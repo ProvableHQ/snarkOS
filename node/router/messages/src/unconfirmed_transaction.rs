@@ -70,6 +70,7 @@ pub mod prop_tests {
 
     use bytes::{Buf, BufMut, BytesMut};
     use proptest::prelude::{BoxedStrategy, Strategy, any};
+
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -83,18 +84,18 @@ pub mod prop_tests {
             .boxed()
     }
 
+    pub fn any_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
+        any_transaction()
+            .prop_map(|tx| UnconfirmedTransaction { transaction_id: tx.id(), transaction: Data::Object(tx) })
+            .boxed()
+    }
+
     pub fn any_large_transaction() -> BoxedStrategy<Transaction<CurrentNetwork>> {
         any::<u64>()
             .prop_map(|seed| {
                 let mut rng = TestRng::fixed(seed);
                 sample_large_execution_transaction(&mut rng)
             })
-            .boxed()
-    }
-
-    pub fn any_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
-        any_transaction()
-            .prop_map(|tx| UnconfirmedTransaction { transaction_id: tx.id(), transaction: Data::Object(tx) })
             .boxed()
     }
 
