@@ -8,7 +8,6 @@ parameters:
     type: string
     default: 2xlarge
 
-
 orbs:
   windows: circleci/windows@5.0
 
