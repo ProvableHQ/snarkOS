@@ -44,7 +44,10 @@ on the entries they receive from other validators' workers.
 - Send back a mismatching transmission for a transmission ID, ensure it catches it.
 - Send back a mismatching certificate for a certificate ID, ensure it catches it.
 
-## Open Questions
-
-1. How does one guarantee the number of accepted transactions and solutions does not exceed the block limits?
-   - We need to set limits on the number of transmissions for the workers, but also the primary.
+## Example generating flamegraphs for profiling on macOS
+Ensure [flamegraph](https://github.com/flamegraph-rs/flamegraph) is installed, then run:
+```
+cd snarkOS/node/bft
+cargo test -- --include-ignored generate_blocks_for_profiling
+sudo flamegraph -o check_next_block.svg -- <path/to/test/binary> check_next_block --include-ignored
+```
