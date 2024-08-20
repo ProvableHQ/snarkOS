@@ -58,6 +58,26 @@ type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 type CurrentConsensusStore = ConsensusStore<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 
 #[ignore]
+fn test_prepare_advance_to_next_quorum_block() -> anyhow::Result<()> {
+    // Deserialize the block from a file.
+    let genesis_bytes = std::fs::read("genesis.bin").unwrap();
+    let genesis: Block<CurrentNetwork> = bincode::deserialize(&genesis_bytes).unwrap();
+    // Initialize the ledger.
+    let ledger = CurrentLedger::load(genesis.clone(), StorageMode::Production).unwrap();
+    let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
+    // Read subdag from file.
+    let subdag_bytes = std::fs::read("subdag.bin").unwrap();
+    let subdag: Subdag<CurrentNetwork> = bincode::deserialize(&subdag_bytes).unwrap();
+    // Read transmissions from file.
+    let transmissions_bytes = std::fs::read("transmissions.bin").unwrap();
+    let transmissions: IndexMap<TransmissionID<CurrentNetwork>, Transmission<CurrentNetwork>> =
+        bincode::deserialize(&transmissions_bytes).unwrap();
+    // Generate block.
+    let _block = core_ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+    return Ok(());
+}
+
+#[ignore]
 fn test_check_next_block() -> anyhow::Result<()> {
     // Deserialize the block from a file.
     let genesis_bytes = std::fs::read("genesis.bin").unwrap();
@@ -76,9 +96,8 @@ fn test_check_next_block() -> anyhow::Result<()> {
     return Ok(());
 }
 
-#[tokio::test]
-#[tracing_test::traced_test]
-async fn generate_blocks_for_profiling() -> anyhow::Result<()> {
+#[ignore]
+fn generate_blocks_for_profiling() -> anyhow::Result<()> {
     let rng = &mut TestRng::fixed(1);
 
     // Initialize the round parameters.
@@ -141,13 +160,8 @@ async fn generate_blocks_for_profiling() -> anyhow::Result<()> {
             TransmissionID::Transaction(*id, checksum)
         })
         .collect::<IndexSet<_>>();
-    let mut transmissions = transactions_serialized
-        .into_iter()
-        // .zip_eq(transmission_ids.iter())
-        .map(|tx| {
-            Transmission::Transaction(tx)
-        })
-        .collect::<Vec<_>>();
+    let mut transmissions =
+        transactions_serialized.into_iter().map(|tx| Transmission::Transaction(tx)).collect::<Vec<_>>();
 
     // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
     let (round_to_certificates_map, committee) = {
@@ -258,6 +272,14 @@ async fn generate_blocks_for_profiling() -> anyhow::Result<()> {
             .collect::<IndexMap<_, _>>();
         println!("num transmissions: {}", transmissions.len());
         println!("num certificates: {}", subdag.certificate_ids().collect::<Vec<_>>().len());
+
+        // Serialize the subdag.
+        let subdag_bytes = bincode::serialize(&subdag).unwrap();
+        std::fs::write("subdag.bin", &subdag_bytes).unwrap();
+
+        // Serialize the transmissions.
+        let transmissions_bytes = bincode::serialize(&transmissions).unwrap();
+        std::fs::write("transmissions.bin", &transmissions_bytes).unwrap();
 
         // Generate block.
         let block = core_ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
