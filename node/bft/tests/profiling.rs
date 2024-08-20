@@ -58,9 +58,7 @@ type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 type CurrentConsensusStore = ConsensusStore<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 
 #[ignore]
-#[tokio::test]
-#[tracing_test::traced_test]
-async fn test_check_next_block() -> anyhow::Result<()> {
+fn test_check_next_block() -> anyhow::Result<()> {
     // Deserialize the block from a file.
     let genesis_bytes = std::fs::read("genesis.bin").unwrap();
     let genesis: Block<CurrentNetwork> = bincode::deserialize(&genesis_bytes).unwrap();

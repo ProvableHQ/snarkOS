@@ -122,6 +122,9 @@ version = "0.9"
 default-features = false
 features = [ "erased-json" ]
 
+[dev-dependencies.bincode]
+version = "1.3"
+
 [dev-dependencies.clap]
 version = "4.4"
 
