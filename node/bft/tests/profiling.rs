@@ -58,6 +58,7 @@ type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 type CurrentConsensusStore = ConsensusStore<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 
 #[ignore]
+#[test]
 fn test_prepare_advance_to_next_quorum_block() -> anyhow::Result<()> {
     // Deserialize the block from a file.
     let genesis_bytes = std::fs::read("genesis.bin").unwrap();
@@ -78,6 +79,7 @@ fn test_prepare_advance_to_next_quorum_block() -> anyhow::Result<()> {
 }
 
 #[ignore]
+#[test]
 fn test_check_next_block() -> anyhow::Result<()> {
     // Deserialize the block from a file.
     let genesis_bytes = std::fs::read("genesis.bin").unwrap();
@@ -97,6 +99,7 @@ fn test_check_next_block() -> anyhow::Result<()> {
 }
 
 #[ignore]
+#[test]
 fn generate_blocks_for_profiling() -> anyhow::Result<()> {
     let rng = &mut TestRng::fixed(1);
 
