@@ -75,9 +75,22 @@ fn test_prepare_advance_to_next_quorum_block() -> anyhow::Result<()> {
         bincode::deserialize(&transmissions_bytes).unwrap();
     // Deserialize the individual transmissions.
     let transmissions = transmissions
-        .into_iter()
-        .map(|(id, transmission)| (id, Transmission::from(transmission)))
-        .collect::<IndexMap<_, _>>();
+    .into_iter()
+    .map(|(id, transmission)| {
+        let new_transmission = match transmission {
+            Transmission::Transaction(tx) => {
+                let deserialized_tx = tx.deserialize_blocking().expect("Failed to deserialize transaction");
+                Transmission::from(deserialized_tx)
+            }
+            Transmission::Solution(solution) => {
+                let deserialized_solution = solution.deserialize_blocking().expect("Failed to deserialize solution");
+                Transmission::from(deserialized_solution)
+            }
+            Transmission::Ratification => panic!("unexpected"),
+        };
+        (id, new_transmission)
+    })
+    .collect::<IndexMap<_, _>>();
     // Generate block.
     // Start measuring time
     let start = std::time::Instant::now();
