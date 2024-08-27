@@ -143,8 +143,10 @@ incremental = true
 debug-assertions = false
 
 [profile.dev]
-opt-level = 2
-lto = "thin"
+opt-level = 1
+lto = "off"
+debug = false
+debug-assertions = false
 incremental = true
 
 [profile.test]

@@ -86,6 +86,7 @@ pub struct StorageInner<N: Network> {
     batch_ids: RwLock<IndexMap<Field<N>, u64>>,
     /// The map of `transmission ID` to `(transmission, certificate IDs)` entries.
     transmissions: Arc<dyn StorageService<N>>,
+    transmissions_cache: Arc<dyn StorageService<N>>,
 }
 
 impl<N: Network> Storage<N> {
@@ -93,6 +94,7 @@ impl<N: Network> Storage<N> {
     pub fn new(
         ledger: Arc<dyn LedgerService<N>>,
         transmissions: Arc<dyn StorageService<N>>,
+        transmissions_cache: Arc<dyn StorageService<N>>,
         max_gc_rounds: u64,
     ) -> Self {
         // Retrieve the current committee.
@@ -111,6 +113,7 @@ impl<N: Network> Storage<N> {
             certificates: Default::default(),
             batch_ids: Default::default(),
             transmissions,
+            transmissions_cache,
         }));
         // Update the storage to the current round.
         storage.update_current_round(current_round);
@@ -576,6 +579,25 @@ impl<N: Network> Storage<N> {
         // Insert the batch ID.
         self.batch_ids.write().insert(batch_id, round);
         // Insert the certificate ID for each of the transmissions into storage.
+        
+        // function arguments passed by value
+        // Call it before? First clone everything, later on extract object and put serialized / deserialized into one / other db
+
+        // clone
+        let certificate_id = certificate_id.clone();
+        //let transmission_ids = transmission_ids.clone();
+        //let aborted_transmission_ids = aborted_transmission_ids.clone();
+        //let missing_transmissions = missing_transmissions.clone();
+
+        // insert into temporary storage
+        //self.transmissions.insert_transmissions(
+        //    certificate_id,
+        //    transmission_ids,
+        //    aborted_transmission_ids,
+        //    missing_transmissions,
+        //);
+
+        // insert into the persistant storage
         self.transmissions.insert_transmissions(
             certificate_id,
             transmission_ids,

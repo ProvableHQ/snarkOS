@@ -20,6 +20,9 @@ pub mod memory;
 #[cfg(feature = "memory")]
 pub use memory::*;
 
+pub mod memory_cache;
+pub use memory_cache::*;
+
 #[cfg(feature = "persistent")]
 pub mod persistent;
 #[cfg(feature = "persistent")]

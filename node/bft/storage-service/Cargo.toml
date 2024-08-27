@@ -40,6 +40,9 @@ workspace = true
 version = "0.1"
 optional = true
 
+[dependencies.lru]
+version = "0.7"
+
 [dev-dependencies.snarkvm]
 workspace = true
 features = [ "test" ]
