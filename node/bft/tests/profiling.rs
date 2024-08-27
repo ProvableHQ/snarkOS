@@ -73,9 +73,23 @@ fn test_prepare_advance_to_next_quorum_block() -> anyhow::Result<()> {
     let transmissions_bytes = std::fs::read("transmissions.bin").unwrap();
     let transmissions: IndexMap<TransmissionID<CurrentNetwork>, Transmission<CurrentNetwork>> =
         bincode::deserialize(&transmissions_bytes).unwrap();
+    // Deserialize the individual transmissions.
+    let transmissions = transmissions
+        .into_iter()
+        .map(|(id, transmission)| (id, Transmission::from(transmission)))
+        .collect::<IndexMap<_, _>>();
     // Generate block.
+    // Start measuring time
+    let start = std::time::Instant::now();
     let _block = core_ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+    // Stop measuring time
+    let duration = start.elapsed();
+    println!("Time elapsed in prepare_advance_to_next_quorum_block() is: {:?}", duration);
     return Ok(());
+    
+
+    //let _block = core_ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+    //return Ok(());
 }
 
 #[ignore]
