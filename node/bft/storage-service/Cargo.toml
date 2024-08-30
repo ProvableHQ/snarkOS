@@ -21,6 +21,7 @@ default = [ ]
 memory = [ "parking_lot", "tracing" ]
 persistent = [ ]
 test = [ "memory" ]
+low_target = [ "snarkvm/test" ]
 
 [dependencies.aleo-std]
 workspace = true

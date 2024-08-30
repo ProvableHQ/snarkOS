@@ -58,6 +58,7 @@ path = "snarkos/main.rs"
 [features]
 metrics = [ "snarkos-node-metrics", "snarkos-node/metrics" ]
 history = [ "snarkos-node/history" ]
+low_target = [ "snarkos-cli/low_target" ]
 
 [dependencies.anyhow]
 version = "1.0.79"

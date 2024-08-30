@@ -19,6 +19,7 @@ edition = "2021"
 [features]
 default = [ ]
 metrics = ["dep:metrics", "snarkvm/metrics"]
+low_target = [ "snarkvm/test" ]
 
 [dependencies.anyhow]
 version = "1.0"

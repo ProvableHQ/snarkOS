@@ -29,3 +29,6 @@ default-features = false
 [dependencies.snarkvm]
 workspace = true
 features = [ "console" ]
+
+[features]
+low_target = [ "snarkvm/test" ]

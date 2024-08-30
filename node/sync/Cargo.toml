@@ -20,6 +20,7 @@ edition = "2021"
 default = [ ]
 metrics = [ "dep:metrics" ]
 test = [ "snarkos-node-sync-locators/test" ]
+low_target = [ "snarkvm/test" ]
 
 [dependencies.anyhow]
 version = "1.0"

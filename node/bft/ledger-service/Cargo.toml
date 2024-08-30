@@ -25,6 +25,7 @@ mock = [ "parking_lot", "tracing" ]
 prover = [ ]
 test = [ "mock", "translucent" ]
 translucent = [ "ledger" ]
+low_target = [ "snarkvm/test" ]
 
 [dependencies.async-trait]
 version = "0.1"

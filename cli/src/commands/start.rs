@@ -494,7 +494,9 @@ impl Start {
     async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>) -> Result<Node<N>> {
         // Print the welcome.
         println!("{}", crate::helpers::welcome_message());
-
+        if cfg!(feature = "low_target") && self.dev.is_none() {
+            bail!("The 'low_target' feature can only be used if the '--dev' flag is also set");
+        }
         // Parse the trusted peers to connect to.
         let mut trusted_peers = self.parse_trusted_peers()?;
         // Parse the trusted validators to connect to.

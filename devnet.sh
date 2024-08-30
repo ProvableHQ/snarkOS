@@ -16,13 +16,21 @@ network_id=${network_id:-1}
 read -p "Do you want to run 'cargo install --locked --path .' to build the binary? (y/n, default: y): " build_binary
 build_binary=${build_binary:-y}
 
+read -p "If you're installing the binary, do you want to set a low proof and coinbase target? (y/n, default: y): " low_target
+low_target=${low_target:-y}
+
 # Ask the user whether to clear the existing ledger history
 read -p "Do you want to clear the existing ledger history? (y/n, default: n): " clear_ledger
 clear_ledger=${clear_ledger:-n}
 
+target=""
+if [[ $low_target == "y" ]]; then
+  target="--features low_target"
+fi
+
 if [[ $build_binary == "y" ]]; then
   # Build the binary using 'cargo install --path .'
-  cargo install --locked --path . || exit 1
+  cargo install --locked --path . $target || exit 1
 fi
 
 # Clear the ledger logs for each validator if the user chooses to clear ledger
