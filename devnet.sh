@@ -23,14 +23,13 @@ low_target=${low_target:-y}
 read -p "Do you want to clear the existing ledger history? (y/n, default: n): " clear_ledger
 clear_ledger=${clear_ledger:-n}
 
-target=""
-if [[ $low_target == "y" ]]; then
-  target="--features low_target"
-fi
-
 if [[ $build_binary == "y" ]]; then
   # Build the binary using 'cargo install --path .'
-  cargo install --locked --path . $target || exit 1
+  if [[ $low_target == "y" ]]; then
+    cargo install --locked --path . --features low_target || exit 1
+  else
+    cargo install --locked --path . || exit 1
+  fi
 fi
 
 # Clear the ledger logs for each validator if the user chooses to clear ledger
