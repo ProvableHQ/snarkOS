@@ -66,8 +66,8 @@ version = "=2.2.7"
 
 [dependencies.snarkvm-synthesizer]
 #path = "../../../snarkVM/synthesizer"
-git = "https://github.com/AleoNet/snarkVM.git"
-rev = "02994a1"
+git = "https://github.com/ProvableHQ/snarkVM.git"
+branch = "skip_tx_checks_new_features-02994a1-with_lazy"
 default-features = false
 optional = true
 
