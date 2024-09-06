@@ -26,8 +26,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use locktick::parking_lot::Mutex;
 use once_cell::sync::OnceCell;
-use parking_lot::Mutex;
 use tokio::{
     io::split,
     net::{TcpListener, TcpStream},

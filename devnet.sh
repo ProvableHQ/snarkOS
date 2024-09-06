@@ -68,12 +68,12 @@ for validator_index in "${validator_indices[@]}"; do
 
   # Send the command to start the validator to the new window and capture output to the log file
   if [ "$validator_index" -eq 0 ]; then
-    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --metrics" C-m
+    tmux send-keys -t "devnet:window$validator_index" "RUST_BACKTRACE=full RUST_LIB_BACKTRACE=1 /Users/victorsintnicolaas/programs/snarkOS_2/target/debug/snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --metrics" C-m
   else
     # Create a new window with a unique name
     window_index=$((validator_index + index_offset))
     tmux new-window -t "devnet:$window_index" -n "window$validator_index"
-    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file" C-m
+    tmux send-keys -t "devnet:window$validator_index" "RUST_BACKTRACE=full RUST_LIB_BACKTRACE=1 /Users/victorsintnicolaas/programs/snarkOS_2/target/debug/snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file" C-m
   fi
 done
 

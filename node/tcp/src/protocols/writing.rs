@@ -17,7 +17,7 @@ use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use futures_util::sink::SinkExt;
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use tokio::{
     io::AsyncWrite,
     sync::{mpsc, oneshot},

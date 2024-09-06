@@ -32,11 +32,11 @@ use snarkvm::{
 };
 
 use anyhow::{Result, bail};
-use parking_lot::Mutex;
+use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 use rayon::prelude::*;
 use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
-    sync::{Mutex as TMutex, OnceCell, oneshot},
+    sync::{OnceCell, oneshot},
     task::JoinHandle,
 };
 

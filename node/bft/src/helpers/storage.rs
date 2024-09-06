@@ -26,8 +26,8 @@ use snarkvm::{
 };
 
 use indexmap::{IndexMap, IndexSet, map::Entry};
+use locktick::parking_lot::RwLock;
 use lru::LruCache;
-use parking_lot::RwLock;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     collections::{HashMap, HashSet},

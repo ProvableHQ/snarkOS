@@ -27,8 +27,8 @@ use snarkvm::{
 };
 
 use indexmap::IndexMap;
+use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
-use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -128,10 +128,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     fn get_block(&self, height: u32) -> Result<Block<N>> {
         // First, check if the block is in the block cache.
         // Using `try_read` to avoid blocking the thread: https://github.com/rayon-rs/rayon/issues/1205
-        if let Some(block_cache) = self.block_cache.try_read() {
-            if let Some(block) = block_cache.get(&height) {
-                return Ok(block.clone());
-            }
+        let block_cache = self.block_cache.read();
+        if let Some(block) = block_cache.get(&height) {
+            return Ok(block.clone());
         }
         // If no block is found in the cache, then retrieve the block from the ledger.
         self.ledger.get_block(height)

@@ -27,7 +27,7 @@ use snarkvm::prelude::{Network, block::Block};
 use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock};
+use locktick::parking_lot::{Mutex, RwLock};
 use rand::{CryptoRng, Rng, prelude::IteratorRandom};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},

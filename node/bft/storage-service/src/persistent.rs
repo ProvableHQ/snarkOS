@@ -36,8 +36,8 @@ use snarkvm::{
 use aleo_std::StorageMode;
 use anyhow::anyhow;
 use indexmap::{IndexSet, indexset};
+use locktick::parking_lot::Mutex;
 use lru::LruCache;
-use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},

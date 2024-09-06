@@ -44,7 +44,7 @@ use snarkvm::prelude::{
 use aleo_std::StorageMode;
 use anyhow::Result;
 use core::future::Future;
-use parking_lot::Mutex;
+use locktick::parking_lot::Mutex;
 use std::{
     net::SocketAddr,
     sync::{Arc, atomic::AtomicBool},

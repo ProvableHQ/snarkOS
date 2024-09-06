@@ -23,7 +23,7 @@ use snarkvm::{
 };
 
 use indexmap::{IndexMap, IndexSet};
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]

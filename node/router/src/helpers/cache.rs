@@ -18,7 +18,7 @@ use snarkvm::prelude::{Network, puzzle::SolutionID};
 
 use core::hash::Hash;
 use linked_hash_map::LinkedHashMap;
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::{IpAddr, SocketAddr},

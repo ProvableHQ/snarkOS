@@ -61,7 +61,10 @@ use snarkvm::{
 use colored::Colorize;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::{IndexMap, IndexSet};
-use parking_lot::{Mutex, RwLock};
+use locktick::{
+    parking_lot::{Mutex, RwLock},
+    tokio::Mutex as TMutex,
+};
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -70,10 +73,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{
-    sync::{Mutex as TMutex, OnceCell},
-    task::JoinHandle,
-};
+use tokio::{sync::OnceCell, task::JoinHandle};
 
 /// A helper type for an optional proposed batch.
 pub type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;

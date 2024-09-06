@@ -17,7 +17,7 @@
 
 use std::{collections::HashMap, net::SocketAddr, ops::Not};
 
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,

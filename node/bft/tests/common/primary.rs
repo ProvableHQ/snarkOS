@@ -46,7 +46,7 @@ use snarkvm::{
 use aleo_std::StorageMode;
 use indexmap::IndexMap;
 use itertools::Itertools;
-use parking_lot::Mutex;
+use locktick::parking_lot::Mutex;
 use std::{
     collections::HashMap,
     ops::RangeBounds,

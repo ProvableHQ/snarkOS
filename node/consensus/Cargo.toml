@@ -43,8 +43,8 @@ path = "../metrics"
 version = "=3.3.2"
 optional = true
 
-[dependencies.parking_lot]
-version = "0.12"
+[dependencies.locktick]
+version = "0.2"
 
 [dependencies.rand]
 version = "0.8"

@@ -18,10 +18,10 @@ edition = "2021"
 
 [features]
 default = [ ]
-ledger = [ "lru", "parking_lot", "rand", "rayon", "tokio", "tracing" ]
+ledger = [ "lru", "locktick", "rand", "rayon", "tokio", "tracing" ]
 ledger-write = [ ]
 metrics = [ "dep:metrics", "snarkvm/metrics" ]
-mock = [ "parking_lot", "tracing" ]
+mock = [ "locktick", "tracing" ]
 prover = [ ]
 test = [ "mock", "translucent" ]
 translucent = [ "ledger" ]
@@ -44,8 +44,8 @@ path = "../../metrics"
 version = "=3.3.2"
 optional = true
 
-[dependencies.parking_lot]
-version = "0.12"
+[dependencies.locktick]
+version = "0.2"
 optional = true
 
 [dependencies.rand]

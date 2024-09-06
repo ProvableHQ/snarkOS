@@ -63,7 +63,7 @@ use snarkvm::{
 use colored::Colorize;
 use futures::SinkExt;
 use indexmap::{IndexMap, IndexSet};
-use parking_lot::{Mutex, RwLock};
+use locktick::parking_lot::{Mutex, RwLock};
 use rand::seq::{IteratorRandom, SliceRandom};
 #[cfg(not(any(test)))]
 use std::net::IpAddr;

@@ -17,7 +17,7 @@ use crate::events::BlockRequest;
 use snarkvm::{console::types::Field, ledger::narwhal::TransmissionID, prelude::Network};
 
 use core::hash::Hash;
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     net::{IpAddr, SocketAddr},

@@ -29,7 +29,7 @@ use snarkvm::prelude::{
 
 use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
-use parking_lot::Mutex;
+use locktick::parking_lot::Mutex;
 use reqwest::Client;
 use std::{
     cmp,
@@ -434,7 +434,7 @@ mod tests {
     };
     use snarkvm::prelude::{MainnetV0, block::Block};
 
-    use parking_lot::RwLock;
+    use locktick::parking_lot::RwLock;
     use std::{sync::Arc, time::Instant};
 
     type CurrentNetwork = MainnetV0;

@@ -34,7 +34,7 @@ use snarkvm::{
 
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
-use parking_lot::Mutex;
+use locktick::parking_lot::Mutex;
 use rand::seq::IteratorRandom;
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};

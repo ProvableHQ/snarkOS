@@ -46,7 +46,7 @@ use aleo_std::StorageMode;
 use anyhow::Result;
 use colored::Colorize;
 use core::{marker::PhantomData, time::Duration};
-use parking_lot::{Mutex, RwLock};
+use locktick::parking_lot::{Mutex, RwLock};
 use rand::{CryptoRng, Rng, rngs::OsRng};
 use snarkos_node_bft::helpers::fmt_id;
 use std::{

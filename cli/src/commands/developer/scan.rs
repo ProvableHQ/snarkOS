@@ -23,7 +23,7 @@ use snarkvm::{
 
 use anyhow::{Result, bail, ensure};
 use clap::Parser;
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use std::{
     io::{Write, stdout},
     str::FromStr,

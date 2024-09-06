@@ -25,7 +25,7 @@ use snarkvm::{
 };
 
 use indexmap::IndexMap;
-use parking_lot::Mutex;
+use locktick::parking_lot::Mutex;
 use std::{collections::BTreeMap, ops::Range};
 use tracing::*;
 

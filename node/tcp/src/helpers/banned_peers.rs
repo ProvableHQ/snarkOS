@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, net::IpAddr, time::Instant};
 
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 
 /// Contains the ban details for a banned peer.
 #[derive(Clone)]

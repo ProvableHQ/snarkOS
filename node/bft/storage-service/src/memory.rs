@@ -20,7 +20,7 @@ use snarkvm::{
 };
 
 use indexmap::{IndexMap, IndexSet, indexset, map::Entry};
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use tracing::error;
 

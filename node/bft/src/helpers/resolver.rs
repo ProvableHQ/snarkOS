@@ -15,7 +15,7 @@
 
 use snarkvm::prelude::{Address, Network};
 
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr};
 
 #[derive(Debug)]

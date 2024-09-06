@@ -64,8 +64,8 @@ version = "1"
 [dependencies.once_cell]
 version = "1"
 
-[dependencies.parking_lot]
-version = "0.12"
+[dependencies.locktick]
+version = "0.2"
 
 [dependencies.rand]
 version = "0.8"

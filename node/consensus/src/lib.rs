@@ -48,8 +48,8 @@ use aleo_std::StorageMode;
 use anyhow::Result;
 use colored::Colorize;
 use indexmap::IndexMap;
+use locktick::parking_lot::Mutex;
 use lru::LruCache;
-use parking_lot::Mutex;
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{
     sync::{OnceCell, oneshot},

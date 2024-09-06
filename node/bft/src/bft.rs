@@ -43,7 +43,10 @@ use snarkvm::{
 
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
-use parking_lot::{Mutex, RwLock};
+use locktick::{
+    parking_lot::{Mutex, RwLock},
+    tokio::Mutex as TMutex,
+};
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
@@ -54,7 +57,7 @@ use std::{
     },
 };
 use tokio::{
-    sync::{Mutex as TMutex, OnceCell, oneshot},
+    sync::{OnceCell, oneshot},
     task::JoinHandle,
 };
 

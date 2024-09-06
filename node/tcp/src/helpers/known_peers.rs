@@ -20,7 +20,7 @@ use std::{
     time::Instant,
 };
 
-use parking_lot::RwLock;
+use locktick::parking_lot::RwLock;
 
 use crate::Stats;
 

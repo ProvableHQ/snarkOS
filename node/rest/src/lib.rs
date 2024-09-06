@@ -46,7 +46,7 @@ use axum::{
     routing::{get, post},
 };
 use axum_extra::response::ErasedJson;
-use parking_lot::Mutex;
+use locktick::parking_lot::Mutex;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};

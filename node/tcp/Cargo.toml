@@ -23,7 +23,7 @@ metrics = [ "dep:metrics" ]
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
-parking_lot = "0.12"
+locktick = "0.2"
 
 [dependencies.futures-util]
 version = "0.3"
