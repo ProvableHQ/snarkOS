@@ -146,7 +146,7 @@ for index, row in event_df.iterrows():
         current_blockRangeRequest.time_received_response = timestamp
         continue
 
-    if "SYNCPROFILING Deserialized blocks BlockRequest" in message:
+    if "SYNCPROFILING Deserialized blocks" in message:
         current_blockRangeRequest.time_deserialized = timestamp
         continue
 

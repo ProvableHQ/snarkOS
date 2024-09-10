@@ -223,7 +223,9 @@ impl<N: Network> BlockSync<N> {
     pub async fn try_block_sync<C: CommunicationService>(&self, communication: &C) {
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
+        // Measurement 1: start of try_block_sync
         let (block_requests, sync_peers) = self.prepare_block_requests();
+        // Measurement 2: end of prepare_block_requests ( duration (2 - 1) can be printed in a separate bar chart, width=number_of_blocks)
         trace!("Prepared {} block requests", block_requests.len());
 
         // If there are no block requests, but there are pending block responses in the sync pool,
@@ -244,12 +246,14 @@ impl<N: Network> BlockSync<N> {
             };
 
             // Try to advance the ledger with the sync pool.
+            // TODO: check in CLI if this triggers at all during the syncing profiling
             trace!("No block requests to send - try advancing with block responses (at block {current_height})");
             self.try_advancing_with_block_responses(current_height);
             // Return early.
             return;
         }
 
+        // Measurement 3: start of sending block requests.
         // Process the block requests.
         'outer: for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
             // Retrieve the starting height and the sync IPs.
@@ -294,6 +298,8 @@ impl<N: Network> BlockSync<N> {
                     "\t\t----SYNCPROFILING Sent block request for startheight {start_height} to endheight {end_height} to peer '{sync_ip}' - at {:?} ns",
                     time::OffsetDateTime::now_utc().unix_timestamp_nanos()
                 );
+                // Measurement 4
+                // First row in the barchart: measurement (4 - 3)
 
                 // If the send fails for any peer, remove the block request from the sync pool.
                 if sender.is_none() {
