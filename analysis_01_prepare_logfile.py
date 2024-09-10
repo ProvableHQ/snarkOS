@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 # Set the variables
-log_folder_names = ["aws-logs"]
+log_folder_names = ["aws-logs5"]
 val_index = 0
 
 # Define the function to parse and filter logs
@@ -48,6 +48,7 @@ for log_folder_name in log_folder_names:
 
     # Replace double newlines to make sure each log stays on one line.
     lines = lines.replace("INFO \n\nAdvanced to block", "INFO Advanced to block")
+    lines = lines.replace("\n\nAdvanced to block", "Advanced to block")
     lines = lines.replace("INFO \n\nCommitting a subdag", "INFO Committing a subdag")
 
     # Filter logs to keep only the last one hour of entries

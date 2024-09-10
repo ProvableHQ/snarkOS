@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 0
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs5", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -42,8 +42,13 @@ event_df = df[df['Message'].str.contains('|'.join(events), na=False)]
 # event_df.to_csv(f'event_df_val{val_index}.csv', index=False)
 
 class BlockRangeRequest:
-    def __init__(self, time_starting_to_find_sync_peers):
-        self.times_starting_to_find_sync_peers = [time_starting_to_find_sync_peers]
+    def __init__(self, time_start_try_block_sync):
+        self.time_start_try_block_sync = time_start_try_block_sync
+        self.time_end_prepare_block_requests = None
+        self.block_requests_len = None
+        self.time_sending_block_requests = None
+        
+        self.times_starting_to_find_sync_peers = [] # todo change logic below
         self.time_sync_peers_found = None
         self.times_to_construct_requests = []
         self.time_to_construct_combined_request = None
@@ -109,16 +114,39 @@ for index, row in event_df.iterrows():
     message = row['Message']
     timestamp = row['Timestamp']
 
+    print(message)
+
+    if "SYNCPROFILING try_block_sync" in message:
+        # todo check if add to list
+        if(current_blockRangeRequest is not None and current_blockRangeRequest.block_requests_len > 0):
+            blockRangeRequests.append(current_blockRangeRequest)
+            current_blockRangeRequest = None
+        current_blockRangeRequest = BlockRangeRequest(timestamp)
+        continue
+
+    # Rust code: info!("SYNCPROFILING End of prepare_block_requests, prepared {} block requests", block_requests.len());
+    if "SYNCPROFILING End of prepare_block_requests" in message:
+        current_blockRangeRequest.time_end_prepare_block_requests = timestamp
+        # extract length of block requests from message
+        block_requests_len = int(message.split('prepared ')[1].split(' block requests')[0])
+        current_blockRangeRequest.block_requests_len = block_requests_len
+        continue
+
+    if "SYNCPROFILING Sending block requests" in message:
+        current_blockRangeRequest.time_sending_block_requests = timestamp
+        continue
+
     # check if message is profiling - starting proposal generation for round {round_number}
     if "SYNCPROFILING Starting to find sync peers..." in message:
-        if(current_blockRangeRequest is None):
-            current_blockRangeRequest = BlockRangeRequest(timestamp)
-        else:
-            if(len(current_blockRangeRequest.times_message_advanced_to_block) == 0):
-                current_blockRangeRequest.times_starting_to_find_sync_peers.append(timestamp)
-            else:
-                blockRangeRequests.append(current_blockRangeRequest)
-                current_blockRangeRequest = BlockRangeRequest(timestamp)
+        current_blockRangeRequest.times_starting_to_find_sync_peers.append(timestamp)
+        #if(current_blockRangeRequest is None):
+        #    current_blockRangeRequest = BlockRangeRequest(timestamp) # todo change logic below
+        #else:
+        #    if(len(current_blockRangeRequest.times_message_advanced_to_block) == 0):
+        #        current_blockRangeRequest.times_starting_to_find_sync_peers.append(timestamp)
+        #    else:
+        #        blockRangeRequests.append(current_blockRangeRequest)
+        #        current_blockRangeRequest = BlockRangeRequest(timestamp)
 
         continue
 

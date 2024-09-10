@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 0
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs3", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
