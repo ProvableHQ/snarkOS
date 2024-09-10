@@ -224,8 +224,10 @@ impl<N: Network> BlockSync<N> {
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
         // Measurement 1: start of try_block_sync
+        info!("SYNCPROFILING try_block_sync");
         let (block_requests, sync_peers) = self.prepare_block_requests();
         // Measurement 2: end of prepare_block_requests ( duration (2 - 1) can be printed in a separate bar chart, width=number_of_blocks)
+        info!("SYNCPROFILING End of prepare_block_requests, prepared {} block requests", block_requests.len());
         trace!("Prepared {} block requests", block_requests.len());
 
         // If there are no block requests, but there are pending block responses in the sync pool,
@@ -253,6 +255,7 @@ impl<N: Network> BlockSync<N> {
             return;
         }
 
+        info!("SYNCPROFILING Sending block requests");
         // Measurement 3: start of sending block requests.
         // Process the block requests.
         'outer: for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
@@ -360,6 +363,8 @@ impl<N: Network> BlockSync<N> {
     fn try_advancing_with_block_responses(&self, mut current_height: u32) {
         while let Some(block) = self.remove_block_response(current_height + 1) {
             // Ensure the block height matches.
+            info!("SYNCPROFILING Processing block response for height {}", block.height());
+            
             if block.height() != current_height + 1 {
                 warn!("Block height mismatch: expected {}, found {}", current_height + 1, block.height());
                 break;
@@ -382,7 +387,7 @@ impl<N: Network> BlockSync<N> {
                 break;
             }
 
-            info!("\t\t-----SYNCPROFILING CHECK NEXT BLOCK TIME: {:?}ns", timer.elapsed().as_nanos());
+            info!("\t\t-----SYNCPROFILING CHECK NEXT BLOCK TIME: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
             let timer = Instant::now();
 
             // Attempt to advance to the next block.
@@ -391,7 +396,7 @@ impl<N: Network> BlockSync<N> {
                 break;
             }
 
-            info!("\t\t-----SYNCPROFILING ADVANCE TO NEXT BLOCK TIME: {:?}ns", timer.elapsed().as_nanos());
+            info!("\t\t-----SYNCPROFILING ADVANCE TO NEXT BLOCK TIME: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
 
             // Update the latest height.
             current_height = self.canon.latest_block_height();
@@ -884,7 +889,7 @@ impl<N: Network> BlockSync<N> {
             request_hashes.insert(height, (hash, previous_hash));
         }
 
-        info!("\t\t -----SYNCPROFILING Time to construct requests: {:?}ns", timer.elapsed().as_nanos());
+        info!("\t\t -----SYNCPROFILING Time to construct requests: {:?}ns, start_height: {}, end_height: {}", timer.elapsed().as_nanos(), start_height, end_height);
         // Construct the requests with the same sync ips.
         request_hashes
             .into_iter()
@@ -964,7 +969,7 @@ fn construct_request<N: Network>(
         }
     };
 
-    info!("\t\t\t ----SYNCPROFILING Time to construct request: {:?}ns", timer.elapsed().as_nanos());
+    info!("\t\t\t ----SYNCPROFILING Time to construct request: {:?}ns, start_height: {}, end_height: {}", timer.elapsed().as_nanos(), height, height + 1);
 
     (hash, previous_hash, num_sync_ips, is_honest)
 }

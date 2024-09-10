@@ -355,12 +355,12 @@ impl<N: Network> Sync<N> {
             // Check the next block.
             self_.ledger.check_next_block(&block)?;
 
-            info!("\t----SYNCPROFILING Check next block took: {:?}ns", timer.elapsed().as_nanos());
+            info!("\t----SYNCPROFILING Check next block took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
             let timer = std::time::Instant::now();
 
             // Attempt to advance to the next block.
             self_.ledger.advance_to_next_block(&block)?;
-            info!("\t----SYNCPROFILING Advance to next block took: {:?}ns", timer.elapsed().as_nanos());
+            info!("\t----SYNCPROFILING Advance to next block took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
 
             // Sync the height with the block.
             self_.storage.sync_height_with_block(block.height());
