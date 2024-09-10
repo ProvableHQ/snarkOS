@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 0
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs5", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs6", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -57,6 +57,7 @@ class TryBlockSyncCall:
         self.time_start_sending_block_requests = None
 
 
+
 class BlockRequest:
     def __init__(self, time_constructed, start_height, end_height, raw_time_to_construct):
         self.time_constructed = time_constructed
@@ -64,9 +65,28 @@ class BlockRequest:
         self.end_height = end_height
         self.raw_time_to_construct = raw_time_to_construct
 
+        self.time_processing_block_response = None
         self.corresponding_block_check_next_block_time = None
         self.corresponding_block_advanced_to_block_time = None
         self.corresponding_block_advanced_to_block_time2 = None
+
+    def get_time_to_construct_raw(self):
+        return self.raw_time_to_construct
+    
+    def get_time_to_sent_request(self, previous_log_time):
+        return self.time_sent_request - previous_log_time
+    
+    def get_time_to_received_response(self):
+        return self.time_received_response - self.time_sent_request
+    
+    def get_time_to_check_next_block_done(self):
+        # assuming sequential, not parallel
+        return self.corresponding_block_check_next_block_time - self.time_processing_block_response
+    
+    def get_time_to_advanced_to_block(self):
+        # assuming sequential, not parallel
+        return self.corresponding_block_advanced_to_block_time - self.corresponding_block_check_next_block_time
+
 
 class BlockRangeRequest:
     def __init__(self, time_sent_request, start_height, end_height, block_requests):
@@ -77,6 +97,55 @@ class BlockRangeRequest:
         self.time_received_response = None
         self.time_deserialized = None
 
+    def get_time_in_construct_raw_requests(self):
+        return sum([block_request.raw_time_to_construct for block_request in self.block_requests])
+
+    def get_time_in_sent_request(self, time_start_sending_block_requests):
+        time_in_sent_request = 0
+        for i, block_request in enumerate(self.block_requests):
+            if(i == 0):
+                time_in_sent_request += block_request.get_time_to_sent_request(time_start_sending_block_requests)
+            else:
+                time_in_sent_request += block_request.get_time_to_sent_request(self.block_requests[i-1].time_sent_request)
+        return time_in_sent_request
+    
+    def get_time_to_received_last_response(self):
+        # find the last received response for the block requests
+        last_received_response = None
+        index_last_received_response = None
+        for i, block_request in enumerate(self.block_requests):
+            if(block_request.time_received_response is not None):
+                last_received_response = block_request.time_received_response
+                index_last_received_response = i
+            elif(block_request.time_received_response > last_received_response):
+                last_received_response = block_request.time_received_response
+                index_last_received_response = i
+        
+        time_send = self.block_requests[index_last_received_response].time_sent_request
+        return last_received_response - time_send
+    
+    def get_time_to_deserialized(self): # assuming deserialization is triggered after receiving a response
+        return self.time_deserialized - self.time_received_response
+    
+    def get_time_to_check_next_block_done(self):
+        time = 0
+        for i, block_request in enumerate(self.block_requests):
+            time += block_request.get_time_to_check_next_block_done()
+        return time
+    
+    def get_time_to_advanced_to_block(self):
+        time = 0
+        for i, block_request in enumerate(self.block_requests):
+            time += block_request.get_time_to_advanced_to_block()
+        return time
+    
+    
+    
+
+        
+
+    
+    # old functions, can likely be removed
     def get_time_to_find_sync_peers(self):
         # todo discuss with victor about multiple start times
         return self.time_sync_peers_found - self.times_starting_to_find_sync_peers[0]
@@ -157,17 +226,6 @@ for index, row in event_df.iterrows():
             current_tryBlockSyncCall.prepared_zero_block_requests = True
         continue
 
-
-
-
-
-
-        if(current_blockRangeRequest is not None and current_blockRangeRequest.block_requests_len > 0):
-            blockRangeRequests.append(current_blockRangeRequest)
-            current_blockRangeRequest = None
-        current_blockRangeRequest = BlockRangeRequest(timestamp)
-        continue
-
     if "SYNCPROFILING Time to construct request:" in message:
         start_height = int(message.split('start_height: ')[1].split(', end_height')[0])
         end_height = int(message.split('end_height: ')[1].split(' ')[0])
@@ -216,6 +274,17 @@ for index, row in event_df.iterrows():
         continue
     if "SYNCPROFILING IS THE NEXT BLOCK IN THE CURRENT RESPONSES?" in message:
         continue
+
+    if "SYNCPROFILING Processing block response for height" in message:
+        height = int(message.split('height ')[1].split(' ')[0])
+        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
+        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
+            if(key <= height):
+                start_key = key
+            else:
+                break
+        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].time_processing_block_response = timestamp
+        a = 0
 
     if "SYNCPROFILING CHECK NEXT BLOCK TIME" in message:
         height = int(message.split('height ')[1])
@@ -321,8 +390,6 @@ for index, row in event_df.iterrows():
         current_blockRangeRequest.times_extra_message_advanced_to_block.append(timestamp)
 
 a = 0
-
-blockRangeRequests
 
 blockRangeRequests_durations = []
 for blockRangeRequest in blockRangeRequests:
