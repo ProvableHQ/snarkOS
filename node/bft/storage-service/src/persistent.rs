@@ -135,7 +135,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                     // If the transmission does not exist, check if it was aborted.
                     None => {
                         if !aborted_transmissions.contains(transmission_id) {
-                            bail!("Failed to provide a transmission");
+                            bail!("Failed to provide a transmission {transmission_id}");
                         }
                     }
                 }
