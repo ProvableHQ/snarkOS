@@ -36,6 +36,9 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// Returns the latest block in the ledger.
     fn latest_block(&self) -> Block<N>;
 
+    /// Returns the latest restrictions ID in the ledger.
+    fn latest_restrictions_id(&self) -> Field<N>;
+
     /// Returns the latest cached leader and its associated round.
     fn latest_leader(&self) -> Option<(u64, Address<N>)>;
 
@@ -74,11 +77,9 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     fn current_committee(&self) -> Result<Committee<N>>;
 
     /// Returns the committee for the given round.
-    /// If the given round is in the future, then the current committee is returned.
     fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>>;
 
     /// Returns the committee lookback for the given round.
-    /// If the committee lookback round is in the future, then the current committee is returned.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>>;
 
     /// Returns `true` if the ledger contains the given certificate ID.

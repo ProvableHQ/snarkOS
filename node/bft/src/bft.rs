@@ -172,24 +172,24 @@ impl<N: Network> BFT<N> {
 }
 
 impl<N: Network> BFT<N> {
-    /// Returns the unconfirmed transmission IDs.
-    pub fn unconfirmed_transmission_ids(&self) -> impl '_ + Iterator<Item = TransmissionID<N>> {
-        self.primary.unconfirmed_transmission_ids()
+    /// Returns the worker transmission IDs.
+    pub fn worker_transmission_ids(&self) -> impl '_ + Iterator<Item = TransmissionID<N>> {
+        self.primary.worker_transmission_ids()
     }
 
-    /// Returns the unconfirmed transmissions.
-    pub fn unconfirmed_transmissions(&self) -> impl '_ + Iterator<Item = (TransmissionID<N>, Transmission<N>)> {
-        self.primary.unconfirmed_transmissions()
+    /// Returns the worker transmissions.
+    pub fn worker_transmissions(&self) -> impl '_ + Iterator<Item = (TransmissionID<N>, Transmission<N>)> {
+        self.primary.worker_transmissions()
     }
 
-    /// Returns the unconfirmed solutions.
-    pub fn unconfirmed_solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
-        self.primary.unconfirmed_solutions()
+    /// Returns the worker solutions.
+    pub fn worker_solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
+        self.primary.worker_solutions()
     }
 
-    /// Returns the unconfirmed transactions.
-    pub fn unconfirmed_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
-        self.primary.unconfirmed_transactions()
+    /// Returns the worker transactions.
+    pub fn worker_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
+        self.primary.worker_transactions()
     }
 }
 
@@ -199,7 +199,9 @@ impl<N: Network> BFT<N> {
         // Ensure the current round is at least the storage round (this is a sanity check).
         let storage_round = self.storage().current_round();
         if current_round < storage_round {
-            warn!("BFT is safely skipping an update for round {current_round}, as storage is at round {storage_round}");
+            debug!(
+                "BFT is safely skipping an update for round {current_round}, as storage is at round {storage_round}"
+            );
             return false;
         }
 
@@ -595,10 +597,34 @@ impl<N: Network> BFT<N> {
             if !IS_SYNCING {
                 // Initialize a map for the deduped transmissions.
                 let mut transmissions = IndexMap::new();
+                // Initialize a map for the deduped transaction ids.
+                let mut seen_transaction_ids = IndexSet::new();
+                // Initialize a map for the deduped solution ids.
+                let mut seen_solution_ids = IndexSet::new();
                 // Start from the oldest leader certificate.
                 for certificate in commit_subdag.values().flatten() {
                     // Retrieve the transmissions.
                     for transmission_id in certificate.transmission_ids() {
+                        // If the transaction ID or solution ID already exists in the map, skip it.
+                        // Note: This additional check is done to ensure that we do not include duplicate
+                        // transaction IDs or solution IDs that may have a different transmission ID.
+                        match transmission_id {
+                            TransmissionID::Solution(solution_id, _) => {
+                                // If the solution already exists, skip it.
+                                if seen_solution_ids.contains(&solution_id) {
+                                    continue;
+                                }
+                            }
+                            TransmissionID::Transaction(transaction_id, _) => {
+                                // If the transaction already exists, skip it.
+                                if seen_transaction_ids.contains(transaction_id) {
+                                    continue;
+                                }
+                            }
+                            TransmissionID::Ratification => {
+                                bail!("Ratifications are currently not supported in the BFT.")
+                            }
+                        }
                         // If the transmission already exists in the map, skip it.
                         if transmissions.contains_key(transmission_id) {
                             continue;
@@ -611,11 +637,22 @@ impl<N: Network> BFT<N> {
                         // Retrieve the transmission.
                         let Some(transmission) = self.storage().get_transmission(*transmission_id) else {
                             bail!(
-                                "BFT failed to retrieve transmission '{}' from round {}",
+                                "BFT failed to retrieve transmission '{}.{}' from round {}",
                                 fmt_id(transmission_id),
+                                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed(),
                                 certificate.round()
                             );
                         };
+                        // Insert the transaction ID or solution ID into the map.
+                        match transmission_id {
+                            TransmissionID::Solution(id, _) => {
+                                seen_solution_ids.insert(id);
+                            }
+                            TransmissionID::Transaction(id, _) => {
+                                seen_transaction_ids.insert(id);
+                            }
+                            TransmissionID::Ratification => {}
+                        }
                         // Add the transmission to the set.
                         transmissions.insert(*transmission_id, transmission);
                     }

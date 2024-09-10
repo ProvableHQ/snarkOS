@@ -25,7 +25,7 @@ use snarkos_node_router::messages::{
     UnconfirmedTransaction,
 };
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
-use snarkvm::prelude::{block::Transaction, Network};
+use snarkvm::prelude::{block::Transaction, Field, Network, Zero};
 
 use std::{io, net::SocketAddr};
 
@@ -45,7 +45,8 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Prover<N, C> {
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
         let genesis_header = *self.genesis.header();
-        self.router.handshake(peer_addr, stream, conn_side, genesis_header).await?;
+        let restrictions_id = Field::zero(); // Provers may bypass restrictions, since they do not validate transactions.
+        self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
         Ok(connection)
     }
@@ -134,6 +135,16 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Prover<N, C> {
     /// Returns a reference to the router.
     fn router(&self) -> &Router<N> {
         &self.router
+    }
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    fn is_block_synced(&self) -> bool {
+        true
+    }
+
+    /// Returns the number of blocks this node is behind the greatest peer height.
+    fn num_blocks_behind(&self) -> u32 {
+        0
     }
 }
 

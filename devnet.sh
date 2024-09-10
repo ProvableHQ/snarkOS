@@ -9,7 +9,7 @@ read -p "Enter the total number of clients (default: 2): " total_clients
 total_clients=${total_clients:-2}
 
 # Read the network ID from user or use a default value of 1
-read -p "Enter the network ID (mainnet = 0, testnet = 1) (default: 1): " network_id
+read -p "Enter the network ID (mainnet = 0, testnet = 1, canary = 2) (default: 1): " network_id
 network_id=${network_id:-1}
 
 # Ask the user if they want to run 'cargo install --locked --path .' or use a pre-installed binary
@@ -32,7 +32,7 @@ if [[ $clear_ledger == "y" ]]; then
 
   for ((index = 0; index < $((total_validators + total_clients)); index++)); do
     # Run 'snarkos clean' for each node in the background
-    snarkos clean --dev $index &
+    snarkos clean --network $network_id --dev $index &
 
     # Store the process ID of the background task
     clean_processes+=($!)

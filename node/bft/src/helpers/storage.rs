@@ -323,6 +323,35 @@ impl<N: Network> Storage<N> {
         }
     }
 
+    /// Returns the certificates that have not yet been included in the ledger.
+    /// Note that the order of this set is by round and then insertion.
+    pub(crate) fn get_pending_certificates(&self) -> IndexSet<BatchCertificate<N>> {
+        let mut pending_certificates = IndexSet::new();
+
+        // Obtain the read locks.
+        let rounds = self.rounds.read();
+        let certificates = self.certificates.read();
+
+        // Iterate over the rounds.
+        for (_, certificates_for_round) in rounds.clone().sorted_by(|a, _, b, _| a.cmp(b)) {
+            // Iterate over the certificates for the round.
+            for (certificate_id, _, _) in certificates_for_round {
+                // Skip the certificate if it already exists in the ledger.
+                if self.ledger.contains_certificate(&certificate_id).unwrap_or(false) {
+                    continue;
+                }
+
+                // Add the certificate to the pending certificates.
+                match certificates.get(&certificate_id).cloned() {
+                    Some(certificate) => pending_certificates.insert(certificate),
+                    None => continue,
+                };
+            }
+        }
+
+        pending_certificates
+    }
+
     /// Checks the given `batch_header` for validity, returning the missing transmissions from storage.
     ///
     /// This method ensures the following invariants:
@@ -662,7 +691,7 @@ impl<N: Network> Storage<N> {
             // Retrieve the transmission.
             match transmission_id {
                 TransmissionID::Ratification => (),
-                TransmissionID::Solution(solution_id) => {
+                TransmissionID::Solution(solution_id, _) => {
                     // Retrieve the solution.
                     match block.get_solution(solution_id) {
                         // Insert the solution.
@@ -687,7 +716,7 @@ impl<N: Network> Storage<N> {
                         },
                     };
                 }
-                TransmissionID::Transaction(transaction_id) => {
+                TransmissionID::Transaction(transaction_id, _) => {
                     // Retrieve the transaction.
                     match unconfirmed_transactions.get(transaction_id) {
                         // Insert the transaction.
@@ -759,6 +788,7 @@ impl<N: Network> Storage<N> {
     /// Inserts the given `certificate` into storage.
     ///
     /// Note: Do NOT use this in production. This is for **testing only**.
+    #[cfg(test)]
     #[doc(hidden)]
     pub(crate) fn testing_only_insert_certificate_testing_only(&self, certificate: BatchCertificate<N>) {
         // Retrieve the round.
@@ -795,7 +825,7 @@ impl<N: Network> Storage<N> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
@@ -841,7 +871,7 @@ mod tests {
     }
 
     /// Samples the random transmissions, returning the missing transmissions and the transmissions.
-    fn sample_transmissions(
+    pub(crate) fn sample_transmissions(
         certificate: &BatchCertificate<CurrentNetwork>,
         rng: &mut TestRng,
     ) -> (
@@ -1126,8 +1156,14 @@ pub mod prop_tests {
 
     pub fn any_transmission_id() -> BoxedStrategy<TransmissionID<CurrentNetwork>> {
         prop_oneof![
-            any_transaction_id().prop_map(TransmissionID::Transaction),
-            any_solution_id().prop_map(TransmissionID::Solution),
+            any_transaction_id().prop_perturb(|id, mut rng| TransmissionID::Transaction(
+                id,
+                rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
+            )),
+            any_solution_id().prop_perturb(|id, mut rng| TransmissionID::Solution(
+                id,
+                rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
+            )),
         ]
         .boxed()
     }

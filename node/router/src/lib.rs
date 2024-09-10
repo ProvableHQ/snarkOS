@@ -390,16 +390,38 @@ impl<N: Network> Router<N> {
     }
 
     /// Returns the list of bootstrap peers.
+    #[allow(clippy::if_same_then_else)]
     pub fn bootstrap_peers(&self) -> Vec<SocketAddr> {
         if cfg!(feature = "test") || self.is_dev {
+            // Development testing contains no bootstrap peers.
             vec![]
-        } else {
+        } else if N::ID == snarkvm::console::network::MainnetV0::ID {
+            // Mainnet contains the following bootstrap peers.
             vec![
-                SocketAddr::from_str("64.23.169.88:4130").unwrap(),
-                SocketAddr::from_str("146.190.35.174:4130").unwrap(),
-                SocketAddr::from_str("45.55.201.67:4130").unwrap(),
-                SocketAddr::from_str("45.55.201.80:4130").unwrap(),
+                SocketAddr::from_str("34.105.20.52:4130").unwrap(),
+                SocketAddr::from_str("35.231.118.193:4130").unwrap(),
+                SocketAddr::from_str("35.204.253.77:4130").unwrap(),
+                SocketAddr::from_str("34.87.188.140:4130").unwrap(),
             ]
+        } else if N::ID == snarkvm::console::network::TestnetV0::ID {
+            // TestnetV0 contains the following bootstrap peers.
+            vec![
+                SocketAddr::from_str("34.168.118.156:4130").unwrap(),
+                SocketAddr::from_str("35.231.152.213:4130").unwrap(),
+                SocketAddr::from_str("34.17.53.129:4130").unwrap(),
+                SocketAddr::from_str("35.200.149.162:4130").unwrap(),
+            ]
+        } else if N::ID == snarkvm::console::network::CanaryV0::ID {
+            // CanaryV0 contains the following bootstrap peers.
+            vec![
+                SocketAddr::from_str("34.74.24.41:4130").unwrap(),
+                SocketAddr::from_str("35.228.3.69:4130").unwrap(),
+                SocketAddr::from_str("34.124.178.133:4130").unwrap(),
+                SocketAddr::from_str("34.125.137.231:4130").unwrap(),
+            ]
+        } else {
+            // Unrecognized networks contain no bootstrap peers.
+            vec![]
         }
     }
 
@@ -479,6 +501,12 @@ impl<N: Network> Router<N> {
             write_fn(peer);
         }
         Ok(())
+    }
+
+    pub fn update_last_seen_for_connected_peer(&self, peer_ip: SocketAddr) {
+        if let Some(peer) = self.connected_peers.write().get_mut(&peer_ip) {
+            peer.set_last_seen(Instant::now());
+        }
     }
 
     /// Removes the connected peer and adds them to the candidate peers.

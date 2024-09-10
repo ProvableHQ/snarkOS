@@ -22,7 +22,7 @@ use snarkvm::{
         store::ConsensusStorage,
         Ledger,
     },
-    prelude::{bail, Address, Field, Network, Result},
+    prelude::{bail, Address, Field, FromBytes, Network, Result},
 };
 
 use indexmap::IndexMap;
@@ -30,6 +30,7 @@ use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use std::{
     fmt,
+    io::Read,
     ops::Range,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -79,6 +80,11 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     /// Returns the latest block in the ledger.
     fn latest_block(&self) -> Block<N> {
         self.ledger.latest_block()
+    }
+
+    /// Returns the latest restrictions ID in the ledger.
+    fn latest_restrictions_id(&self) -> Field<N> {
+        self.ledger.vm().restrictions().restrictions_id()
     }
 
     /// Returns the latest cached leader and its associated round.
@@ -147,7 +153,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the committee for the given round.
-    /// If the given round is in the future, then the current committee is returned.
     fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>> {
         // Check if the committee is already in the cache.
         if let Some(committee) = self.committee_cache.lock().get(&round) {
@@ -162,12 +167,12 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 // Return the committee.
                 Ok(committee)
             }
-            // Return the current committee if the round is in the future.
+            // Return the current committee if the round is equivalent.
             None => {
                 // Retrieve the current committee.
                 let current_committee = self.current_committee()?;
-                // Return the current committee if the round is in the future.
-                match current_committee.starting_round() <= round {
+                // Return the current committee if the round is equivalent.
+                match current_committee.starting_round() == round {
                     true => Ok(current_committee),
                     false => bail!("No committee found for round {round} in the ledger"),
                 }
@@ -176,7 +181,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the committee lookback for the given round.
-    /// If the committee lookback round is in the future, then the current committee is returned.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
         // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
         // because committees are updated in even rounds.
@@ -201,8 +205,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     fn contains_transmission(&self, transmission_id: &TransmissionID<N>) -> Result<bool> {
         match transmission_id {
             TransmissionID::Ratification => Ok(false),
-            TransmissionID::Solution(solution_id) => self.ledger.contains_solution_id(solution_id),
-            TransmissionID::Transaction(transaction_id) => self.ledger.contains_transaction_id(transaction_id),
+            TransmissionID::Solution(solution_id, _) => self.ledger.contains_solution_id(solution_id),
+            TransmissionID::Transaction(transaction_id, _) => self.ledger.contains_transaction_id(transaction_id),
         }
     }
 
@@ -214,32 +218,45 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     ) -> Result<()> {
         match (transmission_id, transmission) {
             (TransmissionID::Ratification, Transmission::Ratification) => {}
-            (TransmissionID::Transaction(expected_transaction_id), Transmission::Transaction(transaction_data)) => {
-                match transaction_data.clone().deserialize_blocking() {
-                    Ok(transaction) => {
-                        // Ensure the transaction ID matches the expected transaction ID.
-                        if transaction.id() != expected_transaction_id {
-                            bail!(
-                                "Received mismatching transaction ID  - expected {}, found {}",
-                                fmt_id(expected_transaction_id),
-                                fmt_id(transaction.id()),
-                            );
-                        }
-
-                        // Ensure the transaction is not a fee transaction.
-                        if transaction.is_fee() {
-                            bail!("Received a fee transaction in a transmission");
-                        }
-
-                        // Update the transmission with the deserialized transaction.
-                        *transaction_data = Data::Object(transaction);
-                    }
-                    Err(err) => {
-                        bail!("Failed to deserialize transaction: {err}");
-                    }
+            (
+                TransmissionID::Transaction(expected_transaction_id, expected_checksum),
+                Transmission::Transaction(transaction_data),
+            ) => {
+                // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
+                let transaction = match transaction_data.clone() {
+                    Data::Object(transaction) => transaction,
+                    Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?,
+                };
+                // Ensure the transaction ID matches the expected transaction ID.
+                if transaction.id() != expected_transaction_id {
+                    bail!(
+                        "Received mismatching transaction ID - expected {}, found {}",
+                        fmt_id(expected_transaction_id),
+                        fmt_id(transaction.id()),
+                    );
                 }
+
+                // Ensure the transmission checksum matches the expected checksum.
+                let checksum = transaction_data.to_checksum::<N>()?;
+                if checksum != expected_checksum {
+                    bail!(
+                        "Received mismatching checksum for transaction {} - expected {expected_checksum} but found {checksum}",
+                        fmt_id(expected_transaction_id)
+                    );
+                }
+
+                // Ensure the transaction is not a fee transaction.
+                if transaction.is_fee() {
+                    bail!("Received a fee transaction in a transmission");
+                }
+
+                // Update the transmission with the deserialized transaction.
+                *transaction_data = Data::Object(transaction);
             }
-            (TransmissionID::Solution(expected_solution_id), Transmission::Solution(solution_data)) => {
+            (
+                TransmissionID::Solution(expected_solution_id, expected_checksum),
+                Transmission::Solution(solution_data),
+            ) => {
                 match solution_data.clone().deserialize_blocking() {
                     Ok(solution) => {
                         if solution.id() != expected_solution_id {
@@ -247,6 +264,15 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                                 "Received mismatching solution ID - expected {}, found {}",
                                 fmt_id(expected_solution_id),
                                 fmt_id(solution.id()),
+                            );
+                        }
+
+                        // Ensure the transmission checksum matches the expected checksum.
+                        let checksum = solution_data.to_checksum::<N>()?;
+                        if checksum != expected_checksum {
+                            bail!(
+                                "Received mismatching checksum for solution {} - expected {expected_checksum} but found {checksum}",
+                                fmt_id(expected_solution_id)
                             );
                         }
 
@@ -294,8 +320,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         transaction_id: N::TransactionID,
         transaction: Data<Transaction<N>>,
     ) -> Result<()> {
-        // Deserialize the transaction.
-        let transaction = spawn_blocking!(transaction.deserialize_blocking())?;
+        // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
+        let transaction = spawn_blocking!({
+            match transaction {
+                Data::Object(transaction) => Ok(transaction),
+                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?),
+            }
+        })?;
         // Ensure the transaction ID matches in the transaction.
         if transaction_id != transaction.id() {
             bail!("Invalid transaction - expected {transaction_id}, found {}", transaction.id());
@@ -343,6 +374,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             metrics::gauge(metrics::bft::LAST_COMMITTED_ROUND, block.round() as f64);
             metrics::increment_gauge(metrics::blocks::SOLUTIONS, num_sol as f64);
             metrics::increment_gauge(metrics::blocks::TRANSACTIONS, num_tx as f64);
+            metrics::update_block_metrics(block);
         }
 
         tracing::info!("\n\nAdvanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());

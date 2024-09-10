@@ -20,7 +20,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{bail, ensure, Address, Field, Network, Result},
+    prelude::{bail, ensure, Address, Field, Network, Result, Zero},
 };
 
 use indexmap::IndexMap;
@@ -66,6 +66,11 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     /// Returns the latest block in the ledger.
     fn latest_block(&self) -> Block<N> {
         unreachable!("MockLedgerService does not support latest_block")
+    }
+
+    /// Returns the latest restrictions ID in the ledger.
+    fn latest_restrictions_id(&self) -> Field<N> {
+        Field::zero()
     }
 
     /// Returns the latest cached leader and its associated round.
@@ -147,7 +152,6 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     }
 
     /// Returns the committee for the given round.
-    /// If the given round is in the future, then the current committee is returned.
     fn get_committee_for_round(&self, _round: u64) -> Result<Committee<N>> {
         Ok(self.committee.clone())
     }
@@ -165,7 +169,11 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
 
     /// Returns `false` for all queries.
     fn contains_transmission(&self, transmission_id: &TransmissionID<N>) -> Result<bool> {
-        trace!("[MockLedgerService] Contains transmission ID {} - false", fmt_id(transmission_id));
+        trace!(
+            "[MockLedgerService] Contains transmission ID {}.{} - false",
+            fmt_id(transmission_id),
+            fmt_id(transmission_id.checksum().unwrap_or_default())
+        );
         Ok(false)
     }
 
@@ -175,7 +183,11 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         transmission_id: TransmissionID<N>,
         _transmission: &mut Transmission<N>,
     ) -> Result<()> {
-        trace!("[MockLedgerService] Ensure transmission ID matches {:?} - Ok", fmt_id(transmission_id));
+        trace!(
+            "[MockLedgerService] Ensure transmission ID matches {}.{} - Ok",
+            fmt_id(transmission_id),
+            fmt_id(transmission_id.checksum().unwrap_or_default())
+        );
         Ok(())
     }
 

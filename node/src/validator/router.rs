@@ -48,7 +48,8 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Validator<N, C> {
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
         let genesis_header = self.ledger.get_header(0).map_err(|e| error(format!("{e}")))?;
-        self.router.handshake(peer_addr, stream, conn_side, genesis_header).await?;
+        let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
+        self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
         Ok(connection)
     }
@@ -111,6 +112,26 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Validator<N, C> {
 
     /// Processes a message received from the network.
     async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) -> io::Result<()> {
+        let clone = self.clone();
+        if matches!(message, Message::BlockRequest(_) | Message::BlockResponse(_)) {
+            // Handle BlockRequest and BlockResponse messages in a separate task to not block the
+            // inbound queue.
+            tokio::spawn(async move {
+                clone.process_message_inner(peer_addr, message).await;
+            });
+        } else {
+            self.process_message_inner(peer_addr, message).await;
+        }
+        Ok(())
+    }
+}
+
+impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
+    async fn process_message_inner(
+        &self,
+        peer_addr: SocketAddr,
+        message: <Validator<N, C> as snarkos_node_tcp::protocols::Reading>::Message,
+    ) {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
             if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
@@ -120,7 +141,6 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Validator<N, C> {
                 self.router().disconnect(peer_ip);
             }
         }
-        Ok(())
     }
 }
 
@@ -136,6 +156,16 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Validator<N, C> {
     /// Returns a reference to the router.
     fn router(&self) -> &Router<N> {
         &self.router
+    }
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    fn is_block_synced(&self) -> bool {
+        self.sync.is_block_synced()
+    }
+
+    /// Returns the number of blocks this node is behind the greatest peer height.
+    fn num_blocks_behind(&self) -> u32 {
+        self.sync.num_blocks_behind()
     }
 }
 

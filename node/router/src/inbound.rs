@@ -36,16 +36,24 @@ use snarkvm::prelude::{
 
 use anyhow::{anyhow, bail, Result};
 use snarkos_node_tcp::is_bogon_ip;
-use std::{net::SocketAddr, time::Instant};
+use std::net::SocketAddr;
 use tokio::task::spawn_blocking;
+// import instant
+use std::time::Instant;
 
 /// The max number of peers to send in a `PeerResponse` message.
 const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
+
+/// The maximum number of blocks the client can be behind it's latest peer before it skips
+/// processing incoming transactions and solutions.
+pub const SYNC_LENIENCY: u32 = 10;
 
 #[async_trait]
 pub trait Inbound<N: Network>: Reading + Outbound<N> {
     /// The maximum number of puzzle requests per interval.
     const MAXIMUM_PUZZLE_REQUESTS_PER_INTERVAL: usize = 5;
+    /// The maximum number of block requests per interval.
+    const MAXIMUM_BLOCK_REQUESTS_PER_INTERVAL: usize = 256;
     /// The duration in seconds to sleep in between ping requests with a connected peer.
     const PING_SLEEP_IN_SECS: u64 = 20; // 20 seconds
     /// The time frame to enforce the `MESSAGE_LIMIT`.
@@ -70,12 +78,20 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
         trace!("Received '{}' from '{peer_ip}'", message.name());
 
+        // Update the last seen timestamp of the peer.
+        self.router().update_last_seen_for_connected_peer(peer_ip);
+
         // This match statement handles the inbound message by deserializing the message,
         // checking that the message is valid, and then calling the appropriate (trait) handler.
         match message {
             Message::BlockRequest(message) => {
                 let BlockRequest { start_height, end_height } = &message;
-
+                // Insert the block request for the peer, and fetch the recent frequency.
+                let frequency = self.router().cache.insert_inbound_block_request(peer_ip);
+                // Check if the number of block requests is within the limit.
+                if frequency > Self::MAXIMUM_BLOCK_REQUESTS_PER_INTERVAL {
+                    bail!("Peer '{peer_ip}' is not following the protocol (excessive block requests)")
+                }
                 // Ensure the block request is well-formed.
                 if start_height >= end_height {
                     bail!("Block request from '{peer_ip}' has an invalid range ({start_height}..{end_height})")
@@ -95,7 +111,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 let BlockResponse { request, blocks } = message;
 
                 info!(
-                    "\t\t----Received block response for height {} to peer '{peer_ip}' - at {:?} ns",
+                    "\t\t----SYNCPROFILING Received block response for height {} to peer '{peer_ip}' - at {:?} ns",
                     request.start_height,
                     time::OffsetDateTime::now_utc().unix_timestamp_nanos()
                 );
@@ -106,8 +122,21 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
                 // Perform the deferred non-blocking deserialization of the blocks.
                 let timer = Instant::now();
-                let blocks = blocks.deserialize().await.map_err(|error| anyhow!("[BlockResponse] {error}"))?;
-                info!("\t\t---Deserialized blocks {request:?} in {:?}ns", timer.elapsed().as_nanos());
+                let (send, recv) = tokio::sync::oneshot::channel();
+                rayon::spawn_fifo(move || {
+                    let blocks = blocks.deserialize_blocking().map_err(|error| anyhow!("[BlockResponse] {error}"));
+                    let _ = send.send(blocks);
+                });
+                let blocks = match recv.await {
+                    Ok(Ok(blocks)) => blocks,
+                    Ok(Err(error)) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
+                    Err(error) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
+                };
+                info!("\t\t---SYNCPROFILING Deserialized blocks {request:?} in {:?}ns", timer.elapsed().as_nanos());
+                // The deserialization can take a long time (minutes). We should not be running
+                // this on a blocking task, but on a rayon thread pool.
+
+
                 // Ensure the block response is well-formed.
                 blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
 
@@ -133,6 +162,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 if !self.router().cache.contains_outbound_peer_request(peer_ip) {
                     bail!("Peer '{peer_ip}' is not following the protocol (unexpected peer response)")
                 }
+                self.router().cache.decrement_outbound_peer_requests(peer_ip);
                 if !self.router().allow_external_peers() {
                     bail!("Not accepting peer response from '{peer_ip}' (validator gossip is disabled)");
                 }
@@ -165,8 +195,6 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                         peer.set_version(message.version);
                         // Update the node type of the peer.
                         peer.set_node_type(message.node_type);
-                        // Update the last seen timestamp of the peer.
-                        peer.set_last_seen(Instant::now());
                     })
                 {
                     bail!("[Ping] {error}");
@@ -215,8 +243,11 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
             }
             Message::UnconfirmedSolution(message) => {
-                // Clone the serialized message.
-                let serialized = message.clone();
+                // Do not process unconfirmed solutions if the node is too far behind.
+                if self.num_blocks_behind() > SYNC_LENIENCY {
+                    trace!("Skipped processing unconfirmed solution '{}' (node is syncing)", message.solution_id);
+                    return Ok(());
+                }
                 // Update the timestamp for the unconfirmed solution.
                 let seen_before = self.router().cache.insert_inbound_solution(peer_ip, message.solution_id).is_some();
                 // Determine whether to propagate the solution.
@@ -224,6 +255,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     trace!("Skipping 'UnconfirmedSolution' from '{peer_ip}'");
                     return Ok(());
                 }
+                // Clone the serialized message.
+                let serialized = message.clone();
                 // Perform the deferred non-blocking deserialization of the solution.
                 let solution = match message.solution.deserialize().await {
                     Ok(solution) => solution,
@@ -240,8 +273,11 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
             }
             Message::UnconfirmedTransaction(message) => {
-                // Clone the serialized message.
-                let serialized = message.clone();
+                // Do not process unconfirmed transactions if the node is too far behind.
+                if self.num_blocks_behind() > SYNC_LENIENCY {
+                    trace!("Skipped processing unconfirmed transaction '{}' (node is syncing)", message.transaction_id);
+                    return Ok(());
+                }
                 // Update the timestamp for the unconfirmed transaction.
                 let seen_before =
                     self.router().cache.insert_inbound_transaction(peer_ip, message.transaction_id).is_some();
@@ -250,6 +286,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     trace!("Skipping 'UnconfirmedTransaction' from '{peer_ip}'");
                     return Ok(());
                 }
+                // Clone the serialized message.
+                let serialized = message.clone();
                 // Perform the deferred non-blocking deserialization of the transaction.
                 let transaction = match message.transaction.deserialize().await {
                     Ok(transaction) => transaction,

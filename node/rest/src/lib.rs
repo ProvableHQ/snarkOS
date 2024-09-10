@@ -121,11 +121,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let network = match N::ID {
             snarkvm::console::network::MainnetV0::ID => "mainnet",
             snarkvm::console::network::TestnetV0::ID => "testnet",
-            _ => "mainnet",
+            snarkvm::console::network::CanaryV0::ID => "canary",
+            unknown_id => {
+                eprintln!("Unknown network ID ({unknown_id})");
+                return;
+            }
         };
 
         let router = {
-            axum::Router::new()
+            let routes = axum::Router::new()
 
             // All the endpoints before the call to `route_layer` are protected with JWT auth.
             .route(&format!("/{network}/node/address"), get(Self::get_node_address))
@@ -166,6 +170,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
             // GET ../find/..
             .route(&format!("/{network}/find/blockHash/:tx_id"), get(Self::find_block_hash))
+            .route(&format!("/{network}/find/blockHeight/:state_root"), get(Self::find_block_height_from_state_root))
             .route(&format!("/{network}/find/transactionID/deployment/:program_id"), get(Self::find_transaction_id_from_program_id))
             .route(&format!("/{network}/find/transactionID/:transition_id"), get(Self::find_transaction_id_from_transition_id))
             .route(&format!("/{network}/find/transitionID/:input_or_output_id"), get(Self::find_transition_id))
@@ -188,8 +193,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route(&format!("/{network}/memoryPool/transactions"), get(Self::get_memory_pool_transactions))
             .route(&format!("/{network}/statePath/:commitment"), get(Self::get_state_path_for_commitment))
             .route(&format!("/{network}/stateRoot/latest"), get(Self::get_state_root_latest))
+            .route(&format!("/{network}/stateRoot/:height"), get(Self::get_state_root))
             .route(&format!("/{network}/committee/latest"), get(Self::get_committee_latest))
+            .route(&format!("/{network}/committee/:height"), get(Self::get_committee))
+            .route(&format!("/{network}/delegators/:validator"), get(Self::get_delegators_for_validator));
 
+            // If the `history` feature is enabled, enable the additional endpoint.
+            #[cfg(feature = "history")]
+            let routes =
+                routes.route(&format!("/{network}/block/:blockHeight/history/:mapping"), get(Self::get_history));
+
+            routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
             // Enable tower-http tracing.
@@ -198,8 +212,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .layer(middleware::from_fn(log_middleware))
             // Enable CORS.
             .layer(cors)
-            // Cap body size at 10MB.
-            .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
+            // Cap body size at 512KiB.
+            .layer(DefaultBodyLimit::max(512 * 1024))
             .layer(GovernorLayer {
                 // We can leak this because it is created only once and it persists.
                 config: Box::leak(governor_config),
@@ -223,4 +237,14 @@ async fn log_middleware(
     info!("Received '{} {}' from '{addr}'", request.method(), request.uri());
 
     Ok(next.run(request).await)
+}
+
+/// Formats an ID into a truncated identifier (for logging purposes).
+pub fn fmt_id(id: impl ToString) -> String {
+    let id = id.to_string();
+    let mut formatted_id = id.chars().take(16).collect::<String>();
+    if id.chars().count() > 16 {
+        formatted_id.push_str("..");
+    }
+    formatted_id
 }

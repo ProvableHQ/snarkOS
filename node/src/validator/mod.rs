@@ -85,10 +85,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         storage_mode: StorageMode,
         allow_external_peers: bool,
         dev_txs: bool,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        // Prepare the shutdown flag.
-        let shutdown: Arc<AtomicBool> = Default::default();
-
         // Initialize the signal handler.
         let signal_node = Self::handle_signals(shutdown.clone());
 
@@ -361,20 +359,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                     return Ok(());
                 }
             }
-            _ => {
-                // Retrieve the genesis committee.
-                let Ok(Some(committee)) = self.ledger.get_committee_for_round(0) else {
-                    // If the genesis committee is not available, do not start the loop.
-                    return Ok(());
-                };
-                // Retrieve the first member.
-                // Note: It is guaranteed that the committee has at least one member.
-                let first_member = committee.members().first().unwrap().0;
-                // If the node is not the first member, do not start the loop.
-                if self.address() != *first_member {
-                    return Ok(());
-                }
-            }
+            // If the node is not running in development mode, do not generate dev traffic.
+            _ => return Ok(()),
         }
 
         let self_ = self.clone();
@@ -502,6 +488,7 @@ mod tests {
             storage_mode,
             false,
             dev_txs,
+            Default::default(),
         )
         .await
         .unwrap();

@@ -14,7 +14,7 @@
 
 use snarkvm::{
     console::{
-        network::{MainnetV0, Network, TestnetV0},
+        network::{CanaryV0, MainnetV0, Network, TestnetV0},
         program::Ciphertext,
     },
     prelude::{Record, ViewKey},
@@ -45,7 +45,8 @@ impl Decrypt {
         match self.network {
             MainnetV0::ID => Self::decrypt_ciphertext::<MainnetV0>(&self.ciphertext, &self.view_key),
             TestnetV0::ID => Self::decrypt_ciphertext::<TestnetV0>(&self.ciphertext, &self.view_key),
-            _ => bail!("Unsupported network ID"),
+            CanaryV0::ID => Self::decrypt_ciphertext::<CanaryV0>(&self.ciphertext, &self.view_key),
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
         }
     }
 

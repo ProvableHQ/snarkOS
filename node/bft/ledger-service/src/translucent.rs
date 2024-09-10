@@ -67,6 +67,11 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         self.inner.latest_block()
     }
 
+    /// Returns the latest restrictions ID in the ledger.
+    fn latest_restrictions_id(&self) -> Field<N> {
+        self.inner.latest_restrictions_id()
+    }
+
     /// Returns the latest cached leader and its associated round.
     fn latest_leader(&self) -> Option<(u64, Address<N>)> {
         self.inner.latest_leader()
@@ -129,7 +134,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     }
 
     /// Returns the committee for the given round.
-    /// If the given round is in the future, then the current committee is returned.
     fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>> {
         self.inner.get_committee_for_round(round)
     }

@@ -20,7 +20,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{bail, Address, Field, Network, Result},
+    prelude::{bail, Address, Field, Network, Result, Zero},
 };
 
 use indexmap::IndexMap;
@@ -54,6 +54,11 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     /// Returns the latest block in the ledger.
     fn latest_block(&self) -> Block<N> {
         unreachable!("Latest block does not exist in prover")
+    }
+
+    /// Returns the latest restrictions ID in the ledger.
+    fn latest_restrictions_id(&self) -> Field<N> {
+        Field::zero()
     }
 
     /// Returns the latest cached leader and its associated round.
@@ -118,13 +123,11 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     }
 
     /// Returns the committee for the given round.
-    /// If the given round is in the future, then the current committee is returned.
     fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>> {
         bail!("Committee for round {round} does not exist in prover")
     }
 
     /// Returns the committee lookback for the given round.
-    /// If the committee lookback round is in the future, then the current committee is returned.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
         bail!("Previous committee for round {round} does not exist in prover")
     }

@@ -82,7 +82,7 @@ impl<N: Network> Ready<N> {
     /// Returns the solutions in the ready queue.
     pub fn solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
         self.transmissions.read().clone().into_iter().filter_map(|(id, transmission)| match (id, transmission) {
-            (TransmissionID::Solution(id), Transmission::Solution(solution)) => Some((id, solution)),
+            (TransmissionID::Solution(id, _), Transmission::Solution(solution)) => Some((id, solution)),
             _ => None,
         })
     }
@@ -90,7 +90,7 @@ impl<N: Network> Ready<N> {
     /// Returns the transactions in the ready queue.
     pub fn transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
         self.transmissions.read().clone().into_iter().filter_map(|(id, transmission)| match (id, transmission) {
-            (TransmissionID::Transaction(id), Transmission::Transaction(tx)) => Some((id, tx)),
+            (TransmissionID::Transaction(id, _), Transmission::Transaction(tx)) => Some((id, tx)),
             _ => None,
         })
     }
@@ -126,6 +126,14 @@ impl<N: Network> Ready<N> {
         // Drain the transmission IDs.
         transmissions.drain(range).collect::<IndexMap<_, _>>()
     }
+
+    /// Clears all solutions from the ready queue.
+    pub(crate) fn clear_solutions(&self) {
+        // Acquire the write lock.
+        let mut transmissions = self.transmissions.write();
+        // Remove all solutions.
+        transmissions.retain(|id, _| !matches!(id, TransmissionID::Solution(..)));
+    }
 }
 
 #[cfg(test)]
@@ -148,9 +156,18 @@ mod tests {
         let ready = Ready::<CurrentNetwork>::new();
 
         // Initialize the solution IDs.
-        let solution_id_1 = TransmissionID::Solution(rng.gen::<u64>().into());
-        let solution_id_2 = TransmissionID::Solution(rng.gen::<u64>().into());
-        let solution_id_3 = TransmissionID::Solution(rng.gen::<u64>().into());
+        let solution_id_1 = TransmissionID::Solution(
+            rng.gen::<u64>().into(),
+            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+        );
+        let solution_id_2 = TransmissionID::Solution(
+            rng.gen::<u64>().into(),
+            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+        );
+        let solution_id_3 = TransmissionID::Solution(
+            rng.gen::<u64>().into(),
+            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+        );
 
         // Initialize the solutions.
         let solution_1 = Transmission::Solution(data(rng));
@@ -171,7 +188,10 @@ mod tests {
         transmission_ids.iter().for_each(|id| assert!(ready.contains(*id)));
 
         // Check that an unknown solution ID is not in the ready queue.
-        let solution_id_unknown = TransmissionID::Solution(rng.gen::<u64>().into());
+        let solution_id_unknown = TransmissionID::Solution(
+            rng.gen::<u64>().into(),
+            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+        );
         assert!(!ready.contains(solution_id_unknown));
 
         // Check the transmissions.
@@ -211,7 +231,10 @@ mod tests {
         let ready = Ready::<CurrentNetwork>::new();
 
         // Initialize the solution ID.
-        let solution_id = TransmissionID::Solution(rng.gen::<u64>().into());
+        let solution_id = TransmissionID::Solution(
+            rng.gen::<u64>().into(),
+            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+        );
 
         // Initialize the solution.
         let solution = Transmission::Solution(data);

@@ -56,7 +56,7 @@ use snarkvm::{
         committee::Committee,
         narwhal::{BatchHeader, Data},
     },
-    prelude::Address,
+    prelude::{Address, Field},
 };
 
 use colored::Colorize;
@@ -259,6 +259,11 @@ impl<N: Network> Gateway<N> {
     /// Returns the account of the node.
     pub const fn account(&self) -> &Account<N> {
         &self.account
+    }
+
+    /// Returns the dev identifier of the node.
+    pub const fn dev(&self) -> Option<u16> {
+        self.dev
     }
 
     /// Returns the IP address of this node.
@@ -623,7 +628,7 @@ impl<N: Network> Gateway<N> {
                 });
 
                 info!(
-                    "\t\t---Sent block Response for height {start_height} to {end_height} in {:?}ns",
+                    "\t\t---SYNCPROFILING Sent block Response for height {start_height} to {end_height} in {:?}ns",
                     timer.elapsed().as_nanos()
                 );
                 Ok(())
@@ -635,7 +640,7 @@ impl<N: Network> Gateway<N> {
                     let BlockResponse { request, blocks } = block_response;
 
                     info!(
-                        "\t\t----Received block response for height {} to peer '{peer_ip}' - at {:?} ns",
+                        "\t\t----SYNCPROFILING Received block response for height {} to peer '{peer_ip}' - at {:?} ns",
                         request.start_height,
                         time::OffsetDateTime::now_utc().unix_timestamp_nanos()
                     );
@@ -643,7 +648,7 @@ impl<N: Network> Gateway<N> {
                     let timer = std::time::Instant::now();
                     // Perform the deferred non-blocking deserialization of the blocks.
                     let blocks = blocks.deserialize().await.map_err(|error| anyhow!("[BlockResponse] {error}"))?;
-                    info!("\t\t---Deserialized blocks {request:?} in {:?}ns", timer.elapsed().as_nanos());
+                    info!("\t\t---SYNCPROFILING Deserialized blocks {request:?} in {:?}ns", timer.elapsed().as_nanos());
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
@@ -1096,6 +1101,11 @@ impl<N: Network> Disconnect for Gateway<N> {
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
             self.remove_connected_peer(peer_ip);
+
+            // We don't clear this map based on time but only on peer disconnect.
+            // This is sufficient to avoid infinite growth as the committee has a fixed number
+            // of members.
+            self.cache.clear_outbound_validators_requests(peer_ip);
         }
     }
 }
@@ -1126,11 +1136,14 @@ impl<N: Network> Handshake for Gateway<N> {
             Some(peer_addr)
         };
 
+        // Retrieve the restrictions ID.
+        let restrictions_id = self.ledger.latest_restrictions_id();
+
         // Perform the handshake; we pass on a mutable reference to peer_ip in case the process is broken at any point in time.
         let handshake_result = if peer_side == ConnectionSide::Responder {
-            self.handshake_inner_initiator(peer_addr, peer_ip, stream).await
+            self.handshake_inner_initiator(peer_addr, peer_ip, restrictions_id, stream).await
         } else {
-            self.handshake_inner_responder(peer_addr, &mut peer_ip, stream).await
+            self.handshake_inner_responder(peer_addr, &mut peer_ip, restrictions_id, stream).await
         };
 
         // Remove the address from the collection of connecting peers (if the handshake got to the point where it's known).
@@ -1194,6 +1207,7 @@ impl<N: Network> Gateway<N> {
         &'a self,
         peer_addr: SocketAddr,
         peer_ip: Option<SocketAddr>,
+        restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
     ) -> io::Result<(SocketAddr, Framed<&mut TcpStream, EventCodec<N>>)> {
         // This value is immediately guaranteed to be present, so it can be unwrapped.
@@ -1221,8 +1235,9 @@ impl<N: Network> Gateway<N> {
         let peer_request = expect_event!(Event::ChallengeRequest, framed, peer_addr);
 
         // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) =
-            self.verify_challenge_response(peer_addr, peer_request.address, peer_response, our_nonce).await
+        if let Some(reason) = self
+            .verify_challenge_response(peer_addr, peer_request.address, peer_response, restrictions_id, our_nonce)
+            .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
             return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
@@ -1242,7 +1257,8 @@ impl<N: Network> Gateway<N> {
             return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
         };
         // Send the challenge response.
-        let our_response = ChallengeResponse { signature: Data::Object(our_signature), nonce: response_nonce };
+        let our_response =
+            ChallengeResponse { restrictions_id, signature: Data::Object(our_signature), nonce: response_nonce };
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
         // Add the peer to the gateway.
@@ -1256,6 +1272,7 @@ impl<N: Network> Gateway<N> {
         &'a self,
         peer_addr: SocketAddr,
         peer_ip: &mut Option<SocketAddr>,
+        restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
     ) -> io::Result<(SocketAddr, Framed<&mut TcpStream, EventCodec<N>>)> {
         // Construct the stream.
@@ -1297,7 +1314,8 @@ impl<N: Network> Gateway<N> {
             return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
         };
         // Send the challenge response.
-        let our_response = ChallengeResponse { signature: Data::Object(our_signature), nonce: response_nonce };
+        let our_response =
+            ChallengeResponse { restrictions_id, signature: Data::Object(our_signature), nonce: response_nonce };
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
         // Sample a random nonce.
@@ -1311,8 +1329,9 @@ impl<N: Network> Gateway<N> {
         // Listen for the challenge response message.
         let peer_response = expect_event!(Event::ChallengeResponse, framed, peer_addr);
         // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) =
-            self.verify_challenge_response(peer_addr, peer_request.address, peer_response, our_nonce).await
+        if let Some(reason) = self
+            .verify_challenge_response(peer_addr, peer_request.address, peer_response, restrictions_id, our_nonce)
+            .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
             return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
@@ -1351,10 +1370,17 @@ impl<N: Network> Gateway<N> {
         peer_addr: SocketAddr,
         peer_address: Address<N>,
         response: ChallengeResponse<N>,
+        expected_restrictions_id: Field<N>,
         expected_nonce: u64,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge response.
-        let ChallengeResponse { signature, nonce } = response;
+        let ChallengeResponse { restrictions_id, signature, nonce } = response;
+
+        // Verify the restrictions ID.
+        if restrictions_id != expected_restrictions_id {
+            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (incorrect restrictions ID)");
+            return Some(DisconnectReason::InvalidChallengeResponse);
+        }
         // Perform the deferred non-blocking deserialization of the signature.
         let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
             warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
