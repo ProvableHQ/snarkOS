@@ -41,25 +41,41 @@ event_df = df[df['Message'].str.contains('|'.join(events), na=False)]
 # store the event_df in a csv file
 # event_df.to_csv(f'event_df_val{val_index}.csv', index=False)
 
-class BlockRangeRequest:
-    def __init__(self, time_start_try_block_sync):
-        self.time_start_try_block_sync = time_start_try_block_sync
-        self.time_end_prepare_block_requests = None
-        self.block_requests_len = None
-        self.time_sending_block_requests = None
-        
-        self.times_starting_to_find_sync_peers = [] # todo change logic below
+class TryBlockSyncCall:
+    def __init__(self, startTime):
+        self.startTime = startTime
+        self.time_start_find_sync_peers = None
         self.time_sync_peers_found = None
-        self.times_to_construct_requests = []
-        self.time_to_construct_combined_request = None
-        self.time_sent_request = None
-        self.block_start_height = None
-        self.block_end_height = None
+        self.time_end_prepare_block_requests = None
+        self.prepared_zero_block_requests = None
+        self.BlockRequests = {}
+        self.time_log_constructed_block_requests = None
+        self.block_requests_raw_aggegarate_time = None
+        self.block_requests_start_height = None
+        self.block_requests_end_height = None
+        self.BlockRangeRequests = {}
+        self.time_start_sending_block_requests = None
+
+
+class BlockRequest:
+    def __init__(self, time_constructed, start_height, end_height, raw_time_to_construct):
+        self.time_constructed = time_constructed
+        self.start_height = start_height
+        self.end_height = end_height
+        self.raw_time_to_construct = raw_time_to_construct
+
+        self.corresponding_block_check_next_block_time = None
+        self.corresponding_block_advanced_to_block_time = None
+        self.corresponding_block_advanced_to_block_time2 = None
+
+class BlockRangeRequest:
+    def __init__(self, time_sent_request, start_height, end_height, block_requests):
+        self.time_sent_request = time_sent_request
+        self.start_height = start_height
+        self.end_height = end_height
+        self.block_requests = block_requests
         self.time_received_response = None
         self.time_deserialized = None
-        self.time_check_next_block_done = []
-        self.times_message_advanced_to_block = []
-        self.times_extra_message_advanced_to_block = []
 
     def get_time_to_find_sync_peers(self):
         # todo discuss with victor about multiple start times
@@ -108,7 +124,8 @@ class BlockRangeRequest:
 advanced_block_times = []
 blockRangeRequests = []
 
-current_blockRangeRequest = None
+blockSyncRequestCalls = []
+current_tryBlockSyncCall = None
 
 for index, row in event_df.iterrows():
     message = row['Message']
@@ -118,11 +135,125 @@ for index, row in event_df.iterrows():
 
     if "SYNCPROFILING try_block_sync" in message:
         # todo check if add to list
+        if(current_tryBlockSyncCall is not None):
+            blockSyncRequestCalls.append(current_tryBlockSyncCall)
+            current_blockRangeRequest = None
+        current_tryBlockSyncCall = TryBlockSyncCall(timestamp)
+        continue
+
+    if "SYNCPROFILING Starting to find sync peers..." in message:
+        current_tryBlockSyncCall.time_start_find_sync_peers = timestamp
+        continue
+
+    if "SYNCPROFILING Time to find sync peers" in message:
+        current_tryBlockSyncCall.time_sync_peers_found = timestamp
+        continue
+
+    if "SYNCPROFILING End of prepare_block_requests" in message:
+        current_tryBlockSyncCall.time_end_prepare_block_requests = timestamp
+        # get number of block requests
+        block_requests_len = int(message.split('prepared ')[1].split(' block requests')[0])
+        if(block_requests_len == 0):
+            current_tryBlockSyncCall.prepared_zero_block_requests = True
+        continue
+
+
+
+
+
+
         if(current_blockRangeRequest is not None and current_blockRangeRequest.block_requests_len > 0):
             blockRangeRequests.append(current_blockRangeRequest)
             current_blockRangeRequest = None
         current_blockRangeRequest = BlockRangeRequest(timestamp)
         continue
+
+    if "SYNCPROFILING Time to construct request:" in message:
+        start_height = int(message.split('start_height: ')[1].split(', end_height')[0])
+        end_height = int(message.split('end_height: ')[1].split(' ')[0])
+        raw_time_to_construct_request = int(message.split('Time to construct request: ')[1].split('ns')[0])
+
+        br = BlockRequest(timestamp, start_height, end_height, raw_time_to_construct_request)
+        current_tryBlockSyncCall.BlockRequests[start_height] = br
+        continue
+
+    if "SYNCPROFILING Time to construct requests:" in message:
+        current_tryBlockSyncCall.time_log_constructed_block_requests = timestamp
+        current_tryBlockSyncCall.raw_aggegarate_time_to_construct_block_requests = int(message.split('Time to construct requests: ')[1].split('ns')[0])
+        current_tryBlockSyncCall.block_requests_start_height = int(message.split('start_height: ')[1].split(', end_height')[0])
+        current_tryBlockSyncCall.block_requests_end_height = int(message.split('end_height: ')[1].split(' ')[0])
+                                    
+        continue
+
+    if "SYNCPROFILING Sending block requests" in message:
+        current_tryBlockSyncCall.time_start_sending_block_requests = timestamp
+        continue
+
+    if "SYNCPROFILING Sent block request for startheight" in message:
+        start_height = int(message.split('startheight ')[1].split(' to')[0])
+        end_height = int(message.split('to endheight ')[1].split(' to')[0])
+        # extract block requests
+        block_requests = []
+        for i in range(start_height, end_height):
+            block_requests.append(current_tryBlockSyncCall.BlockRequests[i])
+        brr = BlockRangeRequest(timestamp, start_height, end_height, block_requests)
+        current_tryBlockSyncCall.BlockRangeRequests[start_height] = brr
+
+        continue
+
+    if "SYNCPROFILING Received block response for height" in message:
+        #current_blockRangeRequest.time_received_response = timestamp
+        height = int(message.split('height ')[1].split(' ')[0])
+        current_tryBlockSyncCall.BlockRangeRequests[height].time_received_response = timestamp
+        continue
+
+    if "SYNCPROFILING Deserialized blocks BlockRequest { start_height" in message:
+        start_height = int(message.split('start_height: ')[1].split(', end_height')[0])
+        current_tryBlockSyncCall.BlockRangeRequests[start_height].time_deserialized = timestamp
+        continue
+
+    if "SYNCPROFILING NUM BLOCKS PENDING IN RESPONSES" in message:
+        continue
+    if "SYNCPROFILING IS THE NEXT BLOCK IN THE CURRENT RESPONSES?" in message:
+        continue
+
+    if "SYNCPROFILING CHECK NEXT BLOCK TIME" in message:
+        height = int(message.split('height ')[1])
+        # find corresponding start block index in current_tryBlockSyncCall.BlockRangeRequests.keys()
+        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
+        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
+            if(key <= height):
+                start_key = key
+            else:
+                break
+        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].corresponding_block_check_next_block_time = timestamp
+        continue
+
+    if "Advanced to block" in message:
+        advanced_block_times.append(timestamp)
+        block_height = int(message.split('Advanced to block ')[1].split(' ')[0])
+        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
+        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
+            if(key <= height):
+                start_key = key
+            else:
+                break
+        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].corresponding_block_advanced_to_block_time = timestamp
+        continue
+
+    if "SYNCPROFILING ADVANCE TO NEXT BLOCK TIME" in message:
+        block_height = int(message.split('height ')[1])
+        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
+        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
+            if(key <= height):
+                start_key = key
+            else:
+                break
+        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].corresponding_block_advanced_to_block_time2 = timestamp
+        continue
+
+    a = 0
+
 
     # Rust code: info!("SYNCPROFILING End of prepare_block_requests, prepared {} block requests", block_requests.len());
     if "SYNCPROFILING End of prepare_block_requests" in message:
@@ -132,9 +263,6 @@ for index, row in event_df.iterrows():
         current_blockRangeRequest.block_requests_len = block_requests_len
         continue
 
-    if "SYNCPROFILING Sending block requests" in message:
-        current_blockRangeRequest.time_sending_block_requests = timestamp
-        continue
 
     # check if message is profiling - starting proposal generation for round {round_number}
     if "SYNCPROFILING Starting to find sync peers..." in message:
