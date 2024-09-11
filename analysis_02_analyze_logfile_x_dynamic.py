@@ -559,134 +559,29 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
 
         times_extra_message_advanced_to_block = tryBlockSyncCall.get_times_advanced_to_block()
         times_extra_message_advanced_to_block_seconds = [time.total_seconds() for time in times_extra_message_advanced_to_block]
+
+        start_time_sequential_tasks = max(bottoms)
+
+        for i, time in enumerate(times_check_next_block_done_seconds):
+            start_height = tryBlockSyncCall.block_requests_start_height + i
+            end_height = start_height + 1
+            width = end_height-start_height
+            ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label='Check next block time', color='tab:purple')
+            start_time_sequential_tasks += time
+            time = times_extra_message_advanced_to_block_seconds[i]
+            ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label='Advanced to block', color='tab:brown')
+            start_time_sequential_tasks += time
         
-        a = 0
-        prev_bottom = bottoms[-1]
+        prev_bottom = start_time_sequential_tasks
 
-# Extract all times\
-time_to_find_sync_peers = []
-times_to_construct_requests = []
-time_to_construct_combined_request = []
-time_to_sent_request = []
-time_to_received_response = []
-time_to_deserialized = []
-times_check_next_block_done = []
-times_extra_message_advanced_to_block = []
-unaccounted_times = []
-
-#previous_block_end_time = 0 
-for blockRangeRequest in blockRangeRequests:
-    this_time_to_find_sync_peers = blockRangeRequest.get_time_to_find_sync_peers()
-    this_times_to_construct_requests = blockRangeRequest.get_times_to_construct_requests()
-    this_time_to_construct_combined_request = blockRangeRequest.get_time_to_construct_combined_request()
-    this_time_to_sent_request = blockRangeRequest.get_time_to_sent_request()
-    this_time_to_received_response = blockRangeRequest.get_time_to_received_response()
-    this_time_to_deserialized = blockRangeRequest.get_time_to_deserialized()
-    this_times_check_next_block_done = blockRangeRequest.get_times_check_next_block_done()
-    this_times_extra_message_advanced_to_block = blockRangeRequest.get_times_extra_message_advanced_to_block()
-    this_unaccounted_time = blockRangeRequest.get_total_time().total_seconds() - this_time_to_find_sync_peers.total_seconds() - sum([time.total_seconds() for time in this_times_to_construct_requests]) - this_time_to_construct_combined_request.total_seconds() - this_time_to_sent_request.total_seconds() - this_time_to_received_response.total_seconds() - this_time_to_deserialized.total_seconds() - sum([time.total_seconds() for time in this_times_check_next_block_done]) - sum([time.total_seconds() for time in this_times_extra_message_advanced_to_block])
-
-    time_to_find_sync_peers.append(this_time_to_find_sync_peers.total_seconds())
-    times_to_construct_requests.append([time.total_seconds() for time in this_times_to_construct_requests])
-    time_to_construct_combined_request.append(this_time_to_construct_combined_request.total_seconds())
-    time_to_sent_request.append(this_time_to_sent_request.total_seconds())
-    time_to_received_response.append(this_time_to_received_response.total_seconds())
-    time_to_deserialized.append(this_time_to_deserialized.total_seconds())
-    times_check_next_block_done.append([time.total_seconds() for time in this_times_check_next_block_done])
-    times_extra_message_advanced_to_block.append([time.total_seconds() for time in this_times_extra_message_advanced_to_block])
-    unaccounted_times.append(this_unaccounted_time)
-
-def flatten_list_of_lists(lol):
-    return [item for sublist in lol for item in sublist]
-
-# Plotting
-fig, ax = plt.subplots(figsize=(10, 7))
-
-# Initialize the bottom stack array for 114 blocks
-bottoms = np.zeros(len(blockRangeRequests))
-
-# Define colors for each category
-sync_peers_color = 'tab:blue'
-construct_requests_color = 'tab:orange'
-construct_combined_color = 'tab:green'
-sent_request_color = 'tab:red'
-received_response_color = 'tab:purple'
-deserialized_color = 'tab:brown'
-check_next_color = 'tab:pink'
-extra_message_advanced_color = 'tab:gray'
-unaccounted_color = 'tab:olive'
-
-# todo, now change the code below - basically, print depending on if it is one value or a list of values
-
-# Iterate over each blockRangeRequest
-for i in range(len(blockRangeRequests)):
-
-    # Set the x position and width of each box based on the block start and end heights
-    block_start = blockRangeRequests[i].block_start_height
-    block_end = blockRangeRequests[i].block_end_height
-    block_width = block_end - block_start
-
-    # Plot time to find sync peers (single value)
-    ax.bar(block_start+block_width/2, time_to_find_sync_peers[i], bottom=bottoms[i], width=block_width, 
-           label='Time to find sync peers' if i == 0 else "", color=sync_peers_color)
-    bottoms[i] += time_to_find_sync_peers[i]
-    
-    # Plot times to construct requests (list of values)
-    for construct_time in times_to_construct_requests[i]:
-        ax.bar(block_start+block_width/2, construct_time, bottom=bottoms[i], width=block_width,
-               label='Time to construct requests' if i == 0 and construct_time == times_to_construct_requests[i][0] else "", color=construct_requests_color)
-        bottoms[i] += construct_time
-
-    # Plot time to construct combined request (single value)
-    ax.bar(block_start+block_width/2, time_to_construct_combined_request[i], bottom=bottoms[i], width=block_width,
-           label='Time to construct combined request' if i == 0 else "", color=construct_combined_color)
-    bottoms[i] += time_to_construct_combined_request[i]
-
-    # Plot time to send request (single value)
-    ax.bar(block_start+block_width/2, time_to_sent_request[i], bottom=bottoms[i], width=block_width,
-           label='Time to send request' if i == 0 else "", color=sent_request_color)
-    bottoms[i] += time_to_sent_request[i]
-
-    # Plot time to receive response (single value)
-    ax.bar(block_start+block_width/2, time_to_received_response[i], bottom=bottoms[i], width=block_width,
-           label='Time to receive response' if i == 0 else "", color=received_response_color)
-    bottoms[i] += time_to_received_response[i]
-
-    # Plot time to deserialize response (single value)
-    ax.bar(block_start+block_width/2, time_to_deserialized[i], bottom=bottoms[i], width=block_width,
-           label='Time to deserialize' if i == 0 else "", color=deserialized_color)
-    bottoms[i] += time_to_deserialized[i]
-
-    # Alternate between check next block and extra message advanced to block (lists of values)
-    for check_time, extra_time in zip(times_check_next_block_done[i], times_extra_message_advanced_to_block[i]):
-        ax.bar(block_start+block_width/2, check_time, bottom=bottoms[i], width=block_width,
-               label='Check next block time' if i == 0 and check_time == times_check_next_block_done[i][0] else "", color=check_next_color)
-        bottoms[i] += check_time
-
-        ax.bar(block_start+block_width/2, extra_time, bottom=bottoms[i], width=block_width,
-               label='Advanced to block' if i == 0 and extra_time == times_extra_message_advanced_to_block[i][0] else "", color=extra_message_advanced_color)
-        bottoms[i] += extra_time
-
-    # Plot unaccounted time (single value)
-    ax.bar(block_start+block_width/2, unaccounted_times[i], bottom=bottoms[i], width=block_width,
-           label='Unaccounted time' if i == 0 else "", color=unaccounted_color)
-    bottoms[i] += unaccounted_times[i]
-
-# Add labels and title
-ax.set_xlabel('Block Height')
-ax.set_ylabel('Time (s)')
-ax.set_title(f'Stacked Bar Chart of Block Times, client {val_index}')
+# plot legend
 ax.legend()
+# Set the title and labels
+ax.set_title(f"Block times for val_index {val_index}")
+ax.set_xlabel("Block height")
+ax.set_ylabel("Time (seconds)")
 
-# Show the plot
-plt.show()
-
+a = 0
 # Save the figure
 fig.savefig(f'1_stacked_bar_chart_block_times_val{val_index}.png')
 
-for i in range(len(blockRangeRequests)):
-    # print start and end height
-    print(f"Block Range Request {i}:")
-    print(f"Start Height: {blockRangeRequests[i].block_start_height}")
-    print(f"End Height: {blockRangeRequests[i].block_end_height}")
-    
