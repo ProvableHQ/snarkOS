@@ -491,8 +491,12 @@ fig, ax = plt.subplots(figsize=(10, 7))
 # legend
 ax.legend()
 
-for tryBlockSyncCall in tryBlockSyncCalls:
+prev_bottom = 0
+
+for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
     if(not tryBlockSyncCall.prepared_zero_block_requests):
+        if(j >= 1):
+            a = 0
         #get_time_to_find_sync_peers, get_times_to_construct_requests, get_unaccounted_time_in_prepare_block_requests
         start_height = tryBlockSyncCall.block_requests_start_height
         end_height = tryBlockSyncCall.block_requests_end_height
@@ -504,7 +508,7 @@ for tryBlockSyncCall in tryBlockSyncCalls:
         
         # plot a bar stack. x from start_height to end_height, y from 0 to time_to_find_sync_peers, combined_time. color should be blue
         width = end_height-start_height
-        ax.bar(start_height+width/2, combined_time, bottom=0, width=width, label='Time to find sync peers', color='tab:blue')
+        ax.bar(start_height+width/2, combined_time, bottom=prev_bottom, width=width, label='Time to find sync peers', color='tab:blue')
 
         # get times to send requests
         times_send, ranges = tryBlockSyncCall.get_times_to_send_requests()
@@ -514,7 +518,7 @@ for tryBlockSyncCall in tryBlockSyncCalls:
         bottoms = np.zeros(len(times_send_seconds))
 
         times_send_seconds_bar_bottoms = []
-        prev_bottom = combined_time
+        prev_bottom += combined_time
         for i, time in enumerate(times_send_seconds):
             start_height = ranges[i][0]
             end_height = ranges[i][1]
@@ -542,6 +546,13 @@ for tryBlockSyncCall in tryBlockSyncCalls:
             times_deserialized.append(blockRangeRequest.get_time_to_deserialized())
         times_deserialized_seconds = [time.total_seconds() for time in times_deserialized]
 
+        for i, time in enumerate(times_deserialized_seconds):
+            start_height = ranges[i][0]
+            end_height = ranges[i][1]
+            width = end_height-start_height
+            ax.bar(start_height+width/2, time, bottom=bottoms[i], width=width, label='Time to deserialize', color='tab:red')
+            bottoms[i] += time
+
         # after all deserialization is done, stair wise check next block and advance to block
         times_check_next_block_done = tryBlockSyncCall.get_times_check_next_block_done()
         times_check_next_block_done_seconds = [time.total_seconds() for time in times_check_next_block_done]
@@ -550,6 +561,7 @@ for tryBlockSyncCall in tryBlockSyncCalls:
         times_extra_message_advanced_to_block_seconds = [time.total_seconds() for time in times_extra_message_advanced_to_block]
         
         a = 0
+        prev_bottom = bottoms[-1]
 
 # Extract all times\
 time_to_find_sync_peers = []
