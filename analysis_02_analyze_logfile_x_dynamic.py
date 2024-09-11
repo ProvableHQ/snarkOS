@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 0
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs6", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs7", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -56,6 +56,69 @@ class TryBlockSyncCall:
         self.BlockRangeRequests = {}
         self.time_start_sending_block_requests = None
 
+    def get_time_to_find_sync_peers(self):
+        return self.time_sync_peers_found - self.time_start_find_sync_peers
+    
+    def get_times_to_construct_requests(self):
+        times = []
+        # iterate over all block requests
+        for blockRequest in self.BlockRequests.values():
+            times.append(blockRequest.get_time_to_construct_raw()*10**-9)
+        return times
+    
+    def get_combined_time_to_construct_requests(self):
+        return self.time_log_constructed_block_requests - self.startTime
+
+    def _get_time_to_end_prepare_block_requests(self):
+        return self.time_end_prepare_block_requests - self.startTime
+    
+    def get_unaccounted_time_in_prepare_block_requests_seconds(self):
+        return self._get_time_to_end_prepare_block_requests().total_seconds() - self.get_time_to_find_sync_peers().total_seconds() - sum(self.get_times_to_construct_requests())
+
+    def get_times_to_send_requests(self):
+        times = []
+        ranges = []
+        start_send_time = self.time_start_sending_block_requests
+        for blockRangeRequest in self.BlockRangeRequests.values():
+            this_time = blockRangeRequest.get_time_in_sent_request(start_send_time)
+            times.append(this_time)
+            start_height = blockRangeRequest.start_height
+            end_height = blockRangeRequest.end_height
+            ranges.append((start_height, end_height))
+            start_send_time = blockRangeRequest.time_sent_request
+        return times, ranges
+    
+    def get_times_check_next_block_done_old(self): # can be deleted
+        times = []
+        previous_time = None
+        # find time when the last block range request is done deserilizing
+        for blockRangeRequest in self.BlockRangeRequests.values():
+            if(previous_time is None):
+                previous_time = blockRangeRequest.time_deserialized
+            elif(blockRangeRequest.time_deserialized > previous_time):
+                previous_time = blockRangeRequest.time_deserialized
+                
+        for blockRequest in self.BlockRequests.values():
+            # corresponding_block_check_next_block_time
+            times.append(blockRequest.corresponding_block_check_next_block_time - previous_time)
+            previous_time = blockRequest.corresponding_block_check_next_block_time
+
+        for blockRangeRequest in self.BlockRangeRequests.values():
+            times.append(blockRangeRequest.get_time_to_check_next_block_done())
+        return times
+    
+    def get_times_check_next_block_done(self):
+        times = []
+        for blockRequest in self.BlockRequests.values():
+            times.append(blockRequest.get_time_to_check_next_block_done())
+        return times
+    
+    def get_times_advanced_to_block(self):
+        times = []
+        for blockRequest in self.BlockRequests.values():
+            times.append(blockRequest.get_time_to_advanced_to_block())
+        return times
+
 
 
 class BlockRequest:
@@ -87,6 +150,31 @@ class BlockRequest:
         # assuming sequential, not parallel
         return self.corresponding_block_advanced_to_block_time - self.corresponding_block_check_next_block_time
 
+    def get_times_in_sent_request_seconds(self):
+        times = []
+        previous_log_time = self.time_start_sending_block_requests
+        for blockRequest in self.BlockRequests:
+            times.append(blockRequest.get_time_to_sent_request(previous_log_time))
+            previous_log_time = blockRequest.time_sent_request
+        return times
+    
+    def get_times_to_received_response_seconds(self):
+        times = []
+        for blockRequest in self.BlockRequests:
+            times.append(blockRequest.get_time_to_received_response())
+        return times
+    
+    def get_times_to_deserialized(self):
+        times = []
+        for blockRangeRequest in self.BlockRangeRequests:
+            times.append(blockRangeRequest.get_time_to_deserialized())
+        return times
+    
+    def get_time_to_check_next_block_done(self):
+        return self.corresponding_block_check_next_block_time - self.time_processing_block_response
+    
+    def get_time_to_advanced_to_block_done(self):
+        return self.corresponding_block_advanced_to_block_time - self.corresponding_block_check_next_block_time
 
 class BlockRangeRequest:
     def __init__(self, time_sent_request, start_height, end_height, block_requests):
@@ -100,14 +188,8 @@ class BlockRangeRequest:
     def get_time_in_construct_raw_requests(self):
         return sum([block_request.raw_time_to_construct for block_request in self.block_requests])
 
-    def get_time_in_sent_request(self, time_start_sending_block_requests):
-        time_in_sent_request = 0
-        for i, block_request in enumerate(self.block_requests):
-            if(i == 0):
-                time_in_sent_request += block_request.get_time_to_sent_request(time_start_sending_block_requests)
-            else:
-                time_in_sent_request += block_request.get_time_to_sent_request(self.block_requests[i-1].time_sent_request)
-        return time_in_sent_request
+    def get_time_in_sent_request(self, previous_time):
+        return self.time_sent_request - previous_time
     
     def get_time_to_received_last_response(self):
         # find the last received response for the block requests
@@ -139,7 +221,13 @@ class BlockRangeRequest:
             time += block_request.get_time_to_advanced_to_block()
         return time
     
+    def get_time_to_received_response(self):
+        return self.time_received_response - self.time_sent_request
     
+    def get_time_to_deserialized(self):
+        return self.time_deserialized - self.time_received_response
+    
+
     
 
         
@@ -193,7 +281,7 @@ class BlockRangeRequest:
 advanced_block_times = []
 blockRangeRequests = []
 
-blockSyncRequestCalls = []
+tryBlockSyncCalls = []
 current_tryBlockSyncCall = None
 
 for index, row in event_df.iterrows():
@@ -205,8 +293,8 @@ for index, row in event_df.iterrows():
     if "SYNCPROFILING try_block_sync" in message:
         # todo check if add to list
         if(current_tryBlockSyncCall is not None):
-            blockSyncRequestCalls.append(current_tryBlockSyncCall)
-            current_blockRangeRequest = None
+            tryBlockSyncCalls.append(current_tryBlockSyncCall)
+            current_tryBlockSyncCall = None
         current_tryBlockSyncCall = TryBlockSyncCall(timestamp)
         continue
 
@@ -233,6 +321,7 @@ for index, row in event_df.iterrows():
 
         br = BlockRequest(timestamp, start_height, end_height, raw_time_to_construct_request)
         current_tryBlockSyncCall.BlockRequests[start_height] = br
+        current_tryBlockSyncCall.prepared_zero_block_requests = False
         continue
 
     if "SYNCPROFILING Time to construct requests:" in message:
@@ -253,6 +342,7 @@ for index, row in event_df.iterrows():
         # extract block requests
         block_requests = []
         for i in range(start_height, end_height):
+            current_tryBlockSyncCall.BlockRequests[i].time_sent_request = timestamp
             block_requests.append(current_tryBlockSyncCall.BlockRequests[i])
         brr = BlockRangeRequest(timestamp, start_height, end_height, block_requests)
         current_tryBlockSyncCall.BlockRangeRequests[start_height] = brr
@@ -392,8 +482,74 @@ for index, row in event_df.iterrows():
 a = 0
 
 blockRangeRequests_durations = []
-for blockRangeRequest in blockRangeRequests:
-    blockRangeRequests_durations.append(blockRangeRequest.get_total_time().total_seconds())
+for tryBlockSyncCall in tryBlockSyncCalls:
+    pass
+    #blockRangeRequests_durations.append(tryBlockSyncCall.get_total_time().total_seconds())
+
+# start a bar chart figure
+fig, ax = plt.subplots(figsize=(10, 7))
+# legend
+ax.legend()
+
+for tryBlockSyncCall in tryBlockSyncCalls:
+    if(not tryBlockSyncCall.prepared_zero_block_requests):
+        #get_time_to_find_sync_peers, get_times_to_construct_requests, get_unaccounted_time_in_prepare_block_requests
+        start_height = tryBlockSyncCall.block_requests_start_height
+        end_height = tryBlockSyncCall.block_requests_end_height
+        time_to_find_sync_peers = tryBlockSyncCall.get_time_to_find_sync_peers().total_seconds()
+        times_to_construct_requests = tryBlockSyncCall.get_times_to_construct_requests()
+        unaccounted_time = tryBlockSyncCall.get_unaccounted_time_in_prepare_block_requests_seconds()
+        combined_time = tryBlockSyncCall.get_combined_time_to_construct_requests().total_seconds()
+        # assuming combined_time is small enought hat we can just proceed with it
+        
+        # plot a bar stack. x from start_height to end_height, y from 0 to time_to_find_sync_peers, combined_time. color should be blue
+        width = end_height-start_height
+        ax.bar(start_height+width/2, combined_time, bottom=0, width=width, label='Time to find sync peers', color='tab:blue')
+
+        # get times to send requests
+        times_send, ranges = tryBlockSyncCall.get_times_to_send_requests()
+        times_send_seconds = [time.total_seconds() for time in times_send]
+        #times_to_send_requests, ranges = tryBlockSyncCall.get_times_to_send_requests()
+
+        bottoms = np.zeros(len(times_send_seconds))
+
+        times_send_seconds_bar_bottoms = []
+        prev_bottom = combined_time
+        for i, time in enumerate(times_send_seconds):
+            start_height = ranges[i][0]
+            end_height = ranges[i][1]
+            width = end_height-start_height
+            ax.bar(start_height+width/2, time, bottom=prev_bottom, width=width, label='Time to send request', color='tab:orange')
+            prev_bottom += time
+            times_send_seconds_bar_bottoms.append(prev_bottom)
+            bottoms[i] = prev_bottom
+
+        # get times to receive responses
+        times_receive = []
+        for blockRangeRequest in tryBlockSyncCall.BlockRangeRequests.values():
+            times_receive.append(blockRangeRequest.get_time_to_received_response())
+        times_receive_seconds = [time.total_seconds() for time in times_receive]
+
+        for i, time in enumerate(times_receive_seconds):
+            start_height = ranges[i][0]
+            end_height = ranges[i][1]
+            width = end_height-start_height
+            ax.bar(start_height+width/2, time, bottom=times_send_seconds_bar_bottoms[i], width=width, label='Time to receive response', color='tab:green')
+            bottoms[i] += time
+
+        times_deserialized = []
+        for blockRangeRequest in tryBlockSyncCall.BlockRangeRequests.values():
+            times_deserialized.append(blockRangeRequest.get_time_to_deserialized())
+        times_deserialized_seconds = [time.total_seconds() for time in times_deserialized]
+
+        # after all deserialization is done, stair wise check next block and advance to block
+        times_check_next_block_done = tryBlockSyncCall.get_times_check_next_block_done()
+        times_check_next_block_done_seconds = [time.total_seconds() for time in times_check_next_block_done]
+
+        times_extra_message_advanced_to_block = tryBlockSyncCall.get_times_advanced_to_block()
+        times_extra_message_advanced_to_block_seconds = [time.total_seconds() for time in times_extra_message_advanced_to_block]
+        
+        a = 0
 
 # Extract all times\
 time_to_find_sync_peers = []
