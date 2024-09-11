@@ -490,6 +490,7 @@ for tryBlockSyncCall in tryBlockSyncCalls:
 fig, ax = plt.subplots(figsize=(10, 7))
 # legend
 ax.legend()
+used_labels = {}
 
 prev_bottom = 0
 
@@ -508,7 +509,12 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
         
         # plot a bar stack. x from start_height to end_height, y from 0 to time_to_find_sync_peers, combined_time. color should be blue
         width = end_height-start_height
-        ax.bar(start_height+width/2, combined_time, bottom=prev_bottom, width=width, label='Time to find sync peers', color='tab:blue')
+        label = 'Time to find sync peers'
+        if label not in used_labels:
+            ax.bar(start_height + width / 2, combined_time, bottom=prev_bottom, width=width, label=label, color='tab:blue')
+            used_labels[label] = True
+        else:
+            ax.bar(start_height + width / 2, combined_time, bottom=prev_bottom, width=width, color='tab:blue')
 
         # get times to send requests
         times_send, ranges = tryBlockSyncCall.get_times_to_send_requests()
@@ -523,7 +529,15 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
             start_height = ranges[i][0]
             end_height = ranges[i][1]
             width = end_height-start_height
-            ax.bar(start_height+width/2, time, bottom=prev_bottom, width=width, label='Time to send request', color='tab:orange')
+
+            label = 'Time to send request'
+            if label not in used_labels:
+                ax.bar(start_height + width / 2, time, bottom=prev_bottom, width=width, label=label, color='tab:orange')
+                used_labels[label] = True
+            else:
+                ax.bar(start_height + width / 2, time, bottom=prev_bottom, width=width, color='tab:orange')
+
+
             prev_bottom += time
             times_send_seconds_bar_bottoms.append(prev_bottom)
             bottoms[i] = prev_bottom
@@ -538,7 +552,15 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
             start_height = ranges[i][0]
             end_height = ranges[i][1]
             width = end_height-start_height
-            ax.bar(start_height+width/2, time, bottom=times_send_seconds_bar_bottoms[i], width=width, label='Time to receive response', color='tab:green')
+
+            label = 'Time to receive response'
+            if label not in used_labels:
+                ax.bar(start_height + width / 2, time, bottom=times_send_seconds_bar_bottoms[i], width=width, label=label, color='tab:green')
+                used_labels[label] = True
+            else:
+                ax.bar(start_height + width / 2, time, bottom=times_send_seconds_bar_bottoms[i], width=width, color='tab:green')
+
+
             bottoms[i] += time
 
         times_deserialized = []
@@ -550,7 +572,14 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
             start_height = ranges[i][0]
             end_height = ranges[i][1]
             width = end_height-start_height
-            ax.bar(start_height+width/2, time, bottom=bottoms[i], width=width, label='Time to deserialize', color='tab:red')
+
+            label = 'Time to deserialize'
+            if label not in used_labels:
+                ax.bar(start_height+width/2, time, bottom=bottoms[i], width=width, label=label, color='tab:red')
+                used_labels[label] = True
+            else:
+                ax.bar(start_height+width/2, time, bottom=bottoms[i], width=width, color='tab:red')
+
             bottoms[i] += time
 
         # after all deserialization is done, stair wise check next block and advance to block
@@ -566,10 +595,24 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
             start_height = tryBlockSyncCall.block_requests_start_height + i
             end_height = start_height + 1
             width = end_height-start_height
-            ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label='Check next block time', color='tab:purple')
+
+            label = 'Check next block time'
+            if label not in used_labels:
+                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label=label, color='tab:purple')
+                used_labels[label] = True
+            else:
+                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, color='tab:purple')
+
             start_time_sequential_tasks += time
             time = times_extra_message_advanced_to_block_seconds[i]
-            ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label='Advanced to block', color='tab:brown')
+
+            label = 'Advanced to block'
+            if label not in used_labels:
+                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label=label, color='tab:brown')
+                used_labels[label] = True
+            else:
+                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, color='tab:brown')
+
             start_time_sequential_tasks += time
         
         prev_bottom = start_time_sequential_tasks
@@ -577,9 +620,12 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
 # plot legend
 ax.legend()
 # Set the title and labels
-ax.set_title(f"Block times for val_index {val_index}")
-ax.set_xlabel("Block height")
+ax.set_title(f"Syncing of client {val_index}")
+ax.set_xlabel("Block height index")
 ax.set_ylabel("Time (seconds)")
+
+# show the plot
+plt.show()
 
 a = 0
 # Save the figure
