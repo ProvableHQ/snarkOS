@@ -224,10 +224,11 @@ impl<N: Network> BlockSync<N> {
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
         // Measurement 1: start of try_block_sync
-        info!("SYNCPROFILING try_block_sync");
+        let timestamp = time::OffsetDateTime::now_utc().unix_timestamp_nanos();
+        info!("SYNCPROFILING try_block_sync, timestamp_try_block_sync: {}", timestamp);
         let (block_requests, sync_peers) = self.prepare_block_requests();
         // Measurement 2: end of prepare_block_requests ( duration (2 - 1) can be printed in a separate bar chart, width=number_of_blocks)
-        info!("SYNCPROFILING End of prepare_block_requests, prepared {} block requests", block_requests.len());
+        info!("SYNCPROFILING End of prepare_block_requests, prepared {} block requests, timestamp_try_block_sync: {}", block_requests.len(), timestamp);
         trace!("Prepared {} block requests", block_requests.len());
 
         // If there are no block requests, but there are pending block responses in the sync pool,
@@ -255,7 +256,7 @@ impl<N: Network> BlockSync<N> {
             return;
         }
 
-        info!("SYNCPROFILING Sending block requests");
+        info!("SYNCPROFILING Sending block requests, timestamp_try_block_sync: {}", timestamp);
         // Measurement 3: start of sending block requests.
         // Process the block requests.
         'outer: for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
@@ -298,7 +299,7 @@ impl<N: Network> BlockSync<N> {
                 let sender = communication.send(sync_ip, message.clone()).await;
 
                 info!(
-                    "\t\t----SYNCPROFILING Sent block request for startheight {start_height} to endheight {end_height} to peer '{sync_ip}' - at {:?} ns",
+                    "\t\t----SYNCPROFILING Sent block request for startheight {start_height} to endheight {end_height} to peer '{sync_ip}' - at {:?} ns, timestamp_try_block_sync: {timestamp}",
                     time::OffsetDateTime::now_utc().unix_timestamp_nanos()
                 );
                 // Measurement 4
