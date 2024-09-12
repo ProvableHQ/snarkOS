@@ -180,7 +180,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         mut missing_transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
     ) {
         // First, handle the non-aborted transmissions.
-        for transmission_id in transmission_ids {
+        'outer: for transmission_id in transmission_ids {
             // Try to fetch from the persistent storage.
             let (transmission, certificate_ids) = match self.transmissions.get_confirmed(&transmission_id) {
                 Ok(Some(entry)) => {
@@ -192,21 +192,16 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 Ok(None) => {
                     // The transmission is missing from persistent storage.
                     // Check if it exists in the `missing_transmissions` map provided.
-
-                    let certificate_ids = indexset! { certificate_id };
-
-                    // Use the transmission from `missing_transmissions` if it exists.
-                    let transmission = if let Some(transmission) = missing_transmissions.remove(&transmission_id) {
-                        transmission
-                    } else {
-                        if !aborted_transmission_ids.contains(&transmission_id) {
-                            // If the transmission is not found in either storage or the missing map, log an error.
+                    let Some(transmission) = missing_transmissions.remove(&transmission_id) else {
+                        if !aborted_transmission_ids.contains(&transmission_id)
+                            && !self.contains_transmission(transmission_id)
+                        {
                             error!("Failed to provide a missing transmission {transmission_id}");
-                            continue;
                         }
-                        // Use a default placeholder transmission if not found in `missing_transmissions`.
-                        Transmission::<N>::Ratification
+                        continue 'outer;
                     };
+                    // Prepare the set of certificate IDs.
+                    let certificate_ids = indexset! { certificate_id };
                     (transmission, certificate_ids)
                 }
                 Err(e) => {
@@ -220,7 +215,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
             {
                 error!("Failed to insert transmission {transmission_id} into storage - {e}");
             }
-            // Also, insert the transmission into the cache.
+            // Insert the transmission into the cache.
             self.cache_transmissions.lock().put(transmission_id, (transmission, certificate_ids));
         }
 
