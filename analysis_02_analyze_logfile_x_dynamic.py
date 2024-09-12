@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 0
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs7", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs8", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -122,10 +122,9 @@ class TryBlockSyncCall:
 
 
 class BlockRequest:
-    def __init__(self, time_constructed, start_height, end_height, raw_time_to_construct):
+    def __init__(self, time_constructed, height, raw_time_to_construct):
         self.time_constructed = time_constructed
-        self.start_height = start_height
-        self.end_height = end_height
+        self.height = height
         self.raw_time_to_construct = raw_time_to_construct
 
         self.time_processing_block_response = None
@@ -148,6 +147,8 @@ class BlockRequest:
     
     def get_time_to_advanced_to_block(self):
         # assuming sequential, not parallel
+        if self.corresponding_block_advanced_to_block_time is None:
+            return pd.Timedelta(seconds=0)
         return self.corresponding_block_advanced_to_block_time - self.corresponding_block_check_next_block_time
 
     def get_times_in_sent_request_seconds(self):
@@ -171,6 +172,11 @@ class BlockRequest:
         return times
     
     def get_time_to_check_next_block_done(self):
+        if self.corresponding_block_check_next_block_time is None:
+            # return timedelta with 0 seconds
+            return pd.Timedelta(seconds=0)
+        if self.time_processing_block_response is None:
+            return pd.Timedelta(seconds=0)
         return self.corresponding_block_check_next_block_time - self.time_processing_block_response
     
     def get_time_to_advanced_to_block_done(self):
@@ -284,6 +290,16 @@ blockRangeRequests = []
 tryBlockSyncCalls = []
 current_tryBlockSyncCall = None
 
+def get_blockRequest_by_height(currentTryBlockSyncCall, height):
+    if currentTryBlockSyncCall is not None:
+        if height in currentTryBlockSyncCall.BlockRequests:
+            return currentTryBlockSyncCall.BlockRequests[height]
+    for tryBlockSyncCall in tryBlockSyncCalls:
+        for blockRequest in tryBlockSyncCall.BlockRequests.values():
+            if(blockRequest.height == height):
+                return blockRequest
+    return None
+
 for index, row in event_df.iterrows():
     message = row['Message']
     timestamp = row['Timestamp']
@@ -316,10 +332,10 @@ for index, row in event_df.iterrows():
 
     if "SYNCPROFILING Time to construct request:" in message:
         start_height = int(message.split('start_height: ')[1].split(', end_height')[0])
-        end_height = int(message.split('end_height: ')[1].split(' ')[0])
+        # end_height = int(message.split('end_height: ')[1].split(' ')[0]) # assumed to be 1 higher
         raw_time_to_construct_request = int(message.split('Time to construct request: ')[1].split('ns')[0])
 
-        br = BlockRequest(timestamp, start_height, end_height, raw_time_to_construct_request)
+        br = BlockRequest(timestamp, start_height, raw_time_to_construct_request)
         current_tryBlockSyncCall.BlockRequests[start_height] = br
         current_tryBlockSyncCall.prepared_zero_block_requests = False
         continue
@@ -367,48 +383,26 @@ for index, row in event_df.iterrows():
 
     if "SYNCPROFILING Processing block response for height" in message:
         height = int(message.split('height ')[1].split(' ')[0])
-        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
-        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
-            if(key <= height):
-                start_key = key
-            else:
-                break
-        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].time_processing_block_response = timestamp
+        get_blockRequest_by_height(current_tryBlockSyncCall, height).time_processing_block_response = timestamp
         a = 0
 
     if "SYNCPROFILING CHECK NEXT BLOCK TIME" in message:
         height = int(message.split('height ')[1])
-        # find corresponding start block index in current_tryBlockSyncCall.BlockRangeRequests.keys()
-        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
-        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
-            if(key <= height):
-                start_key = key
-            else:
-                break
-        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].corresponding_block_check_next_block_time = timestamp
+        br = get_blockRequest_by_height(current_tryBlockSyncCall, height)
+        if(br.height == 53):
+            a = 0
+        get_blockRequest_by_height(current_tryBlockSyncCall, height).corresponding_block_check_next_block_time = timestamp
         continue
 
     if "Advanced to block" in message:
         advanced_block_times.append(timestamp)
         block_height = int(message.split('Advanced to block ')[1].split(' ')[0])
-        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
-        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
-            if(key <= height):
-                start_key = key
-            else:
-                break
-        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].corresponding_block_advanced_to_block_time = timestamp
+        get_blockRequest_by_height(current_tryBlockSyncCall, height).corresponding_block_advanced_to_block_time = timestamp
         continue
 
     if "SYNCPROFILING ADVANCE TO NEXT BLOCK TIME" in message:
         block_height = int(message.split('height ')[1])
-        start_key = list(current_tryBlockSyncCall.BlockRangeRequests.keys())[0]
-        for key in current_tryBlockSyncCall.BlockRangeRequests.keys():
-            if(key <= height):
-                start_key = key
-            else:
-                break
-        current_tryBlockSyncCall.BlockRangeRequests[start_key].block_requests[height-start_key].corresponding_block_advanced_to_block_time2 = timestamp
+        get_blockRequest_by_height(current_tryBlockSyncCall, height).corresponding_block_advanced_to_block_time2 = timestamp
         continue
 
     a = 0
@@ -483,6 +477,8 @@ a = 0
 
 blockRangeRequests_durations = []
 for tryBlockSyncCall in tryBlockSyncCalls:
+    if (len(tryBlockSyncCall.BlockRangeRequests) > 0):
+        a = 0
     pass
     #blockRangeRequests_durations.append(tryBlockSyncCall.get_total_time().total_seconds())
 
@@ -520,6 +516,9 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
         times_send, ranges = tryBlockSyncCall.get_times_to_send_requests()
         times_send_seconds = [time.total_seconds() for time in times_send]
         #times_to_send_requests, ranges = tryBlockSyncCall.get_times_to_send_requests()
+
+        if(start_height == 53):
+            a = 0
 
         bottoms = np.zeros(len(times_send_seconds))
 
