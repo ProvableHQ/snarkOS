@@ -153,14 +153,6 @@ class BlockRequest:
             return pd.Timedelta(seconds=0)
         return self.corresponding_block_advanced_to_block_time - self.corresponding_block_check_next_block_time
 
-    def get_times_in_sent_request_seconds(self):
-        times = []
-        previous_log_time = self.time_start_sending_block_requests
-        for blockRequest in self.BlockRequests:
-            times.append(blockRequest.get_time_to_sent_request(previous_log_time))
-            previous_log_time = blockRequest.time_sent_request
-        return times
-    
     def get_times_to_received_response_seconds(self):
         times = []
         for blockRequest in self.BlockRequests:
@@ -235,55 +227,15 @@ class BlockRangeRequest:
     def get_time_to_deserialized(self):
         return self.time_deserialized - self.time_received_response
     
-
-    
-
-        
-
-    
-    # old functions, can likely be removed
     def get_time_to_find_sync_peers(self):
         # todo discuss with victor about multiple start times
-        return self.time_sync_peers_found - self.times_starting_to_find_sync_peers[0]
-
-    def get_times_to_construct_requests(self):
-        times = []
-        last_time = self.time_sync_peers_found
-        for time in self.times_to_construct_requests:
-            times.append(time - last_time)
-            last_time = time
-        return times
-    
-    def get_time_to_construct_combined_request(self):
-        return self.time_to_construct_combined_request - self.times_to_construct_requests[-1]
-                
-    def get_time_to_sent_request(self):
-        return self.time_sent_request - self.time_to_construct_combined_request
+        return self.time_sync_peers_found - self.times_starting_to_find_sync_peers[0]  
     
     def get_time_to_received_response(self):
         return self.time_received_response - self.time_sent_request
     
     def get_time_to_deserialized(self):
         return self.time_deserialized - self.time_received_response
-    
-    def get_times_check_next_block_done(self):
-        times = []
-        last_time = self.time_deserialized
-        for i, time in enumerate(self.time_check_next_block_done):
-            times.append(time - last_time)
-            last_time = self.times_extra_message_advanced_to_block[i]
-        return times
-    
-    def get_times_extra_message_advanced_to_block(self):
-        times = []
-        last_time = self.time_check_next_block_done[0]
-        for i, time in enumerate(self.times_extra_message_advanced_to_block):
-            times.append(time - last_time)
-            last_time = self.time_check_next_block_done[i]
-        return times
-    
-    def get_total_time(self):
-        return self.times_extra_message_advanced_to_block[-1] - self.times_starting_to_find_sync_peers[0]
     
 # Initialize dictionaries to store times
 advanced_block_times = []
@@ -407,80 +359,9 @@ for index, row in event_df.iterrows():
         get_blockRequest_by_height(current_tryBlockSyncCall, height).corresponding_block_advanced_to_block_time2 = timestamp
         continue
 
-    a = 0
-
-
-    # Rust code: info!("SYNCPROFILING End of prepare_block_requests, prepared {} block requests", block_requests.len());
-    if "SYNCPROFILING End of prepare_block_requests" in message:
-        current_blockRangeRequest.time_end_prepare_block_requests = timestamp
-        # extract length of block requests from message
-        block_requests_len = int(message.split('prepared ')[1].split(' block requests')[0])
-        current_blockRangeRequest.block_requests_len = block_requests_len
-        continue
-
-
-    # check if message is profiling - starting proposal generation for round {round_number}
-    if "SYNCPROFILING Starting to find sync peers..." in message:
-        current_blockRangeRequest.times_starting_to_find_sync_peers.append(timestamp)
-        #if(current_blockRangeRequest is None):
-        #    current_blockRangeRequest = BlockRangeRequest(timestamp) # todo change logic below
-        #else:
-        #    if(len(current_blockRangeRequest.times_message_advanced_to_block) == 0):
-        #        current_blockRangeRequest.times_starting_to_find_sync_peers.append(timestamp)
-        #    else:
-        #        blockRangeRequests.append(current_blockRangeRequest)
-        #        current_blockRangeRequest = BlockRangeRequest(timestamp)
-
-        continue
-
-    if "SYNCPROFILING Time to find sync peers" in message:
-        current_blockRangeRequest.time_sync_peers_found = timestamp
-        continue
-
-    if "SYNCPROFILING Time to construct request:" in message:
-        current_blockRangeRequest.times_to_construct_requests.append(timestamp)
-        continue
-
-    if "SYNCPROFILING Time to construct requests:" in message:
-        current_blockRangeRequest.time_to_construct_combined_request = timestamp
-        continue
-
-    if "SYNCPROFILING Sent block request for startheight" in message:
-        start_height = int(message.split('startheight ')[1].split(' to')[0])
-        end_height = int(message.split('to endheight ')[1].split(' to')[0])
-        current_blockRangeRequest.block_start_height = start_height
-        current_blockRangeRequest.block_end_height = end_height
-        current_blockRangeRequest.time_sent_request = timestamp
-        continue
-
-    if "SYNCPROFILING Received block response" in message:
-        current_blockRangeRequest.time_received_response = timestamp
-        continue
-
-    if "SYNCPROFILING Deserialized blocks" in message:
-        current_blockRangeRequest.time_deserialized = timestamp
-        continue
-
-    # not yet implemented: SYNCPROFILING NUM BLOCKS PENDING IN RESPONSES
-    # not yet implemented: SYNCPROFILING IS THE NEXT BLOCK IN THE CURRENT RESPONSES? false, next next true
-
-    if "SYNCPROFILING CHECK NEXT BLOCK TIME" in message:
-        current_blockRangeRequest.time_check_next_block_done.append(timestamp)
-        continue
-
-    if "Advanced to block " in message:
-        current_blockRangeRequest.times_message_advanced_to_block.append(timestamp)
-        continue
-
-    if "SYNCPROFILING ADVANCE TO NEXT BLOCK TIME" in message:
-        current_blockRangeRequest.times_extra_message_advanced_to_block.append(timestamp)
-
-a = 0
 
 blockRangeRequests_durations = []
 for tryBlockSyncCall in tryBlockSyncCalls:
-    if (len(tryBlockSyncCall.BlockRangeRequests) > 0):
-        a = 0
     pass
     #blockRangeRequests_durations.append(tryBlockSyncCall.get_total_time().total_seconds())
 
@@ -518,9 +399,6 @@ for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
         times_send, ranges = tryBlockSyncCall.get_times_to_send_requests()
         times_send_seconds = [time.total_seconds() for time in times_send]
         #times_to_send_requests, ranges = tryBlockSyncCall.get_times_to_send_requests()
-
-        if(start_height == 53):
-            a = 0
 
         bottoms = np.zeros(len(times_send_seconds))
 
