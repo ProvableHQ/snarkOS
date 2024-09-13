@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 3
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs10", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs11", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -87,25 +87,6 @@ class TryBlockSyncCall:
             ranges.append((start_height, end_height))
             start_send_time = blockRangeRequest.time_sent_request
         return times, ranges
-    
-    def get_times_check_next_block_done_old(self): # can be deleted
-        times = []
-        previous_time = None
-        # find time when the last block range request is done deserilizing
-        for blockRangeRequest in self.BlockRangeRequests.values():
-            if(previous_time is None):
-                previous_time = blockRangeRequest.time_deserialized
-            elif(blockRangeRequest.time_deserialized > previous_time):
-                previous_time = blockRangeRequest.time_deserialized
-                
-        for blockRequest in self.BlockRequests.values():
-            # corresponding_block_check_next_block_time
-            times.append(blockRequest.corresponding_block_check_next_block_time - previous_time)
-            previous_time = blockRequest.corresponding_block_check_next_block_time
-
-        for blockRangeRequest in self.BlockRangeRequests.values():
-            times.append(blockRangeRequest.get_time_to_check_next_block_done())
-        return times
     
     def get_times_check_next_block_done(self):
         times = []
@@ -335,12 +316,12 @@ for index, row in event_df.iterrows():
     if "SYNCPROFILING IS THE NEXT BLOCK IN THE CURRENT RESPONSES?" in message:
         continue
 
-    if "SYNCPROFILING Processing block response for height" in message:
+    if "SYNCPROFILING Processing block response for height" in message or "SYNCPROFILING Received block response for height" in message:
         height = int(message.split('height ')[1].split(' ')[0])
         get_blockRequest_by_height(current_tryBlockSyncCall, height).time_processing_block_response = timestamp
         a = 0
 
-    if "SYNCPROFILING CHECK NEXT BLOCK TIME" in message:
+    if "SYNCPROFILING CHECK NEXT BLOCK TIME" in message or "SYNCPROFILING Check next block took" in message:
         height = int(message.split('height ')[1])
         br = get_blockRequest_by_height(current_tryBlockSyncCall, height)
         if(br.height == 53):
@@ -354,7 +335,7 @@ for index, row in event_df.iterrows():
         get_blockRequest_by_height(current_tryBlockSyncCall, height).corresponding_block_advanced_to_block_time = timestamp
         continue
 
-    if "SYNCPROFILING ADVANCE TO NEXT BLOCK TIME" in message:
+    if "SYNCPROFILING ADVANCE TO NEXT BLOCK TIME" in message or "SYNCPROFILING Advance to next block took" in message:
         block_height = int(message.split('height ')[1])
         get_blockRequest_by_height(current_tryBlockSyncCall, height).corresponding_block_advanced_to_block_time2 = timestamp
         continue
