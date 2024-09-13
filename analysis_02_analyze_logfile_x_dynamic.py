@@ -6,9 +6,9 @@ import numpy as np
 
 # Set the variables
 num_val = 15
-val_index = 0
+val_index = 3
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs8", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs10", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -148,6 +148,8 @@ class BlockRequest:
     def get_time_to_advanced_to_block(self):
         # assuming sequential, not parallel
         if self.corresponding_block_advanced_to_block_time is None:
+            return pd.Timedelta(seconds=0)
+        if self.corresponding_block_check_next_block_time is None:
             return pd.Timedelta(seconds=0)
         return self.corresponding_block_advanced_to_block_time - self.corresponding_block_check_next_block_time
 
