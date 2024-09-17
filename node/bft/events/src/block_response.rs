@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use tracing::info;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct BlockResponse<N: Network> {
@@ -83,6 +84,11 @@ impl<N: Network> DataBlocks<N> {
         // Retrieve the start (inclusive) and end (exclusive) block height.
         let candidate_start_height = self.first().map(|b| b.height()).unwrap_or(0);
         let candidate_end_height = 1 + self.last().map(|b| b.height()).unwrap_or(0);
+
+        // info! log self.first().map height
+        info!("SYNCPROFILING block response candidate_start_height: {:?}", candidate_start_height);
+        info!("SYNCPROFILING block response candidate_end_height: {:?}", candidate_end_height);
+
         // Check that the range matches the block request.
         if start_height != candidate_start_height || end_height != candidate_end_height {
             bail!("Peer '{peer_ip}' sent an invalid block response (range does not match block request)")

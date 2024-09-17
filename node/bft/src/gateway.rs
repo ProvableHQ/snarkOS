@@ -640,8 +640,9 @@ impl<N: Network> Gateway<N> {
                     let BlockResponse { request, blocks } = block_response;
 
                     info!(
-                        "\t\t----SYNCPROFILING Received block response for height {} to peer '{peer_ip}' - at {:?} ns",
+                        "\t\t----SYNCPROFILING Received block response for start height {} to end height {} to peer '{peer_ip}' - at {:?} ns",
                         request.start_height,
+                        request.end_height,
                         time::OffsetDateTime::now_utc().unix_timestamp_nanos()
                     );
 

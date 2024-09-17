@@ -353,14 +353,17 @@ impl<N: Network> Sync<N> {
         tokio::task::spawn_blocking(move || {
             let timer = std::time::Instant::now();
             // Check the next block.
+
+            info!("SYNCPROFILING starting check next block in sync_ledger_with_block_without_bft for height {}", block.height());
+
             self_.ledger.check_next_block(&block)?;
 
-            info!("\t----SYNCPROFILING Check next block took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
+            info!("\t----SYNCPROFILING Check next block in sync_ledger_with_block_without_bft took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
             let timer = std::time::Instant::now();
 
             // Attempt to advance to the next block.
             self_.ledger.advance_to_next_block(&block)?;
-            info!("\t----SYNCPROFILING Advance to next block took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
+            info!("\t----SYNCPROFILING Advance to next block in sync_ledger_with_block_without_bft took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
 
             // Sync the height with the block.
             self_.storage.sync_height_with_block(block.height());
@@ -499,9 +502,17 @@ impl<N: Network> Sync<N> {
                     let self_ = self.clone();
                     tokio::task::spawn_blocking(move || {
                         // Check the next block.
+                        let timer = std::time::Instant::now();
+
+                        info!("SYNCPROFILING starting check next block in sync_storage_with_block for height {}", block.height());
+
                         self_.ledger.check_next_block(&block)?;
+                        info!("\t----SYNCPROFILING Check next block in sync_storage_with_block took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
+
                         // Attempt to advance to the next block.
+                        let timer = std::time::Instant::now();
                         self_.ledger.advance_to_next_block(&block)?;
+                        info!("\t----SYNCPROFILING Advance to next block in sync_storage_with_block took: {:?}ns for height {}", timer.elapsed().as_nanos(), block.height());
 
                         // Sync the height with the block.
                         self_.storage.sync_height_with_block(block.height());
