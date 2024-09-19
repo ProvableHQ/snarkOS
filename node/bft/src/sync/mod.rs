@@ -327,12 +327,22 @@ impl<N: Network> Sync<N> {
         }
 
         // Try to advance the ledger with sync blocks.
-        while let Some(block) = self.block_sync.process_next_block(current_height) {
-            info!("Syncing the BFT to block {}...", block.height());
-            // Sync the storage with the block.
-            self.sync_storage_with_block(block).await?;
-            // Update the current height.
-            current_height += 1;
+        loop {
+            // Get the latest block.
+            let block = self.block_sync.responses.read().get(&current_height).cloned();
+            // If the block is available, sync the storage with the block.
+            if let Some(block) = block {
+                info!("Syncing the BFT to block {}...", block.height());
+                // Sync the storage with the block.
+                self.sync_storage_with_block(block).await?;
+                // Remove the block from the block sync responses.
+                self.block_sync.process_next_block(current_height);
+                // Update the current height.
+                current_height += 1;
+            } else {
+                break;
+            }
+            
         }
         Ok(())
     }

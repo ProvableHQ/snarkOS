@@ -362,7 +362,7 @@ impl<N: Network> BlockSync<N> {
 
     /// Handles the block responses from the sync pool.
     fn try_advancing_with_block_responses(&self, mut current_height: u32) {
-        while let Some(block) = self.remove_block_response(current_height + 1) {
+        while let Some(block) = self.responses.write().get(&(current_height + 1)) {
             // Ensure the block height matches.
             info!("SYNCPROFILING Processing block response for height {}", block.height());
             
@@ -383,7 +383,7 @@ impl<N: Network> BlockSync<N> {
             let timer = Instant::now();
 
             // Check the next block.
-            if let Err(error) = self.canon.check_next_block(&block) {
+            if let Err(error) = self.canon.check_next_block(block) {
                 warn!("The next block ({}) is invalid - {error}", block.height());
                 break;
             }
@@ -392,7 +392,9 @@ impl<N: Network> BlockSync<N> {
             let timer = Instant::now();
 
             // Attempt to advance to the next block.
-            if let Err(error) = self.canon.advance_to_next_block(&block) {
+            let advance_result = self.canon.advance_to_next_block(block);
+            self.remove_block_response(current_height + 1);
+            if let Err(error) = advance_result {
                 warn!("{error}");
                 break;
             }
@@ -583,10 +585,6 @@ impl<N: Network> BlockSync<N> {
 
     /// Checks that a block request for the given height does not already exist.
     fn check_block_request(&self, height: u32) -> Result<()> {
-        // Ensure the block height is not already canon.
-        if self.canon.contains_block_height(height) {
-            bail!("Failed to add block request, as block {height} exists in the canonical ledger");
-        }
         // Ensure the block height is not already requested.
         if self.requests.read().contains_key(&height) {
             bail!("Failed to add block request, as block {height} exists in the requests map");
@@ -598,6 +596,10 @@ impl<N: Network> BlockSync<N> {
         // Ensure the block height is not already requested.
         if self.request_timestamps.read().contains_key(&height) {
             bail!("Failed to add block request, as block {height} exists in the timestamps map");
+        }
+        // Ensure the block height is not already canon.
+        if self.canon.contains_block_height(height) {
+            bail!("Failed to add block request, as block {height} exists in the canonical ledger");
         }
         Ok(())
     }
