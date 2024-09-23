@@ -540,6 +540,7 @@ impl<N: Network> BlockSync<N> {
         ensure!(!sync_ips.is_empty(), "Cannot insert a block request with no sync IPs");
         // Insert the block request.
         self.requests.write().insert(height, (hash, previous_hash, sync_ips));
+        info!("Called self.requests.write() at location 1, height: {}", height);
         // Insert the request timestamp.
         self.request_timestamps.write().insert(height, Instant::now());
         Ok(())
@@ -563,6 +564,7 @@ impl<N: Network> BlockSync<N> {
         if let Some((_, _, sync_ips)) = self.requests.write().get_mut(&height) {
             sync_ips.swap_remove(&peer_ip);
         }
+        info!("Called self.requests.write() at location 2, height: {}", height);
 
         // Acquire the write lock on the responses map.
         let mut responses = self.responses.write();
@@ -637,6 +639,7 @@ impl<N: Network> BlockSync<N> {
     fn remove_block_request(&self, height: u32) {
         // Remove the request entry for the given height.
         self.requests.write().remove(&height);
+        info!("Called self.requests.write() at location 3, height: {}", height);
         // Remove the response entry for the given height.
         self.responses.write().remove(&height);
         // Remove the request timestamp entry for the given height.
@@ -649,6 +652,7 @@ impl<N: Network> BlockSync<N> {
         // Note: This lock must be held across the entire scope, due to asynchronous block responses
         // from multiple peers that may be received concurrently.
         let mut requests = self.requests.write();
+        info!("Called self.requests.write() at location 4, height: {}", height);
 
         // Determine if the request is complete.
         let is_request_complete = requests.get(&height).map(|(_, _, peer_ips)| peer_ips.is_empty()).unwrap_or(true);
@@ -674,11 +678,13 @@ impl<N: Network> BlockSync<N> {
         // and the response entry for this height is also empty, then remove the request entry altogether.
         if let Some((_, _, sync_ips)) = self.requests.write().get_mut(&height) {
             sync_ips.swap_remove(peer_ip);
+            info!("Called self.requests.write() at location 5, height: {}", height);
             can_revoke &= sync_ips.is_empty();
         }
 
         if can_revoke {
             self.requests.write().remove(&height);
+            info!("Called self.requests.write() at location 6, height: {}", height);
             self.request_timestamps.write().remove(&height);
         }
     }
@@ -688,6 +694,7 @@ impl<N: Network> BlockSync<N> {
         trace!("Block sync is removing all block requests to peer {peer_ip}...");
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
+        info!("Called self.requests.write() at location 7");
         // Acquire the read lock on the responses map.
         let responses = self.responses.read();
 
@@ -710,6 +717,7 @@ impl<N: Network> BlockSync<N> {
     fn remove_timed_out_block_requests(&self) -> usize {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
+        info!("Called self.requests.write() at location 8");
         // Acquire the write lock on the responses map.
         let mut responses = self.responses.write();
         // Acquire the write lock on the request timestamps map.
