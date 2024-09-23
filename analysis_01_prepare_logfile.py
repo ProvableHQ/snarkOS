@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 # Set the variables
-log_folder_names = ["aws-logs23"]
+log_folder_names = ["aws-logs24"]
 val_index = 3
 
 # Define the function to parse and filter logs
