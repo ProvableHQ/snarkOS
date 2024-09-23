@@ -333,6 +333,11 @@ impl<N: Network> Sync<N> {
             // If the block is available, sync the storage with the block.
             if let Some(block) = block {
                 info!("Syncing the BFT to block {}...", block.height());
+
+                // call print_conditions for height and height+1
+                let _ = self.block_sync.print_conditions(block.height());
+                let _ = self.block_sync.print_conditions(block.height() + 1);
+
                 // Sync the storage with the block.
                 self.sync_storage_with_block(block).await?;
                 // Remove the block from the block sync responses.
