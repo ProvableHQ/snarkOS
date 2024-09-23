@@ -500,6 +500,12 @@ impl<N: Network> BlockSync<N> {
             // Update the state of `is_block_synced` for the sync module.
             self.update_is_block_synced(greatest_peer_height, MAX_BLOCKS_BEHIND);
             // Return the list of block requests.
+
+            // call print_conditions for heights 1 to 20 in a loop
+            for height in 1..=20 {
+                let _ = self.print_conditions(height);
+            }
+
             (self.construct_requests(&sync_peers, min_common_ancestor), sync_peers)
         } else {
             // Update `is_block_synced` if there are no pending requests or responses.

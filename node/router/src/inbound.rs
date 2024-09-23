@@ -132,7 +132,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     Ok(Err(error)) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
                     Err(error) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
                 };
-                info!("\t\t---SYNCPROFILING Deserialized blocks {request:?} in {:?}ns", timer.elapsed().as_nanos());
+                info!("\t\t---SYNCPROFILING Deserialized blocks {request:?} in {:?}ns in inbound.rs", timer.elapsed().as_nanos());
                 // The deserialization can take a long time (minutes). We should not be running
                 // this on a blocking task, but on a rayon thread pool.
 

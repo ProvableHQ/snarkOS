@@ -649,7 +649,7 @@ impl<N: Network> Gateway<N> {
                     let timer = std::time::Instant::now();
                     // Perform the deferred non-blocking deserialization of the blocks.
                     let blocks = blocks.deserialize().await.map_err(|error| anyhow!("[BlockResponse] {error}"))?;
-                    info!("\t\t---SYNCPROFILING Deserialized blocks {request:?} in {:?}ns", timer.elapsed().as_nanos());
+                    info!("\t\t---SYNCPROFILING Deserialized blocks {request:?} in {:?}ns in gateway.rs", timer.elapsed().as_nanos());
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
