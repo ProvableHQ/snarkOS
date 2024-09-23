@@ -585,6 +585,19 @@ impl<N: Network> BlockSync<N> {
         Ok(())
     }
 
+    fn print_conditions(&self, height: u32) -> Result<()> {
+        // Ensure the block height is not already canon.
+        let contains_block_height = self.canon.contains_block_height(height);
+        let contains_block_request = self.requests.read().contains_key(&height); // if removed from req, we want to be sure added to responses (or other objects) atomically / at same time
+        let contains_block_response = self.responses.read().contains_key(&height); // added to the canon
+        let contains_block_request_timestamp = self.request_timestamps.read().contains_key(&height);
+        info!("SYNCPROFILING print_conditions, height: {}, contains_block_height: {}, contains_block_request: {}, contains_block_response: {}, contains_block_request_timestamp: {}", height, contains_block_height, contains_block_request, contains_block_response, contains_block_request_timestamp);
+        
+        // info! log the variables
+        Ok(())
+        
+    }
+
     /// Checks that a block request for the given height does not already exist.
     fn check_block_request(&self, height: u32) -> Result<()> {
         // Ensure the block height is not already requested.
@@ -653,6 +666,9 @@ impl<N: Network> BlockSync<N> {
         // from multiple peers that may be received concurrently.
         let mut requests = self.requests.write();
         info!("Called self.requests.write() at location 4, height: {}", height);
+        // call print_conditions for height and height+1
+        self.print_conditions(height);
+        self.print_conditions(height + 1);
 
         // Determine if the request is complete.
         let is_request_complete = requests.get(&height).map(|(_, _, peer_ips)| peer_ips.is_empty()).unwrap_or(true);
