@@ -2,8 +2,8 @@ import os
 from datetime import datetime, timedelta
 
 # Set the variables
-log_folder_names = ["aws-logs7"]
-val_index = 0
+log_folder_names = ["aws-logs23"]
+val_index = 3
 
 # Define the function to parse and filter logs
 def filter_logs_by_time(log_content, time_interval=timedelta(hours=1)):
@@ -40,7 +40,7 @@ def filter_logs_by_time(log_content, time_interval=timedelta(hours=1)):
 
 # Process each log folder
 for log_folder_name in log_folder_names:
-    log_file_path = os.path.join(os.getcwd(), log_folder_name, f"client-{val_index}.log")
+    log_file_path = os.path.join(os.getcwd(), log_folder_name, f"validator-{val_index}.log")
 
     # Read the file content as a string
     with open(log_file_path, 'r') as file:
