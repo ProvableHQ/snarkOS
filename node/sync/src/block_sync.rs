@@ -338,7 +338,12 @@ impl<N: Network> BlockSync<N> {
     pub fn process_next_block(&self, next_height: u32) -> Option<Block<N>> {
         // Try to advance the ledger with a block from the sync pool.
         info!("Calling self.remove_block_response at location 2");
-        self.remove_block_response(next_height)
+        let res = self.remove_block_response(next_height);
+        info!("Finished calling self.remove_block_response at location 2");
+        let _ = self.print_conditions(next_height);
+        let _ = self.print_conditions(next_height + 1);
+
+        res
     }
 
     /// Attempts to advance with blocks from the sync pool.
