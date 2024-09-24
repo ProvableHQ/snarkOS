@@ -542,13 +542,20 @@ impl<N: Network> BlockSync<N> {
     fn insert_block_request(&self, height: u32, (hash, previous_hash, sync_ips): SyncRequest<N>) -> Result<()> {
         // Ensure the block request does not already exist.
         self.check_block_request(height)?;
+        
         // Ensure the sync IPs are not empty.
         ensure!(!sync_ips.is_empty(), "Cannot insert a block request with no sync IPs");
+    
+        // Lock both requests and request_timestamps in a single critical section to ensure atomicity
+        let mut requests = self.requests.write();
+        let mut request_timestamps = self.request_timestamps.write();
+        
         // Insert the block request.
-        self.requests.write().insert(height, (hash, previous_hash, sync_ips));
-        info!("Called self.requests.write() at location 1, height: {}", height);
+        requests.insert(height, (hash, previous_hash, sync_ips));
+        
         // Insert the request timestamp.
-        self.request_timestamps.write().insert(height, Instant::now());
+        request_timestamps.insert(height, Instant::now());
+        
         Ok(())
     }
 
@@ -656,13 +663,19 @@ impl<N: Network> BlockSync<N> {
 
     /// Removes the entire block request for the given height, if it exists.
     fn remove_block_request(&self, height: u32) {
+        // Lock requests, responses, and request_timestamps in a single critical section to ensure atomicity
+        let mut requests = self.requests.write();
+        let mut responses = self.responses.write();
+        let mut request_timestamps = self.request_timestamps.write();
+        
         // Remove the request entry for the given height.
-        self.requests.write().remove(&height);
-        info!("Called self.requests.write() at location 3, height: {}", height);
+        requests.remove(&height);
+        
         // Remove the response entry for the given height.
-        self.responses.write().remove(&height);
+        responses.remove(&height);
+        
         // Remove the request timestamp entry for the given height.
-        self.request_timestamps.write().remove(&height);
+        request_timestamps.remove(&height);
     }
 
     /// Removes and returns the block response for the given height, if the request is complete.
