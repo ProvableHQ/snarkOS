@@ -337,6 +337,7 @@ impl<N: Network> BlockSync<N> {
     #[inline]
     pub fn process_next_block(&self, next_height: u32) -> Option<Block<N>> {
         // Try to advance the ledger with a block from the sync pool.
+        info!("Calling self.remove_block_response at location 2");
         self.remove_block_response(next_height)
     }
 
@@ -393,6 +394,7 @@ impl<N: Network> BlockSync<N> {
 
             // Attempt to advance to the next block.
             let advance_result = self.canon.advance_to_next_block(block);
+            info!("Calling self.remove_block_response at location 1");
             self.remove_block_response(current_height + 1);
             if let Err(error) = advance_result {
                 warn!("{error}");
@@ -502,7 +504,7 @@ impl<N: Network> BlockSync<N> {
             // Return the list of block requests.
 
             // call print_conditions for heights 1 to 20 in a loop
-            for height in 1..=20 {
+            for height in 1..=40 {
                 let _ = self.print_conditions(height);
             }
 
