@@ -115,6 +115,7 @@ impl<N: Network> Sync<N> {
                 // let communication = &node.router;
                 self_.block_sync.try_block_sync(communication).await;
 
+                info!("Calling sync_storage_with_blocks from location 1");
                 // Sync the storage with the blocks.
                 if let Err(e) = self_.sync_storage_with_blocks().await {
                     error!("Unable to sync storage with blocks - {e}");
@@ -163,6 +164,7 @@ impl<N: Network> Sync<N> {
                     continue;
                 }
 
+                info!("Calling sync_storage_with_blocks from location 2");
                 // Sync the storage with the blocks.
                 if let Err(e) = self_.sync_storage_with_blocks().await {
                     // Send the error to the callback.
@@ -344,7 +346,11 @@ impl<N: Network> Sync<N> {
                 self.block_sync.process_next_block(current_height);
                 // Update the current height.
                 current_height += 1;
+                info!("SYNCPROFILING, new current height: {current_height}");
+                let _ = self.block_sync.print_conditions(current_height - 1);
+                let _ = self.block_sync.print_conditions(current_height);
             } else {
+                info!("No more blocks to sync... height: {current_height}");
                 break;
             }
             

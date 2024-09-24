@@ -691,11 +691,9 @@ impl<N: Network> BlockSync<N> {
         // Note: This lock must be held across the entire scope, due to asynchronous block responses
         // from multiple peers that may be received concurrently.
 
-        
         // call print_conditions for height and height+1
         let _ = self.print_conditions(height);
         let _ = self.print_conditions(height + 1);
-
 
         let mut requests = self.requests.write();
         info!("Called self.requests.write() at location 4, height: {}", height);
@@ -705,8 +703,10 @@ impl<N: Network> BlockSync<N> {
 
         // If the request is not complete, return early.
         if !is_request_complete {
+            info!("Block request for height {height} is not complete");
             return None;
         }
+        info!("Block request for height {height} is complete");
         // Remove the request entry for the given height.
         requests.remove(&height);
         // Remove the request timestamp entry for the given height.
