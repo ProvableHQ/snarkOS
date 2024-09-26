@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 3
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs6", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs8", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -151,6 +151,71 @@ for i, row in received_block_response.iterrows():
         ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, color='tab:orange')
 
 
+    a = 0
+
+# find "SYNCPROFILING Deserialized blocks BlockRequest" df
+deserialized_blocks = event_df[event_df['Message'].str.contains('SYNCPROFILING Deserialized blocks BlockRequest', na=False)]
+
+for i, row in deserialized_blocks.iterrows():
+    a = 0
+
+    start_height = int(row['Message'].split('start_height: ')[1].split(',')[0])
+    end_height = int(row['Message'].split('end_height: ')[1].split(' ')[0])
+
+    # find "Received block response for height" in event_df
+    received_block_response = event_df[event_df['Message'].str.contains(f'Received block response for start height {start_height} to end height {end_height}', na=False)]
+
+    if(len(received_block_response) > 1):
+        print("Error: More than one received block response found")
+
+    time_received_response = received_block_response.iloc[0]['Timestamp']
+    time_deserialized = row['Timestamp']
+
+    x_bar_start = start_height - 0.5
+    x_bar_end = end_height - 0.5
+    y_bar_start = (time_received_response - start_time).total_seconds()
+    y_bar_end = (time_deserialized - start_time).total_seconds()
+
+    # make a bar plot
+    label = 'Time to deserialize'
+    if label not in used_labels:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, label=label, color='tab:green')
+        used_labels[label] = True
+    else:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, color='tab:green')
+
+
+    a = 0
+
+# find "SYNCPROFILING Check next block took" df
+check_next_block = event_df[event_df['Message'].str.contains('SYNCPROFILING - starting check_next_block for block', na=False)]
+
+for i, row in check_next_block.iterrows():
+    # format: SYNCPROFILING Check next block took: 10911792ns for height 1
+    height = int(row['Message'].split('block ')[2])
+
+    # find SYNCPROFILING - ending check_next_block for block
+    check_next_block_done = event_df[event_df['Message'].str.contains(f'SYNCPROFILING - ending check_next_block for block {height}', na=False)]
+
+    if(len(check_next_block_done) > 1):
+        print("Error: More than one check next block done found")
+
+    time_check_next_block_done = check_next_block_done.iloc[0]['Timestamp']
+    time_check_next_block_start = row['Timestamp']
+
+    x_bar_start = height - 0.5
+    x_bar_end = height + 0.5
+    y_bar_start = (time_check_next_block_start - start_time).total_seconds()
+    y_bar_end = (time_check_next_block_done - start_time).total_seconds()
+
+    # make a bar plot
+    label = 'Check next block time'
+    if label not in used_labels:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, label=label, color='tab:red')
+        used_labels[label] = True
+    else:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, color='tab:red')
+        
     a = 0
 
 prev_bottom = 0
