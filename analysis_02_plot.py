@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 3
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs5", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs6", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -100,10 +100,10 @@ for i, row in time_to_construct_requests.iterrows():
             # make a bar plot
             label = 'Time to construct request'
             if label not in used_labels:
-                ax.bar(height, y_bar_end-y_bar_start, bottom=y_bar_start, width=1, label=label, color='tab:blue')
+                ax.bar((x_bar_end+x_bar_start)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_end-x_bar_start, label=label, color='tab:blue')
                 used_labels[label] = True
             else:
-                ax.bar(height, y_bar_end-y_bar_start, bottom=y_bar_start, width=1, color='tab:blue')
+                ax.bar((x_bar_end+x_bar_start)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_end-x_bar_start, color='tab:blue')
 
             break
 
@@ -114,11 +114,44 @@ for i, row in time_to_construct_requests.iterrows():
 
 
 
+
+# find "Received block response for height" df
+received_block_response = event_df[event_df['Message'].str.contains('Received block response for start height', na=False)]
+
+for i, row in received_block_response.iterrows():
+    original_index = row.name
+    limit_index = original_index - offset
+
+    start_height = int(row['Message'].split('Received block response for start height ')[1].split(' to end height')[0])
+    end_height = int(row['Message'].split('to end height ')[1].split(' to peer')[0])
+    
+    # find "Sent block request for startheight ... to endheight ... to" in event_df
+    sent_block_request = event_df[event_df['Message'].str.contains(f'Sent block request for startheight {start_height} to endheight {end_height} to', na=False)]
+
+    if(len(sent_block_request) > 1):
+        print("Error: More than one sent block request found")
+
+    time_received_response = row['Timestamp']
+    time_sent_request = sent_block_request.iloc[0]['Timestamp']
+
+    x_bar_start = start_height - 0.5
+    x_bar_end = end_height - 0.5
+    y_bar_start = (time_sent_request - start_time).total_seconds()
+    y_bar_end = (time_received_response - start_time).total_seconds()
+
+    if(start_height == 5):
+        a = 0
+
+    # make a bar plot
+    label = 'Time to receive response'
+    if label not in used_labels:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, label=label, color='tab:orange')
+        used_labels[label] = True
+    else:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, color='tab:orange')
+
+
     a = 0
-
-a = 0
-
-
 
 prev_bottom = 0
 
