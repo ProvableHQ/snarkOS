@@ -8,7 +8,7 @@ import numpy as np
 num_val = 15
 val_index = 3
 log_file_name = f"prepared_logs_{val_index}.log"
-log_file_path = os.path.join(os.getcwd(), "aws-logs8", log_file_name)
+log_file_path = os.path.join(os.getcwd(), "aws-logs9", log_file_name)
 
 # Load the log file
 with open(log_file_path, 'r') as file:
@@ -195,7 +195,7 @@ for i, row in check_next_block.iterrows():
     height = int(row['Message'].split('block ')[2])
 
     # find SYNCPROFILING - ending check_next_block for block
-    check_next_block_done = event_df[event_df['Message'].str.contains(f'SYNCPROFILING - ending check_next_block for block {height}', na=False)]
+    check_next_block_done = event_df[event_df['Message'] == f'SYNCPROFILING - ending check_next_block for block {height}']
 
     if(len(check_next_block_done) > 1):
         print("Error: More than one check next block done found")
@@ -215,141 +215,41 @@ for i, row in check_next_block.iterrows():
         used_labels[label] = True
     else:
         ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, color='tab:red')
-        
+
     a = 0
 
 prev_bottom = 0
 
-for j, tryBlockSyncCall in enumerate(tryBlockSyncCalls):
-    if(not tryBlockSyncCall.prepared_zero_block_requests):
-        #get_time_to_find_sync_peers, get_times_to_construct_requests, get_unaccounted_time_in_prepare_block_requests
-        start_height = tryBlockSyncCall.block_requests_start_height
-        end_height = tryBlockSyncCall.block_requests_end_height
-        if(start_height == 35):
-            a = 0
-        time_to_find_sync_peers = tryBlockSyncCall.get_time_to_find_sync_peers().total_seconds()
-        times_to_construct_requests = tryBlockSyncCall.get_times_to_construct_requests()
-        unaccounted_time = tryBlockSyncCall.get_unaccounted_time_in_prepare_block_requests_seconds()
-        combined_time = tryBlockSyncCall.get_combined_time_to_construct_requests().total_seconds()
-        # assuming combined_time is small enought hat we can just proceed with it
-        
-        # plot a bar stack. x from start_height to end_height, y from 0 to time_to_find_sync_peers, combined_time. color should be blue
-        width = end_height-start_height
-        label = 'Time to find sync peers'
-        if label not in used_labels:
-            ax.bar(start_height + width / 2, combined_time, bottom=prev_bottom, width=width, label=label, color='tab:blue')
-            used_labels[label] = True
-        else:
-            ax.bar(start_height + width / 2, combined_time, bottom=prev_bottom, width=width, color='tab:blue')
+# find "Advanced to block" df
+advanced_to_block = event_df[event_df['Message'].str.contains('Advanced to block', na=False)]
 
-        # get times to send requests
-        times_send, ranges = tryBlockSyncCall.get_times_to_send_requests()
-        times_send_seconds = [time.total_seconds() for time in times_send]
-        #times_to_send_requests, ranges = tryBlockSyncCall.get_times_to_send_requests()
+for i, row in advanced_to_block.iterrows():
+    # Advanced to block 1 at round 4 
+    height = int(row['Message'].split('Advanced to block ')[1].split(' at round')[0])
 
-        bottoms = np.zeros(len(times_send_seconds))
+    # find SYNCPROFILING - ending check_next_block for block
+    check_next_block_done = event_df[event_df['Message'] == f'SYNCPROFILING - ending check_next_block for block {height}']
 
-        times_send_seconds_bar_bottoms = []
-        prev_bottom += combined_time
-        for i, time in enumerate(times_send_seconds):
-            start_height = ranges[i][0]
-            end_height = ranges[i][1]
-            width = end_height-start_height
+    if(len(check_next_block_done) > 1):
+        print("Error: More than one start of ending check_next_block found")
 
-            label = 'Time to send request'
-            if label not in used_labels:
-                ax.bar(start_height + width / 2, time, bottom=prev_bottom, width=width, label=label, color='tab:orange')
-                used_labels[label] = True
-            else:
-                ax.bar(start_height + width / 2, time, bottom=prev_bottom, width=width, color='tab:orange')
+    time_advanced_to_block_done = row['Timestamp']
+    time_advanced_to_block_start = check_next_block_done.iloc[0]['Timestamp']
 
+    x_bar_start = height - 0.5
+    x_bar_end = height + 0.5
+    y_bar_start = (time_advanced_to_block_start - start_time).total_seconds()
+    y_bar_end = (time_advanced_to_block_done - start_time).total_seconds()
 
-            prev_bottom += time
-            times_send_seconds_bar_bottoms.append(prev_bottom)
-            bottoms[i] = prev_bottom
+    # make a bar plot
+    label = 'Advanced to block'
+    if label not in used_labels:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, label=label, color='tab:brown')
+        used_labels[label] = True
+    else:
+        ax.bar((x_bar_start+x_bar_end)/2, y_bar_end-y_bar_start, bottom=y_bar_start, width=x_bar_start-x_bar_end, color='tab:brown')
 
-        # get times to receive responses
-        times_receive = []
-        for blockRangeRequest in tryBlockSyncCall.BlockRangeRequests.values():
-            times_receive.append(blockRangeRequest.get_time_to_received_response())
-        times_receive_seconds = [time.total_seconds() for time in times_receive]
-
-        for i, time in enumerate(times_receive_seconds):
-            start_height = ranges[i][0]
-            end_height = ranges[i][1]
-            width = end_height-start_height
-
-
-            if(start_height == 50 or start_height == 51):
-                a = 0
-
-            label = 'Time to receive response'
-            if label not in used_labels:
-                ax.bar(start_height + width / 2, time, bottom=times_send_seconds_bar_bottoms[i], width=width, label=label, color='tab:green')
-                used_labels[label] = True
-            else:
-                ax.bar(start_height + width / 2, time, bottom=times_send_seconds_bar_bottoms[i], width=width, color='tab:green')
-
-
-            bottoms[i] += time
-
-        times_deserialized = []
-        for blockRangeRequest in tryBlockSyncCall.BlockRangeRequests.values():
-            times_deserialized.append(blockRangeRequest.get_time_to_deserialized())
-        times_deserialized_seconds = [time.total_seconds() for time in times_deserialized]
-
-        for i, time in enumerate(times_deserialized_seconds):
-            start_height = ranges[i][0]
-            end_height = ranges[i][1]
-            width = end_height-start_height
-
-            label = 'Time to deserialize'
-            if label not in used_labels:
-                ax.bar(start_height+width/2, time, bottom=bottoms[i], width=width, label=label, color='tab:red')
-                used_labels[label] = True
-            else:
-                ax.bar(start_height+width/2, time, bottom=bottoms[i], width=width, color='tab:red')
-
-            bottoms[i] += time
-
-
-
-
-
-        # after all deserialization is done, stair wise check next block and advance to block
-        times_check_next_block_done = tryBlockSyncCall.get_times_check_next_block_done()
-        times_check_next_block_done_seconds = [time.total_seconds() for time in times_check_next_block_done]
-
-        times_extra_message_advanced_to_block = tryBlockSyncCall.get_times_advanced_to_block()
-        times_extra_message_advanced_to_block_seconds = [time.total_seconds() for time in times_extra_message_advanced_to_block]
-
-        start_time_sequential_tasks = max(bottoms)
-
-        for i, time in enumerate(times_check_next_block_done_seconds):
-            start_height = tryBlockSyncCall.block_requests_start_height + i
-            end_height = start_height + 1
-            width = end_height-start_height
-
-            label = 'Check next block time'
-            if label not in used_labels:
-                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label=label, color='tab:purple')
-                used_labels[label] = True
-            else:
-                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, color='tab:purple')
-
-            start_time_sequential_tasks += time
-            time = times_extra_message_advanced_to_block_seconds[i]
-
-            label = 'Advanced to block'
-            if label not in used_labels:
-                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, label=label, color='tab:brown')
-                used_labels[label] = True
-            else:
-                ax.bar(start_height+width/2, time, bottom=start_time_sequential_tasks, width=width, color='tab:brown')
-
-            start_time_sequential_tasks += time
-        
-        prev_bottom = start_time_sequential_tasks
+    a = 0
 
 # plot legend
 ax.legend()
