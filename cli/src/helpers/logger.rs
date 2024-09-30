@@ -59,6 +59,8 @@ pub fn initialize_logger<P: AsRef<Path>>(
             .add_directive("tokio_util=off".parse().unwrap())
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap())
+            .add_directive("rustls=off".parse().unwrap())
+            .add_directive("h2=off".parse().unwrap())
             .add_directive("want=off".parse().unwrap())
             .add_directive("warp=off".parse().unwrap());
 
