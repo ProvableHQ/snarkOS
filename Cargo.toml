@@ -46,8 +46,8 @@ default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-git = "https://github.com/AleoNet/snarkVM.git"
-rev = "3d42aa0" # If this is updated, the rev in `node/rest/Cargo.toml` must be updated as well.
+git = "https://github.com/ProvableHQ/snarkVM.git"
+rev = "f242209559d51ce3b1f5e55f0449d696d9904279" # If this is updated, the rev in `node/rest/Cargo.toml` must be updated as well.
 #version = "=0.16.18"
 features = [ "circuit", "console", "rocks" ]
 
