@@ -29,7 +29,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::Result,
+    prelude::{Field, Result},
 };
 
 use indexmap::IndexMap;
@@ -125,8 +125,8 @@ pub fn init_bft_channels<N: Network>() -> (BFTSender<N>, BFTReceiver<N>) {
 pub struct PrimarySender<N: Network> {
     pub tx_batch_propose: mpsc::Sender<(SocketAddr, BatchPropose<N>)>,
     pub tx_batch_signature: mpsc::Sender<(SocketAddr, BatchSignature<N>)>,
-    pub tx_batch_certified: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub tx_primary_ping: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
+    pub tx_batch_certified: mpsc::Sender<(SocketAddr, Field<N>, Data<BatchCertificate<N>>)>,
+    pub tx_primary_ping: mpsc::Sender<(SocketAddr, Field<N>, Data<BatchCertificate<N>>)>,
     pub tx_unconfirmed_solution: mpsc::Sender<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
     pub tx_unconfirmed_transaction: mpsc::Sender<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
 }
@@ -165,8 +165,8 @@ impl<N: Network> PrimarySender<N> {
 pub struct PrimaryReceiver<N: Network> {
     pub rx_batch_propose: mpsc::Receiver<(SocketAddr, BatchPropose<N>)>,
     pub rx_batch_signature: mpsc::Receiver<(SocketAddr, BatchSignature<N>)>,
-    pub rx_batch_certified: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub rx_primary_ping: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
+    pub rx_batch_certified: mpsc::Receiver<(SocketAddr, Field<N>, Data<BatchCertificate<N>>)>,
+    pub rx_primary_ping: mpsc::Receiver<(SocketAddr, Field<N>, Data<BatchCertificate<N>>)>,
     pub rx_unconfirmed_solution: mpsc::Receiver<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
     pub rx_unconfirmed_transaction:
         mpsc::Receiver<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,

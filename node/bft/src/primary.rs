@@ -914,11 +914,22 @@ impl<N: Network> Primary<N> {
     async fn process_batch_certificate_from_peer(
         &self,
         peer_ip: SocketAddr,
-        certificate: BatchCertificate<N>,
+        certificate_id: Field<N>,
+        certificate: Data<BatchCertificate<N>>,
     ) -> Result<()> {
         // Ensure storage does not already contain the certificate.
-        if self.storage.contains_certificate(certificate.id()) {
+        if self.storage.contains_certificate(certificate_id) {
             return Ok(());
+        }
+        // Deserialize the primary certificate in the primary ping.
+        let Ok(certificate) = spawn_blocking!(certificate.deserialize_blocking()) else {
+            bail!("Failed to deserialize certificate from '{peer_ip}'");
+        };
+        // Ensure the certificate id matches the given id.
+        if certificate.id() != certificate_id {
+            // Proceed to disconnect the validator.
+            self.gateway.disconnect(peer_ip);
+            bail!("Malicious peer - Received a batch certificate with mismatching id from ({peer_ip})");
         }
 
         // Retrieve the batch certificate author.
@@ -1057,25 +1068,21 @@ impl<N: Network> Primary<N> {
         // Start the primary ping handler.
         let self_ = self.clone();
         self.spawn(async move {
-            while let Some((peer_ip, primary_certificate)) = rx_primary_ping.recv().await {
+            while let Some((peer_ip, certificate_id, primary_certificate)) = rx_primary_ping.recv().await {
                 // If the primary is not synced, then do not process the primary ping.
                 if !self_.sync.is_synced() {
                     trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
                     continue;
                 }
-
                 // Spawn a task to process the primary certificate.
                 {
                     let self_ = self_.clone();
                     tokio::spawn(async move {
-                        // Deserialize the primary certificate in the primary ping.
-                        let Ok(primary_certificate) = spawn_blocking!(primary_certificate.deserialize_blocking())
-                        else {
-                            warn!("Failed to deserialize primary certificate in 'PrimaryPing' from '{peer_ip}'");
-                            return;
-                        };
                         // Process the primary certificate.
-                        if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, primary_certificate).await {
+                        if let Err(e) = self_
+                            .process_batch_certificate_from_peer(peer_ip, certificate_id, primary_certificate)
+                            .await
+                        {
                             warn!("Cannot process a primary certificate in a 'PrimaryPing' from '{peer_ip}' - {e}");
                         }
                     });
@@ -1171,7 +1178,7 @@ impl<N: Network> Primary<N> {
         // Process the certified batch.
         let self_ = self.clone();
         self.spawn(async move {
-            while let Some((peer_ip, batch_certificate)) = rx_batch_certified.recv().await {
+            while let Some((peer_ip, certificate_id, batch_certificate)) = rx_batch_certified.recv().await {
                 // If the primary is not synced, then do not store the certificate.
                 if !self_.sync.is_synced() {
                     trace!("Skipping a certified batch from '{peer_ip}' {}", "(node is syncing)".dimmed());
@@ -1180,13 +1187,10 @@ impl<N: Network> Primary<N> {
                 // Spawn a task to process the batch certificate.
                 let self_ = self_.clone();
                 tokio::spawn(async move {
-                    // Deserialize the batch certificate.
-                    let Ok(batch_certificate) = spawn_blocking!(batch_certificate.deserialize_blocking()) else {
-                        warn!("Failed to deserialize the batch certificate from '{peer_ip}'");
-                        return;
-                    };
                     // Process the batch certificate.
-                    if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, batch_certificate).await {
+                    if let Err(e) =
+                        self_.process_batch_certificate_from_peer(peer_ip, certificate_id, batch_certificate).await
+                    {
                         warn!("Cannot store a certificate from '{peer_ip}' - {e}");
                     }
                 });
