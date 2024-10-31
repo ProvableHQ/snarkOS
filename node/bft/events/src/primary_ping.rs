@@ -19,6 +19,7 @@ use super::*;
 pub struct PrimaryPing<N: Network> {
     pub version: u32,
     pub block_locators: BlockLocators<N>,
+    pub certificate_id: Field<N>,
     pub primary_certificate: Data<BatchCertificate<N>>,
 }
 
@@ -27,16 +28,17 @@ impl<N: Network> PrimaryPing<N> {
     pub const fn new(
         version: u32,
         block_locators: BlockLocators<N>,
+        certificate_id: Field<N>,
         primary_certificate: Data<BatchCertificate<N>>,
     ) -> Self {
-        Self { version, block_locators, primary_certificate }
+        Self { version, block_locators, certificate_id, primary_certificate }
     }
 }
 
 impl<N: Network> From<(u32, BlockLocators<N>, BatchCertificate<N>)> for PrimaryPing<N> {
     /// Initializes a new ping event.
     fn from((version, block_locators, primary_certificate): (u32, BlockLocators<N>, BatchCertificate<N>)) -> Self {
-        Self::new(version, block_locators, Data::Object(primary_certificate))
+        Self::new(version, block_locators, primary_certificate.id(), Data::Object(primary_certificate))
     }
 }
 
@@ -54,6 +56,8 @@ impl<N: Network> ToBytes for PrimaryPing<N> {
         self.version.write_le(&mut writer)?;
         // Write the block locators.
         self.block_locators.write_le(&mut writer)?;
+        // Write the certificate id.
+        self.certificate_id.write_le(&mut writer)?;
         // Write the primary certificate.
         self.primary_certificate.write_le(&mut writer)?;
 
@@ -67,11 +71,13 @@ impl<N: Network> FromBytes for PrimaryPing<N> {
         let version = u32::read_le(&mut reader)?;
         // Read the block locators.
         let block_locators = BlockLocators::read_le(&mut reader)?;
+        // Read the certificate id.
+        let certificate_id = Field::read_le(&mut reader)?;
         // Read the primary certificate.
         let primary_certificate = Data::read_le(&mut reader)?;
 
         // Return the ping event.
-        Ok(Self::new(version, block_locators, primary_certificate))
+        Ok(Self::new(version, block_locators, certificate_id, primary_certificate))
     }
 }
 

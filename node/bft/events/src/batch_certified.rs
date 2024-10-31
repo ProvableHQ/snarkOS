@@ -17,20 +17,23 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchCertified<N: Network> {
+    /// The certificate id.
+    pub certificate_id: Field<N>,
+    /// The batch certificate.
     pub certificate: Data<BatchCertificate<N>>,
 }
 
 impl<N: Network> BatchCertified<N> {
     /// Initializes a new batch certified event.
-    pub fn new(certificate: Data<BatchCertificate<N>>) -> Self {
-        Self { certificate }
+    pub fn new(certificate_id: Field<N>, certificate: Data<BatchCertificate<N>>) -> Self {
+        Self { certificate_id, certificate }
     }
 }
 
 impl<N: Network> From<BatchCertificate<N>> for BatchCertified<N> {
     /// Initializes a new batch certified event.
     fn from(certificate: BatchCertificate<N>) -> Self {
-        Self::new(Data::Object(certificate))
+        Self::new(certificate.id(), Data::Object(certificate))
     }
 }
 
@@ -44,16 +47,18 @@ impl<N: Network> EventTrait for BatchCertified<N> {
 
 impl<N: Network> ToBytes for BatchCertified<N> {
     fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
+        self.certificate_id.write_le(&mut writer)?;
         self.certificate.write_le(&mut writer)?;
         Ok(())
     }
 }
 
 impl<N: Network> FromBytes for BatchCertified<N> {
-    fn read_le<R: Read>(reader: R) -> IoResult<Self> {
-        let certificate = Data::read_le(reader)?;
+    fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
+        let certificate_id = Field::<N>::read_le(&mut reader)?;
+        let certificate = Data::read_le(&mut reader)?;
 
-        Ok(Self { certificate })
+        Ok(Self { certificate_id, certificate })
     }
 }
 
