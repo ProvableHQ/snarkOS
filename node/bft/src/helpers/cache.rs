@@ -32,6 +32,8 @@ pub struct Cache<N: Network> {
     seen_inbound_events: RwLock<BTreeMap<i64, HashMap<SocketAddr, u32>>>,
     /// The ordered timestamp map of certificate IDs and cache hits.
     seen_inbound_certificates: RwLock<BTreeMap<i64, HashMap<Field<N>, u32>>>,
+    /// The ordered timestamp map of (peer IPs, primary certificate IDs) and cache hits.
+    seen_inbound_primary_certificates: RwLock<BTreeMap<i64, HashMap<(SocketAddr, Field<N>), u32>>>,
     /// The ordered timestamp map of transmission IDs and cache hits.
     seen_inbound_transmissions: RwLock<BTreeMap<i64, HashMap<TransmissionID<N>, u32>>>,
     /// The ordered timestamp map of inbound block requests and cache hits.
@@ -62,6 +64,7 @@ impl<N: Network> Cache<N> {
             seen_inbound_connections: Default::default(),
             seen_inbound_events: Default::default(),
             seen_inbound_certificates: Default::default(),
+            seen_inbound_primary_certificates: Default::default(),
             seen_inbound_transmissions: Default::default(),
             seen_inbound_block_requests: Default::default(),
             seen_outbound_events: Default::default(),
@@ -87,6 +90,11 @@ impl<N: Network> Cache<N> {
     /// Inserts a certificate ID into the cache, returning the number of recent events.
     pub fn insert_inbound_certificate(&self, key: Field<N>, interval_in_secs: i64) -> usize {
         Self::retain_and_insert(&self.seen_inbound_certificates, key, interval_in_secs)
+    }
+
+    /// Inserts a (peer_ip, primary certificate ID) into the cache, returning the number of recent events.
+    pub fn insert_inbound_primary_certificate(&self, key: (SocketAddr, Field<N>), interval_in_secs: i64) -> usize {
+        Self::retain_and_insert(&self.seen_inbound_primary_certificates, key, interval_in_secs)
     }
 
     /// Inserts a transmission ID into the cache, returning the number of recent events.

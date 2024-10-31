@@ -17,13 +17,14 @@ use crate::{
     CONTEXT,
     MAX_BATCH_DELAY_IN_MS,
     MEMORY_POOL_PORT,
+    PRIMARY_PING_IN_MS,
     Worker,
-    events::{EventCodec, PrimaryPing},
     helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
+    BatchCertified,
     BlockRequest,
     BlockResponse,
     CertificateRequest,
@@ -33,7 +34,9 @@ use snarkos_node_bft_events::{
     DataBlocks,
     DisconnectReason,
     Event,
+    EventCodec,
     EventTrait,
+    PrimaryPing,
     TransmissionRequest,
     TransmissionResponse,
     ValidatorsRequest,
@@ -78,6 +81,8 @@ use tokio_util::codec::Framed;
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
 /// The maximum interval of requests to cache.
 const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
+/// The maximum interval of events to cache.
+const CACHE_PRIMARY_CERTIFICATES_INTERVAL: i64 = 3 * (PRIMARY_PING_IN_MS / 1000) as i64; // seconds
 
 /// The maximum number of connection attempts in an interval.
 const MAX_CONNECTION_ATTEMPTS: usize = 10;
@@ -561,6 +566,21 @@ impl<N: Network> Gateway<N> {
                     return Ok(());
                 }
             }
+            Event::PrimaryPing(_) | Event::BatchCertified(_) => {
+                // Retrieve the certificate ID.
+                let certificate_id = match &event {
+                    Event::PrimaryPing(PrimaryPing { certificate_id, .. }) => *certificate_id,
+                    Event::BatchCertified(BatchCertified { certificate_id, .. }) => *certificate_id,
+                    _ => unreachable!(),
+                };
+                // Skip processing duplicate primary certificates received from the same peer.
+                let num_events = self
+                    .cache
+                    .insert_inbound_primary_certificate((peer_ip, certificate_id), CACHE_PRIMARY_CERTIFICATES_INTERVAL);
+                if num_events >= 2 {
+                    return Ok(());
+                }
+            }
             Event::TransmissionRequest(TransmissionRequest { transmission_id })
             | Event::TransmissionResponse(TransmissionResponse { transmission_id, .. }) => {
                 // Skip processing this certificate if the rate limit was exceeded (i.e. someone is spamming a specific certificate).
@@ -594,7 +614,8 @@ impl<N: Network> Gateway<N> {
             }
             Event::BatchCertified(batch_certified) => {
                 // Send the batch certificate to the primary.
-                let _ = self.primary_sender().tx_batch_certified.send((peer_ip, batch_certified.certificate)).await;
+                let BatchCertified { certificate_id, certificate } = batch_certified;
+                let _ = self.primary_sender().tx_batch_certified.send((peer_ip, certificate_id, certificate)).await;
                 Ok(())
             }
             Event::BlockRequest(block_request) => {
@@ -676,7 +697,7 @@ impl<N: Network> Gateway<N> {
                 bail!("{CONTEXT} {:?}", disconnect.reason)
             }
             Event::PrimaryPing(ping) => {
-                let PrimaryPing { version, block_locators, primary_certificate } = ping;
+                let PrimaryPing { version, block_locators, certificate_id, primary_certificate } = ping;
 
                 // Ensure the event version is not outdated.
                 if version < Event::<N>::VERSION {
@@ -691,8 +712,9 @@ impl<N: Network> Gateway<N> {
                     }
                 }
 
-                // Send the batch certificates to the primary.
-                let _ = self.primary_sender().tx_primary_ping.send((peer_ip, primary_certificate)).await;
+                // Send the batch certificate to the primary.
+                let _ =
+                    self.primary_sender().tx_primary_ping.send((peer_ip, certificate_id, primary_certificate)).await;
                 Ok(())
             }
             Event::TransmissionRequest(request) => {
