@@ -479,7 +479,7 @@ impl<N: Network> Consensus<N> {
                 if let Err(e) =
                     tokio::try_join!(self_.process_unconfirmed_transactions(), self_.process_unconfirmed_solutions(),)
                 {
-                    warn!("Cannot process unconfirmed transactions and solutions - {e}");
+                    warn!("Cannot process unconfirmed transactions or solutions - {e}");
                 }
             }
         });
