@@ -475,13 +475,11 @@ impl<N: Network> Consensus<N> {
             loop {
                 // Sleep briefly.
                 tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
-                // Process the unconfirmed transactions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_transactions().await {
-                    warn!("Cannot process unconfirmed transactions - {e}");
-                }
-                // Process the unconfirmed solutions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_solutions().await {
-                    warn!("Cannot process unconfirmed solutions - {e}");
+                // Process the unconfirmed transactions and solutions in the memory pool.
+                if let Err(e) =
+                    tokio::try_join!(self_.process_unconfirmed_transactions(), self_.process_unconfirmed_solutions(),)
+                {
+                    warn!("Cannot process unconfirmed transactions and solutions - {e}");
                 }
             }
         });
