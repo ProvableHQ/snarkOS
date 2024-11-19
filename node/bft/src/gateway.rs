@@ -661,6 +661,10 @@ impl<N: Network> Gateway<N> {
                     if !self.cache.remove_outbound_block_request(peer_ip, &request) {
                         bail!("Unsolicited block response from '{peer_ip}'")
                     }
+                    // Return early if we already advanced past the block request.
+                    if self.ledger.latest_block_height() >= request.end_height {
+                        return Ok(());
+                    }
                     // Perform the deferred non-blocking deserialization of the blocks.
                     let blocks = blocks.deserialize().await.map_err(|error| anyhow!("[BlockResponse] {error}"))?;
                     // Ensure the block response is well-formed.
