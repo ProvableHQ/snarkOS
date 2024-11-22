@@ -82,7 +82,7 @@ const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // sec
 /// The maximum interval of requests to cache.
 const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
 /// The maximum interval of events to cache.
-const CACHE_PRIMARY_CERTIFICATES_INTERVAL: i64 = 3 * (PRIMARY_PING_IN_MS / 1000) as i64; // seconds
+const CACHE_PRIMARY_CERTIFICATES_INTERVAL: i64 = ((2 * PRIMARY_PING_IN_MS) / 1000) as i64; // seconds
 
 /// The maximum number of connection attempts in an interval.
 const MAX_CONNECTION_ATTEMPTS: usize = 10;
