@@ -22,7 +22,7 @@ metrics = [ "snarkvm/metrics" ]
 serial = [ "snarkvm/metrics" ]
 
 [dependencies.metrics-exporter-prometheus]
-version = "0.13"
+version = "0.15"
 
 [dependencies.parking_lot]
 version = "0.12"
