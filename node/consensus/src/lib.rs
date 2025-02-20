@@ -306,8 +306,10 @@ impl<N: Network> Consensus<N> {
                 // If the transaction was recently seen, return early.
                 return Ok(());
             }
+            // Create transmission ID.
+            let transmission_id = TransmissionID::Solution(solution_id, checksum);
             // Check if the solution already exists in the ledger.
-            if self.ledger.contains_transmission(&TransmissionID::Solution(solution_id, checksum))? {
+            if self.ledger.contains_transmission(&transmission_id)? {
                 bail!("Solution '{}' exists in the ledger {}", fmt_id(solution_id), "(skipping)".dimmed());
             }
             // Add the solution to the memory pool.
@@ -385,8 +387,10 @@ impl<N: Network> Consensus<N> {
                 // If the transaction was recently seen, return early.
                 return Ok(());
             }
+            // Create transmission ID.
+            let transmission_id = TransmissionID::Transaction(transaction_id, checksum);
             // Check if the transaction already exists in the ledger.
-            if self.ledger.contains_transmission(&TransmissionID::Transaction(transaction_id, checksum))? {
+            if self.ledger.contains_transmission(&transmission_id)? {
                 bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
             }
             // Add the transaction to the memory pool.

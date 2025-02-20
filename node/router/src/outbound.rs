@@ -20,9 +20,9 @@ use crate::{
 use snarkos_node_sync_locators::BlockLocators;
 use snarkos_node_tcp::protocols::Writing;
 use snarkvm::prelude::Network;
-use std::io;
 
-use std::net::SocketAddr;
+use rand::{rngs::OsRng, seq::IteratorRandom};
+use std::{io, net::SocketAddr};
 use tokio::sync::oneshot;
 
 pub trait Outbound<N: Network>: Writing<Message = Message<N>> {
@@ -113,7 +113,7 @@ pub trait Outbound<N: Network>: Writing<Message = Message<N>> {
     }
 
     /// Sends the given message to every connected validator, excluding the sender and any specified IPs.
-    fn propagate_to_validators(&self, message: Message<N>, excluded_peers: &[SocketAddr]) {
+    fn propagate_to_validators(&self, message: Message<N>, excluded_peers: &[SocketAddr], num_validators: usize) {
         // TODO (howardwu): Serialize large messages once only.
         // // Perform ahead-of-time, non-blocking serialization just once for applicable objects.
         // if let Message::UnconfirmedSolution(ref mut message) = message {
@@ -130,9 +130,15 @@ pub trait Outbound<N: Network>: Writing<Message = Message<N>> {
         //     }
         // }
 
+        // Initialize an RNG.
+        let rng = &mut OsRng;
+
         // Prepare the peers to send to.
         let connected_validators = self.router().connected_validators();
-        let peers = connected_validators.iter().filter(|peer_ip| !excluded_peers.contains(peer_ip));
+        let peers = connected_validators
+            .iter()
+            .filter(|peer_ip| !excluded_peers.contains(peer_ip))
+            .choose_multiple(rng, num_validators);
 
         // Iterate through all validators that are not the sender and excluded validators.
         for peer_ip in peers {
