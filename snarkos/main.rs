@@ -63,3 +63,4 @@ fn check_for_version() {
         }
     }
 }
+snarkos account sign --raw --private-key-file <aleo1tnzcpgl3hf2sp5u46xenmhr77qdjtutrulkmr9ujmcxmd0k42gyqespul9> -m <b49c8eab9f24502b05a8f0ae65aab1170e813c3e80edb59e7aeef50caa1f247f>
