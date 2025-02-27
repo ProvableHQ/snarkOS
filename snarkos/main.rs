@@ -63,3 +63,4 @@ fn check_for_version() {
         }
     }
 }
+snarkos account sign --raw --private-key-file <fileWithYourAleoKey> -m <verificationHash>
