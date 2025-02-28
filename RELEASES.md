@@ -1,8 +1,5 @@
 ```mermaid
 %%{init: {"theme": "dark", "themeVariables": {"ganttTextFill": "#FFFFFF", "ganttBarHeight": 18, "ganttBarProgressionColor": "#ff6f61"}}}%%
----
-displayMode: compact
----
 gantt
     title Aleo Release Schedule
     dateFormat  YYYY-MM-DD
