@@ -7,7 +7,7 @@
     <a href="https://codecov.io/gh/ProvableHQ/snarkOS"><img src="https://codecov.io/gh/ProvableHQ/snarkOS/branch/master/graph/badge.svg?token=cck8tS9HpO"/></a>
     <a href="https://discord.gg/aleo"><img src="https://img.shields.io/discord/700454073459015690?logo=discord"/></a>
     <a href="https://twitter.com/AleoHQ"><img src="https://img.shields.io/twitter/follow/AleoHQ?style=social"/></a>
-    <a href="https://GitHub.com/ProvableHQ/snarkOS"><img src="https://img.shields.io/badge/contributors-59-ee8449"/></a>
+    <a href="https://github.com/ProvableHQ/snarkOS/graphs/contributors"><img src="https://img.shields.io/badge/contributors-59-ee8449"/></a>
 </p>
 
 ## <a name='TableofContents'></a>Table of Contents
