@@ -79,8 +79,9 @@ version = "=3.3.2"
 
 [dependencies.snarkvm-synthesizer]
 # path = "../../../snarkVM/synthesizer"
-git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "10bcf43"
+git = "https://github.com/kaimast/snarkVM.git"
+#rev = "10bcf43"
+branch = "subdag-leaves"
 #version = "=1.3.0"
 default-features = false
 optional = true
