@@ -190,6 +190,7 @@ commands:
           cache_key: << parameters.cache_key >>
       - run:
           name: "Install snarkos"
+          no_output_timeout: 20m
           command: |
             cargo install --locked --path .
       - run:
@@ -381,7 +382,7 @@ jobs:
   devnet-test:
     docker:
       - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.xlarge >>
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_devnet:
           workspace_member: .
