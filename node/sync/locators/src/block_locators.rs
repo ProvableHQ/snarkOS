@@ -59,13 +59,15 @@ pub const CHECKPOINT_INTERVAL: u32 = 10_000; // 10,000 block intervals
 /// but if `CHECKPOINT_INTERVAL` is much larger than `NUM_RECENT_BLOCKS`,
 /// there is no overlap most of the time.
 ///
-/// `BlockLocators` instances are built, in the form described above,
-/// by [`BlockSync::get_block_locators()`].
+/// We call `BlockLocators` with the form described above 'well-formed'.
+///
+/// Well-formed `BlockLocators` instances are built by [`BlockSync::get_block_locators()`].
 /// When a `BlockLocators` instance is received (in a [`PrimaryPing`]) by a validator,
-/// the maps may not have the form described below; the deserializer does not enforce that.
-/// However, before incorporating the `BlockLocators` instance information into its state,
-/// the validator checks that the maps have the correct form,
-/// via [`BlockLocators::ensure_is_valid()`].
+/// the maps may not be well-formed (if the sending validator is faulty),
+/// but the receiving validator ensures that they are well-formed
+/// by calling [`BlockLocators::ensure_is_valid()`] from [`BlockLocators::new()`],
+/// when deserializing in [`BlockLocators::read_le()`].
+/// So this well-formedness is an invariant of `BlockLocators` instances.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockLocators<N: Network> {
     /// The map of recent blocks.
@@ -86,7 +88,9 @@ impl<N: Network> BlockLocators<N> {
     }
 
     /// Initializes a new instance of the block locators, without checking the validity of the block locators.
-    pub fn new_unchecked(recents: IndexMap<u32, N::BlockHash>, checkpoints: IndexMap<u32, N::BlockHash>) -> Self {
+    /// This is only used for testing; note that it is non-public.
+    #[cfg(test)]
+    fn new_unchecked(recents: IndexMap<u32, N::BlockHash>, checkpoints: IndexMap<u32, N::BlockHash>) -> Self {
         Self { recents, checkpoints }
     }
 
@@ -140,7 +144,7 @@ impl<N: Network> BlockLocators<N> {
         true
     }
 
-    /// Checks that this block locators are well-formed.
+    /// Checks that this block locators instance is well-formed.
     pub fn ensure_is_valid(&self) -> Result<()> {
         // Ensure the block locators are well-formed.
         Self::check_block_locators(&self.recents, &self.checkpoints)
@@ -189,27 +193,44 @@ impl<N: Network> BlockLocators<N> {
         // Ensure the block checkpoints are well-formed.
         let last_checkpoint_height = Self::check_block_checkpoints(checkpoints)?;
 
-        // Ensure the `last_recent_height` is at or above `last_checkpoint_height - NUM_RECENT_BLOCKS`.
-        let threshold = last_checkpoint_height.saturating_sub(NUM_RECENT_BLOCKS as u32);
-        if last_recent_height < threshold {
-            bail!("Recent height ({last_recent_height}) cannot be below checkpoint threshold ({threshold})")
-        }
-
-        // If the `last_recent_height` is below NUM_RECENT_BLOCKS, ensure the genesis hash matches in both maps.
-        if last_recent_height < NUM_RECENT_BLOCKS as u32
-            && recents.get(&0).copied().unwrap_or_default() != checkpoints.get(&0).copied().unwrap_or_default()
+        // Ensure that `last_checkpoint_height` is
+        // the largest multiple of `CHECKPOINT_INTERVAL` that does not exceed `last_recent_height`.
+        // That is, we must have
+        // `last_checkpoint_height <= last_recent_height < last_checkpoint_height + CHECKPOINT_INTERVAL`.
+        // Although we do not expect to run out of `u32` for block heights,
+        // `last_checkpoint_height` is an untrusted value that may come from a faulty validator,
+        // and thus we use a saturating addition;
+        // only a faulty validator would send block locators with such high block heights,
+        // under the assumption that the blockchain is always well below the `u32` limit for heights.
+        if !(last_checkpoint_height..last_checkpoint_height.saturating_add(CHECKPOINT_INTERVAL))
+            .contains(&last_recent_height)
         {
-            bail!("Recent genesis hash and checkpoint genesis hash mismatch at height {last_recent_height}")
+            bail!(
+                "Last checkpoint height ({last_checkpoint_height}) is not the largest multiple of \
+                 {CHECKPOINT_INTERVAL} that does not exceed the last recent height ({last_recent_height})"
+            )
         }
 
-        // If the `last_recent_height` overlaps with a checkpoint, ensure the block hashes match.
-        if let Some(last_checkpoint_hash) = checkpoints.get(&last_recent_height) {
-            if let Some(last_recent_hash) = recents.get(&last_recent_height) {
-                if last_checkpoint_hash != last_recent_hash {
-                    bail!("Recent block hash and checkpoint hash mismatch at height {last_recent_height}")
-                }
+        // Ensure that if the recents and checkpoints maps overlap, they agree on the hash:
+        // we calculate the distance from the last recent to the last checkpoint;
+        // if that distance is `NUM_RECENT_BLOCKS` or more, there is no overlap;
+        // otherwise, the overlap is at the last checkpoint,
+        // which is exactly at the last recent height minus its distance from the last checkpoint.
+        // All of this also works if the last checkpoint is 0:
+        // in this case, there is an overlap (at 0) exactly when the last recent height,
+        // which is the same as its distance from the last checkpoint (0),
+        // is less than `NUM_RECENT_BLOCKS`.
+        // All of this only works if `NUM_RECENT_BLOCKS < CHECKPOINT_INTERVAL`,
+        // because it is only under this condition that there is at most one overlapping height.
+        // TODO: generalize check for RECENT_INTERVAL > 1, or remove this comment if we hardwire that to 1
+        let last_recent_to_last_checkpoint_distance = last_recent_height % CHECKPOINT_INTERVAL;
+        if last_recent_to_last_checkpoint_distance < NUM_RECENT_BLOCKS as u32 {
+            let common = last_recent_height - last_recent_to_last_checkpoint_distance;
+            if recents.get(&common).unwrap() != checkpoints.get(&common).unwrap() {
+                bail!("Recent block hash and checkpoint hash mismatch at height {common}")
             }
         }
+
         Ok(())
     }
 
@@ -235,7 +256,7 @@ impl<N: Network> BlockLocators<N> {
         // Ensure the given recent blocks increment in height, and at the correct interval.
         let mut last_height = 0;
         for (i, current_height) in recents.keys().enumerate() {
-            if i == 0 && recents.len() < NUM_RECENT_BLOCKS && *current_height != last_height {
+            if i == 0 && recents.len() < NUM_RECENT_BLOCKS && *current_height > 0 {
                 bail!("Ledgers under {NUM_RECENT_BLOCKS} blocks must have the first recent block at height 0")
             }
             if i > 0 && *current_height <= last_height {
@@ -247,11 +268,15 @@ impl<N: Network> BlockLocators<N> {
             last_height = *current_height;
         }
 
-        // If the last height is below NUM_RECENT_BLOCKS, ensure the number of recent blocks matches the last height.
-        if last_height < NUM_RECENT_BLOCKS as u32 && recents.len().saturating_sub(1) as u32 != last_height {
-            bail!("As the last height is below {NUM_RECENT_BLOCKS}, the number of recent blocks must match the height")
-        }
-        // Otherwise, ensure the number of recent blocks matches NUM_RECENT_BLOCKS.
+        // At this point, if last_height < NUM_RECENT_BLOCKS`,
+        // we know that the `recents` map consists of exactly block heights from 0 to last_height,
+        // because the loop above has ensured that the first entry is for height 0,
+        // and at the end of the loop `last_height` is the last key in `recents`,
+        // and all the keys in `recents` are consecutive in increments of 1.
+        // So the `recents` map consists of NUM_RECENT_BLOCKS or fewer entries.
+
+        // If last height >= NUM_RECENT_BLOCKS, ensure the number of recent blocks matches NUM_RECENT_BLOCKS.
+        // TODO: generalize check for RECENT_INTERVAL > 1, or remove this comment if we hardwire that to 1
         if last_height >= NUM_RECENT_BLOCKS as u32 && recents.len() != NUM_RECENT_BLOCKS {
             bail!("Number of recent blocks must match {NUM_RECENT_BLOCKS}")
         }
@@ -354,6 +379,8 @@ pub mod test_helpers {
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
     /// Simulates a block locator at the given height.
+    ///
+    /// The returned block locator is checked to be well-formed.
     pub fn sample_block_locators(height: u32) -> BlockLocators<CurrentNetwork> {
         // Create the recent locators.
         let mut recents = IndexMap::new();
@@ -376,6 +403,8 @@ pub mod test_helpers {
     }
 
     /// Simulates a block locator at the given height, with a fork within NUM_RECENT_BLOCKS of the given height.
+    ///
+    /// The returned block locator is checked to be well-formed.
     pub fn sample_block_locators_with_fork(height: u32, fork_height: u32) -> BlockLocators<CurrentNetwork> {
         assert!(fork_height <= height, "Fork height must be less than or equal to the given height");
         assert!(
@@ -423,7 +452,8 @@ pub mod test_helpers {
             assert_eq!(block_locators.checkpoints.len(), expected_num_checkpoints as usize);
             assert_eq!(block_locators.recents.len(), expected_num_recents as usize);
             assert_eq!(block_locators.latest_locator_height(), expected_height);
-            assert!(block_locators.is_valid());
+            // Note that `sample_block_locators` always returns well-formed block locators,
+            // so we don't need to check `is_valid()` here.
         }
     }
 }
@@ -516,7 +546,7 @@ mod tests {
         let mut recents = IndexMap::new();
         for i in 0..NUM_RECENT_BLOCKS {
             recents.insert(i as u32, (Field::<CurrentNetwork>::from_u32(i as u32)).into());
-            let block_locators = BlockLocators::<CurrentNetwork>::new(recents.clone(), checkpoints.clone()).unwrap();
+            let block_locators = BlockLocators::<CurrentNetwork>::new_unchecked(recents.clone(), checkpoints.clone());
             block_locators.ensure_is_valid().unwrap();
         }
         // Ensure NUM_RECENT_BLOCKS + 1 is not valid.
@@ -532,7 +562,7 @@ mod tests {
         let checkpoints = IndexMap::from([(0, zero), (CHECKPOINT_INTERVAL, checkpoint_1)]);
         check_is_valid(
             checkpoints,
-            (CHECKPOINT_INTERVAL - NUM_RECENT_BLOCKS as u32)..(CHECKPOINT_INTERVAL * 2 - NUM_RECENT_BLOCKS as u32),
+            (CHECKPOINT_INTERVAL - NUM_RECENT_BLOCKS as u32 + 1)..(CHECKPOINT_INTERVAL * 2 - NUM_RECENT_BLOCKS as u32),
         );
     }
 
@@ -545,17 +575,17 @@ mod tests {
         let block_locators = BlockLocators::<CurrentNetwork>::new_unchecked(Default::default(), Default::default());
         block_locators.ensure_is_valid().unwrap_err();
 
-        // Ensure internally-mismatching genesis block locators is valid.
+        // Ensure internally-mismatching genesis block locators is not valid.
         let block_locators =
             BlockLocators::<CurrentNetwork>::new_unchecked(IndexMap::from([(0, zero)]), IndexMap::from([(0, one)]));
         block_locators.ensure_is_valid().unwrap_err();
 
-        // Ensure internally-mismatching genesis block locators is valid.
+        // Ensure internally-mismatching genesis block locators is not valid.
         let block_locators =
             BlockLocators::<CurrentNetwork>::new_unchecked(IndexMap::from([(0, one)]), IndexMap::from([(0, zero)]));
         block_locators.ensure_is_valid().unwrap_err();
 
-        // Ensure internally-mismatching block locators with two recent blocks is valid.
+        // Ensure internally-mismatching block locators with two recent blocks is not valid.
         let block_locators = BlockLocators::<CurrentNetwork>::new_unchecked(
             IndexMap::from([(0, one), (1, zero)]),
             IndexMap::from([(0, zero)]),
@@ -567,6 +597,14 @@ mod tests {
             IndexMap::from([(0, zero), (1, zero)]),
             IndexMap::from([(0, zero)]),
         );
+        block_locators.ensure_is_valid().unwrap_err();
+
+        // Ensure insufficient checkpoints are not valid.
+        let mut recents = IndexMap::new();
+        for i in 0..NUM_RECENT_BLOCKS {
+            recents.insert(10_000 + i as u32, (Field::<CurrentNetwork>::from_u32(i as u32)).into());
+        }
+        let block_locators = BlockLocators::<CurrentNetwork>::new_unchecked(recents, IndexMap::from([(0, zero)]));
         block_locators.ensure_is_valid().unwrap_err();
     }
 

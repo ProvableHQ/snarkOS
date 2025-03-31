@@ -31,7 +31,7 @@ use snarkvm::{
     prelude::{cfg_into_iter, cfg_iter},
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
@@ -299,6 +299,10 @@ impl<N: Network> Sync<N> {
                         self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
                     });
                 }
+
+                // Update the validator telemetry.
+                #[cfg(feature = "telemetry")]
+                self.gateway.validator_telemetry().insert_subdag(subdag);
             }
         }
 
@@ -509,13 +513,15 @@ impl<N: Network> Sync<N> {
                 _ => bail!("Received a block with an unexpected authority type."),
             };
             let commit_round = leader_certificate.round();
-            let certificate_round = commit_round.saturating_add(1);
+            let certificate_round =
+                commit_round.checked_add(1).ok_or_else(|| anyhow!("Integer overflow on round number"))?;
 
-            // Get the committee lookback for the commit round.
-            let committee_lookback = self.ledger.get_committee_lookback_for_round(commit_round)?;
-            // Retrieve all of the certificates for the **certificate** round.
+            // Get the committee lookback for the round just after the leader.
+            let certificate_committee_lookback = self.ledger.get_committee_lookback_for_round(certificate_round)?;
+            // Retrieve all of the certificates for the round just after the leader.
             let certificates = self.storage.get_certificates_for_round(certificate_round);
-            // Construct a set over the authors who included the leader's certificate in the certificate round.
+            // Construct a set over the authors, at the round just after the leader,
+            // who included the leader's certificate in their previous certificate IDs.
             let authors = certificates
                 .iter()
                 .filter_map(|c| match c.previous_certificate_ids().contains(&leader_certificate.id()) {
@@ -526,7 +532,7 @@ impl<N: Network> Sync<N> {
 
             debug!("Validating sync block {next_block_height} at round {commit_round}...");
             // Check if the leader is ready to be committed.
-            if committee_lookback.is_availability_threshold_reached(&authors) {
+            if certificate_committee_lookback.is_availability_threshold_reached(&authors) {
                 // Initialize the current certificate.
                 let mut current_certificate = leader_certificate;
                 // Check if there are any linked blocks that need to be added.
@@ -561,6 +567,8 @@ impl<N: Network> Sync<N> {
                         warn!("Skipping block {block_height} from the latest block responses - not sequential.");
                         continue;
                     }
+                    #[cfg(feature = "telemetry")]
+                    let block_authority = block.authority().clone();
 
                     let self_ = self.clone();
                     tokio::task::spawn_blocking(move || {
@@ -581,6 +589,12 @@ impl<N: Network> Sync<N> {
                     latest_block_responses.remove(&block_height);
                     // Mark the block height as processed in block_sync.
                     self.block_sync.remove_block_response(block_height);
+
+                    // Update the validator telemetry.
+                    #[cfg(feature = "telemetry")]
+                    if let Authority::Quorum(subdag) = block_authority {
+                        self_.gateway.validator_telemetry().insert_subdag(&subdag);
+                    }
                 }
             } else {
                 debug!(
@@ -791,7 +805,7 @@ mod tests {
         ];
 
         // Initialize the ledger with the genesis block.
-        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::Production).unwrap();
+        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
 
@@ -965,7 +979,7 @@ mod tests {
 
         // Initialize the syncing ledger.
         let syncing_ledger = Arc::new(CoreLedgerService::new(
-            CurrentLedger::load(genesis, StorageMode::Production).unwrap(),
+            CurrentLedger::load(genesis, StorageMode::new_test(None)).unwrap(),
             Default::default(),
         ));
         // Initialize the gateway.
@@ -1014,7 +1028,7 @@ mod tests {
             PrivateKey::new(genesis_rng)?,
         ];
         // Initialize the ledger with the genesis block.
-        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::Production).unwrap();
+        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.

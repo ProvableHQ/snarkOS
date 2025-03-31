@@ -172,7 +172,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     async fn check_transaction_basic(
         &self,
         _transaction_id: N::TransactionID,
-        _transaction: Data<Transaction<N>>,
+        _transaction: Transaction<N>,
     ) -> Result<()> {
         Ok(())
     }
@@ -194,5 +194,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     /// Adds the given block as the next block in the ledger.
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
         self.inner.advance_to_next_block(block)
+    }
+
+    /// Returns the spent cost for a transaction in microcredits.
+    fn transaction_spent_cost_in_microcredits(
+        &self,
+        transaction_id: N::TransactionID,
+        transaction: Transaction<N>,
+    ) -> Result<u64> {
+        self.inner.transaction_spent_cost_in_microcredits(transaction_id, transaction)
     }
 }

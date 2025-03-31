@@ -103,7 +103,7 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     async fn check_transaction_basic(
         &self,
         transaction_id: N::TransactionID,
-        transaction: Data<Transaction<N>>,
+        transaction: Transaction<N>,
     ) -> Result<()>;
 
     /// Checks the given block is valid next block.
@@ -120,4 +120,11 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// Adds the given block as the next block in the ledger.
     #[cfg(feature = "ledger-write")]
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
+
+    /// Returns the spent cost for a transaction in microcredits.
+    fn transaction_spent_cost_in_microcredits(
+        &self,
+        transaction_id: N::TransactionID,
+        transaction: Transaction<N>,
+    ) -> Result<u64>;
 }

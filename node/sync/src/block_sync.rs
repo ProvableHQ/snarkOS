@@ -207,6 +207,7 @@ impl<N: Network> BlockSync<N> {
         let latest_height = self.ledger.latest_block_height();
 
         // Initialize the recents map.
+        // TODO: generalize this for RECENT_INTERVAL > 1, or remove this comment if we hardwire that to 1
         let mut recents = IndexMap::with_capacity(NUM_RECENT_BLOCKS);
         // Retrieve the recent block hashes.
         for height in latest_height.saturating_sub((NUM_RECENT_BLOCKS - 1) as u32)..=latest_height {
@@ -422,16 +423,18 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Updates the block locators and common ancestors for the given peer IP.
-    /// This function checks that the given block locators are well-formed, however it does **not** check
-    /// that the block locators are consistent the peer's previous block locators or other peers' block locators.
+    ///
+    /// This function does not need to check that the block locators are well-formed,
+    /// because that is already done in [`BlockLocators::new()`], as noted in [`BlockLocators`].
+    ///
+    /// This function does **not** check
+    /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
         // If the locators match the existing locators for the peer, return early.
         if self.locators.read().get(&peer_ip) == Some(&locators) {
             return Ok(());
         }
 
-        // Ensure the given block locators are well-formed.
-        locators.ensure_is_valid()?;
         // Update the locators entry for the given peer IP.
         self.locators.write().insert(peer_ip, locators.clone());
 

@@ -22,7 +22,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
-    utilities::{cfg_into_iter, cfg_sorted_by},
+    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
 };
 
 use indexmap::{IndexMap, IndexSet, map::Entry};
@@ -31,7 +31,7 @@ use locktick::parking_lot::RwLock;
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
@@ -495,6 +495,49 @@ impl<N: Network> Storage<N> {
             }
         }
         Ok(missing_transmissions)
+    }
+
+    /// Check the validity of a certificate coming from another validator.
+    ///
+    /// It suffices to check that the signers (author and endorsers) are members of the applicable committee
+    /// and that they form a quorum in the committee.
+    /// Under the fundamental fault tolerance assumption of at most `f` (stake of) faulty validators,
+    /// the quorum check on signers guarantees that at least one correct validator
+    /// has ensured the validity of the proposal contained in the certificate,
+    /// either by construction (by the author) or by checking (by an endorser):
+    /// given `N > 0` total stake, and `f` the largest integer `< N/3` (where `/` is exact rational division),
+    /// we have `N >= 3f + 1`, which implies `N - f >= 2f + 1`, which is always `> f`;
+    /// `N - f` is the quorum stake.
+    pub fn check_incoming_certificate(&self, certificate: &BatchCertificate<N>) -> Result<()> {
+        // Retrieve the certificate author and round.
+        let certificate_author = certificate.author();
+        let certificate_round = certificate.round();
+
+        // Retrieve the committee lookback.
+        let committee_lookback = self.ledger.get_committee_lookback_for_round(certificate_round)?;
+
+        // Ensure that the signers of the certificate reach the quorum threshold.
+        // Note that certificate.signatures() only returns the endorsing signatures, not the author's signature.
+        let mut signers: HashSet<Address<N>> =
+            certificate.signatures().map(|signature| signature.to_address()).collect();
+        signers.insert(certificate_author);
+        ensure!(
+            committee_lookback.is_quorum_threshold_reached(&signers),
+            "Certificate '{}' for round {certificate_round} does not meet quorum requirements",
+            certificate.id()
+        );
+
+        // Ensure that the signers of the certificate are in the committee.
+        cfg_iter!(signers).try_for_each(|signer| {
+            ensure!(
+                committee_lookback.is_committee_member(*signer),
+                "Signer '{signer}' of certificate '{}' for round {certificate_round} is not in the committee",
+                certificate.id()
+            );
+            Ok(())
+        })?;
+
+        Ok(())
     }
 
     /// Checks the given `certificate` for validity, returning the missing transmissions from storage.

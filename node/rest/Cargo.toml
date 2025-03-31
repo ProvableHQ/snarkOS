@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "3.3.2"
+version = "3.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -20,6 +20,7 @@ edition = "2021"
 default = [ "parallel" ]
 parallel = [ "rayon" ]
 history = [ "snarkvm-synthesizer/history" ]
+telemetry = [ ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
   "dep:locktick",
@@ -71,11 +72,11 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-node-consensus]
 path = "../consensus"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-router]
 path = "../router"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkvm-synthesizer]
 # path = "../../../snarkVM/synthesizer"

@@ -46,6 +46,11 @@ pub use signed_proposals::*;
 pub mod storage;
 pub use storage::*;
 
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
+#[cfg(feature = "telemetry")]
+pub use telemetry::*;
+
 pub mod timestamp;
 pub use timestamp::*;
 

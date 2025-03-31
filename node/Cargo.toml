@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "3.3.2"
+version = "3.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -39,6 +39,7 @@ metrics = [
   "snarkos-node-tcp/metrics"
 ]
 history = [ "snarkos-node-rest/history" ]
+telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",
   "snarkos-account/cuda",
@@ -81,7 +82,7 @@ version = "0.12.1"
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "./metrics"
-version = "=3.3.2"
+version = "=3.4.0"
 optional = true
 
 [dependencies.num_cpus]
@@ -107,35 +108,35 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
 path = "../account"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-bft]
 path = "./bft"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-cdn]
 path = "./cdn"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-consensus]
 path = "./consensus"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-rest]
 path = "./rest"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-router]
 path = "./router"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-sync]
 path = "./sync"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkos-node-tcp]
 path = "./tcp"
-version = "=3.3.2"
+version = "=3.4.0"
 
 [dependencies.snarkvm]
 workspace = true

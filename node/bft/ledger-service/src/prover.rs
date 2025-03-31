@@ -161,7 +161,7 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     async fn check_transaction_basic(
         &self,
         _transaction_id: N::TransactionID,
-        _transaction: Data<Transaction<N>>,
+        _transaction: Transaction<N>,
     ) -> Result<()> {
         Ok(())
     }
@@ -185,5 +185,14 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     #[cfg(feature = "ledger-write")]
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
         bail!("Cannot advance to next block in prover - {block}")
+    }
+
+    /// Returns the spent cost for a transaction in microcredits.
+    fn transaction_spent_cost_in_microcredits(
+        &self,
+        transaction_id: N::TransactionID,
+        _transaction: Transaction<N>,
+    ) -> Result<u64> {
+        bail!("Transaction '{transaction_id}' doesn't exist in prover")
     }
 }

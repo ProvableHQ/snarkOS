@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature = "telemetry")]
+use crate::helpers::Telemetry;
 use crate::{
     CONTEXT,
     MAX_BATCH_DELAY_IN_MS,
@@ -131,6 +133,9 @@ pub struct Gateway<N: Network> {
     /// prevent simultaneous "two-way" connections between two peers (i.e. both nodes simultaneously
     /// attempt to connect to each other). This set is used to prevent this from happening.
     connecting_peers: Arc<Mutex<IndexSet<SocketAddr>>>,
+    /// The validator telemetry.
+    #[cfg(feature = "telemetry")]
+    validator_telemetry: Telemetry<N>,
     /// The primary sender.
     primary_sender: Arc<OnceCell<PrimarySender<N>>>,
     /// The worker senders.
@@ -172,6 +177,8 @@ impl<N: Network> Gateway<N> {
             trusted_validators: trusted_validators.iter().copied().collect(),
             connected_peers: Default::default(),
             connecting_peers: Default::default(),
+            #[cfg(feature = "telemetry")]
+            validator_telemetry: Default::default(),
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
@@ -298,6 +305,12 @@ impl<N: Network> Gateway<N> {
     /// Returns the resolver.
     pub fn resolver(&self) -> &Resolver<N> {
         &self.resolver
+    }
+
+    /// Returns the validator telemetry.
+    #[cfg(feature = "telemetry")]
+    pub fn validator_telemetry(&self) -> &Telemetry<N> {
+        &self.validator_telemetry
     }
 
     /// Returns the primary sender.
@@ -918,7 +931,11 @@ impl<N: Network> Gateway<N> {
 impl<N: Network> Gateway<N> {
     /// Handles the heartbeat request.
     fn heartbeat(&self) {
+        // Log the connected validators.
         self.log_connected_validators();
+        // Log the validator participation scores.
+        #[cfg(feature = "telemetry")]
+        self.log_participation_scores();
         // Keep the trusted validators connected.
         self.handle_trusted_validators();
         // Removes any validators that not in the current committee.
@@ -966,6 +983,20 @@ impl<N: Network> Gateway<N> {
             // Log the validators that are not connected.
             for address in committee_members.difference(&connected_validator_addresses) {
                 debug!("{}", format!("  Not connected to {address}").dimmed());
+            }
+        }
+    }
+
+    // Logs the validator participation scores.
+    #[cfg(feature = "telemetry")]
+    fn log_participation_scores(&self) {
+        if let Ok(current_committee) = self.ledger.current_committee() {
+            // Retrieve the participation scores.
+            let participation_scores = self.validator_telemetry().get_participation_scores(&current_committee);
+            // Log the participation scores.
+            debug!("Participation Scores (in the last {} rounds):", self.storage.max_gc_rounds());
+            for (address, score) in participation_scores {
+                debug!("{}", format!("  {address} - {score:.2}%").dimmed());
             }
         }
     }

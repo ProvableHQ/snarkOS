@@ -205,7 +205,7 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     async fn check_transaction_basic(
         &self,
         transaction_id: N::TransactionID,
-        _transaction: Data<Transaction<N>>,
+        _transaction: Transaction<N>,
     ) -> Result<()> {
         trace!("[MockLedgerService] Check transaction basic {:?} - Ok", fmt_id(transaction_id));
         Ok(())
@@ -237,5 +237,14 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         );
         self.height_to_round_and_hash.lock().insert(block.height(), (block.round(), block.hash()));
         Ok(())
+    }
+
+    /// Returns the spent cost for a transaction in microcredits.
+    fn transaction_spent_cost_in_microcredits(
+        &self,
+        _transaction_id: N::TransactionID,
+        _transaction: Transaction<N>,
+    ) -> Result<u64> {
+        Ok(N::TRANSACTION_SPEND_LIMIT)
     }
 }

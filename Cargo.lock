@@ -593,9 +593,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.32"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6088f3ae8c3608d19260cd7445411865a485688711b78b5be70d78cd96136f83"
+checksum = "e958897981290da2a852763fe9cdb89cd36977a5d729023127095fa94d95e2ff"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -603,9 +603,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.32"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a7ef7f676155edfb82daa97f99441f3ebf4a58d5e32f295a56259f1b6facc8"
+checksum = "83b0f35019843db2160b5bb19ae09b4e6411ac33fc6a712003c33e03090e2489"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1113,9 +1113,9 @@ dependencies = [
 
 [[package]]
 name = "fragile"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c2141d6d6c8512188a7891b4b01590a45f6dac67afb4f255c4124dbb86d4eaa"
+checksum = "28dd6caf6059519a65843af8fe2a3ae298b14b80179855aeb4adc2c1934ee619"
 
 [[package]]
 name = "fsio"
@@ -1665,9 +1665,9 @@ dependencies = [
 
 [[package]]
 name = "icu_locid_transform_data"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdc8ff3388f852bede6b579ad4e978ab004f139284d7b28715f773507b946f6e"
+checksum = "7515e6d781098bf9f7205ab3fc7e9709d34554ae0b21ddbcb5febfa4bc7df11d"
 
 [[package]]
 name = "icu_normalizer"
@@ -1689,9 +1689,9 @@ dependencies = [
 
 [[package]]
 name = "icu_normalizer_data"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8cafbf7aa791e9b22bec55a167906f9e1215fd475cd22adfcf660e03e989516"
+checksum = "c5e8338228bdc8ab83303f16b797e177953730f601a96c25d10cb3ab0daa0cb7"
 
 [[package]]
 name = "icu_properties"
@@ -1710,9 +1710,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67a8effbc3dd3e4ba1afa8ad918d5684b8868b3b26500753effea8d2eed19569"
+checksum = "85fb8799753b75aee8d2a21d7c14d9f38921b54b3dbda10f5a3c7a7b82dba5e2"
 
 [[package]]
 name = "icu_provider"
@@ -2391,9 +2391,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.1"
+version = "1.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
+checksum = "c2806eaa3524762875e21c3dcd057bc4b7bfa01ce4da8d46be1cd43649e1cc6b"
 dependencies = [
  "parking_lot_core",
 ]
@@ -3060,7 +3060,7 @@ dependencies = [
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.0",
+ "rustls-webpki 0.103.1",
  "subtle",
  "zeroize",
 ]
@@ -3101,9 +3101,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.0"
+version = "0.103.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0aa4eeac2588ffff23e9d7a7e9b3f971c5fb5b7ebc9452745e0c232c64f83b2f"
+checksum = "fef8b8769aaccf73098557a87cd1816b4f9c7c16811c9c77142aa695c16f2c03"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -3451,7 +3451,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "built",
@@ -3479,7 +3479,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-account"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "colored",
@@ -3489,7 +3489,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-cli"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "aleo-std",
  "anstyle",
@@ -3529,7 +3529,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-display"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -3541,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-integration"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "aleo-std",
  "snarkos-node-cdn",
@@ -3553,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -3592,7 +3592,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -3642,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft-events"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3661,8 +3661,9 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft-ledger-service"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "indexmap 2.8.0",
  "locktick",
@@ -3677,7 +3678,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft-storage-service"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -3691,7 +3692,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-cdn"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3711,7 +3712,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-consensus"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -3736,7 +3737,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-metrics"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "locktick",
  "metrics-exporter-prometheus",
@@ -3749,7 +3750,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-rest"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3778,7 +3779,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-router"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3815,7 +3816,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-router-messages"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3834,7 +3835,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-sync"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "indexmap 2.8.0",
@@ -3857,7 +3858,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-sync-communication-service"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "async-trait",
  "tokio",
@@ -3865,7 +3866,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-sync-locators"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "anyhow",
  "indexmap 2.8.0",
@@ -3876,7 +3877,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-tcp"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3892,8 +3893,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -3924,8 +3925,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-algorithms"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -3956,8 +3957,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-algorithms-cuda"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "blst",
  "cc",
@@ -3967,8 +3968,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -3981,8 +3982,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-account"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-network",
@@ -3992,8 +3993,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-algorithms"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-types",
  "snarkvm-console-algorithms",
@@ -4002,8 +4003,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-collections"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-types",
@@ -4012,8 +4013,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-environment"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "indexmap 2.8.0",
  "itertools 0.11.0",
@@ -4031,13 +4032,13 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-environment-witness"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 
 [[package]]
 name = "snarkvm-circuit-network"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-collections",
@@ -4047,8 +4048,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-program"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "paste",
  "snarkvm-circuit-account",
@@ -4062,8 +4063,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-address",
@@ -4077,8 +4078,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-address"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4090,8 +4091,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-boolean"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-console-types-boolean",
@@ -4099,8 +4100,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-field"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4109,8 +4110,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-group"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4121,8 +4122,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-integers"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4133,8 +4134,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-scalar"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4144,8 +4145,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-circuit-types-string"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4156,8 +4157,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-account",
  "snarkvm-console-algorithms",
@@ -4169,8 +4170,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-account"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "bs58",
  "snarkvm-console-network",
@@ -4180,8 +4181,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-algorithms"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "blake2s_simd",
  "smallvec",
@@ -4193,8 +4194,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-collections"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "rayon",
@@ -4204,8 +4205,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-network"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "anyhow",
  "indexmap 2.8.0",
@@ -4227,8 +4228,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-network-environment"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "anyhow",
  "bech32",
@@ -4245,8 +4246,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-program"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "enum-iterator",
  "enum_index",
@@ -4267,8 +4268,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-address",
@@ -4282,8 +4283,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types-address"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4293,16 +4294,16 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types-boolean"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
 ]
 
 [[package]]
 name = "snarkvm-console-types-field"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4311,8 +4312,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types-group"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4322,8 +4323,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types-integers"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4333,8 +4334,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types-scalar"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4344,8 +4345,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-console-types-string"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4355,8 +4356,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-curves"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "rand",
  "rayon",
@@ -4369,8 +4370,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-fields"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4386,8 +4387,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4413,8 +4414,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-authority"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "anyhow",
  "rand",
@@ -4425,8 +4426,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-block"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "indexmap 2.8.0",
  "rayon",
@@ -4445,8 +4446,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-committee"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "anyhow",
  "indexmap 2.8.0",
@@ -4464,8 +4465,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-ledger-narwhal-batch-certificate",
  "snarkvm-ledger-narwhal-batch-header",
@@ -4477,8 +4478,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-certificate"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "indexmap 2.8.0",
  "rayon",
@@ -4490,8 +4491,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-header"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "indexmap 2.8.0",
  "rayon",
@@ -4503,8 +4504,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal-data"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "bytes",
  "serde_json",
@@ -4514,8 +4515,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal-subdag"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "indexmap 2.8.0",
  "rayon",
@@ -4529,8 +4530,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "bytes",
  "serde_json",
@@ -4542,8 +4543,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission-id"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "snarkvm-console",
  "snarkvm-ledger-puzzle",
@@ -4551,8 +4552,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-puzzle"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4572,8 +4573,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-puzzle-epoch"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4594,8 +4595,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-query"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "async-trait",
  "reqwest 0.11.27",
@@ -4607,8 +4608,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-store"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std-storage",
  "anyhow",
@@ -4635,8 +4636,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-ledger-test-helpers"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "once_cell",
@@ -4651,8 +4652,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-metrics"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
@@ -4660,8 +4661,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-parameters"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4686,8 +4687,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-synthesizer"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4719,8 +4720,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-synthesizer-process"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "colored",
@@ -4744,8 +4745,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-synthesizer-program"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "indexmap 2.8.0",
  "paste",
@@ -4759,8 +4760,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-synthesizer-snark"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "bincode",
  "once_cell",
@@ -4772,8 +4773,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-utilities"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4793,8 +4794,8 @@ dependencies = [
 
 [[package]]
 name = "snarkvm-utilities-derives"
-version = "1.3.0"
-source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#a1a1c271f582a6925c88c4016d9f55324392629b"
+version = "1.4.0"
+source = "git+https://github.com/kaimast/snarkVM.git?branch=subdag-leaves#fc96a73fa336547d3c7349e2bd91678282d73fdc"
 dependencies = [
  "proc-macro2",
  "quote 1.0.40",
