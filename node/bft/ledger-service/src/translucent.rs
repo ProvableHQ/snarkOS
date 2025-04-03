@@ -129,7 +129,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         self.inner.get_batch_certificate(certificate_id)
     }
 
-    /// Returns the current committee.
+    /// Returns the latest committee,
+    /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
     fn current_committee(&self) -> Result<Committee<N>> {
         self.inner.current_committee()
     }

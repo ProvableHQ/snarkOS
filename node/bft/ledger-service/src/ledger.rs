@@ -161,7 +161,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         }
     }
 
-    /// Returns the current committee.
+    /// Returns the latest committee,
+    /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
     fn current_committee(&self) -> Result<Committee<N>> {
         self.ledger.latest_committee()
     }

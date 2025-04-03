@@ -74,7 +74,8 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// Returns the batch certificate for the given batch certificate ID.
     fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
 
-    /// Returns the current committee.
+    /// Returns the latest committee,
+    /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
     fn current_committee(&self) -> Result<Committee<N>>;
 
     /// Returns the committee for the given round.
