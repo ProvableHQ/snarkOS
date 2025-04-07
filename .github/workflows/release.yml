@@ -79,16 +79,16 @@ jobs:
           mkdir tempdir
           mv target/release/snarkos tempdir
           cd tempdir
-          zip -r aleo-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.zip snarkos
+          zip -r aleo-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.zip snarkos
           cd ..
-          mv tempdir/aleo-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.zip .
+          mv tempdir/aleo-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.zip .
 
       - name: Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            aleo-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.zip
+            aleo-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
