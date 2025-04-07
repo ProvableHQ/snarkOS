@@ -227,7 +227,7 @@ impl<N: Network> Gateway<N> {
 impl<N: Network> Gateway<N> {
     /// The current maximum committee size.
     fn max_committee_size(&self) -> usize {
-        self.ledger.current_committee().map_or_else(
+        self.ledger.latest_committee().map_or_else(
             |_e| Committee::<N>::max_committee_size().unwrap() as usize,
             |committee| committee.num_members(),
         )
@@ -382,7 +382,7 @@ impl<N: Network> Gateway<N> {
         }
 
         // Determine if the validator is in the latest committee on the ledger.
-        if self.ledger.current_committee().map_or(false, |committee| committee.is_committee_member(validator_address)) {
+        if self.ledger.latest_committee().map_or(false, |committee| committee.is_committee_member(validator_address)) {
             return true;
         }
 
@@ -951,7 +951,7 @@ impl<N: Network> Gateway<N> {
         // Log the connected validators.
         let connected_validators = self.connected_peers().read().clone();
         // Resolve the total number of connectable validators.
-        let validators_total = self.ledger.current_committee().map_or(0, |c| c.num_members().saturating_sub(1));
+        let validators_total = self.ledger.latest_committee().map_or(0, |c| c.num_members().saturating_sub(1));
         // Format the total validators message.
         let total_validators = format!("(of {validators_total} bonded validators)").dimmed();
         // Construct the connections message.
@@ -978,7 +978,7 @@ impl<N: Network> Gateway<N> {
             info!("Not connected to {num_not_connected} validators {total_validators}");
             // Collect the committee members.
             let committee_members: IndexSet<_> =
-                self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
+                self.ledger.latest_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
 
             // Log the validators that are not connected.
             for address in committee_members.difference(&connected_validator_addresses) {
@@ -990,9 +990,9 @@ impl<N: Network> Gateway<N> {
     // Logs the validator participation scores.
     #[cfg(feature = "telemetry")]
     fn log_participation_scores(&self) {
-        if let Ok(current_committee) = self.ledger.current_committee() {
+        if let Ok(latest_committee) = self.ledger.latest_committee() {
             // Retrieve the participation scores.
-            let participation_scores = self.validator_telemetry().get_participation_scores(&current_committee);
+            let participation_scores = self.validator_telemetry().get_participation_scores(&latest_committee);
             // Log the participation scores.
             debug!("Participation Scores (in the last {} rounds):", self.storage.max_gc_rounds());
             for (address, score) in participation_scores {

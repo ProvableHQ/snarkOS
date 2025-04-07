@@ -76,7 +76,7 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
 
     /// Returns the latest committee,
     /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
-    fn current_committee(&self) -> Result<Committee<N>>;
+    fn latest_committee(&self) -> Result<Committee<N>>;
 
     /// Returns the committee for the given round.
     fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>>;

@@ -606,7 +606,7 @@ mod tests {
             fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>>;
             fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>>;
             fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
-            fn current_committee(&self) -> Result<Committee<N>>;
+            fn latest_committee(&self) -> Result<Committee<N>>;
             fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>>;
             fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>>;
             fn contains_certificate(&self, certificate_id: &Field<N>) -> Result<bool>;
@@ -648,7 +648,7 @@ mod tests {
         let committee_clone = committee.clone();
         // Setup the mock ledger.
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_solution_basic().returning(|_, _| Ok(()));
@@ -667,7 +667,7 @@ mod tests {
         // Setup the mock gateway and ledger.
         let gateway = MockGateway::default();
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_solution_basic().returning(|_, _| Ok(()));
@@ -708,7 +708,7 @@ mod tests {
             Some(rx)
         });
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_ensure_transmission_is_well_formed().returning(|_, _| Ok(()));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
@@ -748,7 +748,7 @@ mod tests {
             Some(rx)
         });
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_solution_basic().returning(|_, _| Ok(()));
@@ -785,7 +785,7 @@ mod tests {
             Some(rx)
         });
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_solution_basic().returning(|_, _| Err(anyhow!("")));
@@ -822,7 +822,7 @@ mod tests {
             Some(rx)
         });
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_transaction_basic().returning(|_, _| Ok(()));
@@ -860,7 +860,7 @@ mod tests {
             Some(rx)
         });
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_transaction_basic().returning(|_, _| Err(anyhow!("")));
@@ -897,7 +897,7 @@ mod tests {
             Some(rx)
         });
         let mut mock_ledger = MockLedger::default();
-        mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+        mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
         mock_ledger.expect_get_committee_lookback_for_round().returning(move |_| Ok(committee_clone.clone()));
         mock_ledger.expect_contains_transmission().returning(|_| Ok(false));
         mock_ledger.expect_check_transaction_basic().returning(|_, _| Ok(()));
@@ -981,7 +981,7 @@ mod tests {
 
             // Setup the mock gateway and ledger.
             let mut mock_ledger = MockLedger::default();
-            mock_ledger.expect_current_committee().returning(move || Ok(committee.clone()));
+            mock_ledger.expect_latest_committee().returning(move || Ok(committee.clone()));
 
             let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
             // Initialize the storage.

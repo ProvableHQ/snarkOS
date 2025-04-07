@@ -106,7 +106,7 @@ impl<N: Network> Storage<N> {
         max_gc_rounds: u64,
     ) -> Self {
         // Retrieve the current committee.
-        let committee = ledger.current_committee().expect("Ledger is missing a committee.");
+        let committee = ledger.latest_committee().expect("Ledger is missing a committee.");
         // Retrieve the current round.
         let current_round = committee.starting_round().max(1);
         // Set the unprocessed certificates cache size.
@@ -177,9 +177,9 @@ impl<N: Network> Storage<N> {
         }
 
         // Retrieve the current committee.
-        let current_committee = self.ledger.current_committee()?;
+        let latest_committee = self.ledger.latest_committee()?;
         // Retrieve the current committee's starting round.
-        let starting_round = current_committee.starting_round();
+        let starting_round = latest_committee.starting_round();
         // If the primary is behind the current committee's starting round, sync with the latest block.
         if next_round < starting_round {
             // Retrieve the latest block round.

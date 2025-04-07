@@ -152,7 +152,7 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
 
     /// Returns the latest committee,
     /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
-    fn current_committee(&self) -> Result<Committee<N>> {
+    fn latest_committee(&self) -> Result<Committee<N>> {
         Ok(self.committee.clone())
     }
 

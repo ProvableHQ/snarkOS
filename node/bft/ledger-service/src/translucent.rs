@@ -131,8 +131,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
 
     /// Returns the latest committee,
     /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
-    fn current_committee(&self) -> Result<Committee<N>> {
-        self.inner.current_committee()
+    fn latest_committee(&self) -> Result<Committee<N>> {
+        self.inner.latest_committee()
     }
 
     /// Returns the committee for the given round.

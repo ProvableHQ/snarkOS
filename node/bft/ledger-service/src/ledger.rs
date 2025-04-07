@@ -67,7 +67,7 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
 impl<N: Network, C: ConsensusStorage<N>> fmt::Debug for CoreLedgerService<N, C> {
     /// Implements a custom `fmt::Debug` for `CoreLedgerService`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CoreLedgerService").field("current_committee", &self.current_committee()).finish()
+        f.debug_struct("CoreLedgerService").field("latest_committee", &self.latest_committee()).finish()
     }
 }
 
@@ -163,7 +163,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the latest committee,
     /// i.e. the committee resulting from all the bonding and unbonding transactions in the blockchain.
-    fn current_committee(&self) -> Result<Committee<N>> {
+    fn latest_committee(&self) -> Result<Committee<N>> {
         self.ledger.latest_committee()
     }
 

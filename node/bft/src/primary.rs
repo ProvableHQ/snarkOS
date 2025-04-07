@@ -2342,7 +2342,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             Default::default(),
             timestamp,
@@ -2378,7 +2378,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             Default::default(),
             timestamp,
@@ -2415,7 +2415,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             previous_certificates,
             timestamp,
@@ -2449,7 +2449,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             Default::default(),
             timestamp,
@@ -2494,7 +2494,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             previous_certificates,
             timestamp,
@@ -2539,7 +2539,7 @@ mod tests {
         let past_timestamp = now() - 100; // Use a timestamp that is in the past.
         let proposal = create_test_proposal(
             &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             previous_certificates,
             past_timestamp,
@@ -2664,7 +2664,7 @@ mod tests {
         let timestamp = now();
         let proposal = create_test_proposal(
             primary.gateway.account(),
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round + 1,
             previous_certificates,
             timestamp,
@@ -2692,7 +2692,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             Default::default(),
             timestamp,
@@ -2731,7 +2731,7 @@ mod tests {
         let timestamp = now();
         let proposal = create_test_proposal(
             primary.gateway.account(),
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             previous_certificates,
             timestamp,
@@ -2767,7 +2767,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             Default::default(),
             timestamp,
@@ -2805,7 +2805,7 @@ mod tests {
         let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
-            primary.ledger.current_committee().unwrap(),
+            primary.ledger.latest_committee().unwrap(),
             round,
             previous_certificates,
             timestamp,
