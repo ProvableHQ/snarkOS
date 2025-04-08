@@ -105,14 +105,15 @@ impl<N: Network> Storage<N> {
         transmissions: Arc<dyn StorageService<N>>,
         max_gc_rounds: u64,
     ) -> Self {
-        // Retrieve the current committee.
+        // Retrieve the latest committee bonded in the ledger
+        // (genesis committee if the ledger contains only the genesis block).
         let committee = ledger.latest_committee().expect("Ledger is missing a committee.");
-        // Retrieve the current round.
+        // Retrieve the round at which that committee was created, or 1 if it is the genesis committee.
         let current_round = committee.starting_round().max(1);
         // Set the unprocessed certificates cache size.
         let unprocessed_cache_size = NonZeroUsize::new((N::LATEST_MAX_CERTIFICATES().unwrap() * 2) as usize).unwrap();
 
-        // Return the storage.
+        // Create the storage.
         let storage = Self(Arc::new(StorageInner {
             ledger,
             current_height: Default::default(),
@@ -128,6 +129,7 @@ impl<N: Network> Storage<N> {
         // Update the storage to the current round.
         storage.update_current_round(current_round);
         // Perform GC on the current round.
+        // Since there are no certificates yet, this only sets `gc_round`.
         storage.garbage_collect_certificates(current_round);
         // Return the storage.
         storage

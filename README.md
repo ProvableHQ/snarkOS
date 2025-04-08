@@ -202,7 +202,7 @@ Enter the Aleo Prover account private key:
 APrivateKey1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 3.3.1 Enable CUDA Acceleration (Optional)
+### 3.3.1 Enable CUDA Acceleration (Optional) <a name="cuda"></a>
 
 If a supported Nvidia GPU is available, CUDA-based acceleration can be enabled using the following command:
 
@@ -434,6 +434,21 @@ To clean up the node storage, run:
 ```
 cargo run --release -- clean --dev <NODE_ID>
 ```
+
+## 6.4 Feature Flags
+
+By default, the metrics feature is turnned on for some internal crates.
+
+* **history** -
+  Enables a /history REST endpoint.
+* **telemetry** -
+  Allows the node to upload telemetry data.
+* **cuda** -
+  Allows some operations to run on the (NVidia) GPU, instead of on the CPU. See above under [Enable CUDA acceleration](#cuda)
+* **locktick** -
+  This feature turns on code for detecting deadlocks.
+* **test_targets** -
+  This feature allows the lowering of coinbase and proof targets for testing.
 
 ## 7. Contributors
 Thank you for helping make snarkOS better!  
