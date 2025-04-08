@@ -191,6 +191,22 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok(ErasedJson::pretty(rest.ledger.get_program(id)?))
     }
 
+    // GET /<network>/program/{programID}/latest_edition
+    pub(crate) async fn get_latest_program_edition(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_latest_edition_for_program(&id)?))
+    }
+
+    // GET /<network>/program/{programID}/{edition}
+    pub(crate) async fn get_program_for_edition(
+        State(rest): State<Self>,
+        Path((id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_program_for_edition(id, edition)?))
+    }
+
     // GET /<network>/program/{programID}/mappings
     pub(crate) async fn get_mapping_names(
         State(rest): State<Self>,
@@ -345,11 +361,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     // GET /<network>/find/transactionID/deployment/{programID}
-    pub(crate) async fn find_transaction_id_from_program_id(
+    pub(crate) async fn find_latest_transaction_id_from_program_id(
         State(rest): State<Self>,
         Path(program_id): Path<ProgramID<N>>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id(&program_id)?))
+        Ok(ErasedJson::pretty(rest.ledger.find_latest_transaction_id_from_program_id(&program_id)?))
+    }
+
+    // GET /<network>/find/transactionID/deployment/{programID}/{edition}
+    pub(crate) async fn find_transaction_id_from_program_id_and_edition(
+        State(rest): State<Self>,
+        Path((program_id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id_and_edition(&program_id, edition)?))
     }
 
     // GET /<network>/find/transactionID/{transitionID}

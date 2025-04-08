@@ -135,7 +135,7 @@ impl Deploy {
             let vm = VM::from(store)?;
 
             // Compute the minimum deployment cost.
-            let (minimum_deployment_cost, (_, _, _)) = deployment_cost(&deployment)?;
+            let (minimum_deployment_cost, (_, _, _, _)) = deployment_cost(&vm.process().read(), &deployment)?;
 
             // Prepare the fees.
             let fee = match &self.record {
