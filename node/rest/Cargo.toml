@@ -79,9 +79,11 @@ version = "=3.6.0"
 
 [dependencies.snarkvm-synthesizer]
 #path = "../../../snarkVM/synthesizer"
-git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "a87ceb9"
-version = "=1.6.0"
+#git = "https://github.com/ProvableHQ/snarkVM.git"
+#rev = "a87ceb9"
+#version = "=1.6.0"
+git = "https://github.com/kaimast/snarkVM.git"
+branch = "pending-blocks"
 default-features = false
 optional = true
 

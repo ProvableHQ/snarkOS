@@ -19,6 +19,7 @@ use indexmap::IndexMap;
 use snarkvm::{
     ledger::{
         Ledger,
+        PendingBlock,
         block::{Block, Transaction},
         committee::Committee,
         narwhal::{Data, Subdag, Transmission, TransmissionID},
@@ -180,6 +181,16 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     /// Always succeeds.
     fn check_next_block(&self, _block: &Block<N>) -> Result<()> {
         Ok(())
+    }
+
+    /// Checks the given block is valid next block.
+    fn check_block_subdag(&self, _block: Block<N>, _pending_blocks: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+        unimplemented!();
+    }
+
+    /// Checks the given block is valid next block.
+    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>> {
+        unimplemented!();
     }
 
     /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.

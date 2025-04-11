@@ -378,6 +378,20 @@ pub mod test_helpers {
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
+    /// Generates a sample hash for a block at the specified height.
+    ///
+    /// The hash is simply the height converted to a Field element.
+    pub fn sample_block_hash(height: u32) -> <CurrentNetwork as Network>::BlockHash {
+        Field::<CurrentNetwork>::from_u32(height).into()
+    }
+
+    /// Generates a sample hash for *forked* block at the specified height.
+    ///
+    /// The hash is the *negative height* (to differentiate it from a regular block) converted to a Field element.
+    pub fn sample_forked_block_hash(height: u32) -> <CurrentNetwork as Network>::BlockHash {
+        (-Field::<CurrentNetwork>::from_u32(height)).into()
+    }
+
     /// Simulates a block locator at the given height.
     ///
     /// The returned block locator is checked to be well-formed.
@@ -420,9 +434,9 @@ pub mod test_helpers {
         };
         for i in recents_range {
             if i >= fork_height {
-                recents.insert(i, (-Field::<CurrentNetwork>::from_u32(i)).into());
+                recents.insert(i, sample_forked_block_hash(i));
             } else {
-                recents.insert(i, (Field::<CurrentNetwork>::from_u32(i)).into());
+                recents.insert(i, sample_block_hash(i));
             }
         }
 

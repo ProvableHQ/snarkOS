@@ -15,6 +15,7 @@
 
 use snarkvm::{
     ledger::{
+        PendingBlock,
         block::{Block, Transaction},
         committee::Committee,
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
@@ -108,6 +109,12 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
 
     /// Checks the given block is valid next block.
     fn check_next_block(&self, block: &Block<N>) -> Result<()>;
+
+    /// Checks the given block is valid next block.
+    fn check_block_subdag(&self, block: Block<N>, pending_blocks: &[PendingBlock<N>]) -> Result<PendingBlock<N>>;
+
+    /// Checks the given block is valid next block.
+    fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>>;
 
     /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
     #[cfg(feature = "ledger-write")]

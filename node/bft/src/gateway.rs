@@ -508,6 +508,7 @@ impl<N: Network> Gateway<N> {
     /// Inserts the given peer into the connected peers.
     #[cfg(not(test))]
     fn insert_connected_peer(&self, peer_ip: SocketAddr, peer_addr: SocketAddr, address: Address<N>) {
+        trace!("Adding new connected validator {peer_ip}");
         // Adds a bidirectional map between the listener address and (ambiguous) peer address.
         self.resolver.insert_peer(peer_ip, peer_addr, address);
         // Add a transmission for this peer in the connected peers.
@@ -527,6 +528,8 @@ impl<N: Network> Gateway<N> {
 
     /// Removes the connected peer and adds them to the candidate peers.
     fn remove_connected_peer(&self, peer_ip: SocketAddr) {
+        trace!("Removing connected validator {peer_ip}");
+
         // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
         if let Some(sync_sender) = self.sync_sender.get() {
             let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();

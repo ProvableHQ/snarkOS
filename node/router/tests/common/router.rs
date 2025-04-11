@@ -45,6 +45,7 @@ use snarkvm::prelude::{
     puzzle::Solution,
 };
 
+use anyhow::Result;
 use async_trait::async_trait;
 use std::{io, net::SocketAddr, str::FromStr};
 use tracing::*;
@@ -181,13 +182,13 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        true
+    fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> Result<()> {
+        Ok(())
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, _peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
-        true
+    fn block_response(&self, _peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> Result<()> {
+        Ok(())
     }
 
     /// Handles an `Ping` message.

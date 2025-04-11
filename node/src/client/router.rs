@@ -36,6 +36,7 @@ use snarkvm::{
     prelude::{Network, block::Transaction},
 };
 
+use anyhow::bail;
 use std::{io, net::SocketAddr, time::Duration};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Client<N, C> {
@@ -212,34 +213,28 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
+    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> Result<()> {
         let BlockRequest { start_height, end_height } = &message;
 
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => Data::Object(DataBlocks(blocks)),
             Err(error) => {
-                error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
-                return false;
+                bail!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
             }
         };
         // Send the `BlockResponse` message to the peer.
         Outbound::send(self, peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
-        true
+        Ok(())
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
-        match self.sync.insert_block_responses(peer_ip, blocks) {
-            Ok(()) => {
-                self.sync.try_advancing_block_synchronization();
-                true
-            }
-            Err(error) => {
-                warn!("{error}");
-                false
-            }
+    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+        let result = self.sync.insert_block_responses(peer_ip, blocks);
+        if result.is_ok() {
+            self.sync.try_advancing_block_synchronization();
         }
+        result
     }
 
     /// Processes the block locators and sends back a `Pong` message.

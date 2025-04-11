@@ -28,6 +28,7 @@ use snarkos_node_router::messages::{
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::prelude::{Field, Network, Zero, block::Transaction};
 
+use anyhow::bail;
 use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Prover<N, C> {
@@ -124,12 +125,11 @@ impl<N: Network, C: ConsensusStorage<N>> Heartbeat<N> for Prover<N, C> {
     /// This function updates the puzzle if network has updated.
     fn handle_puzzle_request(&self) {
         // Find the sync peers.
-        if let Some((sync_peers, _)) = self.sync.find_sync_peers() {
-            // Choose the peer with the highest block height.
-            if let Some((peer_ip, _)) = sync_peers.into_iter().max_by_key(|(_, height)| *height) {
-                // Request the puzzle from the peer.
-                Outbound::send(self, peer_ip, Message::PuzzleRequest(PuzzleRequest));
-            }
+        let sync_peers = self.sync.find_sync_peers();
+        // Choose the peer with the highest block height.
+        if let Some((peer_ip, _)) = sync_peers.into_iter().max_by_key(|(_, height)| *height) {
+            // Request the puzzle from the peer.
+            Outbound::send(self, peer_ip, Message::PuzzleRequest(PuzzleRequest));
         }
     }
 }
@@ -159,15 +159,13 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
-        false
+    fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> Result<()> {
+        bail!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
-        false
+    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> Result<()> {
+        bail!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
     }
 
     /// Processes the block locators and sends back a `Pong` message.

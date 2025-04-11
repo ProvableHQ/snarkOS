@@ -46,6 +46,10 @@ version = "1"
 path = "../../sync/locators"
 version = "=3.6.0"
 
+[dependencies.snarkos-node-sync-communication-service]
+path = "../../sync/communication-service"
+version = "=3.6.0"
+
 [dependencies.snarkvm]
 workspace = true
 

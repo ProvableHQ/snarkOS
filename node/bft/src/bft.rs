@@ -255,7 +255,8 @@ impl<N: Network> BFT<N> {
             } else {
                 match is_ready {
                     true => info!("\n\nRound {current_round} reached quorum without a leader\n"),
-                    false => info!("{}", format!("\n\nRound {current_round} did not elect a leader (yet)\n").dimmed()),
+                    // Will be re-checked for the same round, so print less prominently.
+                    false => info!("Round {current_round} did not elect a leader (yet)"),
                 }
             }
         }

@@ -135,6 +135,7 @@ impl<N: Network> DAG<N> {
 
         // Update the last committed round.
         if self.last_committed_round < certificate_round {
+            trace!("Moving last commmitted certificate round to {certificate_round}");
             self.last_committed_round = certificate_round;
         } else {
             // TODO(kaimast); only remove old certificates for specific author here?

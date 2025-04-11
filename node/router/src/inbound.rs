@@ -104,17 +104,17 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
 
                 let node = self.clone();
-                match spawn_blocking(move || node.block_request(peer_ip, message)).await? {
-                    true => Ok(()),
-                    false => bail!("Peer '{peer_ip}' sent an invalid block request"),
+                if let Err(err) = spawn_blocking(move || node.block_request(peer_ip, message)).await? {
+                    bail!("Invalid block request - {err}");
                 }
+                Ok(())
             }
             Message::BlockResponse(message) => {
                 let BlockResponse { request, blocks } = message;
 
                 // Remove the block request, checking if this node previously sent a block request to this peer.
                 if !self.router().cache.remove_outbound_block_request(peer_ip, &request) {
-                    bail!("Peer '{peer_ip}' is not following the protocol (unexpected block response)")
+                    bail!("Peer is not following the protocol (unexpected block response)")
                 }
                 // Perform the deferred non-blocking deserialization of the blocks.
                 // The deserialization can take a long time (minutes). We should not be running
@@ -126,8 +126,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 });
                 let blocks = match recv.await {
                     Ok(Ok(blocks)) => blocks,
-                    Ok(Err(error)) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
-                    Err(error) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
+                    Ok(Err(error)) => bail!("Invalid block response - {error}"),
+                    Err(error) => bail!("Invalid block response - {error}"),
                 };
 
                 // Ensure the block response is well-formed.
@@ -135,10 +135,10 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
                 // Process the block response.
                 let node = self.clone();
-                match spawn_blocking(move || node.block_response(peer_ip, blocks.0)).await? {
-                    true => Ok(()),
-                    false => bail!("Peer '{peer_ip}' sent an invalid block response"),
+                if let Err(err) = spawn_blocking(move || node.block_response(peer_ip, blocks.0)).await? {
+                    bail!("Invalid block response - {err}");
                 }
+                Ok(())
             }
             Message::ChallengeRequest(..) | Message::ChallengeResponse(..) => {
                 // Disconnect as the peer is not following the protocol.
@@ -300,10 +300,10 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> bool;
+    fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> Result<()>;
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool;
+    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> Result<()>;
 
     /// Handles a `PeerRequest` message.
     fn peer_request(&self, peer_ip: SocketAddr) -> bool {

@@ -18,7 +18,6 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
     Transport,
-    events::DataBlocks,
     helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
     spawn_blocking,
 };
@@ -32,19 +31,13 @@ use snarkvm::{
     prelude::{cfg_into_iter, cfg_iter},
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use rayon::prelude::*;
-use std::{
-    collections::{BTreeMap, HashMap},
-    future::Future,
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time::Duration};
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
@@ -84,12 +77,6 @@ pub struct Sync<N: Network> {
     response_lock: Arc<TMutex<()>>,
     /// The sync lock. Ensures that only one task syncs the ledger at a time.
     sync_lock: Arc<TMutex<()>>,
-    /// The latest block responses.
-    ///
-    /// This is used in [`Sync::sync_storage_with_block()`] to accumulate blocks
-    /// whose addition to the ledger is deferred until certain checks pass.
-    /// Blocks need to be processed in order, hence a BTree map.
-    latest_block_responses: Arc<TMutex<BTreeMap<u32, Block<N>>>>,
 }
 
 impl<N: Network> Sync<N> {
@@ -111,7 +98,6 @@ impl<N: Network> Sync<N> {
             handles: Default::default(),
             response_lock: Default::default(),
             sync_lock: Default::default(),
-            latest_block_responses: Default::default(),
         }
     }
 
@@ -138,7 +124,7 @@ impl<N: Network> Sync<N> {
     ///
     /// Responses to block requests will eventually be processed by `Self::try_advancing_block_synchronization`.
     #[inline]
-    pub async fn issue_block_requests(&self) {
+    pub async fn issue_block_requests(&self) -> Result<()> {
         // First see if any peers need removal
         let peers_to_ban = self.block_sync.remove_timed_out_block_requests();
         for peer_ip in peers_to_ban {
@@ -152,28 +138,23 @@ impl<N: Network> Sync<N> {
             });
         }
 
-        // We might be further ahead than the ledger, if there are queued
-        // responses.
-        let current_height = {
-            let responses = self.latest_block_responses.lock().await;
-            if let Some((height, _)) = responses.last_key_value() { *height } else { self.ledger.latest_block_height() }
-        };
-
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.block_sync.prepare_block_requests_at_height(current_height);
+        let block_requests = self.block_sync.prepare_block_requests()?;
         trace!("Prepared {} block requests", block_requests.len());
 
         // Sends the block requests to the sync peers.
-        for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.block_sync.send_block_requests(&self.gateway, &sync_peers, requests).await {
-                // Stop if we fail to process a batch of requests.
+        for request in block_requests {
+            if !self.block_sync.send_block_request(&self.gateway, request).await {
+                // Stop if we fail to process a request.
                 break;
             }
 
             // Sleep to avoid triggering spam detection.
             tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
         }
+
+        Ok(())
     }
 
     /// Starts the sync module.
@@ -195,7 +176,10 @@ impl<N: Network> Sync<N> {
                 // Sleep briefly to avoid triggering spam detection.
                 tokio::time::sleep(Duration::from_millis(PRIMARY_PING_IN_MS)).await;
 
-                self_.try_block_sync().await;
+                if let Err(err) = self_.try_block_sync().await {
+                    error!("Unable to perform block sync - {err}");
+                    continue;
+                }
             }
         });
 
@@ -294,18 +278,21 @@ impl<N: Network> Sync<N> {
     ///
     /// This is called periodically by a tokio background task spawned in `Self::run`.
     /// Some unit tests also call this function directly to manually trigger block synchronization.
-    pub(crate) async fn try_block_sync(&self) {
-        self.issue_block_requests().await;
+    pub(crate) async fn try_block_sync(&self) -> Result<()> {
+        self.issue_block_requests().await?;
 
         // Sync the storage with the blocks.
         if let Err(err) = self.try_advancing_block_synchronization().await {
-            error!("Block synchronization failed - {err}");
+            bail!("Block synchronization failed - {err}");
         }
 
+        /*
         // If the node is synced, clear the `latest_block_responses`.
         if self.is_synced() {
             self.latest_block_responses.lock().await.clear();
-        }
+        }*/
+
+        Ok(())
     }
 }
 
@@ -442,27 +429,15 @@ impl<N: Network> Sync<N> {
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
 
-        // Figure out which height we are synchronized to.
-        // If there are queued block responses, this might be higher than the latest block in the ledger.
-        let sync_height = {
-            let responses = self.latest_block_responses.lock().await;
-            if let Some((height, _)) = responses.last_key_value() { *height } else { self.ledger.latest_block_height() }
-        };
-
         // Retrieve the next block height.
         // This variable is used to index blocks that are added to the ledger;
         // it is incremented as blocks as added.
         // So 'current' means 'currently being added'.
-        let mut current_height = sync_height + 1;
+        let mut current_height = self.ledger.latest_block_height() + 1;
         trace!("Try advancing with block responses (at block {current_height})");
 
         // Retrieve the maximum block height of the peers.
-        let tip = self
-            .block_sync
-            .find_sync_peers_at_height(sync_height)
-            .map(|(x, _)| x.into_values().max().unwrap_or(0))
-            .unwrap_or(0);
-
+        let tip = self.block_sync.find_sync_peers().into_iter().map(|(_, l)| l).max().unwrap_or(0);
         // Determine the maximum number of blocks corresponding to rounds
         // that would not have been garbage collected, i.e. that would be kept in storage.
         // Since at most one block is created every two rounds,
@@ -474,108 +449,43 @@ impl<N: Network> Sync<N> {
         // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
         let max_gc_height = tip.saturating_sub(max_gc_blocks);
 
-        // Determine if we can sync the ledger without updating the BFT first.
-        if current_height <= max_gc_height {
-            info!("Block sync is too far behind other validators. Syncing without BFT.");
+        let self_ = self.clone();
+        let new_blocks =
+            tokio::task::spawn_blocking(move || self_.block_sync.try_advancing_block_synchronization()).await?;
 
-            // Try to advance the ledger *to tip* without updating the BFT.
-            while let Some(block) = self.block_sync.peek_next_block(current_height) {
-                info!("Syncing the ledger to block {}...", block.height());
-                // Sync the ledger with the block without BFT.
-                match self.sync_ledger_with_block_without_bft(block).await {
-                    Ok(_) => {
-                        // Update the current height if sync succeeds.
-                        current_height += 1;
-                    }
-                    Err(e) => {
-                        // Mark the current height as processed in block_sync.
-                        self.block_sync.remove_block_response(current_height);
-                        return Err(e);
-                    }
-                }
-            }
-            // Sync the storage with the ledger if we should transition to the BFT sync.
-            if current_height > max_gc_height {
-                info!("Finished catching up with the network. Switching back to BFT sync.");
-                if let Err(e) = self.sync_storage_with_ledger_at_bootup().await {
-                    //TODO (kaimast): bail! here?
-                    error!("BFT sync (with bootup routine) failed - {e}");
-                }
-            }
-        }
+        for block in new_blocks.into_iter() {
+            // Determine if we can sync the ledger without updating the BFT first.
+            if current_height <= max_gc_height {
+                // Try to advance the ledger *to tip* without updating the BFT.
+                // Sync the height with the block.
+                self_.storage.sync_height_with_block(block.height());
+                // Sync the round with the block.
+                self_.storage.sync_round_with_block(block.round());
 
-        // Try to advance the ledger with sync blocks.
-        while let Some(block) = self.block_sync.peek_next_block(current_height) {
-            info!("Syncing the BFT to block {}...", block.height());
-            // Sync the storage with the block.
-            match self.sync_storage_with_block(block).await {
-                Ok(_) => {
-                    // Update the current height if sync succeeds.
-                    current_height += 1;
+                current_height += 1;
+
+                // Sync the storage with the ledger if we should transition to the BFT sync.
+                if current_height > max_gc_height {
+                    if let Err(e) = self.sync_storage_with_ledger_at_bootup().await {
+                        error!("BFT sync (with bootup routine) failed - {e}");
+                    }
                 }
-                Err(e) => {
-                    // Mark the current height as processed in block_sync.
-                    self.block_sync.remove_block_response(current_height);
-                    return Err(e);
-                }
+            } else {
+                info!("Syncing the BFT to block {}...", block.height());
+                self.sync_storage_with_block(&block).await?;
+                current_height += 1;
             }
         }
         Ok(())
     }
 
-    /// Syncs the ledger with the given block without updating the BFT.
-    ///
-    /// This is only used at startup when fetching blocks from storage.
-    async fn sync_ledger_with_block_without_bft(&self, block: Block<N>) -> Result<()> {
+    /// Syncs the storage with the given block.
+    //
+    /// This must be called *after* the block was added to the ledger.
+    /// It also updates the DAG because the synced block might be within GC.
+    async fn sync_storage_with_block(&self, block: &Block<N>) -> Result<()> {
         // Acquire the sync lock.
         let _lock = self.sync_lock.lock().await;
-
-        let self_ = self.clone();
-        tokio::task::spawn_blocking(move || {
-            // Check the next block.
-            self_.ledger.check_next_block(&block)?;
-            // Attempt to advance to the next block.
-            self_.ledger.advance_to_next_block(&block)?;
-
-            // Sync the height with the block.
-            self_.storage.sync_height_with_block(block.height());
-            // Sync the round with the block.
-            self_.storage.sync_round_with_block(block.round());
-            // Mark the block height as processed in block_sync.
-            self_.block_sync.remove_block_response(block.height());
-
-            Ok(())
-        })
-        .await?
-    }
-
-    /// Advances the ledger by the given block and updates the storage accordingly.
-    ///
-    /// This also updates the DAG, and uses the DAG to ensure that the block's leader certificate
-    /// meets the voter availability threshold (i.e. > f voting stake)
-    /// or is reachable via a DAG path from a later leader certificate that does.
-    /// Since performing this check requires DAG certificates from later blocks,
-    /// the block is stored in `Sync::latest_block_responses`,
-    /// and its addition to the ledger is deferred until the check passes.
-    /// Several blocks may be stored in `Sync::latest_block_responses`
-    /// before they can be all checked and added to the ledger.
-    async fn sync_storage_with_block(&self, block: Block<N>) -> Result<()> {
-        // Acquire the sync lock.
-        let _lock = self.sync_lock.lock().await;
-        // Acquire the latest block responses lock.
-        let mut latest_block_responses = self.latest_block_responses.lock().await;
-
-        // If this block has already been processed, return early.
-        // TODO(kaimast): Should we remove the response here?
-        if self.ledger.contains_block_height(block.height()) {
-            debug!("Ledger is already synced with block at height {}. Will not sync.", block.height());
-            return Ok(());
-        }
-
-        if latest_block_responses.contains_key(&block.height()) {
-            debug!("An unconfirmed block is queued already for height {}. Will not sync.", block.height());
-            return Ok(());
-        }
 
         // If the block authority is a sub-DAG, then sync the batch certificates with the block.
         // Note that the block authority is always a sub-DAG in production;
@@ -593,7 +503,7 @@ impl<N: Network> Sync<N> {
             for certificates in subdag.values().cloned() {
                 cfg_into_iter!(certificates.clone()).for_each(|certificate| {
                     // Sync the batch certificate with the block.
-                    self.storage.sync_certificate_with_block(&block, certificate.clone(), &unconfirmed_transactions);
+                    self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions);
                 });
 
                 // Sync the BFT DAG with the certificates.
@@ -610,156 +520,7 @@ impl<N: Network> Sync<N> {
             }
         }
 
-        // Fetch the latest block height.
-        let latest_block_height = self.ledger.latest_block_height();
-
-        // Insert the latest block response.
-        latest_block_responses.insert(block.height(), block);
-        // Clear the latest block responses of older blocks.
-        latest_block_responses.retain(|height, _| *height > latest_block_height);
-
-        // Get a list of contiguous blocks from the latest block responses.
-        let contiguous_blocks: Vec<Block<N>> = (latest_block_height.saturating_add(1)..)
-            .take_while(|&k| latest_block_responses.contains_key(&k))
-            .filter_map(|k| latest_block_responses.get(&k).cloned())
-            .collect();
-
-        // Check if each block response, from the contiguous sequence just constructed,
-        // is ready to be added to the ledger.
-        // Ensure that the block's leader certificate meets the availability threshold
-        // based on the certificates in the DAG just after the block's round.
-        // If the availability threshold is not met,
-        // process the next block and check if it is linked to the current block,
-        // in the sense that there is a path in the DAG
-        // from the next block's leader certificate
-        // to the current block's leader certificate.
-        // Note: We do not advance to the most recent block response because we would be unable to
-        // validate if the leader certificate in the block has been certified properly.
-        for next_block in contiguous_blocks.into_iter() {
-            // Retrieve the height of the next block.
-            let next_block_height = next_block.height();
-
-            // Fetch the leader certificate and the relevant rounds.
-            let leader_certificate = match next_block.authority() {
-                Authority::Quorum(subdag) => subdag.leader_certificate().clone(),
-                _ => bail!("Received a block with an unexpected authority type."),
-            };
-            let commit_round = leader_certificate.round();
-            let certificate_round =
-                commit_round.checked_add(1).ok_or_else(|| anyhow!("Integer overflow on round number"))?;
-
-            // Get the committee lookback for the round just after the leader.
-            let certificate_committee_lookback = self.ledger.get_committee_lookback_for_round(certificate_round)?;
-            // Retrieve all of the certificates for the round just after the leader.
-            let certificates = self.storage.get_certificates_for_round(certificate_round);
-            // Construct a set over the authors, at the round just after the leader,
-            // who included the leader's certificate in their previous certificate IDs.
-            let authors = certificates
-                .iter()
-                .filter_map(|c| match c.previous_certificate_ids().contains(&leader_certificate.id()) {
-                    true => Some(c.author()),
-                    false => None,
-                })
-                .collect();
-
-            debug!("Validating sync block {next_block_height} at round {commit_round}...");
-            // Check if the leader is ready to be committed.
-            if certificate_committee_lookback.is_availability_threshold_reached(&authors) {
-                // Initialize the current certificate.
-                let mut current_certificate = leader_certificate;
-                // Check if there are any linked blocks that need to be added.
-                let mut blocks_to_add = vec![next_block];
-
-                // Check if there are other blocks to process based on `is_linked`.
-                for height in (self.ledger.latest_block_height().saturating_add(1)..next_block_height).rev() {
-                    // Retrieve the previous block.
-                    let Some(previous_block) = latest_block_responses.get(&height) else {
-                        bail!("Block {height} is missing from the latest block responses.");
-                    };
-                    // Retrieve the previous block's leader certificate.
-                    let previous_certificate = match previous_block.authority() {
-                        Authority::Quorum(subdag) => subdag.leader_certificate().clone(),
-                        _ => bail!("Received a block with an unexpected authority type."),
-                    };
-                    // Determine if there is a path between the previous certificate and the current certificate.
-                    if self.is_linked(previous_certificate.clone(), current_certificate.clone())? {
-                        debug!("Previous sync block {height} is linked to the current block {next_block_height}");
-                        // Add the previous leader certificate to the list of certificates to commit.
-                        blocks_to_add.insert(0, previous_block.clone());
-                        // Update the current certificate to the previous leader certificate.
-                        current_certificate = previous_certificate;
-                    }
-                }
-
-                // Add the blocks to the ledger.
-                for block in blocks_to_add {
-                    // Check that the blocks are sequential and can be added to the ledger.
-                    let block_height = block.height();
-                    if block_height != self.ledger.latest_block_height().saturating_add(1) {
-                        warn!("Skipping block {block_height} from the latest block responses - not sequential.");
-                        continue;
-                    }
-                    #[cfg(feature = "telemetry")]
-                    let block_authority = block.authority().clone();
-
-                    let self_ = self.clone();
-                    tokio::task::spawn_blocking(move || {
-                        // Check the next block.
-                        self_.ledger.check_next_block(&block)?;
-                        // Attempt to advance to the next block.
-                        self_.ledger.advance_to_next_block(&block)?;
-
-                        // Sync the height with the block.
-                        self_.storage.sync_height_with_block(block.height());
-                        // Sync the round with the block.
-                        self_.storage.sync_round_with_block(block.round());
-
-                        Ok::<(), anyhow::Error>(())
-                    })
-                    .await??;
-                    // Remove the block height from the latest block responses.
-                    latest_block_responses.remove(&block_height);
-
-                    // Update the validator telemetry.
-                    #[cfg(feature = "telemetry")]
-                    if let Authority::Quorum(subdag) = block_authority {
-                        self_.gateway.validator_telemetry().insert_subdag(&subdag);
-                    }
-                }
-            } else {
-                debug!(
-                    "Availability threshold was not reached for block {next_block_height} at round {commit_round}. Checking next block..."
-                );
-            }
-
-            // Mark the block height as processed in block_sync.
-            // Even if we did not add the block to the ledger yet, the associated request can safely
-            // be removed as the block is now stored in `latest_block_responses`.
-            self.block_sync.remove_block_response(next_block_height);
-        }
-
         Ok(())
-    }
-
-    /// Returns `true` if there is a path from the previous certificate to the current certificate.
-    fn is_linked(
-        &self,
-        previous_certificate: BatchCertificate<N>,
-        current_certificate: BatchCertificate<N>,
-    ) -> Result<bool> {
-        // Initialize the list containing the traversal.
-        let mut traversal = vec![current_certificate.clone()];
-        // Iterate over the rounds from the current certificate to the previous certificate.
-        for round in (previous_certificate.round()..current_certificate.round()).rev() {
-            // Retrieve all of the certificates for this past round.
-            let certificates = self.storage.get_certificates_for_round(round);
-            // Filter the certificates to only include those that are in the traversal.
-            traversal = certificates
-                .into_iter()
-                .filter(|p| traversal.iter().any(|c| c.previous_certificate_ids().contains(&p.id())))
-                .collect();
-        }
-        Ok(traversal.contains(&previous_certificate))
     }
 }
 
@@ -771,6 +532,19 @@ impl<N: Network> Sync<N> {
             return false;
         }
         self.block_sync.is_block_synced()
+    }
+
+    /// Like `is_synced` but returns more information.
+    pub fn check_synced(&self) -> Result<()> {
+        if self.gateway.number_of_connected_peers() == 0 {
+            bail!("Not connected to any other validators yet");
+        }
+
+        if !self.block_sync.is_block_synced() {
+            bail!("Validator is still syncing");
+        }
+
+        Ok(())
     }
 
     /// Returns the number of blocks the node is behind the greatest peer height.
@@ -1115,13 +889,16 @@ mod tests {
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), syncing_ledger.clone(), block_sync);
         // Try to sync block 1.
-        sync.sync_storage_with_block(block_1).await?;
+        syncing_ledger.advance_to_next_block(&block_1).unwrap();
+        assert!(sync.sync_storage_with_block(&block_1).await.is_ok());
         assert_eq!(syncing_ledger.latest_block_height(), 1);
         // Try to sync block 2.
-        sync.sync_storage_with_block(block_2).await?;
+        syncing_ledger.advance_to_next_block(&block_2).unwrap();
+        assert!(sync.sync_storage_with_block(&block_2).await.is_ok());
         assert_eq!(syncing_ledger.latest_block_height(), 2);
         // Try to sync block 3.
-        sync.sync_storage_with_block(block_3).await?;
+        syncing_ledger.advance_to_next_block(&block_3).unwrap();
+        assert!(sync.sync_storage_with_block(&block_3).await.is_ok());
         assert_eq!(syncing_ledger.latest_block_height(), 3);
         // Ensure blocks 1 and 2 were added to the ledger.
         assert!(syncing_ledger.contains_block_height(1));

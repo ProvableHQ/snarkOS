@@ -560,6 +560,7 @@ mod tests {
     use snarkvm::{
         console::{network::Network, types::Field},
         ledger::{
+            PendingBlock,
             block::Block,
             committee::Committee,
             ledger_test_helpers::sample_execution_transaction_with_fee,
@@ -627,6 +628,8 @@ mod tests {
                 transaction: Transaction<N>,
             ) -> Result<()>;
             fn check_next_block(&self, block: &Block<N>) -> Result<()>;
+            fn check_block_subdag(&self, _block: Block<N>, _pending_blocks: &[PendingBlock<N>]) -> Result<PendingBlock<N>>;
+            fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>>;
             fn prepare_advance_to_next_quorum_block(
                 &self,
                 subdag: Subdag<N>,

@@ -17,6 +17,7 @@ use crate::{LedgerService, fmt_id, spawn_blocking};
 use snarkvm::{
     ledger::{
         Ledger,
+        PendingBlock,
         block::{Block, Transaction},
         committee::Committee,
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
@@ -332,6 +333,16 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     /// Checks the given block is valid next block.
     fn check_next_block(&self, block: &Block<N>) -> Result<()> {
         self.ledger.check_next_block(block, &mut rand::thread_rng())
+    }
+
+    /// Checks the given block is valid next block.
+    fn check_block_subdag(&self, block: Block<N>, pending_blocks: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+        self.ledger.check_block_subdag(block, pending_blocks)
+    }
+
+    /// Checks the given block is valid next block.
+    fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>> {
+        self.ledger.check_block_content(block, &mut rand::thread_rng())
     }
 
     /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
