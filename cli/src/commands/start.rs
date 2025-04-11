@@ -34,6 +34,7 @@ use snarkvm::{
 
 use aleo_std::StorageMode;
 use anyhow::{Result, bail, ensure};
+use base64::prelude::*;
 use clap::Parser;
 use colored::Colorize;
 use core::str::FromStr;
@@ -169,6 +170,14 @@ pub struct Start {
     /// If development mode is enabled, specify the custom bonded balances as a JSON object (default: None)
     #[clap(long)]
     pub dev_bonded_balances: Option<BondedBalances>,
+    /// Pass in an optional jwt secret for the node instance (16 bytes, base64 encoded) for keeping
+    /// the JWT constant
+    #[clap(long)]
+    pub jwt_secret: Option<String>,
+    /// Pass in an optional jwt creation timestamp for keeping the JWT constant. Can be any time in
+    /// the last 10 years
+    #[clap(long)]
+    pub jwt_timestamp: Option<i64>,
 }
 
 impl Start {
@@ -569,11 +578,24 @@ impl Start {
             );
 
             // If the node is running a REST server, print the REST IP and JWT.
-            if node_type.is_validator() {
+            if node_type.is_validator() || node_type.is_client() {
                 if let Some(rest_ip) = rest_ip {
                     println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
 
-                    if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address()).to_jwt_string() {
+                    let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
+                        if self.jwt_timestamp.is_none() {
+                            bail!("The '--jwt-timestamp' flag must be set if the '--jwt-secret' flag is set");
+                        }
+                        let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
+                        if jwt_bytes.len() != 16 {
+                            bail!("The JWT secret must be 16 bytes long");
+                        }
+                        Some(jwt_bytes)
+                    } else {
+                        None
+                    };
+
+                    if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
                         println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
                     }
                 }

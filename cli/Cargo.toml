@@ -40,6 +40,9 @@ workspace = true
 [dependencies.anstyle]
 version = "1"
 
+[dependencies.base64]
+version = "0.22"
+
 [dependencies.anyhow]
 version = "1.0.79"
 

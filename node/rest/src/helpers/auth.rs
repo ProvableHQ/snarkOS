@@ -32,12 +32,13 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 
+/// The JWT secret.
+static SECRET: OnceCell<Vec<u8>> = OnceCell::new();
 /// The time a jwt token is valid for.
 pub const EXPIRATION: i64 = 10 * 365 * 24 * 60 * 60; // 10 years.
 
 /// Returns the JWT secret for the node instance.
 fn jwt_secret() -> &'static Vec<u8> {
-    static SECRET: OnceCell<Vec<u8>> = OnceCell::new();
     SECRET.get_or_init(|| {
         let seed: [u8; 16] = ::rand::thread_rng().gen();
         seed.to_vec()
@@ -56,8 +57,11 @@ pub struct Claims {
 }
 
 impl Claims {
-    pub fn new<N: Network>(address: Address<N>) -> Self {
-        let issued_at = OffsetDateTime::now_utc().unix_timestamp();
+    pub fn new<N: Network>(address: Address<N>, jwt_secret: Option<Vec<u8>>, jwt_timestamp: Option<i64>) -> Self {
+        if let Some(secret) = jwt_secret {
+            SECRET.set(secret).expect("Failed to set JWT secret: already initialized");
+        }
+        let issued_at = jwt_timestamp.unwrap_or(OffsetDateTime::now_utc().unix_timestamp());
         let expiration = issued_at.saturating_add(EXPIRATION);
 
         Self { sub: address.to_string(), iat: issued_at, exp: expiration }
