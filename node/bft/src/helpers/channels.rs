@@ -60,6 +60,7 @@ pub fn init_consensus_channels<N: Network>() -> (ConsensusSender<N>, ConsensusRe
     (sender, receiver)
 }
 
+/// "Interface" that enables, for example, sending data from storage to the the BFT logic.
 #[derive(Clone, Debug)]
 pub struct BFTSender<N: Network> {
     pub tx_primary_round: mpsc::Sender<(u64, oneshot::Sender<bool>)>,
@@ -100,6 +101,7 @@ impl<N: Network> BFTSender<N> {
     }
 }
 
+/// Receiving counterpart to `BFTSender`
 #[derive(Debug)]
 pub struct BFTReceiver<N: Network> {
     pub rx_primary_round: mpsc::Receiver<(u64, oneshot::Sender<bool>)>,
@@ -108,7 +110,7 @@ pub struct BFTReceiver<N: Network> {
     pub rx_sync_bft: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
 }
 
-/// Initializes the BFT channels.
+/// Initializes the BFT channels, and returns the sending and receiving ends.
 pub fn init_bft_channels<N: Network>() -> (BFTSender<N>, BFTReceiver<N>) {
     let (tx_primary_round, rx_primary_round) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_primary_certificate, rx_primary_certificate) = mpsc::channel(MAX_CHANNEL_SIZE);

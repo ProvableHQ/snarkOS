@@ -21,12 +21,15 @@ extern crate async_trait;
 use std::{io, net::SocketAddr};
 use tokio::sync::oneshot;
 
+/// Abstract communcation service.
+///
+/// Implemented by `Gateway` and `Client`.
 #[async_trait]
 pub trait CommunicationService: Send + Sync {
-    /// The message type.
+    /// The message type used by this communication service.
     type Message: Clone;
 
-    /// Prepares a block request to be sent.
+    /// Generates the service-specific message for a block request.
     fn prepare_block_request(start: u32, end: u32) -> Self::Message;
 
     /// Sends the given message to specified peer.
@@ -34,5 +37,6 @@ pub trait CommunicationService: Send + Sync {
     /// This function returns as soon as the message is queued to be sent,
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the message has been delivered.
+    /// If no peer with the given IP exists, this function returns None.
     async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>>;
 }

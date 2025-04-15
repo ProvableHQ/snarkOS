@@ -194,9 +194,11 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
 
     /// Handles a `BlockResponse` message.
     fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
-        // Tries to advance with blocks from the sync module.
-        match self.sync.advance_with_sync_blocks(peer_ip, blocks) {
-            Ok(()) => true,
+        match self.sync.insert_block_responses(peer_ip, blocks) {
+            Ok(()) => {
+                self.sync.try_advancing_block_synchronization();
+                true
+            }
             Err(error) => {
                 warn!("{error}");
                 false
@@ -204,19 +206,10 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         }
     }
 
-    /// Processes the block locators and sends back a `Pong` message.
-    fn ping(&self, peer_ip: SocketAddr, message: Ping<N>) -> bool {
-        // Check if the sync module is in router mode.
-        if self.sync.mode().is_router() {
-            // If block locators were provided, then update the peer in the sync pool.
-            if let Some(block_locators) = message.block_locators {
-                // Check the block locators are valid, and update the peer in the sync pool.
-                if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
-                    warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
-                    return false;
-                }
-            }
-        }
+    /// Processes a ping message from a client (or prover) and sends back a `Pong` message.
+    fn ping(&self, peer_ip: SocketAddr, _message: Ping<N>) -> bool {
+        // In gateway/validator mode, we do not need to process client block locators.
+        // Instead, locators are fetched from other validators in `Gateway` using `PrimaryPing` messages.
 
         // Send a `Pong` message to the peer.
         Outbound::send(self, peer_ip, Message::Pong(Pong { is_fork: Some(false) }));

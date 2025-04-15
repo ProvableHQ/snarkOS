@@ -21,8 +21,21 @@ read -p "Do you want to clear the existing ledger history? (y/n, default: n): " 
 clear_ledger=${clear_ledger:-n}
 
 if [[ $build_binary == "y" ]]; then
-  # Build the binary using 'cargo install --path .'
-  cargo install --locked --path . || exit 1
+  # Ask the user if they want to enable validator telemetry
+  read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
+  enable_telemetry=${enable_telemetry:-y}
+
+  # Build command
+  build_cmd="cargo install --locked --path ."
+
+  # Add the telemetry feature if requested
+  if [[ $enable_telemetry == "y" ]]; then
+    build_cmd+=" --features telemetry"
+  fi
+
+  # Build command
+  echo "Running build command: \"$build_cmd\""
+  eval "$build_cmd" || exit 1
 fi
 
 # Clear the ledger logs for each validator if the user chooses to clear ledger

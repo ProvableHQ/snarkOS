@@ -28,7 +28,7 @@ use snarkos_node_router::{
     Routing,
     messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::{BlockSync, BlockSyncMode};
+use snarkos_node_sync::BlockSync;
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
@@ -66,8 +66,8 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     router: Router<N>,
     /// The REST server of the node.
     rest: Option<Rest<N, C, Self>>,
-    /// The sync module.
-    sync: BlockSync<N>,
+    /// The block synchronization logic (used in the Router impl).
+    sync: Arc<BlockSync<N>>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The shutdown signal.
@@ -111,13 +111,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
 
-        // Initialize the consensus.
-        let mut consensus =
-            Consensus::new(account.clone(), ledger_service.clone(), bft_ip, trusted_validators, storage_mode.clone())?;
-        // Initialize the primary channels.
-        let (primary_sender, primary_receiver) = init_primary_channels::<N>();
-        // Start the consensus.
-        consensus.run(primary_sender, primary_receiver).await?;
         // Determine if the validator should rotate external peers.
         let rotate_external_peers = false;
 
@@ -125,7 +118,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         let router = Router::new(
             node_ip,
             NodeType::Validator,
-            account,
+            account.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
@@ -134,9 +127,22 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         )
         .await?;
 
-        // Initialize the sync module.
-        let sync = BlockSync::new(BlockSyncMode::Gateway, ledger_service, router.tcp().clone());
+        // Initialize the block synchronization logic.
+        let sync = Arc::new(BlockSync::new(ledger_service.clone()));
 
+        // Initialize the consensus layer.
+        let mut consensus = Consensus::new(
+            account.clone(),
+            ledger_service.clone(),
+            sync.clone(),
+            bft_ip,
+            trusted_validators,
+            storage_mode.clone(),
+        )?;
+        // Initialize the primary channels.
+        let (primary_sender, primary_receiver) = init_primary_channels::<N>();
+        // Start the consensus.
+        consensus.run(primary_sender, primary_receiver).await?;
         // Initialize the node.
         let mut node = Self {
             ledger: ledger.clone(),

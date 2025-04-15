@@ -82,6 +82,10 @@ version = "=3.5.0"
 default-features = false
 features = [ "persistent" ]
 
+[dependencies.snarkos-node-sync]
+path = "../sync"
+version = "=3.5.0"
+
 [dependencies.snarkvm]
 workspace = true
 

@@ -22,9 +22,12 @@ use snarkvm::{
 use indexmap::IndexSet;
 use std::collections::{BTreeMap, HashMap};
 
+/// Maintains an directed acyclic graph (DAG) of batches, from which we build a totally-ordered blockchain.
+/// The DAG is updated in rounds, where each validator adds at most one new batch.
 #[derive(Debug)]
 pub struct DAG<N: Network> {
     /// The in-memory collection of certificates that comprise the DAG.
+    /// For each round, there is a mapping from node address to batch.
     graph: BTreeMap<u64, HashMap<Address<N>, BatchCertificate<N>>>,
     /// The in-memory collection of recently committed certificate IDs (up to GC).
     recent_committed_ids: BTreeMap<u64, IndexSet<Field<N>>>,
