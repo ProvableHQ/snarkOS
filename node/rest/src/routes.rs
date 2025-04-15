@@ -184,11 +184,28 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     // GET /<network>/program/{programID}
+    // GET /<network>/program/{programID}?metadata={true}
     pub(crate) async fn get_program(
         State(rest): State<Self>,
         Path(id): Path<ProgramID<N>>,
+        metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_program(id)?))
+        // Get the program from the ledger.
+        let program = rest.ledger.get_program(id)?;
+        // Check if metadata is requested and return the program with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the edition of the program.
+            let edition = rest.ledger.get_latest_edition_for_program(&id)?;
+            // Get the transaction ID associated with the program and edition.
+            let tid = rest.ledger.find_transaction_id_from_program_id_and_edition(&id, edition)?;
+            return Ok(ErasedJson::pretty(json!({
+                "program": program,
+                "edition": edition,
+                "tid": tid,
+            })));
+        }
+        // Return the program without metadata.
+        Ok(ErasedJson::pretty(program))
     }
 
     // GET /<network>/program/{programID}/latest_edition
@@ -200,11 +217,25 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     // GET /<network>/program/{programID}/{edition}
+    // GET /<network>/program/{programID}/{edition}?metadata={true}
     pub(crate) async fn get_program_for_edition(
         State(rest): State<Self>,
         Path((id, edition)): Path<(ProgramID<N>, u16)>,
+        metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_program_for_edition(id, edition)?))
+        // Get the program from the ledger.
+        let program = rest.ledger.get_program_for_edition(id, edition)?;
+        // Check if metadata is requested and return the program with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the transaction ID associated with the program and edition.
+            let tid = rest.ledger.find_transaction_id_from_program_id_and_edition(&id, edition)?;
+            return Ok(ErasedJson::pretty(json!({
+                "program": program,
+                "edition": edition,
+                "tid": tid,
+            })));
+        }
+        Ok(ErasedJson::pretty(program))
     }
 
     // GET /<network>/program/{programID}/mappings

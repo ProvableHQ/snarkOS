@@ -54,9 +54,6 @@ pub use telemetry::*;
 pub mod timestamp;
 pub use timestamp::*;
 
-pub mod transmission_checks;
-pub use transmission_checks::*;
-
 /// Formats an ID into a truncated identifier (for logging purposes).
 pub fn fmt_id(id: impl ToString) -> String {
     let id = id.to_string();

@@ -3970,7 +3970,7 @@ dependencies = [
  "fxhash",
  "hashbrown 0.14.5",
  "hex",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itertools 0.11.0",
  "locktick",
  "num-traits",
@@ -4114,7 +4114,7 @@ name = "snarkvm-circuit-environment"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itertools 0.11.0",
  "nom",
  "num-traits",
@@ -4503,7 +4503,7 @@ version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
  "anyhow",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itertools 0.11.0",
  "lazy_static",
  "once_cell",
@@ -4586,7 +4586,7 @@ dependencies = [
  "enum-iterator",
  "enum_index",
  "enum_index_derive",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "num-derive",
  "num-traits",
  "once_cell",
@@ -4914,7 +4914,7 @@ name = "snarkvm-ledger-block"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "rayon",
  "serde_json",
  "snarkvm-console 1.5.0 (git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16)",
@@ -4953,7 +4953,7 @@ name = "snarkvm-ledger-committee"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "rayon",
  "serde_json",
  "snarkvm-console 1.5.0 (git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16)",
@@ -4991,7 +4991,7 @@ name = "snarkvm-ledger-narwhal-batch-certificate"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "rayon",
  "serde_json",
  "snarkvm-console 1.5.0 (git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16)",
@@ -5017,7 +5017,7 @@ name = "snarkvm-ledger-narwhal-batch-header"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "rayon",
  "serde_json",
  "snarkvm-console 1.5.0 (git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16)",
@@ -5065,7 +5065,7 @@ name = "snarkvm-ledger-narwhal-subdag"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "rayon",
  "serde_json",
  "snarkvm-console 1.5.0 (git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16)",
@@ -5135,7 +5135,7 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "bincode",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "locktick",
  "lru",
  "once_cell",
@@ -5178,7 +5178,7 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "colored",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "locktick",
  "lru",
  "parking_lot",
@@ -5253,7 +5253,7 @@ dependencies = [
  "aleo-std-storage",
  "anyhow",
  "bincode",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "locktick",
  "parking_lot",
  "rayon",
@@ -5333,7 +5333,7 @@ dependencies = [
  "colored",
  "curl",
  "hex",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itertools 0.11.0",
  "lazy_static",
  "locktick",
@@ -5386,7 +5386,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7b
 dependencies = [
  "aleo-std",
  "anyhow",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itertools 0.11.0",
  "locktick",
  "lru",
@@ -5442,7 +5442,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7b
 dependencies = [
  "aleo-std",
  "colored",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "locktick",
  "once_cell",
  "parking_lot",
@@ -5482,7 +5482,7 @@ name = "snarkvm-synthesizer-program"
 version = "1.5.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e376a16#e376a16b5f7bb91e540381af25ea919bb063229b"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "paste",
  "rand",
  "rand_chacha",
