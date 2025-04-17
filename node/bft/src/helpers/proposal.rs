@@ -180,8 +180,10 @@ impl<N: Network> Proposal<N> {
     ) -> Result<(BatchCertificate<N>, IndexMap<TransmissionID<N>, Transmission<N>>)> {
         // Ensure the quorum threshold has been reached.
         ensure!(self.is_quorum_threshold_reached(committee), "The quorum threshold has not been reached");
+        // Basic check for the signatures - we call this and then later BatchCertificate::from_unchecked to avoid verifying the signatures again.
+        BatchCertificate::<N>::check_signature_basic(&self.batch_header, &self.signatures)?;
         // Create the batch certificate.
-        let certificate = BatchCertificate::from(self.batch_header.clone(), self.signatures.clone())?;
+        let certificate = BatchCertificate::from_unchecked(self.batch_header.clone(), self.signatures.clone())?;
         // Return the certificate and transmissions.
         Ok((certificate, self.transmissions.clone()))
     }
