@@ -60,7 +60,7 @@ pub fn init_consensus_channels<N: Network>() -> (ConsensusSender<N>, ConsensusRe
     (sender, receiver)
 }
 
-/// "Interface" that enables, for example, sending data from storage to the the BFT logic.
+/// "Interface" that enables, for example, sending data from storage to the BFT logic.
 #[derive(Clone, Debug)]
 pub struct BFTSender<N: Network> {
     pub tx_primary_round: mpsc::Sender<(u64, oneshot::Sender<bool>)>,
