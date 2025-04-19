@@ -1725,7 +1725,7 @@ mod tests {
             assert!(!bootup_bft.dag.read().contains_certificate_in_round(certificate_round, certificate_id));
         }
 
-        // Check that that the bootup BFT has committed the subdag stemming from the second leader certificate in consensus.
+        // Check that the bootup BFT has committed the subdag stemming from the second leader certificate in consensus.
         for certificate in committed_certificates_bootup.clone() {
             let certificate_round = certificate.round();
             let certificate_id = certificate.id();
