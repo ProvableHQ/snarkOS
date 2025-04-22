@@ -56,7 +56,7 @@ name = "snarkos"
 path = "snarkos/main.rs"
 
 [features]
-default = [ "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-cli/metrics" ]
+default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [

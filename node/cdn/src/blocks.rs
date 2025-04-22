@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +48,13 @@ const CONCURRENT_REQUESTS: u32 = 16;
 const MAXIMUM_PENDING_BLOCKS: u32 = BLOCKS_PER_FILE * CONCURRENT_REQUESTS * 2;
 /// Maximum number of attempts for a request to the CDN.
 const MAXIMUM_REQUEST_ATTEMPTS: u8 = 10;
+
+/// Updates the metrics during CDN sync.
+#[cfg(feature = "metrics")]
+fn update_block_metrics(height: u32) {
+    // Update the BFT height metric.
+    crate::metrics::gauge(crate::metrics::bft::HEIGHT, height as f64);
+}
 
 /// Loads blocks from a CDN into the ledger.
 ///
@@ -219,6 +226,10 @@ pub async fn load_blocks<N: Network>(
 
                     // Update the current height.
                     current_height = block_height;
+
+                    // Update metrics.
+                    #[cfg(feature = "metrics")]
+                    update_block_metrics(current_height);
 
                     // Log the progress.
                     log_progress::<BLOCKS_PER_FILE>(timer, current_height, cdn_start, cdn_end, "block");
