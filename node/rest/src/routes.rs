@@ -17,7 +17,7 @@ use super::*;
 use snarkos_node_router::{SYNC_LENIENCY, messages::UnconfirmedSolution};
 use snarkvm::{
     ledger::puzzle::Solution,
-    prelude::{Address, Identifier, LimitedWriter, Plaintext, ToBytes, block::Transaction},
+    prelude::{Address, Identifier, LimitedWriter, Plaintext, ToBytes, Value, block::Transaction},
 };
 
 use indexmap::IndexMap;
@@ -220,13 +220,47 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Check if metadata is requested and return the value with metadata if so.
         if metadata.metadata.unwrap_or(false) {
             return Ok(ErasedJson::pretty(json!({
-                "data": mapping_value,
+                "data": Self::value_to_json(mapping_value),
                 "height": rest.ledger.latest_height(),
             })));
         }
 
-        // Return the value without metadata.
-        Ok(ErasedJson::pretty(mapping_value))
+        Ok(ErasedJson::pretty(Self::value_to_json(mapping_value)))
+    }
+
+    /// Convert a `Value` to JSON.
+    /// `Value` implements Serialize by just calling `to_string()` on the value, which leads to Display
+    /// output which (sometimes) looks like JSON but isn't.
+    /// We produce actual JSON by calling `serde_json::to_value` on the inner object.
+    fn value_to_json(mapping_value: Option<Value<N>>) -> serde_json::Value {
+        if let Some(mapping_value) = mapping_value {
+            match mapping_value {
+                Value::Plaintext(plaintext) => match plaintext {
+                    Plaintext::Array(array, _) => serde_json::to_value(&array).unwrap(),
+                    Plaintext::Struct(map, _) => serde_json::to_value(&map).unwrap(),
+                    Plaintext::Literal(literal, _) => serde_json::to_value(&literal).unwrap(),
+                },
+                Value::Record(record) => serde_json::to_value(&record).unwrap(),
+                Value::Future(future) => serde_json::to_value(&future).unwrap(),
+            }
+        } else {
+            json!("{}")
+        }
+    }
+
+    fn vec_to_json(mapping_values: &Vec<(Plaintext<N>, Value<N>)>) -> serde_json::Value {
+        let mut json = serde_json::Map::new();
+        for (ref key, ref value) in mapping_values {
+            let key = match key {
+                // TODO: not sure if keys can be anything other than literals
+                Plaintext::Array(array, _) => serde_json::to_string(array).unwrap(),
+                Plaintext::Struct(map, _) => serde_json::to_string(map).unwrap(),
+                // We can not use json here as it would cause the key to be escaped
+                Plaintext::Literal(literal, _) => literal.to_string(),
+            };
+            json.insert(key, Self::value_to_json(Some(value.clone())));
+        }
+        serde_json::Value::Object(json)
     }
 
     // GET /<network>/program/{programID}/mapping/{mappingName}?all={true}&metadata={true}
@@ -251,13 +285,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 // Check if metadata is requested and return the mapping with metadata if so.
                 if metadata.metadata.unwrap_or(false) {
                     return Ok(ErasedJson::pretty(json!({
-                        "data": mapping_values,
+                        "data": Self::vec_to_json(&mapping_values),
                         "height": height,
                     })));
                 }
 
                 // Return the full mapping without metadata.
-                Ok(ErasedJson::pretty(mapping_values))
+                Ok(ErasedJson::pretty(Self::vec_to_json(&mapping_values)))
             }
             Ok(Err(err)) => Err(RestError(format!("Unable to read mapping - {err}"))),
             Err(err) => Err(RestError(format!("Unable to read mapping - {err}"))),
