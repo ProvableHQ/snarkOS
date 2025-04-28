@@ -281,7 +281,10 @@ impl<N: Network> BlockSync<N> {
         if is_request_complete { self.responses.read().get(&next_height).cloned() } else { None }
     }
 
-    /// Attempts to advance with blocks from the sync pool.
+    /// Attempts to advance synchronization by processing completed block responses.
+    ///
+    /// Validators will not call this function, but instead execute `snarkos_node_bft::Sync::try_advancing_block_synchronization`
+    /// which also updates the BFT state.
     #[inline]
     pub fn try_advancing_block_synchronization(&self) {
         // Acquire the lock to ensure this function is called only once at a time.
