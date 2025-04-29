@@ -773,11 +773,15 @@ impl<N: Network> Storage<N> {
         unconfirmed_transactions: &HashMap<N::TransactionID, Transaction<N>>,
     ) {
         // Skip if the certificate round is below the GC round.
-        if certificate.round() <= self.gc_round() {
+        let gc_round = self.gc_round();
+        if certificate.round() <= gc_round {
+            trace!("Got certificate for round {} below GC round ({gc_round}). Will not store it.", certificate.round());
             return;
         }
+
         // If the certificate ID already exists in storage, skip it.
         if self.contains_certificate(certificate.id()) {
+            trace!("Got certificate {} for round {} more than once.", certificate.id(), certificate.round());
             return;
         }
         // Retrieve the transmissions for the certificate.

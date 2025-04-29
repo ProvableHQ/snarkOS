@@ -23,14 +23,23 @@ use indexmap::IndexSet;
 use std::collections::{BTreeMap, HashMap};
 
 /// Maintains an directed acyclic graph (DAG) of batches, from which we build a totally-ordered blockchain.
+///
 /// The DAG is updated in rounds, where each validator adds at most one new batch.
+/// Certificates older than GC are removed, as they are not longer needed.
+///
+/// Invariants:
+///  - For each entry in `graph` there is a corresponding certificate ID in `recent_committed_ids`.
+///  - `last_committed_round`, if >0, is equal to the largest key in `recent_commit_ids`.
 #[derive(Debug)]
 pub struct DAG<N: Network> {
     /// The in-memory collection of certificates that comprise the DAG.
     /// For each round, there is a mapping from node address to batch.
     graph: BTreeMap<u64, HashMap<Address<N>, BatchCertificate<N>>>,
-    /// The in-memory collection of recently committed certificate IDs (up to GC).
+
+    /// The in-memory collection of recently committed certificate IDs (up to GC),
+    /// where each entry has a round number as its key and a set of certificate IDs as its value.
     recent_committed_ids: BTreeMap<u64, IndexSet<Field<N>>>,
+
     /// The last round that was committed.
     last_committed_round: u64,
 }
@@ -98,10 +107,12 @@ impl<N: Network> DAG<N> {
         // If the certificate was not recently committed, insert it into the DAG.
         if !self.is_recently_committed(round, certificate.id()) {
             // Insert the certificate into the DAG.
-            let _previous = self.graph.entry(round).or_default().insert(author, certificate);
+            let previous = self.graph.entry(round).or_default().insert(author, certificate);
             // If a previous certificate existed for the author, log it.
-            #[cfg(debug_assertions)]
-            if _previous.is_some() {
+            if previous.is_none() {
+                trace!("Added new certificate for round {round} by author {author} to the DAG");
+            } else {
+                #[cfg(debug_assertions)]
                 error!("A certificate for round {round} by author {author} already existed in the DAG");
             }
         }
@@ -116,19 +127,29 @@ impl<N: Network> DAG<N> {
         /* Updates */
 
         // Update the recently committed IDs.
-        self.recent_committed_ids.entry(certificate_round).or_default().insert(certificate_id);
+        let is_new = self.recent_committed_ids.entry(certificate_round).or_default().insert(certificate_id);
+        if !is_new {
+            //TODO (kaimast): return early here?
+            trace!("Certificate {certificate_id} was already committed for round {certificate_round}");
+        }
 
         // Update the last committed round.
-        self.last_committed_round = self.last_committed_round.max(certificate_round);
+        if self.last_committed_round < certificate_round {
+            self.last_committed_round = certificate_round;
+        } else {
+            // TODO(kaimast); only remove old certificates for specific author here?
+        }
 
-        /* GC */
+        /* Garbage collect old commit ids */
 
         // Remove committed IDs that are below the GC round.
         self.recent_committed_ids.retain(|round, _| round + max_gc_rounds > self.last_committed_round);
 
         // Remove certificates that are below the GC round.
         self.graph.retain(|round, _| round + max_gc_rounds > self.last_committed_round);
+
         // Remove any certificates for this author that are at or below the certificate round.
+        // TODO (kaimast): is this extra retain needed? It might be less expensive to keep the certificate and skip this additional iteration.
         self.graph.retain(|round, map| match *round > certificate_round {
             true => true,
             false => {
