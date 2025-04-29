@@ -38,7 +38,13 @@ use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use rayon::prelude::*;
-use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::Future,
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
@@ -82,7 +88,7 @@ pub struct Sync<N: Network> {
     ///
     /// This is used in [`Sync::sync_storage_with_block()`] to accumulate blocks
     /// whose addition to the ledger is deferred until certain checks pass.
-    latest_block_responses: Arc<TMutex<HashMap<u32, Block<N>>>>,
+    latest_block_responses: Arc<TMutex<BTreeMap<u32, Block<N>>>>,
 }
 
 impl<N: Network> Sync<N> {
@@ -145,9 +151,16 @@ impl<N: Network> Sync<N> {
             });
         }
 
+        // We might be further ahead than the ledger, if there are queued
+        // responses.
+        let current_height = {
+            let responses = self.latest_block_responses.lock().await;
+            if let Some((height, _)) = responses.last_key_value() { *height } else { self.ledger.latest_block_height() }
+        };
+
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.block_sync.prepare_block_requests();
+        let (block_requests, sync_peers) = self.block_sync.prepare_block_requests_at_height(current_height);
         trace!("Prepared {} block requests", block_requests.len());
 
         // Sends the block requests to the sync peers.
@@ -434,8 +447,19 @@ impl<N: Network> Sync<N> {
         // So 'current' means 'currently being added'.
         let mut current_height = self.ledger.latest_block_height() + 1;
 
+        // Figure out the sync height.
+        let sync_height = {
+            let responses = self.latest_block_responses.lock().await;
+            if let Some((height, _)) = responses.last_key_value() { *height } else { self.ledger.latest_block_height() }
+        };
+
         // Retrieve the maximum block height of the peers.
-        let tip = self.block_sync.find_sync_peers().map(|(x, _)| x.into_values().max().unwrap_or(0)).unwrap_or(0);
+        let tip = self
+            .block_sync
+            .find_sync_peers_at_height(sync_height)
+            .map(|(x, _)| x.into_values().max().unwrap_or(0))
+            .unwrap_or(0);
+
         // Determine the maximum number of blocks corresponding to rounds
         // that would not have been garbage collected, i.e. that would be kept in storage.
         // Since at most one block is created every two rounds,
