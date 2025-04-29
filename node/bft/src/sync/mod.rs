@@ -118,7 +118,10 @@ impl<N: Network> Sync<N> {
         info!("Syncing storage with the ledger...");
 
         // Sync the storage with the ledger.
-        self.sync_storage_with_ledger_at_bootup().await
+        self.sync_storage_with_ledger_at_bootup().await?;
+
+        debug!("Finished initial block synchronization at startup");
+        Ok(())
     }
 
     /// Issues new requests for blocks, if needed.
@@ -281,8 +284,8 @@ impl<N: Network> Sync<N> {
         self.issue_block_requests().await;
 
         // Sync the storage with the blocks.
-        if let Err(e) = self.try_advancing_block_synchronization().await {
-            error!("Unable to sync storage with blocks - {e}");
+        if let Err(err) = self.try_advancing_block_synchronization().await {
+            error!("Block synchronization failed - {err}");
         }
 
         // If the node is synced, clear the `latest_block_responses`.
@@ -323,7 +326,7 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// Syncs the storage with the ledger at bootup.
     ///
-    /// This is called exactly once when starting the validator.
+    /// This is called when starting the validator and after finishing a sync withou BFT.
     async fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
         // Retrieve the latest block in the ledger.
         let latest_block = self.ledger.latest_block();
@@ -445,6 +448,8 @@ impl<N: Network> Sync<N> {
 
         // Determine if we can sync the ledger without updating the BFT first.
         if current_height <= max_gc_height {
+            info!("Block sync is too far behind other validators. Syncing without BFT.");
+
             // Try to advance the ledger *to tip* without updating the BFT.
             while let Some(block) = self.block_sync.peek_next_block(current_height) {
                 info!("Syncing the ledger to block {}...", block.height());
@@ -463,7 +468,9 @@ impl<N: Network> Sync<N> {
             }
             // Sync the storage with the ledger if we should transition to the BFT sync.
             if current_height > max_gc_height {
+                info!("Finished catching up with the network. Switching back to BFT sync.");
                 if let Err(e) = self.sync_storage_with_ledger_at_bootup().await {
+                    //TODO (kaimast): bail! here?
                     error!("BFT sync (with bootup routine) failed - {e}");
                 }
             }
@@ -531,7 +538,14 @@ impl<N: Network> Sync<N> {
         let mut latest_block_responses = self.latest_block_responses.lock().await;
 
         // If this block has already been processed, return early.
-        if self.ledger.contains_block_height(block.height()) || latest_block_responses.contains_key(&block.height()) {
+        // TODO(kaimast): Should we remove the response here?
+        if self.ledger.contains_block_height(block.height()) {
+            debug!("Ledger is already synced with block at height {}. Will not sync.", block.height());
+            return Ok(());
+        }
+
+        if latest_block_responses.contains_key(&block.height()) {
+            debug!("An unconfirmed block is already queued already for height {}. Will not sync.", block.height());
             return Ok(());
         }
 
@@ -557,10 +571,11 @@ impl<N: Network> Sync<N> {
                 // Sync the BFT DAG with the certificates.
                 for certificate in certificates {
                     // If a BFT sender was provided, send the certificate to the BFT.
+                    // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
                     if let Some(bft_sender) = self.bft_sender.get() {
                         // Await the callback to continue.
-                        if let Err(e) = bft_sender.send_sync_bft(certificate).await {
-                            bail!("Sync - {e}");
+                        if let Err(err) = bft_sender.send_sync_bft(certificate).await {
+                            bail!("Failed to sync certificate - {err}");
                         };
                     }
                 }

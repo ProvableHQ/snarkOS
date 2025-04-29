@@ -639,9 +639,10 @@ impl<N: Network> BlockSync<N> {
         // Retrieve the current block height
         let current_height = self.ledger.latest_block_height();
 
-        // Track the number of timed out block requests.
+        // Track the number of timed out block requests (only used to print a log message).
         let mut num_timed_out_block_requests = 0;
 
+        // Track which peers should be banned due to unresponsiveness.
         let mut peers_to_ban: HashSet<SocketAddr> = HashSet::new();
 
         // Remove timed out block requests.
@@ -673,12 +674,20 @@ impl<N: Network> BlockSync<N> {
                 requests.remove(height);
                 // Remove the response entry for the given height.
                 responses.remove(height);
+            }
+
+            if is_timeout {
                 // Increment the number of timed out block requests.
                 num_timed_out_block_requests += 1;
             }
+
             // Retain if this is not a timeout and is not obsolete.
             !is_timeout && !is_obsolete
         });
+
+        if num_timed_out_block_requests > 0 {
+            debug!("{num_timed_out_block_requests} block requests timed out");
+        }
 
         peers_to_ban
     }
