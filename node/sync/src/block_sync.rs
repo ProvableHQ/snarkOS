@@ -447,14 +447,14 @@ impl<N: Network> BlockSync<N> {
             // Retrieve the highest block height.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
             // Update the state of `is_block_synced` for the sync module.
-            self.update_is_block_synced(greatest_peer_height, MAX_BLOCKS_BEHIND);
+            self.update_is_block_synced(greatest_peer_height, current_height, MAX_BLOCKS_BEHIND);
             // Return the list of block requests.
             (self.construct_requests(&sync_peers, min_common_ancestor), sync_peers)
         } else {
             // Update `is_block_synced` if there are no pending requests or responses.
             if self.requests.read().is_empty() && self.responses.read().is_empty() {
                 // Update the state of `is_block_synced` for the sync module.
-                self.update_is_block_synced(0, MAX_BLOCKS_BEHIND);
+                self.update_is_block_synced(0, current_height, MAX_BLOCKS_BEHIND);
             }
             // Return an empty list of block requests.
             (Default::default(), Default::default())
@@ -462,14 +462,15 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Updates the state of `is_block_synced` for the sync module.
-    fn update_is_block_synced(&self, greatest_peer_height: u32, max_blocks_behind: u32) {
+    fn update_is_block_synced(&self, greatest_peer_height: u32, current_height: u32, max_blocks_behind: u32) {
         // Retrieve the latest block height.
         let ledger_height = self.ledger.latest_block_height();
         trace!(
-            "Updating is_block_synced: greatest_peer_height = {greatest_peer_height}, ledger_height = {ledger_height}"
+            "Updating is_block_synced: greatest_peer_height = {greatest_peer_height}, ledger_height = {ledger_height},
+            current_height = {current_height}"
         );
         // Compute the number of blocks that we are behind by.
-        let num_blocks_behind = greatest_peer_height.saturating_sub(ledger_height);
+        let num_blocks_behind = greatest_peer_height.saturating_sub(current_height);
         // Determine if the primary is synced.
         let is_synced = num_blocks_behind <= max_blocks_behind;
         // Update the num blocks behind.

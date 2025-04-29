@@ -445,13 +445,14 @@ impl<N: Network> Sync<N> {
         // This variable is used to index blocks that are added to the ledger;
         // it is incremented as blocks as added.
         // So 'current' means 'currently being added'.
-        let mut current_height = self.ledger.latest_block_height() + 1;
-
         // Figure out the sync height.
         let sync_height = {
             let responses = self.latest_block_responses.lock().await;
             if let Some((height, _)) = responses.last_key_value() { *height } else { self.ledger.latest_block_height() }
         };
+
+        let mut current_height = sync_height + 1;
+        trace!("Try advancing with block responses (at block {current_height})");
 
         // Retrieve the maximum block height of the peers.
         let tip = self
@@ -569,7 +570,7 @@ impl<N: Network> Sync<N> {
         }
 
         if latest_block_responses.contains_key(&block.height()) {
-            debug!("An unconfirmed block is already queued already for height {}. Will not sync.", block.height());
+            debug!("An unconfirmed block is queued already for height {}. Will not sync.", block.height());
             return Ok(());
         }
 
