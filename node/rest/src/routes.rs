@@ -24,6 +24,7 @@ use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use snarkvm::prelude::Program;
 
 /// The `get_blocks` query object.
 #[derive(Deserialize, Serialize)]
@@ -196,24 +197,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         if metadata.metadata.unwrap_or(false) {
             // Get the edition of the program.
             let edition = rest.ledger.get_latest_edition_for_program(&id)?;
-            // Get the transaction ID associated with the program and edition.
-            let tid = rest.ledger.find_transaction_id_from_program_id_and_edition(&id, edition)?;
-            return Ok(ErasedJson::pretty(json!({
-                "program": program,
-                "edition": edition,
-                "tid": tid,
-            })));
+            return rest.return_program_with_metadata(program, edition);
         }
         // Return the program without metadata.
         Ok(ErasedJson::pretty(program))
-    }
-
-    // GET /<network>/program/{programID}/latest_edition
-    pub(crate) async fn get_latest_program_edition(
-        State(rest): State<Self>,
-        Path(id): Path<ProgramID<N>>,
-    ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_latest_edition_for_program(&id)?))
     }
 
     // GET /<network>/program/{programID}/{edition}
@@ -227,15 +214,44 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let program = rest.ledger.get_program_for_edition(id, edition)?;
         // Check if metadata is requested and return the program with metadata if so.
         if metadata.metadata.unwrap_or(false) {
-            // Get the transaction ID associated with the program and edition.
-            let tid = rest.ledger.find_transaction_id_from_program_id_and_edition(&id, edition)?;
-            return Ok(ErasedJson::pretty(json!({
-                "program": program,
-                "edition": edition,
-                "tid": tid,
-            })));
+            return rest.return_program_with_metadata(program, edition);
         }
         Ok(ErasedJson::pretty(program))
+    }
+
+    // A helper function to return the program and its metadata.
+    // This function is used in the `get_program` and `get_program_for_edition` functions.
+    fn return_program_with_metadata(&self, program: Program<N>, edition: u16) -> Result<ErasedJson, RestError> {
+        let id = program.id();
+        // Get the transaction ID associated with the program and edition.
+        let tid = self.ledger.find_transaction_id_from_program_id_and_edition(id, edition)?;
+        // Get the optional program owner associated with the program.
+        // Note: The owner is only available after the `ConsensusVersion::V7`.
+        let program_owner = match &tid {
+            Some(tid) => self
+                .ledger
+                .vm()
+                .block_store()
+                .transaction_store()
+                .deployment_store()
+                .get_deployment(tid)?
+                .and_then(|deployment| deployment.program_owner().copied()),
+            None => None,
+        };
+        Ok(ErasedJson::pretty(json!({
+            "program": program,
+            "edition": edition,
+            "tid": tid,
+            "program_owner": program_owner,
+        })))
+    }
+
+    // GET /<network>/program/{programID}/latest_edition
+    pub(crate) async fn get_latest_program_edition(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_latest_edition_for_program(&id)?))
     }
 
     // GET /<network>/program/{programID}/mappings

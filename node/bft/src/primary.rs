@@ -838,7 +838,6 @@ impl<N: Network> Primary<N> {
             };
 
             // If the transmission is a transaction, check that it satisfies the required properties.
-
             if let (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(transaction)) =
                 (transmission_id, transmission)
             {
@@ -857,10 +856,6 @@ impl<N: Network> Primary<N> {
 
                 // If the `ConsensusVersion` is greater than or equal to V5:
                 //   - ensure the transaction doesn't bring the proposal above the spend limit.
-                // Otherwise:
-                //   - ensure that the transaction does not use constructors, the checksum operand, or edition operand.
-                //   - ensure that `program_checksum`s in deployments are `None`.
-                //    TODO: @d0cd this ^ needs to be updated to the correct version once we have pinned it down.
                 if N::CONSENSUS_VERSION(block_height)? >= ConsensusVersion::V5 {
                     // Compute the transaction spent cost (in microcredits).
                     // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
@@ -892,24 +887,6 @@ impl<N: Network> Primary<N> {
 
                     // Update the proposal cost.
                     proposal_cost = next_proposal_cost;
-                } else {
-                    // Enforce the restrictions on deployment transactions.
-                    if let Transaction::Deploy(_, _, _, deployment, _) = transaction {
-                        // Require that the `program_checksum` is `None`.
-                        if deployment.program_checksum().is_some() {
-                            bail!(
-                                "Malicious peer - Batch proposal from '{peer_ip}' contains a transaction with a program checksum before V5: '{}'",
-                                fmt_id(transaction_id)
-                            );
-                        }
-                        // Require that the program does not contain a constructor, the checksum operand, or edition operand.
-                        if deployment.program().uses_constructor_checksum_or_edition() {
-                            bail!(
-                                "Malicious peer - Batch proposal from '{peer_ip}' contains a transaction with a constructor, checksum operand, or edition operand before V5: '{}'",
-                                fmt_id(transaction_id)
-                            );
-                        }
-                    }
                 }
             }
         }

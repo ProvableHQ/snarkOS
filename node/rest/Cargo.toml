@@ -78,10 +78,11 @@ version = "=3.5.0"
 path = "../router"
 version = "=3.5.0"
 
-[dependencies.snarkvm-synthesizer]
+[dependencies.snarkvm-synthesizer] # If this is updated, the rev in the main `Cargo.toml` must be updated as well.
 #path = "../../../snarkVM/synthesizer"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "e376a16"
+#rev = "e376a16"
+branch = "feat/program-owner-operand+staging"
 #version = "=1.5.0"
 default-features = false
 optional = true
