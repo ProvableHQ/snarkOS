@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync-locators"
-version = "3.5.0"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Locators to synchronize a decentralized operating system"
 homepage = "https://aleo.org"
@@ -19,7 +19,6 @@ edition = "2021"
 [features]
 default = [ ]
 test = [ ]
-test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.anyhow]
 version = "1.0"

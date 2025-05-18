@@ -60,6 +60,9 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     /// The maximum number of messages accepted within `MESSAGE_LIMIT_TIME_FRAME_IN_SECS`.
     const MESSAGE_LIMIT: usize = 500;
 
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, message_version: u32) -> bool;
+
     /// Handles the inbound message from the peer.
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<()> {
         // Retrieve the listener IP for the peer.
@@ -164,7 +167,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
             }
             Message::Ping(message) => {
                 // Ensure the message protocol version is not outdated.
-                if message.version < Message::<N>::VERSION {
+                if !self.is_valid_message_version(message.version) {
                     bail!("Dropping '{peer_ip}' on message version {} (outdated)", message.version);
                 }
 

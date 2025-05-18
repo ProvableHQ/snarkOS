@@ -206,6 +206,11 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Client<N, C> {
 
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, message_version: u32) -> bool {
+        self.router().is_valid_message_version(message_version)
+    }
+
     /// Handles a `BlockRequest` message.
     fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
         let BlockRequest { start_height, end_height } = &message;
@@ -225,11 +230,9 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
 
     /// Handles a `BlockResponse` message.
     fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
-        match self.sync.insert_block_responses(peer_ip, blocks) {
-            Ok(()) => {
-                self.sync.try_advancing_block_synchronization();
-                true
-            }
+        // Tries to advance with blocks from the sync module.
+        match self.sync.advance_with_sync_blocks(peer_ip, blocks) {
+            Ok(()) => true,
             Err(error) => {
                 warn!("{error}");
                 false
@@ -239,12 +242,15 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
 
     /// Processes the block locators and sends back a `Pong` message.
     fn ping(&self, peer_ip: SocketAddr, message: Ping<N>) -> bool {
-        // If block locators were provided, then update the peer in the sync pool.
-        if let Some(block_locators) = message.block_locators {
-            // Check the block locators are valid, and update the peer in the sync pool.
-            if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
-                warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
-                return false;
+        // Check if the sync module is in router mode.
+        if self.sync.mode().is_router() {
+            // If block locators were provided, then update the peer in the sync pool.
+            if let Some(block_locators) = message.block_locators {
+                // Check the block locators are valid, and update the peer in the sync pool.
+                if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
+                    warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
+                    return false;
+                }
             }
         }
 

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "3.5.0"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -28,7 +28,6 @@ locktick = [
   "snarkos-node-router/locktick",
   "snarkvm-synthesizer/locktick"
 ]
-test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.anyhow]
 version = "1.0.79"
@@ -72,11 +71,11 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-node-consensus]
 path = "../consensus"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-router]
 path = "../router"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkvm-synthesizer] # If this is updated, the rev in the main `Cargo.toml` must be updated as well.
 #path = "../../../snarkVM/synthesizer"

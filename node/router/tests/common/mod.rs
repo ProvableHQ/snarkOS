@@ -21,11 +21,16 @@ use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
+    sync::Arc,
 };
 
 use snarkos_account::Account;
+use snarkos_node_bft_ledger_service::MockLedgerService;
 use snarkos_node_router::{Router, messages::NodeType};
-use snarkvm::prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, block::Block};
+use snarkvm::{
+    prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, block::Block},
+    utilities::TestRng,
+};
 
 /// A helper macro to print the TCP listening address, along with the connected and connecting peers.
 #[macro_export]
@@ -72,10 +77,13 @@ pub fn initialize_logger(level: u8) {
 /// Initializes a client router. Setting the `listening_port = 0` will result in a random port being assigned.
 #[allow(dead_code)]
 pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNetwork> {
+    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
+    let ledger_service = Arc::new(MockLedgerService::new(committee));
     Router::new(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listening_port),
         NodeType::Client,
         sample_account(),
+        ledger_service,
         &[],
         max_peers,
         false,
@@ -90,10 +98,13 @@ pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNe
 /// Initializes a prover router. Setting the `listening_port = 0` will result in a random port being assigned.
 #[allow(dead_code)]
 pub async fn prover(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNetwork> {
+    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
+    let ledger_service = Arc::new(MockLedgerService::new(committee));
     Router::new(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listening_port),
         NodeType::Prover,
         sample_account(),
+        ledger_service,
         &[],
         max_peers,
         false,
@@ -113,10 +124,13 @@ pub async fn validator(
     trusted_peers: &[SocketAddr],
     allow_external_peers: bool,
 ) -> TestRouter<CurrentNetwork> {
+    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
+    let ledger_service = Arc::new(MockLedgerService::new(committee));
     Router::new(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listening_port),
         NodeType::Validator,
         sample_account(),
+        ledger_service,
         trusted_peers,
         max_peers,
         false,

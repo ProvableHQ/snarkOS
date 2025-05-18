@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "3.5.0"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -21,7 +21,6 @@ test = [ ]
 locktick = [ "dep:locktick", "snarkos-node-tcp/locktick", "snarkvm/locktick" ]
 metrics = [ "dep:metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
-test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.anyhow]
 version = "1.0.79"
@@ -57,7 +56,7 @@ optional = true
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "../metrics"
-version = "=3.5.0"
+version = "=3.6.0"
 optional = true
 
 [dependencies.parking_lot]
@@ -77,19 +76,25 @@ version = "1"
 
 [dependencies.snarkos-account]
 path = "../../account"
-version = "=3.5.0"
+version = "=3.6.0"
+
+[dependencies.snarkos-node-bft-ledger-service]
+path = "../bft/ledger-service"
+version = "=3.6.0"
+default-features = false
+features = [ "ledger", "prover" ]
 
 [dependencies.snarkos-node-sync-locators]
 path = "../sync/locators"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-router-messages]
 path = "messages"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-tcp]
 path = "../tcp"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkvm]
 workspace = true
@@ -129,6 +134,10 @@ features = [ "sink" ]
 [dev-dependencies.peak_alloc]
 version = "0.2"
 
+[dev-dependencies.snarkos-node-bft-ledger-service]
+path = "../bft/ledger-service"
+features = [ "ledger-write", "test" ]
+
 [dev-dependencies.snarkos-node-sync]
 path = "../sync"
 features = [ "test" ]
@@ -140,6 +149,10 @@ features = [ "test" ]
 [dev-dependencies.snarkos-node-router-messages]
 path = "messages"
 features = [ "test" ]
+
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "test-helpers" ]
 
 [dev-dependencies.tracing-subscriber]
 version = "0.3"

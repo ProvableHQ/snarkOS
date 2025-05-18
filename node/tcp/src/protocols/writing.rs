@@ -51,7 +51,9 @@ where
     /// obscure potential issues with your implementation (like slow serialization) or network.
     ///
     /// The default value is 1024.
-    const MESSAGE_QUEUE_DEPTH: usize = 1024;
+    fn message_queue_depth(&self) -> usize {
+        1024
+    }
 
     /// The type of the outbound messages; unless their serialization is expensive and the message
     /// is broadcasted (in which case it would get serialized multiple times), serialization should
@@ -196,7 +198,7 @@ impl<W: Writing> WritingInternal for W {
         let writer = conn.writer.take().expect("missing connection writer!");
         let mut framed = FramedWrite::new(writer, codec);
 
-        let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(Self::MESSAGE_QUEUE_DEPTH);
+        let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(self.message_queue_depth());
 
         // register the connection's message sender with the Writing protocol handler
         conn_senders.write().insert(addr, outbound_message_sender);

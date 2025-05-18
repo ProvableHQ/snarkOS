@@ -175,6 +175,11 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
 
 #[async_trait]
 impl<N: Network> Inbound<N> for TestRouter<N> {
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, _message_version: u32) -> bool {
+        true
+    }
+
     /// Handles a `BlockRequest` message.
     fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> bool {
         true

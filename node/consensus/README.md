@@ -5,6 +5,3 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE.md)
 
 The `snarkos-node-consensus` crate provides the consensus layer for the snarkOS node.
-
-It builds on top of the `snarkos-node-bft` crate, which provides an abstract implementationv of the AleoBFT.
-More concretely, this crate provides the communication logic that allows multiple AleoBFT nodes to interact with each other.

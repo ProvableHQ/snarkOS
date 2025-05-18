@@ -175,6 +175,11 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Validator<N, C> {
 
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, message_version: u32) -> bool {
+        self.router().is_valid_message_version(message_version)
+    }
+
     /// Retrieves the blocks within the block request range, and returns the block response to the peer.
     fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
         let BlockRequest { start_height, end_height } = &message;
@@ -194,11 +199,9 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
 
     /// Handles a `BlockResponse` message.
     fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
-        match self.sync.insert_block_responses(peer_ip, blocks) {
-            Ok(()) => {
-                self.sync.try_advancing_block_synchronization();
-                true
-            }
+        // Tries to advance with blocks from the sync module.
+        match self.sync.advance_with_sync_blocks(peer_ip, blocks) {
+            Ok(()) => true,
             Err(error) => {
                 warn!("{error}");
                 false
@@ -206,10 +209,19 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         }
     }
 
-    /// Processes a ping message from a client (or prover) and sends back a `Pong` message.
-    fn ping(&self, peer_ip: SocketAddr, _message: Ping<N>) -> bool {
-        // In gateway/validator mode, we do not need to process client block locators.
-        // Instead, locators are fetched from other validators in `Gateway` using `PrimaryPing` messages.
+    /// Processes the block locators and sends back a `Pong` message.
+    fn ping(&self, peer_ip: SocketAddr, message: Ping<N>) -> bool {
+        // Check if the sync module is in router mode.
+        if self.sync.mode().is_router() {
+            // If block locators were provided, then update the peer in the sync pool.
+            if let Some(block_locators) = message.block_locators {
+                // Check the block locators are valid, and update the peer in the sync pool.
+                if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
+                    warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
+                    return false;
+                }
+            }
+        }
 
         // Send a `Pong` message to the peer.
         Outbound::send(self, peer_ip, Message::Pong(Pong { is_fork: Some(false) }));

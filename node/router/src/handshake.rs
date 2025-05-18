@@ -350,7 +350,7 @@ impl<N: Network> Router<N> {
         let &ChallengeRequest { version, listener_port: _, node_type: _, address: _, nonce: _ } = message;
 
         // Ensure the message protocol version is not outdated.
-        if version < Message::<N>::VERSION {
+        if !self.is_valid_message_version(version) {
             warn!("Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }

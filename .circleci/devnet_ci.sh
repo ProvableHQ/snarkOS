@@ -48,6 +48,8 @@ for ((validator_index = 0; validator_index < $total_validators; validator_index+
   fi
   PIDS[$validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
+  # Add 1-second delay between starting nodes to avoid hitting rate limits
+  sleep 1
 done
 
 # Start all client nodes in the background
@@ -57,6 +59,10 @@ for ((client_index = 0; client_index < $total_clients; client_index++)); do
   snarkos start --nodisplay --network $network_id --dev $node_index --dev-num-validators $total_validators --client --logfile $log_file &
   PIDS[$node_index]=$!
   echo "Started client $client_index with PID ${PIDS[$node_index]}"
+  # Add 1-second delay between starting nodes to avoid hitting rate limits
+  if [ $client_index -lt $((total_clients - 1)) ]; then
+    sleep 1
+  fi
 done
 
 # Function to check block heights

@@ -61,7 +61,7 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
 
 impl<N: Network> ChallengeRequest<N> {
     pub fn new(listener_port: u16, node_type: NodeType, address: Address<N>, nonce: u64) -> Self {
-        Self { version: Message::<N>::VERSION, listener_port, node_type, address, nonce }
+        Self { version: Message::<N>::latest_message_version(), listener_port, node_type, address, nonce }
     }
 }
 

@@ -80,6 +80,12 @@ pub struct StorageInner<N: Network> {
     current_height: AtomicU32,
     /* Once per round */
     /// The current round.
+    ///
+    /// Invariant: current_round > 0.
+    /// This is established in [`Storage::new`], which sets it to at least 1 via [`Storage::update_current_round`].
+    /// The only callers of [`Storage::update_current_round`] are
+    /// [`Storage::increment_to_next_round`] and [`Storage::sync_round_with_block`],
+    /// both of which set it to at least 1.
     current_round: AtomicU64,
     /// The `round` for which garbage collection has occurred **up to** (inclusive).
     gc_round: AtomicU64,

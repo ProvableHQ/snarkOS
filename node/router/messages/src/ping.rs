@@ -67,7 +67,7 @@ impl<N: Network> FromBytes for Ping<N> {
 
 impl<N: Network> Ping<N> {
     pub fn new(node_type: NodeType, block_locators: Option<BlockLocators<N>>) -> Self {
-        Self { version: <Message<N>>::VERSION, node_type, block_locators }
+        Self { version: <Message<N>>::latest_message_version(), node_type, block_locators }
     }
 }
 
