@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -162,6 +162,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // GET and POST ../transaction/..
             .route(&format!("/{network}/transaction/:id"), get(Self::get_transaction))
             .route(&format!("/{network}/transaction/confirmed/:id"), get(Self::get_confirmed_transaction))
+            .route(&format!("/{network}/transaction/unconfirmed/:id"), get(Self::get_unconfirmed_transaction))
             .route(&format!("/{network}/transaction/broadcast"), post(Self::transaction_broadcast))
 
             // POST ../solution/broadcast

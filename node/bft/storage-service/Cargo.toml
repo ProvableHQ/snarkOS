@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft-storage-service"
-version = "3.5.0"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A storage service for the memory pool in a decentralized operating system"
 homepage = "https://aleo.org"
@@ -22,7 +22,6 @@ locktick = [ "dep:locktick", "snarkvm/locktick" ]
 memory = [ "parking_lot", "tracing" ]
 persistent = [ ]
 test = [ "memory" ]
-test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.aleo-std]
 workspace = true

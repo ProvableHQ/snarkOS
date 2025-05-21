@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "3.5.0"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -28,7 +28,6 @@ locktick = [
   "snarkos-node-router/locktick",
   "snarkvm-synthesizer/locktick"
 ]
-test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.anyhow]
 version = "1.0.79"
@@ -72,17 +71,17 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-node-consensus]
 path = "../consensus"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-router]
 path = "../router"
-version = "=3.5.0"
+version = "=3.6.0"
 
 [dependencies.snarkvm-synthesizer]
 #path = "../../../snarkVM/synthesizer"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "0face8c"
-#version = "=1.5.0"
+rev = "a87ceb9"
+version = "=1.6.0"
 default-features = false
 optional = true
 

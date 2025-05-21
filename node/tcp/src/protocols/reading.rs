@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,7 +50,9 @@ where
     /// attacks.
     ///
     /// The default value is 1024.
-    const MESSAGE_QUEUE_DEPTH: usize = 1024;
+    fn message_queue_depth(&self) -> usize {
+        1024
+    }
 
     /// The initial size of a per-connection buffer for reading inbound messages. Can be set to the maximum expected size
     /// of the inbound message in order to only allocate it once.
@@ -129,7 +131,7 @@ impl<R: Reading> ReadingInternal for R {
             framed.read_buffer_mut().reserve(Self::INITIAL_BUFFER_SIZE);
         }
 
-        let (inbound_message_sender, mut inbound_message_receiver) = mpsc::channel(Self::MESSAGE_QUEUE_DEPTH);
+        let (inbound_message_sender, mut inbound_message_receiver) = mpsc::channel(self.message_queue_depth());
 
         // use a channel to know when the processing task is ready
         let (tx_processing, rx_processing) = oneshot::channel::<()>();

@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,6 @@ use snarkos_node_bft::{
 };
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
-use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{account::PrivateKey, algorithms::BHP256, types::Address},
     ledger::{
@@ -143,9 +142,7 @@ pub async fn start_bft(
     // Initialize the consensus receiver handler.
     consensus_handler(consensus_receiver);
     // Initialize the BFT instance.
-    let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-    let mut bft =
-        BFT::<CurrentNetwork>::new(account, storage, ledger, block_sync, ip, &trusted_validators, storage_mode)?;
+    let mut bft = BFT::<CurrentNetwork>::new(account, storage, ledger, ip, &trusted_validators, storage_mode)?;
     // Run the BFT instance.
     bft.run(Some(consensus_sender), sender.clone(), receiver).await?;
     // Retrieve the BFT's primary.
@@ -183,9 +180,7 @@ pub async fn start_primary(
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     // Initialize the primary instance.
-    let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-    let mut primary =
-        Primary::<CurrentNetwork>::new(account, storage, ledger, block_sync, ip, &trusted_validators, storage_mode)?;
+    let mut primary = Primary::<CurrentNetwork>::new(account, storage, ledger, ip, &trusted_validators, storage_mode)?;
     // Run the primary instance.
     primary.run(None, sender.clone(), receiver).await?;
     // Handle OS signals.

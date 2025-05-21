@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,10 +61,10 @@ pub const MAX_TIMESTAMP_DELTA_IN_SECS: i64 = 10; // seconds
 /// The maximum number of workers that can be spawned.
 pub const MAX_WORKERS: u8 = 1; // worker(s)
 
-/// The interval at which each primary broadcasts a ping to every other node.
+/// The frequency at which each primary broadcasts a ping to every other node.
 /// Note: If this is updated, be sure to update `MAX_BLOCKS_BEHIND` to correspond properly.
 pub const PRIMARY_PING_IN_MS: u64 = 2 * MAX_BATCH_DELAY_IN_MS; // ms
-/// The interval at which each worker broadcasts a ping to every other node.
+/// The frequency at which each worker broadcasts a ping to every other node.
 pub const WORKER_PING_IN_MS: u64 = 4 * MAX_BATCH_DELAY_IN_MS; // ms
 
 /// A helper macro to spawn a blocking task.

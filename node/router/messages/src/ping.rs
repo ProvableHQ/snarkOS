@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,7 +67,7 @@ impl<N: Network> FromBytes for Ping<N> {
 
 impl<N: Network> Ping<N> {
     pub fn new(node_type: NodeType, block_locators: Option<BlockLocators<N>>) -> Self {
-        Self { version: <Message<N>>::VERSION, node_type, block_locators }
+        Self { version: <Message<N>>::latest_message_version(), node_type, block_locators }
     }
 }
 

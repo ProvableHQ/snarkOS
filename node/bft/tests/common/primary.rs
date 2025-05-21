@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,6 @@ use snarkos_node_bft::{
     helpers::{PrimarySender, Storage, init_primary_channels},
 };
 use snarkos_node_bft_storage_service::BFTMemoryService;
-use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{
         account::{Address, PrivateKey},
@@ -165,14 +164,12 @@ impl TestNetwork {
                 Arc::new(BFTMemoryService::new()),
                 BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
             );
-            // Initialize the block synchronization logic.
-            let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+
             let (primary, bft) = if config.bft {
                 let bft = BFT::<CurrentNetwork>::new(
                     account,
                     storage,
                     ledger,
-                    block_sync,
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
                     StorageMode::new_test(None),
@@ -184,7 +181,6 @@ impl TestNetwork {
                     account,
                     storage,
                     ledger,
-                    block_sync,
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
                     StorageMode::new_test(None),

@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,6 @@ use snarkos_node_bft::{
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_bft_storage_service::BFTPersistentStorage;
-use snarkos_node_sync::BlockSync;
 use snarkvm::{
     ledger::{
         block::Transaction,
@@ -118,7 +117,6 @@ impl<N: Network> Consensus<N> {
     pub fn new(
         account: Account<N>,
         ledger: Arc<dyn LedgerService<N>>,
-        block_sync: Arc<BlockSync<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
@@ -128,7 +126,7 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         // Initialize the BFT.
-        let bft = BFT::new(account, storage, ledger.clone(), block_sync, ip, trusted_validators, storage_mode)?;
+        let bft = BFT::new(account, storage, ledger.clone(), ip, trusted_validators, storage_mode)?;
         // Return the consensus.
         Ok(Self {
             ledger,

@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +65,7 @@ pub use snarkos_node_bft_events::DataBlocks;
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::prelude::{
     Address,
+    ConsensusVersion,
     FromBytes,
     Network,
     Signature,
@@ -111,8 +112,40 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 }
 
 impl<N: Network> Message<N> {
-    /// The version of the network protocol; it can be incremented in order to force users to update.
-    pub const VERSION: u32 = 17;
+    /// The version of the network protocol; this can is incremented for breaking changes between migration versions.
+    pub const VERSIONS: [(ConsensusVersion, u32); 2] = [(ConsensusVersion::V4, 16), (ConsensusVersion::V5, 17)];
+
+    /// Returns the latest message version.
+    pub fn latest_message_version() -> u32 {
+        Self::VERSIONS.last().map(|(_, version)| *version).unwrap_or(0)
+    }
+
+    /// Returns the lowest acceptable message version for the given block height.
+    /// Example scenario:
+    ///     At block height `X`, the protocol upgrades to message version from `Y-1` to `Y`.
+    ///     Client A upgrades and starts using message version `Y`.
+    ///     Client B has not upgraded and still uses message version `Y-1`.
+    ///     Until block `X`, they stay connected and can communicate.
+    ///     After block `X`, Client A will reject messages from Client B.
+    pub fn lowest_accepted_message_version(current_block_height: u32) -> u32 {
+        // Fetch the latest message version.
+        let latest_message_version = Self::latest_message_version();
+
+        // Fetch the versions.
+        let versions = Self::VERSIONS;
+
+        // Determine the minimum accepted message version.
+        N::CONSENSUS_VERSION(current_block_height).map_or(latest_message_version, |seek_version| {
+            // Search the consensus value for the specified version.
+            match versions.binary_search_by(|(version, _)| version.cmp(&seek_version)) {
+                // If a value was found for this consensus version, return it.
+                Ok(index) => versions[index].1,
+                // If the specified version was not found exactly, return the appropriate value belonging to the consensus version *lower* than the sought version.
+                // If the constant is not yet in effect at this consensus version, use the earliest version.
+                Err(index) => versions[index.saturating_sub(1)].1,
+            }
+        })
+    }
 
     /// Returns the message name.
     #[inline]
@@ -230,5 +263,52 @@ impl<N: Network> FromBytes for Message<N> {
         }
 
         Ok(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snarkvm::prelude::{CanaryV0, MainnetV0, TestnetV0};
+
+    /// Ensure that the message versions used at genesis is correct.
+    fn consensus_constants_at_genesis<N: Network>() {
+        let height = 0;
+        let consensus_version = Message::<N>::lowest_accepted_message_version(height);
+        assert_eq!(consensus_version as usize, Message::<N>::VERSIONS.first().unwrap().1 as usize);
+    }
+
+    /// Ensure that the consensus *versions* are unique and incrementing.
+    fn consensus_versions<N: Network>() {
+        let mut previous_version = Message::<N>::VERSIONS.first().unwrap().0;
+        for (version, _) in Message::<N>::VERSIONS.iter().skip(1) {
+            assert!(*version as usize > previous_version as usize);
+            previous_version = *version;
+        }
+    }
+
+    /// Ensure that *message versions* are unique and incrementing by 1.
+    fn consensus_constants_increasing_heights<N: Network>() {
+        let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
+        for (_, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+            assert_eq!(*message_version, previous_message_version + 1);
+            previous_message_version = *message_version;
+        }
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn test_consensus_constants() {
+        consensus_constants_at_genesis::<MainnetV0>();
+        consensus_constants_at_genesis::<TestnetV0>();
+        consensus_constants_at_genesis::<CanaryV0>();
+
+        consensus_versions::<MainnetV0>();
+        consensus_versions::<TestnetV0>();
+        consensus_versions::<CanaryV0>();
+
+        consensus_constants_increasing_heights::<MainnetV0>();
+        consensus_constants_increasing_heights::<TestnetV0>();
+        consensus_constants_increasing_heights::<CanaryV0>();
     }
 }

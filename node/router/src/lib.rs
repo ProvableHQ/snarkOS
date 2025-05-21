@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,8 +39,9 @@ pub use outbound::*;
 mod routing;
 pub use routing::*;
 
-use crate::messages::NodeType;
+use crate::messages::{Message, NodeType};
 use snarkos_account::Account;
+use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_tcp::{Config, P2P, Tcp, is_bogon_ip, is_unspecified_or_broadcast_ip};
 
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
@@ -81,6 +82,8 @@ pub struct InnerRouter<N: Network> {
     node_type: NodeType,
     /// The account of the node.
     account: Account<N>,
+    /// The ledger service.
+    ledger: Arc<dyn LedgerService<N>>,
     /// The cache.
     cache: Cache<N>,
     /// The resolver.
@@ -131,6 +134,7 @@ impl<N: Network> Router<N> {
         node_ip: SocketAddr,
         node_type: NodeType,
         account: Account<N>,
+        ledger: Arc<dyn LedgerService<N>>,
         trusted_peers: &[SocketAddr],
         max_peers: u16,
         rotate_external_peers: bool,
@@ -144,6 +148,7 @@ impl<N: Network> Router<N> {
             tcp,
             node_type,
             account,
+            ledger,
             cache: Default::default(),
             resolver: Default::default(),
             trusted_peers: trusted_peers.iter().copied().collect(),
@@ -249,6 +254,24 @@ impl<N: Network> Router<N> {
     /// Returns `true` if the given IP is not this node, is not a bogon address, and is not unspecified.
     pub fn is_valid_peer_ip(&self, ip: &SocketAddr) -> bool {
         !self.is_local_ip(ip) && !is_bogon_ip(ip.ip()) && !is_unspecified_or_broadcast_ip(ip.ip())
+    }
+
+    /// Returns `true` if the message version is valid.
+    pub fn is_valid_message_version(&self, message_version: u32) -> bool {
+        // Determine the minimum message version this node will accept, based on its role.
+        // - Provers always operate at the latest message version.
+        // - Validators and clients may accept older versions, depending on their current block height.
+        let lowest_accepted_message_version = match self.node_type {
+            // Provers should always use the latest version.
+            NodeType::Prover => Message::<N>::latest_message_version(),
+            // Validators and clients accept messages from lower version based on the migration height.
+            NodeType::Validator | NodeType::Client => {
+                Message::<N>::lowest_accepted_message_version(self.ledger.latest_block_height())
+            }
+        };
+
+        // Check if the incoming message version is valid.
+        message_version >= lowest_accepted_message_version
     }
 
     /// Returns the node type.

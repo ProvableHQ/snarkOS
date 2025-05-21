@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -522,9 +522,12 @@ impl Start {
         println!("{}", crate::helpers::welcome_message());
 
         // Check if we are running with the lower coinbase and proof targets. This should only be
-        // allowed in --dev mode.
-        if cfg!(feature = "test_targets") && self.dev.is_none() {
-            bail!("The 'test_targets' feature is enabled, but the '--dev' flag is not set");
+        // allowed in --dev mode and should not be allowed in mainnet mode.
+        if cfg!(feature = "test_network") && self.dev.is_none() {
+            bail!("The 'test_network' feature is enabled, but the '--dev' flag is not set");
+        }
+        if cfg!(feature = "test_network") && N::ID == MainnetV0::ID {
+            bail!("The 'test_network' feature is enabled, but you are trying to use mainnet. This is not supported.");
         }
 
         // Parse the trusted peers to connect to.

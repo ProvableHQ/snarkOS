@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -175,6 +175,11 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
 
 #[async_trait]
 impl<N: Network> Inbound<N> for TestRouter<N> {
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, _message_version: u32) -> bool {
+        true
+    }
+
     /// Handles a `BlockRequest` message.
     fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> bool {
         true

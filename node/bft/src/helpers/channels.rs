@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,7 +101,6 @@ impl<N: Network> BFTSender<N> {
     }
 }
 
-/// Receiving counterpart to `BFTSender`
 #[derive(Debug)]
 pub struct BFTReceiver<N: Network> {
     pub rx_primary_round: mpsc::Receiver<(u64, oneshot::Sender<bool>)>,
@@ -110,7 +109,7 @@ pub struct BFTReceiver<N: Network> {
     pub rx_sync_bft: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
 }
 
-/// Initializes the BFT channels, and returns the sending and receiving ends.
+/// Initializes the BFT channels.
 pub fn init_bft_channels<N: Network>() -> (BFTSender<N>, BFTReceiver<N>) {
     let (tx_primary_round, rx_primary_round) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_primary_certificate, rx_primary_certificate) = mpsc::channel(MAX_CHANNEL_SIZE);

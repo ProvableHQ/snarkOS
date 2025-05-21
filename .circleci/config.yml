@@ -207,15 +207,6 @@ commands:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
 
 jobs:
-  integration:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.medium >>
-    steps:
-      - run_serial_long:
-          workspace_member: .integration
-          cache_key: v3.3.1-rust-1.83.0-integration-cache
-
   snarkos:
     docker:
       - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
@@ -471,15 +462,4 @@ workflows:
                 display,
                 node
               ]
-
-  scheduled-workflow:
-    triggers:
-      - schedule:
-          cron: "0 0,12 * * *"
-          filters:
-            branches:
-              only:
-                - mainnet
-    jobs:
-      - integration
       

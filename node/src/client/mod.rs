@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Aleo Network Foundation
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +16,8 @@
 mod router;
 
 use crate::traits::NodeInterface;
-
 use snarkos_account::Account;
-use snarkos_node_bft::{events::DataBlocks, ledger_service::CoreLedgerService};
+use snarkos_node_bft::ledger_service::CoreLedgerService;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -28,7 +27,7 @@ use snarkos_node_router::{
     Routing,
     messages::{Message, NodeType, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync};
+use snarkos_node_sync::{BlockSync, BlockSyncMode};
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
@@ -102,7 +101,7 @@ pub struct Client<N: Network, C: ConsensusStorage<N>> {
     router: Router<N>,
     /// The REST server of the node.
     rest: Option<Rest<N, C, Self>>,
-    /// The block synchronization logic.
+    /// The sync module.
     sync: Arc<BlockSync<N>>,
     /// The genesis block.
     genesis: Block<N>,
@@ -167,6 +166,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             node_ip,
             NodeType::Client,
             account,
+            ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
@@ -176,7 +176,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         .await?;
 
         // Initialize the sync module.
-        let sync = BlockSync::new(ledger_service.clone());
+        let sync = BlockSync::new(BlockSyncMode::Router, ledger_service.clone(), router.tcp().clone());
 
         // Initialize the node.
         let mut node = Self {
@@ -233,62 +233,21 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     /// Initializes the sync pool.
     fn initialize_sync(&self) {
         // Start the sync loop.
-        let _self = self.clone();
+        let node = self.clone();
         self.handles.lock().push(tokio::spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if _self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                if node.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                     info!("Shutting down block production");
                     break;
                 }
 
                 // Sleep briefly to avoid triggering spam detection.
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
                 // Perform the sync routine.
-                _self.try_block_sync().await;
+                node.sync.try_block_sync(&node).await;
             }
         }));
-    }
-
-    /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
-    async fn try_block_sync(&self) {
-        // First see if any peers need removal.
-        let peers_to_ban = self.sync.remove_timed_out_block_requests();
-        for peer_ip in peers_to_ban {
-            trace!("Banning peer {peer_ip} for timing out on block requests");
-
-            let tcp = self.router.tcp().clone();
-            tcp.banned_peers().update_ip_ban(peer_ip.ip());
-
-            tokio::spawn(async move {
-                tcp.disconnect(peer_ip).await;
-            });
-        }
-
-        // Prepare the block requests, if any.
-        // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.sync.prepare_block_requests();
-        trace!("Prepared {} block requests", block_requests.len());
-
-        // If there are no block requests, but there are pending block responses in the sync pool,
-        // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() && self.sync.has_pending_responses() {
-            // Try to advance the ledger with the sync pool.
-            trace!("No block requests to send, but there are still pending block responses.");
-            self.sync.try_advancing_block_synchronization();
-        } else {
-            // Issues the block requests in batches.
-            for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-                if !self.sync.send_block_requests(self, &sync_peers, requests).await {
-                    // Stop if we fail to process a batch of requests.
-                    break;
-                }
-
-                // Sleep to avoid triggering spam detection.
-                tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
-            }
-        }
     }
 
     /// Initializes solution verification.
