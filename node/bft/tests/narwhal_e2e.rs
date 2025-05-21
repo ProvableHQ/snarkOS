@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -16,7 +17,7 @@
 mod common;
 
 use crate::common::primary::{TestNetwork, TestNetworkConfig};
-use snarkos_node_bft::MAX_BATCH_DELAY_IN_MS;
+use snarkos_node_bft::MAX_FETCH_TIMEOUT_IN_MS;
 
 use std::time::Duration;
 
@@ -72,7 +73,7 @@ async fn test_quorum_threshold() {
     // Start the cannons for node 0.
     network.fire_transmissions_at(0, TRANSMISSION_INTERVAL_MS);
 
-    sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS * 2)).await;
+    sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
 
     // Check each node is still at round 1.
     for validator in network.validators.values() {
@@ -83,7 +84,7 @@ async fn test_quorum_threshold() {
     network.connect_validators(0, 1).await;
     network.fire_transmissions_at(1, TRANSMISSION_INTERVAL_MS);
 
-    sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS * 2)).await;
+    sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
 
     // Check each node is still at round 1.
     for validator in network.validators.values() {
@@ -157,8 +158,7 @@ async fn test_storage_coherence() {
     assert!(network.is_committee_coherent(1..TARGET_ROUND));
 
     // Check the round certificates are coherent across the network. We skip the genesis round and
-    // check up to 2 rounds before the the target round as the round preceding the target round
-    // might still be incomplete since the network advances when quorum is reached, not when all
-    // the nodes have completed the round.
-    assert!(network.is_certificate_round_coherent(1..TARGET_ROUND - 1));
+    // check only up to 3 rounds before the the target round, because the network advances when
+    // quorum is reached, not when all the nodes have completed the round and received certificates.
+    assert!(network.is_certificate_round_coherent(1..TARGET_ROUND - 2));
 }

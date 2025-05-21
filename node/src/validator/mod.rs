@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -16,36 +17,40 @@ mod router;
 
 use crate::traits::NodeInterface;
 use snarkos_account::Account;
-use snarkos_node_bft::{helpers::init_primary_channels, ledger_service::CoreLedgerService};
+use snarkos_node_bft::{helpers::init_primary_channels, ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_consensus::Consensus;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
-    messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
     Heartbeat,
     Inbound,
     Outbound,
     Router,
     Routing,
+    messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, BlockSyncMode};
 use snarkos_node_tcp::{
-    protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
     P2P,
+    protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
 use snarkvm::prelude::{
-    block::{Block, Header},
-    coinbase::ProverSolution,
-    store::ConsensusStorage,
     Ledger,
     Network,
+    block::{Block, Header},
+    puzzle::Solution,
+    store::ConsensusStorage,
 };
 
+use aleo_std::StorageMode;
 use anyhow::Result;
 use core::future::Future;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::Mutex;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use std::{
     net::SocketAddr,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::task::JoinHandle;
@@ -81,51 +86,57 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_validators: &[SocketAddr],
         genesis: Block<N>,
         cdn: Option<String>,
-        dev: Option<u16>,
+        storage_mode: StorageMode,
+        allow_external_peers: bool,
+        dev_txs: bool,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        // Prepare the shutdown flag.
-        let shutdown: Arc<AtomicBool> = Default::default();
-
         // Initialize the signal handler.
         let signal_node = Self::handle_signals(shutdown.clone());
 
         // Initialize the ledger.
-        let ledger = Ledger::load(genesis, dev)?;
-        // TODO: Remove me after Phase 3.
-        let ledger = crate::phase_3_reset(ledger, dev)?;
+        let ledger = Ledger::load(genesis, storage_mode.clone())?;
+
         // Initialize the CDN.
         if let Some(base_url) = cdn {
             // Sync the ledger with the CDN.
             if let Err((_, error)) =
                 snarkos_node_cdn::sync_ledger_with_cdn(&base_url, ledger.clone(), shutdown.clone()).await
             {
-                crate::log_clean_error(dev);
+                crate::log_clean_error(&storage_mode);
                 return Err(error);
             }
         }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
-        // Initialize the sync module.
-        let sync = BlockSync::new(BlockSyncMode::Gateway, ledger_service.clone());
 
         // Initialize the consensus.
-        let mut consensus = Consensus::new(account.clone(), ledger_service, bft_ip, trusted_validators, dev)?;
+        let mut consensus =
+            Consensus::new(account.clone(), ledger_service.clone(), bft_ip, trusted_validators, storage_mode.clone())?;
         // Initialize the primary channels.
         let (primary_sender, primary_receiver) = init_primary_channels::<N>();
         // Start the consensus.
         consensus.run(primary_sender, primary_receiver).await?;
+        // Determine if the validator should rotate external peers.
+        let rotate_external_peers = false;
 
         // Initialize the node router.
         let router = Router::new(
             node_ip,
             NodeType::Validator,
-            account,
+            account.clone(),
+            ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            dev.is_some(),
+            rotate_external_peers,
+            allow_external_peers,
+            matches!(storage_mode, StorageMode::Development(_)),
         )
         .await?;
+
+        // Initialize the sync module.
+        let sync = BlockSync::new(BlockSyncMode::Gateway, ledger_service, router.tcp().clone());
 
         // Initialize the node.
         let mut node = Self {
@@ -138,7 +149,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             shutdown,
         };
         // Initialize the transaction pool.
-        node.initialize_transaction_pool(dev)?;
+        node.initialize_transaction_pool(storage_mode, dev_txs)?;
 
         // Initialize the REST server.
         if let Some(rest_ip) = rest_ip {
@@ -338,7 +349,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     // }
 
     /// Initialize the transaction pool.
-    fn initialize_transaction_pool(&self, dev: Option<u16>) -> Result<()> {
+    fn initialize_transaction_pool(&self, storage_mode: StorageMode, dev_txs: bool) -> Result<()> {
         use snarkvm::console::{
             program::{Identifier, Literal, ProgramID, Value},
             types::U64,
@@ -349,28 +360,16 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         let locator = (ProgramID::from_str("credits.aleo")?, Identifier::from_str("transfer_public")?);
 
         // Determine whether to start the loop.
-        match dev {
+        match storage_mode {
             // If the node is running in development mode, only generate if you are allowed.
-            Some(dev) => {
-                // If the node is not the first node, do not start the loop.
-                if dev != 0 {
+            StorageMode::Development(id) => {
+                // If the node is not the first node, or if we should not create dev traffic, do not start the loop.
+                if id != 0 || !dev_txs {
                     return Ok(());
                 }
             }
-            None => {
-                // Retrieve the genesis committee.
-                let Ok(Some(committee)) = self.ledger.get_committee_for_round(0) else {
-                    // If the genesis committee is not available, do not start the loop.
-                    return Ok(());
-                };
-                // Retrieve the first member.
-                // Note: It is guaranteed that the committee has at least one member.
-                let first_member = committee.members().first().unwrap().0;
-                // If the node is not the first member, do not start the loop.
-                if self.address() != *first_member {
-                    return Ok(());
-                }
-            }
+            // If the node is not running in development mode, do not generate dev traffic.
+            _ => return Ok(()),
         }
 
         let self_ = self.clone();
@@ -385,15 +384,16 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                 // Prepare the inputs.
                 let inputs = [Value::from(Literal::Address(self_.address())), Value::from(Literal::U64(U64::new(1)))];
                 // Execute the transaction.
-                let transaction = match self_.ledger.vm().execute(
-                    self_.private_key(),
+                let self__ = self_.clone();
+                let transaction = match spawn_blocking!(self__.ledger.vm().execute(
+                    self__.private_key(),
                     locator,
                     inputs.into_iter(),
                     None,
                     10_000,
                     None,
                     &mut rand::thread_rng(),
-                ) {
+                )) {
                     Ok(transaction) => transaction,
                     Err(error) => {
                         error!("Transaction pool encountered an execution error - {error}");
@@ -430,7 +430,7 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
-        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown.store(true, std::sync::atomic::Ordering::Release);
 
         // Abort the tasks.
         trace!("Shutting down the validator...");
@@ -451,9 +451,9 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 mod tests {
     use super::*;
     use snarkvm::prelude::{
-        store::{helpers::memory::ConsensusMemory, ConsensusStore},
-        Testnet3,
+        MainnetV0,
         VM,
+        store::{ConsensusStore, helpers::memory::ConsensusMemory},
     };
 
     use anyhow::bail;
@@ -461,23 +461,26 @@ mod tests {
     use rand_chacha::ChaChaRng;
     use std::str::FromStr;
 
-    type CurrentNetwork = Testnet3;
+    type CurrentNetwork = MainnetV0;
 
     /// Use `RUST_MIN_STACK=67108864 cargo test --release profiler --features timer` to run this test.
     #[ignore]
     #[tokio::test]
     async fn test_profiler() -> Result<()> {
         // Specify the node attributes.
-        let node = SocketAddr::from_str("0.0.0.0:4133").unwrap();
-        let rest = SocketAddr::from_str("0.0.0.0:3033").unwrap();
-        let dev = Some(0);
+        let node = SocketAddr::from_str("0.0.0.0:4130").unwrap();
+        let rest = SocketAddr::from_str("0.0.0.0:3030").unwrap();
+        let storage_mode = StorageMode::Development(0);
+        let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.
         let mut rng = ChaChaRng::seed_from_u64(1234567890u64);
         // Initialize the account.
         let account = Account::<CurrentNetwork>::new(&mut rng).unwrap();
         // Initialize a new VM.
-        let vm = VM::from(ConsensusStore::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>::open(None)?)?;
+        let vm = VM::from(ConsensusStore::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>::open(
+            StorageMode::new_test(None),
+        )?)?;
         // Initialize the genesis block.
         let genesis = vm.genesis_beacon(account.private_key(), &mut rng)?;
 
@@ -493,7 +496,10 @@ mod tests {
             &[],
             genesis,
             None,
-            dev,
+            storage_mode,
+            false,
+            dev_txs,
+            Default::default(),
         )
         .await
         .unwrap();

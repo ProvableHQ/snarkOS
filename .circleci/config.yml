@@ -1,7 +1,21 @@
 version: 2.1
 
+parameters:
+  medium:
+    type: string
+    default: medium
+  large:
+    type: string
+    default: large
+  xlarge:
+    type: string
+    default: xlarge
+  twoxlarge:
+    type: string
+    default: 2xlarge
+
 orbs:
-  windows: circleci/windows@2.4.0
+  windows: circleci/windows@5.0
 
 commands:
   check_windows:
@@ -17,13 +31,17 @@ commands:
           name: "Install Rust and run cargo check"
           command: |
             $ProgressPreference = "SilentlyContinue"
-            Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "stable-x86_64-pc-windows-msvc" --no-modify-path --profile minimal
-            choco install llvm -y
+            # Remove the circleci installed rustc.
+            choco uninstall rust
+            # Install llvm (libclang for rocksdb).
+            choco install llvm -y 
             refreshenv
-            $env:Path += ";C:\Users\circleci\.cargo\bin"
-            rustc -Vv
-            cargo --version
+            # Install rust with rustup.
+            Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
+            & C:\rustup-init.exe -y --default-toolchain "1.83.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
+            # Verify the installation.
+            cargo --version --verbose
             rustc --version | Out-File -FilePath "rust-version"
             if (!(Test-Path "Cargo.lock" -PathType Leaf)) {
                 cargo generate-lockfile
@@ -42,10 +60,9 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: snarkos-stable-cache
+        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
     steps:
       - run: set -e
-      - setup_remote_docker
       - run:
           name: Prepare environment and install dependencies
           command: |
@@ -71,7 +88,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: snarkos-stable-cache
+        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
     steps:
       - run: (sccache -s||true)
       - run: set +e
@@ -148,207 +165,243 @@ commands:
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
+  run_devnet:
+    description: "Run devnet for integration testing"
+    parameters:
+      workspace_member:
+        type: string
+      cache_key:
+        type: string
+      validators:
+        type: integer
+        default: 4
+      clients:
+        type: integer
+        default: 2
+      network_id:
+        type: integer
+        default: 0
+      min_height:
+        type: integer
+        default: 45
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: << parameters.cache_key >>
+      - run:
+          name: "Install snarkos"
+          command: |
+            cargo install --locked --path .
+      - run:
+          name: "Run devnet test"
+          no_output_timeout: 20m  # Allow 20 minutes total
+          command: |
+            chmod +x .circleci/devnet_ci.sh
+            ./.circleci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+      - clear_environment:
+          cache_key: << parameters.cache_key >>
+
   install_rust_nightly:
     description: "Install Rust nightly toolchain"
     steps:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
 
 jobs:
-  integration:
-    docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
-    steps:
-      - run_serial_long:
-          workspace_member: .integration
-          cache_key: snarkos-integration-cache
-
   snarkos:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: .
-          cache_key: snarkos-stable-cache
+          cache_key: v3.3.1-rust-1.83.0-stable-cache
 
   account:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: account
-          cache_key: snarkos-account-cache
+          cache_key: v3.3.1-rust-1.83.0-account-cache
 
   cli:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.xlarge >>
     steps:
       - run_serial:
           workspace_member: cli
-          cache_key: snarkos-cli-cache
+          cache_key: v3.3.1-rust-1.83.0-cli-cache
 
   display:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: display
-          cache_key: snarkos-display-cache
+          cache_key: v3.3.1-rust-1.83.0-display-cache
 
   node:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: node
-          cache_key: snarkos-node-cache
+          cache_key: v3.3.1-rust-1.83.0-node-cache
 
   node-bft:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: node/bft
-          cache_key: snarkos-node-bft-cache
+          cache_key: v3.3.1-rust-1.83.0-node-bft-cache
 
   node-bft-events:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/bft/events
-          cache_key: snarkos-node-bft-events-cache
+          cache_key: v3.3.1-rust-1.83.0-node-bft-events-cache
 
   node-bft-ledger-service:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/bft/ledger-service
-          cache_key: snarkos-node-bft-ledger-service-cache
+          cache_key: v3.3.1-rust-1.83.0-node-bft-ledger-service-cache
 
   node-bft-storage-service:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/bft/storage-service
-          cache_key: snarkos-node-bft-storage-service-cache
+          cache_key: v3.3.1-rust-1.83.0-node-bft-storage-service-cache
 
   node-cdn:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/cdn
-          cache_key: snarkos-node-cdn-cache
+          cache_key: v3.3.1-rust-1.83.0-node-cdn-cache
 
   node-consensus:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/consensus
-          cache_key: snarkos-node-consensus-cache
+          cache_key: v3.3.1-rust-1.83.0-node-consensus-cache
 
   node-rest:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/rest
-          cache_key: snarkos-node-rest-cache
+          cache_key: v3.3.1-rust-1.83.0-node-rest-cache
 
   node-router:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/router
-          cache_key: snarkos-node-router-cache
+          cache_key: v3.3.1-rust-1.83.0-node-router-cache
 
   node-router-messages:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/router/messages
-          cache_key: snarkos-node-router-messages-cache
+          cache_key: v3.3.1-rust-1.83.0-node-router-messages-cache
 
   node-sync:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.xlarge >>
     steps:
       - run_serial:
           workspace_member: node/sync
-          cache_key: snarkos-node-sync-cache
+          cache_key: v3.3.1-rust-1.83.0-node-sync-cache
 
   node-sync-communication-service:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/sync/communication-service
-          cache_key: snarkos-node-sync-communication-service-cache
+          cache_key: v3.3.1-rust-1.83.0-node-sync-communication-service-cache
 
   node-sync-locators:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/sync/locators
-          cache_key: snarkos-node-sync-locators-cache
+          cache_key: v3.3.1-rust-1.83.0-node-sync-locators-cache
 
   node-tcp:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/tcp
-          cache_key: snarkos-node-tcp-cache
+          cache_key: v3.3.1-rust-1.83.0-node-tcp-cache
+
+  devnet-test:
+    docker:
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - run_devnet:
+          workspace_member: .
+          cache_key: v3.3.1-rust-1.83.0-devnet-test-cache
 
   check-fmt:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - install_rust_nightly
       - setup_environment:
-          cache_key: snarkos-fmt-cache
+          cache_key: v3.3.1-rust-1.83.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +nightly fmt --all -- --check
       - clear_environment:
-          cache_key: snarkos-fmt-cache
+          cache_key: v3.3.1-rust-1.83.0-fmt-cache
 
   check-clippy:
     docker:
-      - image: cimg/rust:1.72.1
-    resource_class: 2xlarge
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - setup_environment:
-          cache_key: snarkos-clippy-cache
+          cache_key: v3.3.1-rust-1.83.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -356,7 +409,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: snarkos-clippy-cache
+          cache_key: v3.3.1-rust-1.83.0-clippy-cache
 
   verify-windows:
     executor:
@@ -396,6 +449,7 @@ workflows:
       - node-tcp
       - check-fmt
       - check-clippy
+      - devnet-test
 
   windows-workflow:
     jobs:
@@ -408,14 +462,4 @@ workflows:
                 display,
                 node
               ]
-
-  scheduled-workflow:
-    triggers:
-      - schedule:
-          cron: "0 0,12 * * *"
-          filters:
-            branches:
-              only:
-                - testnet3
-    jobs:
-      - integration
+      

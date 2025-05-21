@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-node-rest"
-version = "2.2.7"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,13 +12,22 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2021"
 
 [features]
 default = [ "parallel" ]
 parallel = [ "rayon" ]
+history = [ "snarkvm-synthesizer/history" ]
+telemetry = [ ]
+cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-consensus/locktick",
+  "snarkos-node-router/locktick",
+  "snarkvm-synthesizer/locktick"
+]
 
 [dependencies.anyhow]
 version = "1.0.79"
@@ -40,6 +49,11 @@ features = [ "serde", "rayon" ]
 [dependencies.jsonwebtoken]
 version = "9.2"
 
+[dependencies.locktick]
+version = "0.3"
+features = [ "parking_lot" ]
+optional = true
+
 [dependencies.once_cell]
 version = "1.19"
 
@@ -57,11 +71,19 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-node-consensus]
 path = "../consensus"
-version = "=2.2.7"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-router]
 path = "../router"
-version = "=2.2.7"
+version = "=3.6.0"
+
+[dependencies.snarkvm-synthesizer]
+#path = "../../../snarkVM/synthesizer"
+git = "https://github.com/ProvableHQ/snarkVM.git"
+rev = "a87ceb9"
+version = "=1.6.0"
+default-features = false
+optional = true
 
 [dependencies.rand]
 version = "0.8"

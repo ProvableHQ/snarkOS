@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -12,11 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
+use std::{
+    sync::atomic::{AtomicU64, Ordering::Relaxed},
+    time::Instant,
+};
 
 /// Contains statistics related to Tcp.
-#[derive(Default)]
 pub struct Stats {
+    /// The timestamp of the creation (for the node) or connection (to a peer).
+    pub(crate) timestamp: RwLock<Instant>,
     /// The number of all messages sent.
     msgs_sent: AtomicU64,
     /// The number of all messages received.
@@ -30,6 +39,23 @@ pub struct Stats {
 }
 
 impl Stats {
+    /// Creates a new instance of the object.
+    pub fn new(timestamp: Instant) -> Self {
+        Self {
+            timestamp: RwLock::new(timestamp),
+            msgs_sent: Default::default(),
+            msgs_received: Default::default(),
+            bytes_sent: Default::default(),
+            bytes_received: Default::default(),
+            failures: Default::default(),
+        }
+    }
+
+    /// Returns the creation or connection timestamp.
+    pub fn timestamp(&self) -> Instant {
+        *self.timestamp.read()
+    }
+
     /// Returns the number of sent messages and their collective size in bytes.
     pub fn sent(&self) -> (u64, u64) {
         let msgs = self.msgs_sent.load(Relaxed);

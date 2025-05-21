@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -14,26 +15,27 @@
 
 use super::*;
 use snarkos_node_router::{
+    Routing,
     messages::{
         BlockRequest,
         BlockResponse,
         DataBlocks,
         DisconnectReason,
         MessageCodec,
+        PeerRequest,
         Ping,
         Pong,
         PuzzleResponse,
         UnconfirmedTransaction,
     },
-    Routing,
 };
+use snarkos_node_sync::communication_service::CommunicationService;
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{block::Transaction, Network},
+    prelude::{Network, block::Transaction},
 };
 
-use snarkos_node_sync::communication_service::CommunicationService;
 use std::{io, net::SocketAddr, time::Duration};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Client<N, C> {
@@ -52,7 +54,8 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
         let genesis_header = *self.genesis.header();
-        self.router.handshake(peer_addr, stream, conn_side, genesis_header).await?;
+        let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
+        self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
         Ok(connection)
     }
@@ -66,6 +69,12 @@ where
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
         let Some(peer_ip) = self.router.resolve_to_listener(&peer_addr) else { return };
+        // Promote the peer's status from "connecting" to "connected".
+        self.router().insert_connected_peer(peer_ip);
+        // If it's a bootstrap peer, first request its peers.
+        if self.router.bootstrap_peers().contains(&peer_ip) {
+            Outbound::send(self, peer_ip, Message::PeerRequest(PeerRequest));
+        }
         // Retrieve the block locators.
         let block_locators = match self.sync.get_block_locators() {
             Ok(block_locators) => Some(block_locators),
@@ -115,16 +124,36 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Client<N, C> {
 
     /// Processes a message received from the network.
     async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) -> io::Result<()> {
+        let clone = self.clone();
+        if matches!(message, Message::BlockRequest(_) | Message::BlockResponse(_)) {
+            // Handle BlockRequest and BlockResponse messages in a separate task to not block the
+            // inbound queue.
+            tokio::spawn(async move {
+                clone.process_message_inner(peer_addr, message).await;
+            });
+        } else {
+            self.process_message_inner(peer_addr, message).await;
+        }
+        Ok(())
+    }
+}
+
+impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
+    async fn process_message_inner(
+        &self,
+        peer_addr: SocketAddr,
+        message: <Client<N, C> as snarkos_node_tcp::protocols::Reading>::Message,
+    ) {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
+            warn!("Failed to process inbound message from '{peer_addr}' - {error}");
             if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
-                warn!("Disconnecting from '{peer_ip}' - {error}");
+                warn!("Disconnecting from '{peer_ip}' for protocol violation");
                 Outbound::send(self, peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
                 // Disconnect from this peer.
                 self.router().disconnect(peer_ip);
             }
         }
-        Ok(())
     }
 }
 
@@ -163,10 +192,25 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Client<N, C> {
     fn router(&self) -> &Router<N> {
         &self.router
     }
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    fn is_block_synced(&self) -> bool {
+        self.sync.is_block_synced()
+    }
+
+    /// Returns the number of blocks this node is behind the greatest peer height.
+    fn num_blocks_behind(&self) -> u32 {
+        self.sync.num_blocks_behind()
+    }
 }
 
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, message_version: u32) -> bool {
+        self.router().is_valid_message_version(message_version)
+    }
+
     /// Handles a `BlockRequest` message.
     fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
         let BlockRequest { start_height, end_height } = &message;
@@ -235,11 +279,11 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         true
     }
 
-    /// Disconnects on receipt of a `PuzzleRequest` message.
+    /// Retrieves the latest epoch hash and latest block header, and returns the puzzle response to the peer.
     fn puzzle_request(&self, peer_ip: SocketAddr) -> bool {
-        // Retrieve the latest epoch challenge.
-        let epoch_challenge = match self.ledger.latest_epoch_challenge() {
-            Ok(epoch_challenge) => epoch_challenge,
+        // Retrieve the latest epoch hash.
+        let epoch_hash = match self.ledger.latest_epoch_hash() {
+            Ok(epoch_hash) => epoch_hash,
             Err(error) => {
                 error!("Failed to prepare a puzzle request for '{peer_ip}': {error}");
                 return false;
@@ -248,12 +292,12 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         // Retrieve the latest block header.
         let block_header = Data::Object(self.ledger.latest_header());
         // Send the `PuzzleResponse` message to the peer.
-        Outbound::send(self, peer_ip, Message::PuzzleResponse(PuzzleResponse { epoch_challenge, block_header }));
+        Outbound::send(self, peer_ip, Message::PuzzleResponse(PuzzleResponse { epoch_hash, block_header }));
         true
     }
 
-    /// Saves the latest epoch challenge and latest block header in the node.
-    fn puzzle_response(&self, peer_ip: SocketAddr, _epoch_challenge: EpochChallenge<N>, _header: Header<N>) -> bool {
+    /// Saves the latest epoch hash and latest block header in the node.
+    fn puzzle_response(&self, peer_ip: SocketAddr, _epoch_hash: N::BlockHash, _header: Header<N>) -> bool {
         debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
         false
     }
@@ -263,33 +307,15 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         &self,
         peer_ip: SocketAddr,
         serialized: UnconfirmedSolution<N>,
-        solution: ProverSolution<N>,
+        solution: Solution<N>,
     ) -> bool {
-        // Retrieve the latest epoch challenge.
-        if let Ok(epoch_challenge) = self.ledger.latest_epoch_challenge() {
-            // Retrieve the latest proof target.
-            let proof_target = self.ledger.latest_block().header().proof_target();
-            // Ensure that the prover solution is valid for the given epoch.
-            let coinbase_puzzle = self.coinbase_puzzle.clone();
-            let is_valid = tokio::task::spawn_blocking(move || {
-                solution.verify(coinbase_puzzle.coinbase_verifying_key(), &epoch_challenge, proof_target)
-            })
-            .await;
-
-            match is_valid {
-                // If the solution is valid, propagate the `UnconfirmedSolution`.
-                Ok(Ok(true)) => {
-                    let message = Message::UnconfirmedSolution(serialized);
-                    // Propagate the "UnconfirmedSolution".
-                    self.propagate(message, &[peer_ip]);
-                }
-                Ok(Ok(false)) | Ok(Err(_)) => {
-                    trace!("Invalid prover solution '{}' for the proof target.", solution.commitment())
-                }
-                Err(error) => warn!("Failed to verify the prover solution: {error}"),
-            }
+        // Try to add the solution to the verification queue, without changing LRU status of known solutions.
+        let mut solution_queue = self.solution_queue.lock();
+        if !solution_queue.contains(&solution.id()) {
+            solution_queue.put(solution.id(), (peer_ip, serialized, solution));
         }
-        true
+
+        true // Maintain the connection
     }
 
     /// Handles an `UnconfirmedTransaction` message.
@@ -299,15 +325,23 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         serialized: UnconfirmedTransaction<N>,
         transaction: Transaction<N>,
     ) -> bool {
-        // Check that the transaction is not a fee transaction.
-        if transaction.is_fee() {
-            return true; // Maintain the connection.
+        // Try to add the transaction to a verification queue, without changing LRU status of known transactions.
+        match &transaction {
+            Transaction::<N>::Fee(..) => (), // Fee Transactions are not valid.
+            Transaction::<N>::Deploy(..) => {
+                let mut deploy_queue = self.deploy_queue.lock();
+                if !deploy_queue.contains(&transaction.id()) {
+                    deploy_queue.put(transaction.id(), (peer_ip, serialized, transaction));
+                }
+            }
+            Transaction::<N>::Execute(..) => {
+                let mut execute_queue = self.execute_queue.lock();
+                if !execute_queue.contains(&transaction.id()) {
+                    execute_queue.put(transaction.id(), (peer_ip, serialized, transaction));
+                }
+            }
         }
-        // Check that the transaction is well-formed and unique.
-        if self.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()).is_ok() {
-            // Propagate the `UnconfirmedTransaction`.
-            self.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
-        }
-        true
+
+        true // Maintain the connection
     }
 }

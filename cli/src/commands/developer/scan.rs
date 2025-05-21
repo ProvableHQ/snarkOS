@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -14,26 +15,34 @@
 
 #![allow(clippy::type_complexity)]
 
-use super::CurrentNetwork;
+use crate::commands::CDN_BASE_URL;
+use snarkvm::{
+    console::network::{CanaryV0, MainnetV0, Network, TestnetV0},
+    prelude::{Ciphertext, Field, FromBytes, Plaintext, PrivateKey, Record, ViewKey, block::Block},
+};
 
-use snarkvm::prelude::{block::Block, Ciphertext, Field, FromBytes, Network, Plaintext, PrivateKey, Record, ViewKey};
-
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use clap::Parser;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use std::{
-    io::{stdout, Write},
+    io::{Write, stdout},
     str::FromStr,
     sync::Arc,
 };
 use zeroize::Zeroize;
 
 const MAX_BLOCK_RANGE: u32 = 50;
-const CDN_ENDPOINT: &str = "https://s3.us-west-1.amazonaws.com/testnet3.blocks/phase3";
 
 /// Scan the snarkOS node for records.
 #[derive(Debug, Parser, Zeroize)]
 pub struct Scan {
+    /// Specify the network to scan.
+    #[clap(default_value = "0", long = "network")]
+    pub network: u16,
+
     /// An optional private key scan for unspent records.
     #[clap(short, long)]
     private_key: Option<String>,
@@ -61,14 +70,25 @@ pub struct Scan {
 
 impl Scan {
     pub fn parse(self) -> Result<String> {
+        // Scan for records on the given network.
+        match self.network {
+            MainnetV0::ID => self.scan_records::<MainnetV0>(),
+            TestnetV0::ID => self.scan_records::<TestnetV0>(),
+            CanaryV0::ID => self.scan_records::<CanaryV0>(),
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        }
+    }
+
+    /// Scan the network for records.
+    fn scan_records<N: Network>(&self) -> Result<String> {
         // Derive the view key and optional private key.
-        let (private_key, view_key) = self.parse_account()?;
+        let (private_key, view_key) = self.parse_account::<N>()?;
 
         // Find the start and end height to scan.
         let (start_height, end_height) = self.parse_block_range()?;
 
         // Fetch the records from the network.
-        let records = Self::fetch_records(private_key, &view_key, &self.endpoint, start_height, end_height)?;
+        let records = Self::fetch_records::<N>(private_key, &view_key, &self.endpoint, start_height, end_height)?;
 
         // Output the decrypted records associated with the view key.
         if records.is_empty() {
@@ -115,6 +135,14 @@ impl Scan {
 
     /// Returns the `start` and `end` blocks to scan.
     fn parse_block_range(&self) -> Result<(u32, u32)> {
+        // Get the network name.
+        let network = match self.network {
+            MainnetV0::ID => "mainnet",
+            TestnetV0::ID => "testnet",
+            CanaryV0::ID => "canary",
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        };
+
         match (self.start, self.end, self.last) {
             (Some(start), Some(end), None) => {
                 ensure!(end > start, "The given scan range is invalid (start = {start}, end = {end})");
@@ -123,7 +151,7 @@ impl Scan {
             }
             (Some(start), None, None) => {
                 // Request the latest block height from the endpoint.
-                let endpoint = format!("{}/testnet3/latest/height", self.endpoint);
+                let endpoint = format!("{}/{network}/block/height/latest", self.endpoint);
                 let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_string()?)?;
 
                 // Print a warning message if the user is attempting to scan the whole chain.
@@ -136,7 +164,7 @@ impl Scan {
             (None, Some(end), None) => Ok((0, end)),
             (None, None, Some(last)) => {
                 // Request the latest block height from the endpoint.
-                let endpoint = format!("{}/testnet3/latest/height", self.endpoint);
+                let endpoint = format!("{}/{network}/block/height/latest", self.endpoint);
                 let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_string()?)?;
 
                 Ok((latest_height.saturating_sub(last), latest_height))
@@ -146,18 +174,36 @@ impl Scan {
         }
     }
 
+    /// Returns the CDN to prefetch initial blocks from, from the given configurations.
+    fn parse_cdn<N: Network>() -> Result<String> {
+        match N::ID {
+            MainnetV0::ID => Ok(format!("{CDN_BASE_URL}/mainnet/v0")),
+            TestnetV0::ID => Ok(format!("{CDN_BASE_URL}/testnet/v0")),
+            CanaryV0::ID => Ok(format!("{CDN_BASE_URL}/canary/v0")),
+            _ => bail!("Unknown network ID ({})", N::ID),
+        }
+    }
+
     /// Fetch owned ciphertext records from the endpoint.
-    fn fetch_records(
-        private_key: Option<PrivateKey<CurrentNetwork>>,
-        view_key: &ViewKey<CurrentNetwork>,
+    fn fetch_records<N: Network>(
+        private_key: Option<PrivateKey<N>>,
+        view_key: &ViewKey<N>,
         endpoint: &str,
         start_height: u32,
         end_height: u32,
-    ) -> Result<Vec<Record<CurrentNetwork, Plaintext<CurrentNetwork>>>> {
+    ) -> Result<Vec<Record<N, Plaintext<N>>>> {
         // Check the bounds of the request.
         if start_height > end_height {
             bail!("Invalid block range");
         }
+
+        // Get the network name.
+        let network = match N::ID {
+            MainnetV0::ID => "mainnet",
+            TestnetV0::ID => "testnet",
+            CanaryV0::ID => "canary",
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        };
 
         // Derive the x-coordinate of the address corresponding to the given view key.
         let address_x_coordinate = view_key.to_address().to_x_coordinate();
@@ -173,20 +219,21 @@ impl Scan {
         stdout().flush()?;
 
         // Fetch the genesis block from the endpoint.
-        let genesis_block: Block<CurrentNetwork> =
-            ureq::get(&format!("{endpoint}/testnet3/block/0")).call()?.into_json()?;
+        let genesis_block: Block<N> = ureq::get(&format!("{endpoint}/{network}/block/0")).call()?.into_json()?;
         // Determine if the endpoint is on a development network.
-        let is_development_network = genesis_block != Block::from_bytes_le(CurrentNetwork::genesis_bytes())?;
+        let is_development_network = genesis_block != Block::from_bytes_le(N::genesis_bytes())?;
 
         // Determine the request start height.
         let mut request_start = match is_development_network {
             true => start_height,
             false => {
+                // Parse the CDN endpoint.
+                let cdn_endpoint = Self::parse_cdn::<N>()?;
                 // Scan the CDN first for records.
                 Self::scan_from_cdn(
                     start_height,
                     end_height,
-                    CDN_ENDPOINT.to_string(),
+                    cdn_endpoint,
                     endpoint.to_string(),
                     private_key,
                     *view_key,
@@ -211,9 +258,9 @@ impl Scan {
             let request_end = request_start.saturating_add(num_blocks_to_request);
 
             // Establish the endpoint.
-            let blocks_endpoint = format!("{endpoint}/testnet3/blocks?start={request_start}&end={request_end}");
+            let blocks_endpoint = format!("{endpoint}/{network}/blocks?start={request_start}&end={request_end}");
             // Fetch blocks
-            let blocks: Vec<Block<CurrentNetwork>> = ureq::get(&blocks_endpoint).call()?.into_json()?;
+            let blocks: Vec<Block<N>> = ureq::get(&blocks_endpoint).call()?.into_json()?;
 
             // Scan the blocks for owned records.
             for block in &blocks {
@@ -233,15 +280,15 @@ impl Scan {
 
     /// Scan the blocks from the CDN.
     #[allow(clippy::too_many_arguments)]
-    fn scan_from_cdn(
+    fn scan_from_cdn<N: Network>(
         start_height: u32,
         end_height: u32,
         cdn: String,
         endpoint: String,
-        private_key: Option<PrivateKey<CurrentNetwork>>,
-        view_key: ViewKey<CurrentNetwork>,
-        address_x_coordinate: Field<CurrentNetwork>,
-        records: Arc<RwLock<Vec<Record<CurrentNetwork, Plaintext<CurrentNetwork>>>>>,
+        private_key: Option<PrivateKey<N>>,
+        view_key: ViewKey<N>,
+        address_x_coordinate: Field<N>,
+        records: Arc<RwLock<Vec<Record<N, Plaintext<N>>>>>,
     ) -> Result<()> {
         // Calculate the number of blocks to scan.
         let total_blocks = end_height.saturating_sub(start_height);
@@ -295,13 +342,13 @@ impl Scan {
     }
 
     /// Scan a block for owned records.
-    fn scan_block(
-        block: &Block<CurrentNetwork>,
+    fn scan_block<N: Network>(
+        block: &Block<N>,
         endpoint: &str,
-        private_key: Option<PrivateKey<CurrentNetwork>>,
-        view_key: &ViewKey<CurrentNetwork>,
-        address_x_coordinate: &Field<CurrentNetwork>,
-        records: Arc<RwLock<Vec<Record<CurrentNetwork, Plaintext<CurrentNetwork>>>>>,
+        private_key: Option<PrivateKey<N>>,
+        view_key: &ViewKey<N>,
+        address_x_coordinate: &Field<N>,
+        records: Arc<RwLock<Vec<Record<N, Plaintext<N>>>>>,
     ) -> Result<()> {
         for (commitment, ciphertext_record) in block.records() {
             // Check if the record is owned by the given view key.
@@ -319,21 +366,28 @@ impl Scan {
     }
 
     /// Decrypts the ciphertext record and filters spend record if a private key was provided.
-    fn decrypt_record(
-        private_key: Option<PrivateKey<CurrentNetwork>>,
-        view_key: &ViewKey<CurrentNetwork>,
+    fn decrypt_record<N: Network>(
+        private_key: Option<PrivateKey<N>>,
+        view_key: &ViewKey<N>,
         endpoint: &str,
-        commitment: Field<CurrentNetwork>,
-        ciphertext_record: &Record<CurrentNetwork, Ciphertext<CurrentNetwork>>,
-    ) -> Result<Option<Record<CurrentNetwork, Plaintext<CurrentNetwork>>>> {
+        commitment: Field<N>,
+        ciphertext_record: &Record<N, Ciphertext<N>>,
+    ) -> Result<Option<Record<N, Plaintext<N>>>> {
         // Check if a private key was provided.
         if let Some(private_key) = private_key {
             // Compute the serial number.
-            let serial_number =
-                Record::<CurrentNetwork, Plaintext<CurrentNetwork>>::serial_number(private_key, commitment)?;
+            let serial_number = Record::<N, Plaintext<N>>::serial_number(private_key, commitment)?;
+
+            // Get the network name.
+            let network = match N::ID {
+                MainnetV0::ID => "mainnet",
+                TestnetV0::ID => "testnet",
+                CanaryV0::ID => "canary",
+                unknown_id => bail!("Unknown network ID ({unknown_id})"),
+            };
 
             // Establish the endpoint.
-            let endpoint = format!("{endpoint}/testnet3/find/transitionID/{serial_number}");
+            let endpoint = format!("{endpoint}/{network}/find/transitionID/{serial_number}");
 
             // Check if the record is spent.
             match ureq::get(&endpoint).call() {
@@ -358,9 +412,9 @@ impl Scan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snarkvm::prelude::{TestRng, Testnet3};
+    use snarkvm::prelude::{MainnetV0, TestRng};
 
-    type CurrentNetwork = Testnet3;
+    type CurrentNetwork = MainnetV0;
 
     #[test]
     fn test_parse_account() {

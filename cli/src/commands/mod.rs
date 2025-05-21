@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -29,7 +30,7 @@ pub use update::*;
 
 use anstyle::{AnsiColor, Color, Style};
 use anyhow::Result;
-use clap::{builder::Styles, Parser};
+use clap::{Parser, builder::Styles};
 
 const HEADER_COLOR: Option<Color> = Some(Color::Ansi(AnsiColor::Yellow));
 const LITERAL_COLOR: Option<Color> = Some(Color::Ansi(AnsiColor::Green));
@@ -38,8 +39,9 @@ const STYLES: Styles = Styles::plain()
     .usage(Style::new().bold().fg_color(HEADER_COLOR))
     .literal(Style::new().bold().fg_color(LITERAL_COLOR));
 
+// Note: the basic clap-supplied version is overridden in the main module.
 #[derive(Debug, Parser)]
-#[clap(name = "snarkOS", author = "The Aleo Team <hello@aleo.org>", styles = STYLES)]
+#[clap(name = "snarkOS", author = "The Aleo Team <hello@aleo.org>", styles = STYLES, version)]
 pub struct CLI {
     /// Specify the verbosity [options: 0, 1, 2, 3]
     #[clap(default_value = "2", short, long)]

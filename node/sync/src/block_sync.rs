@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -13,43 +14,50 @@
 // limitations under the License.
 
 use crate::{
-    helpers::{PeerPair, SyncRequest},
+    helpers::{PeerPair, PrepareSyncRequest, SyncRequest},
     locators::BlockLocators,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
-use snarkvm::prelude::{block::Block, Network};
+use snarkos_node_tcp::Tcp;
+use snarkvm::prelude::{Network, block::Block};
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::{Mutex, RwLock};
+#[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::{prelude::IteratorRandom, CryptoRng, Rng};
+use rand::{CryptoRng, Rng, prelude::IteratorRandom};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::Instant,
 };
 
+#[cfg(not(test))]
+pub const REDUNDANCY_FACTOR: usize = 1;
+#[cfg(test)]
 pub const REDUNDANCY_FACTOR: usize = 3;
-const EXTRA_REDUNDANCY_FACTOR: usize = REDUNDANCY_FACTOR * 2;
+const EXTRA_REDUNDANCY_FACTOR: usize = REDUNDANCY_FACTOR * 3;
 const NUM_SYNC_CANDIDATE_PEERS: usize = REDUNDANCY_FACTOR * 5;
 
-const BLOCK_REQUEST_TIMEOUT_IN_SECS: u64 = 15; // 15 seconds
+const BLOCK_REQUEST_TIMEOUT_IN_SECS: u64 = 600; // 600 seconds
 const MAX_BLOCK_REQUESTS: usize = 50; // 50 requests
-const MAX_BLOCK_REQUEST_TIMEOUTS: usize = 5; // 5 timeouts
 
 /// The maximum number of blocks tolerated before the primary is considered behind its peers.
-pub const MAX_BLOCKS_BEHIND: u32 = 2; // blocks
+pub const MAX_BLOCKS_BEHIND: u32 = 1; // blocks
 
 /// This is a dummy IP address that is used to represent the local node.
 /// Note: This here does not need to be a real IP address, but it must be unique/distinct from all other connections.
-const DUMMY_SELF_IP: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
+pub const DUMMY_SELF_IP: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BlockSyncMode {
@@ -73,22 +81,22 @@ impl BlockSyncMode {
 ///
 /// # State
 /// - When a request is inserted, the `requests` map and `request_timestamps` map insert an entry for the request height.
-/// - When a response is inserted, the `requests` map inserts the entry for the request height.
+/// - When a response is inserted, the `responses` map inserts the entry for the request height.
 /// - When a request is completed, the `requests` map still has the entry, but its `sync_ips` is empty;
 ///   the `request_timestamps` map remains unchanged.
 /// - When a response is removed/completed, the `requests` map and `request_timestamps` map also remove the entry for the request height.
-/// - When a request is timed out, the `requests`, `request_timestamps`, and `responses` map remove the entry for the request height;
+/// - When a request is timed out, the `requests`, `request_timestamps`, and `responses` map remove the entry for the request height.
 #[derive(Clone, Debug)]
 pub struct BlockSync<N: Network> {
     /// The block sync mode.
     mode: BlockSyncMode,
-    /// The canonical map of block height to block hash.
-    /// This map is a linearly-increasing map of block heights to block hashes,
-    /// updated solely from the ledger and candidate blocks (not from peers' block locators, to ensure there are no forks).
-    canon: Arc<dyn LedgerService<N>>,
+    /// The ledger.
+    ledger: Arc<dyn LedgerService<N>>,
+    /// The TCP stack.
+    tcp: Tcp,
     /// The map of peer IP to their block locators.
-    /// The block locators are consistent with the canonical map and every other peer's block locators.
-    locators: Arc<RwLock<IndexMap<SocketAddr, BlockLocators<N>>>>,
+    /// The block locators are consistent with the ledger and every other peer's block locators.
+    locators: Arc<RwLock<HashMap<SocketAddr, BlockLocators<N>>>>,
     /// The map of peer-to-peer to their common ancestor.
     /// This map is used to determine which peers to request blocks from.
     common_ancestors: Arc<RwLock<IndexMap<PeerPair, u32>>>,
@@ -101,28 +109,28 @@ pub struct BlockSync<N: Network> {
     /// The map of block height to the timestamp of the last time the block was requested.
     /// This map is used to determine which requests to remove if they have been pending for too long.
     request_timestamps: Arc<RwLock<BTreeMap<u32, Instant>>>,
-    /// The map of (timed out) peer IPs to their request timestamps.
-    /// This map is used to determine which peers to remove if they have timed out too many times.
-    request_timeouts: Arc<RwLock<IndexMap<SocketAddr, Vec<Instant>>>>,
     /// The boolean indicator of whether the node is synced up to the latest block (within the given tolerance).
     is_block_synced: Arc<AtomicBool>,
+    /// The number of blocks the peer is behind the greatest peer height.
+    num_blocks_behind: Arc<AtomicU32>,
     /// The lock to guarantee advance_with_sync_blocks() is called only once at a time.
     advance_with_sync_blocks_lock: Arc<Mutex<()>>,
 }
 
 impl<N: Network> BlockSync<N> {
     /// Initializes a new block sync module.
-    pub fn new(mode: BlockSyncMode, ledger: Arc<dyn LedgerService<N>>) -> Self {
+    pub fn new(mode: BlockSyncMode, ledger: Arc<dyn LedgerService<N>>, tcp: Tcp) -> Self {
         Self {
             mode,
-            canon: ledger,
+            ledger,
+            tcp,
             locators: Default::default(),
             common_ancestors: Default::default(),
             requests: Default::default(),
             responses: Default::default(),
             request_timestamps: Default::default(),
-            request_timeouts: Default::default(),
             is_block_synced: Default::default(),
+            num_blocks_behind: Default::default(),
             advance_with_sync_blocks_lock: Default::default(),
         }
     }
@@ -137,6 +145,12 @@ impl<N: Network> BlockSync<N> {
     #[inline]
     pub fn is_block_synced(&self) -> bool {
         self.is_block_synced.load(Ordering::SeqCst)
+    }
+
+    /// Returns the number of blocks the node is behind the greatest peer height.
+    #[inline]
+    pub fn num_blocks_behind(&self) -> u32 {
+        self.num_blocks_behind.load(Ordering::SeqCst)
     }
 }
 
@@ -190,20 +204,21 @@ impl<N: Network> BlockSync<N> {
     #[inline]
     pub fn get_block_locators(&self) -> Result<BlockLocators<N>> {
         // Retrieve the latest block height.
-        let latest_height = self.canon.latest_block_height();
+        let latest_height = self.ledger.latest_block_height();
 
         // Initialize the recents map.
+        // TODO: generalize this for RECENT_INTERVAL > 1, or remove this comment if we hardwire that to 1
         let mut recents = IndexMap::with_capacity(NUM_RECENT_BLOCKS);
         // Retrieve the recent block hashes.
         for height in latest_height.saturating_sub((NUM_RECENT_BLOCKS - 1) as u32)..=latest_height {
-            recents.insert(height, self.canon.get_block_hash(height)?);
+            recents.insert(height, self.ledger.get_block_hash(height)?);
         }
 
         // Initialize the checkpoints map.
         let mut checkpoints = IndexMap::with_capacity((latest_height / CHECKPOINT_INTERVAL + 1).try_into()?);
         // Retrieve the checkpoint block hashes.
         for height in (0..=latest_height).step_by(CHECKPOINT_INTERVAL as usize) {
-            checkpoints.insert(height, self.canon.get_block_hash(height)?);
+            checkpoints.insert(height, self.ledger.get_block_hash(height)?);
         }
 
         // Construct the block locators.
@@ -215,14 +230,26 @@ impl<N: Network> BlockSync<N> {
     pub async fn try_block_sync<C: CommunicationService>(&self, communication: &C) {
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let block_requests = self.prepare_block_requests();
+        let (block_requests, sync_peers) = self.prepare_block_requests();
         trace!("Prepared {} block requests", block_requests.len());
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() && !self.responses.read().is_empty() {
+        // Note: This condition is guarded by `mode.is_router()` because validators sync blocks
+        // using another code path that updates both `storage` and `ledger` when advancing blocks.
+        if block_requests.is_empty() && !self.responses.read().is_empty() && self.mode.is_router() {
             // Retrieve the latest block height.
-            let current_height = self.canon.latest_block_height();
+            let current_height = self.ledger.latest_block_height();
+
+            // Acquire the lock to ensure try_advancing_with_block_responses is called only once at a time.
+            // If the lock is already acquired, return early.
+            let Some(_lock) = self.advance_with_sync_blocks_lock.try_lock() else {
+                trace!(
+                    "Skipping a call to try_block_sync() as a block advance is already in progress (at block {current_height})"
+                );
+                return;
+            };
+
             // Try to advance the ledger with the sync pool.
             trace!("No block requests to send - try advancing with block responses (at block {current_height})");
             self.try_advancing_with_block_responses(current_height);
@@ -231,18 +258,41 @@ impl<N: Network> BlockSync<N> {
         }
 
         // Process the block requests.
-        'outer: for (height, (hash, previous_hash, sync_ips)) in block_requests {
-            // Insert the block request into the sync pool.
-            if let Err(error) = self.insert_block_request(height, (hash, previous_hash, sync_ips.clone())) {
-                warn!("Block sync failed - {error}");
-                // Break out of the loop.
-                break 'outer;
+        'outer: for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
+            // Retrieve the starting height and the sync IPs.
+            let (start_height, max_num_sync_ips) = match requests.first() {
+                Some((height, (_, _, max_num_sync_ips))) => (*height, *max_num_sync_ips),
+                None => {
+                    warn!("Block sync failed - no block requests");
+                    break 'outer;
+                }
+            };
+
+            // Use a randomly sampled subset of the sync IPs.
+            let sync_ips: IndexSet<_> = sync_peers
+                .keys()
+                .copied()
+                .choose_multiple(&mut rand::thread_rng(), max_num_sync_ips)
+                .into_iter()
+                .collect();
+
+            // Calculate the end height.
+            let end_height = start_height.saturating_add(requests.len() as u32);
+
+            // Insert the chunk of block requests.
+            for (height, (hash, previous_hash, _)) in requests.iter() {
+                // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
+                if let Err(error) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
+                    warn!("Block sync failed - {error}");
+                    // Break out of the loop.
+                    break 'outer;
+                }
             }
 
             /* Send the block request to the peers */
 
             // Construct the message.
-            let message = C::prepare_block_request(height, height + 1);
+            let message = C::prepare_block_request(start_height, end_height);
             // Send the message to the peers.
             for sync_ip in sync_ips {
                 let sender = communication.send(sync_ip, message.clone()).await;
@@ -250,7 +300,9 @@ impl<N: Network> BlockSync<N> {
                 if sender.is_none() {
                     warn!("Failed to send block request to peer '{sync_ip}'");
                     // Remove the entire block request from the sync pool.
-                    self.remove_block_request(height);
+                    for height in start_height..end_height {
+                        self.remove_block_request(height);
+                    }
                     // Break out of the loop.
                     break 'outer;
                 }
@@ -272,11 +324,25 @@ impl<N: Network> BlockSync<N> {
         Ok(())
     }
 
-    /// Returns the next block to process, if one is ready.
+    /// Returns the next block for the given `next_height` if the request is complete,
+    /// or `None` otherwise. This does not remove the block from the `responses` map.
     #[inline]
-    pub fn process_next_block(&self, next_height: u32) -> Option<Block<N>> {
-        // Try to advance the ledger with a block from the sync pool.
-        self.remove_block_response(next_height)
+    pub fn peek_next_block(&self, next_height: u32) -> Option<Block<N>> {
+        // Acquire the requests write lock.
+        // Note: This lock must be held across the entire scope, due to asynchronous block responses
+        // from multiple peers that may be received concurrently.
+        let requests = self.requests.read();
+
+        // Determine if the request is complete.
+        let is_request_complete =
+            requests.get(&next_height).map(|(_, _, peer_ips)| peer_ips.is_empty()).unwrap_or(true);
+
+        // If the request is not complete, return early.
+        if !is_request_complete {
+            return None;
+        }
+
+        self.responses.read().get(&next_height).cloned()
     }
 
     /// Attempts to advance with blocks from the sync pool.
@@ -293,7 +359,7 @@ impl<N: Network> BlockSync<N> {
         };
 
         // Retrieve the latest block height.
-        let current_height = self.canon.latest_block_height();
+        let current_height = self.ledger.latest_block_height();
         // Try to advance the ledger with the sync pool.
         self.try_advancing_with_block_responses(current_height);
         Ok(())
@@ -301,24 +367,41 @@ impl<N: Network> BlockSync<N> {
 
     /// Handles the block responses from the sync pool.
     fn try_advancing_with_block_responses(&self, mut current_height: u32) {
-        while let Some(block) = self.remove_block_response(current_height + 1) {
+        while let Some(block) = self.peek_next_block(current_height + 1) {
             // Ensure the block height matches.
             if block.height() != current_height + 1 {
                 warn!("Block height mismatch: expected {}, found {}", current_height + 1, block.height());
                 break;
             }
-            // Check the next block.
-            if let Err(error) = self.canon.check_next_block(&block) {
-                warn!("The next block ({}) is invalid - {error}", block.height());
-                break;
-            }
-            // Attempt to advance to the next block.
-            if let Err(error) = self.canon.advance_to_next_block(&block) {
-                warn!("{error}");
+
+            // Try to check the next block and advance to it.
+            let advanced = match self.ledger.check_next_block(&block) {
+                Ok(_) => match self.ledger.advance_to_next_block(&block) {
+                    Ok(_) => true,
+                    Err(err) => {
+                        warn!(
+                            "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                            block.height(),
+                            block.hash()
+                        );
+                        false
+                    }
+                },
+                Err(err) => {
+                    warn!("The next block (height: {}, hash: '{}') is invalid - {err}", block.height(), block.hash());
+                    false
+                }
+            };
+
+            // Remove the block response.
+            self.remove_block_response(current_height + 1);
+
+            // If advancing failed, exit the loop.
+            if !advanced {
                 break;
             }
             // Update the latest height.
-            current_height = self.canon.latest_block_height();
+            current_height = self.ledger.latest_block_height();
         }
     }
 }
@@ -326,7 +409,7 @@ impl<N: Network> BlockSync<N> {
 impl<N: Network> BlockSync<N> {
     /// Returns the sync peers with their latest heights, and their minimum common ancestor, if the node can sync.
     /// This function returns peers that are consistent with each other, and have a block height
-    /// that is greater than the canon height of this node.
+    /// that is greater than the ledger height of this node.
     pub fn find_sync_peers(&self) -> Option<(IndexMap<SocketAddr, u32>, u32)> {
         if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner() {
             // Map the locators into the latest height.
@@ -340,24 +423,29 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Updates the block locators and common ancestors for the given peer IP.
-    /// This function checks that the given block locators are well-formed, however it does **not** check
-    /// that the block locators are consistent the peer's previous block locators or other peers' block locators.
+    ///
+    /// This function does not need to check that the block locators are well-formed,
+    /// because that is already done in [`BlockLocators::new()`], as noted in [`BlockLocators`].
+    ///
+    /// This function does **not** check
+    /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
         // If the locators match the existing locators for the peer, return early.
         if self.locators.read().get(&peer_ip) == Some(&locators) {
             return Ok(());
         }
 
-        // Ensure the given block locators are well-formed.
-        locators.ensure_is_valid()?;
         // Update the locators entry for the given peer IP.
         self.locators.write().insert(peer_ip, locators.clone());
 
         // Compute the common ancestor with this node.
+        // Attention: Please do not optimize this loop, as it performs fork-detection. In addition,
+        // by iterating upwards, it also early-terminates malicious block locators at the *first* point
+        // of bifurcation in their ledger history, which is a critical safety guarantee provided here.
         let mut ancestor = 0;
         for (height, hash) in locators.clone().into_iter() {
-            if let Ok(canon_hash) = self.canon.get_block_hash(height) {
-                match canon_hash == hash {
+            if let Ok(ledger_hash) = self.ledger.get_block_hash(height) {
+                match ledger_hash == hash {
                     true => ancestor = height,
                     false => break, // fork
                 }
@@ -397,14 +485,13 @@ impl<N: Network> BlockSync<N> {
         self.locators.write().remove(peer_ip);
         // Remove all block requests to the peer.
         self.remove_block_requests_to_peer(peer_ip);
-        // Remove the timeouts for the peer.
-        self.request_timeouts.write().remove(peer_ip);
     }
 }
 
 impl<N: Network> BlockSync<N> {
-    /// Returns a list of block requests, if the node needs to sync.
-    fn prepare_block_requests(&self) -> Vec<(u32, SyncRequest<N>)> {
+    /// Returns a list of block requests and the sync peers, if the node needs to sync.
+    #[allow(clippy::type_complexity)]
+    fn prepare_block_requests(&self) -> (Vec<(u32, PrepareSyncRequest<N>)>, IndexMap<SocketAddr, BlockLocators<N>>) {
         // Remove timed out block requests.
         self.remove_timed_out_block_requests();
         // Prepare the block requests.
@@ -414,28 +501,36 @@ impl<N: Network> BlockSync<N> {
             // Update the state of `is_block_synced` for the sync module.
             self.update_is_block_synced(greatest_peer_height, MAX_BLOCKS_BEHIND);
             // Return the list of block requests.
-            self.construct_requests(sync_peers, min_common_ancestor, &mut rand::thread_rng())
+            (self.construct_requests(&sync_peers, min_common_ancestor), sync_peers)
         } else {
-            // Update the state of `is_block_synced` for the sync module.
-            self.update_is_block_synced(0, MAX_BLOCKS_BEHIND);
+            // Update `is_block_synced` if there are no pending requests or responses.
+            if self.requests.read().is_empty() && self.responses.read().is_empty() {
+                // Update the state of `is_block_synced` for the sync module.
+                self.update_is_block_synced(0, MAX_BLOCKS_BEHIND);
+            }
             // Return an empty list of block requests.
-            Vec::new()
+            (Default::default(), Default::default())
         }
     }
 
     /// Updates the state of `is_block_synced` for the sync module.
     fn update_is_block_synced(&self, greatest_peer_height: u32, max_blocks_behind: u32) {
         // Retrieve the latest block height.
-        let canon_height = self.canon.latest_block_height();
+        let ledger_height = self.ledger.latest_block_height();
         trace!(
-            "Updating is_block_synced: greatest_peer_height = {greatest_peer_height}, canon_height = {canon_height}"
+            "Updating is_block_synced: greatest_peer_height = {greatest_peer_height}, ledger_height = {ledger_height}"
         );
         // Compute the number of blocks that we are behind by.
-        let num_blocks_behind = greatest_peer_height.saturating_sub(canon_height);
+        let num_blocks_behind = greatest_peer_height.saturating_sub(ledger_height);
         // Determine if the primary is synced.
         let is_synced = num_blocks_behind <= max_blocks_behind;
+        // Update the num blocks behind.
+        self.num_blocks_behind.store(num_blocks_behind, Ordering::SeqCst);
         // Update the sync status.
         self.is_block_synced.store(is_synced, Ordering::SeqCst);
+        // Update the `IS_SYNCED` metric.
+        #[cfg(feature = "metrics")]
+        metrics::gauge(metrics::bft::IS_SYNCED, is_synced);
     }
 
     /// Inserts a block request for the given height.
@@ -467,7 +562,7 @@ impl<N: Network> BlockSync<N> {
 
         // Remove the peer IP from the request entry.
         if let Some((_, _, sync_ips)) = self.requests.write().get_mut(&height) {
-            sync_ips.remove(&peer_ip);
+            sync_ips.swap_remove(&peer_ip);
         }
 
         // Acquire the write lock on the responses map.
@@ -491,9 +586,9 @@ impl<N: Network> BlockSync<N> {
 
     /// Checks that a block request for the given height does not already exist.
     fn check_block_request(&self, height: u32) -> Result<()> {
-        // Ensure the block height is not already canon.
-        if self.canon.contains_block_height(height) {
-            bail!("Failed to add block request, as block {height} exists in the canonical ledger");
+        // Ensure the block height is not already in the ledger.
+        if self.ledger.contains_block_height(height) {
+            bail!("Failed to add block request, as block {height} exists in the ledger");
         }
         // Ensure the block height is not already requested.
         if self.requests.read().contains_key(&height) {
@@ -534,6 +629,8 @@ impl<N: Network> BlockSync<N> {
                 bail!("The sync pool did not request block {height} from '{peer_ip}'")
             }
             Ok(())
+        } else if self.ledger.contains_block_height(height) {
+            bail!("The sync request was removed because we already advanced")
         } else {
             bail!("The sync pool did not request block {height}")
         }
@@ -549,37 +646,32 @@ impl<N: Network> BlockSync<N> {
         self.request_timestamps.write().remove(&height);
     }
 
-    /// Removes and returns the block response for the given height, if the request is complete.
-    fn remove_block_response(&self, height: u32) -> Option<Block<N>> {
+    /// Removes the block response for the given height
+    /// This may only be called after `peek_next_block`, which checked if the request for the given height was complete.
+    pub fn remove_block_response(&self, height: u32) {
         // Acquire the requests write lock.
         // Note: This lock must be held across the entire scope, due to asynchronous block responses
         // from multiple peers that may be received concurrently.
         let mut requests = self.requests.write();
-
-        // Determine if the request is complete.
-        let is_request_complete = requests.get(&height).map(|(_, _, peer_ips)| peer_ips.is_empty()).unwrap_or(false);
-
-        // If the request is not complete, return early.
-        if !is_request_complete {
-            return None;
-        }
         // Remove the request entry for the given height.
         requests.remove(&height);
         // Remove the request timestamp entry for the given height.
-        self.request_timestamps.write().remove(&height);
+        if let Some(request_time) = self.request_timestamps.write().remove(&height) {
+            trace!("Block request for height {height} was completed in {}ms", request_time.elapsed().as_millis());
+        }
         // Remove the response entry for the given height.
-        self.responses.write().remove(&height)
+        self.responses.write().remove(&height);
     }
 
     /// Removes the block request for the given peer IP, if it exists.
     #[allow(dead_code)]
     fn remove_block_request_to_peer(&self, peer_ip: &SocketAddr, height: u32) {
-        let mut can_revoke = self.responses.read().get(&height).is_none();
+        let mut can_revoke = self.peek_next_block(height).is_none();
 
         // Remove the peer IP from the request entry. If the request entry is now empty,
         // and the response entry for this height is also empty, then remove the request entry altogether.
         if let Some((_, _, sync_ips)) = self.requests.write().get_mut(&height) {
-            sync_ips.remove(peer_ip);
+            sync_ips.swap_remove(peer_ip);
             can_revoke &= sync_ips.is_empty();
         }
 
@@ -600,10 +692,11 @@ impl<N: Network> BlockSync<N> {
         // Remove the peer IP from the requests map. If any request entry is now empty,
         // and its corresponding response entry is also empty, then remove that request entry altogether.
         requests.retain(|height, (_, _, peer_ips)| {
-            peer_ips.remove(peer_ip);
+            peer_ips.swap_remove(peer_ip);
 
             let retain = !peer_ips.is_empty() || responses.get(height).is_some();
             if !retain {
+                trace!("Removed block request timestamp for {peer_ip} at height {height}");
                 self.request_timestamps.write().remove(height);
             }
             retain
@@ -619,49 +712,65 @@ impl<N: Network> BlockSync<N> {
         let mut responses = self.responses.write();
         // Acquire the write lock on the request timestamps map.
         let mut request_timestamps = self.request_timestamps.write();
+        //  Acquire the write lock on the locators map.
+        let mut locators = self.locators.write();
 
         // Retrieve the current time.
         let now = Instant::now();
 
-        // Track each unique peer IP that has timed out.
-        let mut timeout_ips = IndexSet::new();
+        // Retrieve the current block height
+        let current_height = self.ledger.latest_block_height();
+
         // Track the number of timed out block requests.
         let mut num_timed_out_block_requests = 0;
 
+        let mut peers_to_ban: HashSet<SocketAddr> = HashSet::new();
+
         // Remove timed out block requests.
         request_timestamps.retain(|height, timestamp| {
+            let is_obsolete = *height <= current_height;
             // Determine if the duration since the request timestamp has exceeded the request timeout.
             let is_time_passed = now.duration_since(*timestamp).as_secs() > BLOCK_REQUEST_TIMEOUT_IN_SECS;
             // Determine if the request is incomplete.
             let is_request_incomplete =
-                !requests.get(height).map(|(_, _, peer_ips)| peer_ips.is_empty()).unwrap_or(false);
+                !requests.get(height).map(|(_, _, peer_ips)| peer_ips.is_empty()).unwrap_or(true);
             // Determine if the request has timed out.
             let is_timeout = is_time_passed && is_request_incomplete;
 
-            // If the request has timed out, then remove it.
-            if is_timeout {
-                // Remove the request entry for the given height.
-                if let Some((_, _, sync_ips)) = requests.remove(height) {
-                    // Add each sync IP to the timeout IPs.
-                    timeout_ips.extend(sync_ips);
+            // If the request has timed out, or is obsolete, then remove it.
+            if is_timeout || is_obsolete {
+                trace!("Block request {height} has timed out: is_time_passed = {is_time_passed}, is_request_incomplete = {is_request_incomplete}, is_obsolete = {is_obsolete}");
+
+                if let Some((_, _, peer_ips)) = requests.get(height) { peer_ips.iter().for_each(|peer_ip| {
+                        debug!("Removing peer {peer_ip} from block request {height}");
+                        // Remove the locators entry for the given peer IP.
+                        locators.remove(peer_ip);
+                        if is_timeout {
+                            peers_to_ban.insert(*peer_ip);
+                        }
+                    });
                 }
+
+                // Remove the request entry for the given height.
+                requests.remove(height);
                 // Remove the response entry for the given height.
                 responses.remove(height);
                 // Increment the number of timed out block requests.
                 num_timed_out_block_requests += 1;
             }
-            // Retain if this is not a timeout.
-            !is_timeout
+            // Retain if this is not a timeout and is not obsolete.
+            !is_timeout && !is_obsolete
         });
 
-        // If there are timeout IPs, then add them to the request timeouts map.
-        if !timeout_ips.is_empty() {
-            // Acquire the write lock on the request timeouts map.
-            let mut request_timeouts = self.request_timeouts.write();
-            // Add each timeout IP to the request timeouts map.
-            for timeout_ip in timeout_ips {
-                request_timeouts.entry(timeout_ip).or_default().push(now);
-            }
+        // After the retain loop, handle the banning of peers
+        for peer_ip in peers_to_ban {
+            trace!("Banning peer {peer_ip} for timing out on block requests");
+            self.tcp.banned_peers().update_ip_ban(peer_ip.ip());
+
+            let tcp = self.tcp.clone();
+            tokio::spawn(async move {
+                tcp.disconnect(peer_ip).await;
+            });
         }
 
         num_timed_out_block_requests
@@ -669,24 +778,15 @@ impl<N: Network> BlockSync<N> {
 
     /// Returns the sync peers and their minimum common ancestor, if the node needs to sync.
     fn find_sync_peers_inner(&self) -> Option<(IndexMap<SocketAddr, BlockLocators<N>>, u32)> {
-        // Retrieve the latest canon height.
-        let latest_canon_height = self.canon.latest_block_height();
+        // Retrieve the latest ledger height.
+        let latest_ledger_height = self.ledger.latest_block_height();
 
-        // Compute the timeout frequency of each peer.
-        let timeouts = self
-            .request_timeouts
-            .read()
-            .iter()
-            .map(|(peer_ip, timestamps)| (*peer_ip, timestamps.len()))
-            .collect::<IndexMap<_, _>>();
-
-        // Pick a set of peers above the latest canon height, and include their locators.
+        // Pick a set of peers above the latest ledger height, and include their locators.
         let candidate_locators: IndexMap<_, _> = self
             .locators
             .read()
             .iter()
-            .filter(|(_, locators)| locators.latest_locator_height() > latest_canon_height)
-            .filter(|(ip, _)| timeouts.get(*ip).map(|count| *count < MAX_BLOCK_REQUEST_TIMEOUTS).unwrap_or(true))
+            .filter(|(_, locators)| locators.latest_locator_height() > latest_ledger_height)
             .sorted_by(|(_, a), (_, b)| b.latest_locator_height().cmp(&a.latest_locator_height()))
             .take(NUM_SYNC_CANDIDATE_PEERS)
             .map(|(peer_ip, locators)| (*peer_ip, locators.clone()))
@@ -698,7 +798,7 @@ impl<N: Network> BlockSync<N> {
         }
 
         // TODO (howardwu): Change this to the highest cumulative weight for Phase 3.
-        // Case 1: If all of the candidate peers share a common ancestor below the latest canon height,
+        // Case 1: If all of the candidate peers share a common ancestor below the latest ledger height,
         // then pick the peer with the highest height, and find peers (up to extra redundancy) with
         // a common ancestor above the block request range. Set the end height to their common ancestor.
 
@@ -709,7 +809,7 @@ impl<N: Network> BlockSync<N> {
         let mut sync_peers = IndexMap::new();
 
         // Breaks the loop when the first threshold number of peers are found, biasing for the peer with the highest height
-        // and a cohort of peers who share a common ancestor above this node's latest canon height.
+        // and a cohort of peers who share a common ancestor above this node's latest ledger height.
         for (i, (peer_ip, peer_locators)) in candidate_locators.iter().enumerate() {
             // As the previous iteration did not `break`, reset the sync peers.
             sync_peers.clear();
@@ -720,9 +820,9 @@ impl<N: Network> BlockSync<N> {
             sync_peers.insert(*peer_ip, peer_locators.clone());
 
             for (other_ip, other_locators) in candidate_locators.iter().skip(i + 1) {
-                // Check if these two peers have a common ancestor above the latest canon height.
+                // Check if these two peers have a common ancestor above the latest ledger height.
                 if let Some(common_ancestor) = self.common_ancestors.read().get(&PeerPair(*peer_ip, *other_ip)) {
-                    if *common_ancestor > latest_canon_height {
+                    if *common_ancestor > latest_ledger_height {
                         // If so, then check that their block locators are consistent.
                         if peer_locators.is_consistent_with(other_locators) {
                             // If their common ancestor is less than the minimum common ancestor, then update it.
@@ -736,50 +836,62 @@ impl<N: Network> BlockSync<N> {
                 }
             }
 
-            // If we have enough sync peers above the latest canon height, then break the loop.
-            if min_common_ancestor > latest_canon_height && sync_peers.len() >= threshold_to_request {
+            // If we have enough sync peers above the latest ledger height, then break the loop.
+            if min_common_ancestor > latest_ledger_height && sync_peers.len() >= threshold_to_request {
                 break;
             }
         }
 
-        // If there is not enough peers with a minimum common ancestor above the latest canon height, then return early.
-        if min_common_ancestor <= latest_canon_height || sync_peers.len() < threshold_to_request {
+        // If there is not enough peers with a minimum common ancestor above the latest ledger height, then return early.
+        if min_common_ancestor <= latest_ledger_height || sync_peers.len() < threshold_to_request {
             return None;
         }
+
+        // Shuffle the sync peers prior to returning. This ensures the rest of the stack
+        // does not rely on the order of the sync peers, and that the sync peers are not biased.
+        let sync_peers = shuffle_indexmap(sync_peers, &mut rand::thread_rng());
 
         Some((sync_peers, min_common_ancestor))
     }
 
     /// Given the sync peers and their minimum common ancestor, return a list of block requests.
-    fn construct_requests<R: Rng + CryptoRng>(
+    fn construct_requests(
         &self,
-        sync_peers: IndexMap<SocketAddr, BlockLocators<N>>,
+        sync_peers: &IndexMap<SocketAddr, BlockLocators<N>>,
         min_common_ancestor: u32,
-        rng: &mut R,
-    ) -> Vec<(u32, SyncRequest<N>)> {
-        // Retrieve the latest canon height.
-        let latest_canon_height = self.canon.latest_block_height();
+    ) -> Vec<(u32, PrepareSyncRequest<N>)> {
+        // Retrieve the latest ledger height.
+        let latest_ledger_height = self.ledger.latest_block_height();
 
-        // If the minimum common ancestor is at or below the latest canon height, then return early.
-        if min_common_ancestor <= latest_canon_height {
-            return vec![];
+        // If the minimum common ancestor is at or below the latest ledger height, then return early.
+        if min_common_ancestor <= latest_ledger_height {
+            return Default::default();
         }
 
         // Compute the start height for the block request.
-        let start_height = latest_canon_height + 1;
+        let start_height = latest_ledger_height + 1;
         // Compute the end height for the block request.
-        let end_height = (min_common_ancestor + 1).min(start_height + MAX_BLOCK_REQUESTS as u32);
+        let max_blocks_to_request = MAX_BLOCK_REQUESTS as u32 * DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as u32;
+        let end_height = (min_common_ancestor + 1).min(start_height + max_blocks_to_request);
 
-        let mut requests = Vec::with_capacity((start_height..end_height).len());
+        // Construct the block hashes to request.
+        let mut request_hashes = IndexMap::with_capacity((start_height..end_height).len());
+        // Track the largest number of sync IPs required for any block request in the sequence of requests.
+        let mut max_num_sync_ips = 1;
 
         for height in start_height..end_height {
-            // Ensure the current height is not canonized or already requested.
+            // Ensure the current height is not in the ledger or already requested.
             if self.check_block_request(height).is_err() {
-                continue;
+                // If the sequence of block requests is interrupted, then return early.
+                // Otherwise, continue until the first start height that is new.
+                match request_hashes.is_empty() {
+                    true => continue,
+                    false => break,
+                }
             }
 
             // Construct the block request.
-            let (hash, previous_hash, num_sync_ips, is_honest) = construct_request(height, &sync_peers);
+            let (hash, previous_hash, num_sync_ips, is_honest) = construct_request(height, sync_peers);
 
             // Handle the dishonest case.
             if !is_honest {
@@ -791,14 +903,18 @@ impl<N: Network> BlockSync<N> {
                 }
             }
 
-            // Pick the sync peers.
-            let sync_ips = sync_peers.keys().copied().choose_multiple(rng, num_sync_ips);
+            // Update the maximum number of sync IPs.
+            max_num_sync_ips = max_num_sync_ips.max(num_sync_ips);
 
             // Append the request.
-            requests.push((height, (hash, previous_hash, sync_ips.into_iter().collect())));
+            request_hashes.insert(height, (hash, previous_hash));
         }
 
-        requests
+        // Construct the requests with the same sync ips.
+        request_hashes
+            .into_iter()
+            .map(|(height, (hash, previous_hash))| (height, (hash, previous_hash, max_num_sync_ips)))
+            .collect()
     }
 }
 
@@ -874,22 +990,35 @@ fn construct_request<N: Network>(
     (hash, previous_hash, num_sync_ips, is_honest)
 }
 
+/// Shuffles a given `IndexMap` using the given random number generator.
+fn shuffle_indexmap<K, V, R: Rng + CryptoRng>(mut map: IndexMap<K, V>, rng: &mut R) -> IndexMap<K, V>
+where
+    K: core::hash::Hash + Eq + Clone,
+    V: Clone,
+{
+    use rand::seq::SliceRandom;
+    let mut pairs: Vec<_> = map.drain(..).collect(); // Drain elements to a vector
+    pairs.shuffle(rng); // Shuffle the vector of tuples
+    pairs.into_iter().collect() // Collect back into an IndexMap
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::locators::{
-        test_helpers::{sample_block_locators, sample_block_locators_with_fork},
         CHECKPOINT_INTERVAL,
         NUM_RECENT_BLOCKS,
+        test_helpers::{sample_block_locators, sample_block_locators_with_fork},
     };
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkvm::prelude::{Field, TestRng};
 
-    use indexmap::indexset;
+    use indexmap::{IndexSet, indexset};
+    use snarkos_node_tcp::Config;
     use snarkvm::ledger::committee::Committee;
     use std::net::{IpAddr, Ipv4Addr};
 
-    type CurrentNetwork = snarkvm::prelude::Testnet3;
+    type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
     /// Returns the peer IP for the sync pool.
     fn sample_peer_ip(id: u16) -> SocketAddr {
@@ -908,9 +1037,34 @@ mod tests {
         MockLedgerService::new_at_height(sample_committee(), height)
     }
 
-    /// Returns the sync pool, with the canonical ledger initialized to the given height.
+    /// Returns the sync pool, with the ledger initialized to the given height.
     fn sample_sync_at_height(height: u32) -> BlockSync<CurrentNetwork> {
-        BlockSync::<CurrentNetwork>::new(BlockSyncMode::Router, Arc::new(sample_ledger_service(height)))
+        BlockSync::<CurrentNetwork>::new(BlockSyncMode::Router, Arc::new(sample_ledger_service(height)), sample_tcp())
+    }
+
+    /// Returns a duplicate sync pool with a different ledger height.
+    fn duplicate_sync_at_new_height(sync: &BlockSync<CurrentNetwork>, height: u32) -> BlockSync<CurrentNetwork> {
+        BlockSync::<CurrentNetwork> {
+            mode: sync.mode,
+            ledger: Arc::new(sample_ledger_service(height)),
+            tcp: sync.tcp.clone(),
+            locators: sync.locators.clone(),
+            common_ancestors: sync.common_ancestors.clone(),
+            requests: sync.requests.clone(),
+            responses: sync.responses.clone(),
+            request_timestamps: sync.request_timestamps.clone(),
+            is_block_synced: sync.is_block_synced.clone(),
+            num_blocks_behind: sync.num_blocks_behind.clone(),
+            advance_with_sync_blocks_lock: Default::default(),
+        }
+    }
+
+    fn sample_tcp() -> Tcp {
+        Tcp::new(Config {
+            listener_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            max_connections: 200,
+            ..Default::default()
+        })
     }
 
     /// Checks that the sync pool (starting at genesis) returns the correct requests.
@@ -919,11 +1073,13 @@ mod tests {
         min_common_ancestor: u32,
         peers: IndexSet<SocketAddr>,
     ) {
+        let rng = &mut TestRng::default();
+
         // Check test assumptions are met.
-        assert_eq!(sync.canon.latest_block_height(), 0, "This test assumes the sync pool is at genesis");
+        assert_eq!(sync.ledger.latest_block_height(), 0, "This test assumes the sync pool is at genesis");
 
         // Determine the number of peers within range of this sync pool.
-        let num_peers_within_recent_range_of_canon = {
+        let num_peers_within_recent_range_of_ledger = {
             // If no peers are within range, then set to 0.
             if min_common_ancestor >= NUM_RECENT_BLOCKS as u32 {
                 0
@@ -935,7 +1091,7 @@ mod tests {
         };
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, sync_peers) = sync.prepare_block_requests();
 
         // If there are no peers, then there should be no requests.
         if peers.is_empty() {
@@ -947,15 +1103,18 @@ mod tests {
         let expected_num_requests = core::cmp::min(min_common_ancestor as usize, MAX_BLOCK_REQUESTS);
         assert_eq!(requests.len(), expected_num_requests);
 
-        for (idx, (height, (hash, previous_hash, sync_ips))) in requests.into_iter().enumerate() {
+        for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
 
-            if num_peers_within_recent_range_of_canon >= REDUNDANCY_FACTOR {
+            if num_peers_within_recent_range_of_ledger >= REDUNDANCY_FACTOR {
                 assert_eq!(sync_ips.len(), 1);
             } else {
-                assert_eq!(sync_ips.len(), num_peers_within_recent_range_of_canon);
+                assert_eq!(sync_ips.len(), num_peers_within_recent_range_of_ledger);
                 assert_eq!(sync_ips, peers);
             }
         }
@@ -965,7 +1124,7 @@ mod tests {
     fn test_latest_block_height() {
         for height in 0..100_002u32 {
             let sync = sample_sync_at_height(height);
-            assert_eq!(sync.canon.latest_block_height(), height);
+            assert_eq!(sync.ledger.latest_block_height(), height);
         }
     }
 
@@ -973,9 +1132,9 @@ mod tests {
     fn test_get_block_height() {
         for height in 0..100_002u32 {
             let sync = sample_sync_at_height(height);
-            assert_eq!(sync.canon.get_block_height(&(Field::<CurrentNetwork>::from_u32(0)).into()).unwrap(), 0);
+            assert_eq!(sync.ledger.get_block_height(&(Field::<CurrentNetwork>::from_u32(0)).into()).unwrap(), 0);
             assert_eq!(
-                sync.canon.get_block_height(&(Field::<CurrentNetwork>::from_u32(height)).into()).unwrap(),
+                sync.ledger.get_block_height(&(Field::<CurrentNetwork>::from_u32(height)).into()).unwrap(),
                 height
             );
         }
@@ -985,8 +1144,8 @@ mod tests {
     fn test_get_block_hash() {
         for height in 0..100_002u32 {
             let sync = sample_sync_at_height(height);
-            assert_eq!(sync.canon.get_block_hash(0).unwrap(), (Field::<CurrentNetwork>::from_u32(0)).into());
-            assert_eq!(sync.canon.get_block_hash(height).unwrap(), (Field::<CurrentNetwork>::from_u32(height)).into());
+            assert_eq!(sync.ledger.get_block_hash(0).unwrap(), (Field::<CurrentNetwork>::from_u32(0)).into());
+            assert_eq!(sync.ledger.get_block_hash(height).unwrap(), (Field::<CurrentNetwork>::from_u32(height)).into());
         }
     }
 
@@ -1037,20 +1196,21 @@ mod tests {
         sync.update_peer_locators(peer_3, sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, _) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 10);
 
         // Check the requests.
-        for (idx, (height, (hash, previous_hash, sync_ips))) in requests.into_iter().enumerate() {
+        for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
-            assert_eq!(sync_ips.len(), 1); // Only 1 needed since we have redundancy factor on this (recent locator) hash.
+            assert_eq!(num_sync_ips, 1); // Only 1 needed since we have redundancy factor on this (recent locator) hash.
         }
     }
 
     #[test]
     fn test_prepare_block_requests_with_leading_fork_at_10() {
+        let rng = &mut TestRng::default();
         let sync = sample_sync_at_height(0);
 
         // Intuitively, peer 1's fork is at peer 2 and peer 3's height.
@@ -1079,7 +1239,7 @@ mod tests {
         sync.update_peer_locators(peer_3, sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, _) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 0);
 
         // When there are NUM_REDUNDANCY+1 peers ahead, and 1 is on a fork, then there should be block requests.
@@ -1089,11 +1249,14 @@ mod tests {
         sync.update_peer_locators(peer_4, sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, sync_peers) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 10);
 
         // Check the requests.
-        for (idx, (height, (hash, previous_hash, sync_ips))) in requests.into_iter().enumerate() {
+        for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
@@ -1104,6 +1267,7 @@ mod tests {
 
     #[test]
     fn test_prepare_block_requests_with_trailing_fork_at_9() {
+        let rng = &mut TestRng::default();
         let sync = sample_sync_at_height(0);
 
         // Peer 1 and 2 diverge from peer 3 at block 10. We only sync when there are NUM_REDUNDANCY peers
@@ -1123,7 +1287,7 @@ mod tests {
         sync.update_peer_locators(peer_3, sample_block_locators_with_fork(20, 10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, _) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 0);
 
         // When there are NUM_REDUNDANCY+1 peers ahead, and peer 3 is on a fork, then there should be block requests.
@@ -1133,11 +1297,14 @@ mod tests {
         sync.update_peer_locators(peer_4, sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, sync_peers) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 10);
 
         // Check the requests.
-        for (idx, (height, (hash, previous_hash, sync_ips))) in requests.into_iter().enumerate() {
+        for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
@@ -1148,16 +1315,20 @@ mod tests {
 
     #[test]
     fn test_insert_block_requests() {
+        let rng = &mut TestRng::default();
         let sync = sample_sync_at_height(0);
 
         // Add a peer.
         sync.update_peer_locators(sample_peer_ip(1), sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, sync_peers) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 10);
 
-        for (height, (hash, previous_hash, sync_ips)) in requests.clone() {
+        for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
@@ -1165,13 +1336,19 @@ mod tests {
             assert!(sync.get_block_request_timestamp(height).is_some());
         }
 
-        for (height, (hash, previous_hash, sync_ips)) in requests.clone() {
+        for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             // Check that the block requests are still inserted.
             assert_eq!(sync.get_block_request(height), Some((hash, previous_hash, sync_ips)));
             assert!(sync.get_block_request_timestamp(height).is_some());
         }
 
-        for (height, (hash, previous_hash, sync_ips)) in requests {
+        for (height, (hash, previous_hash, num_sync_ips)) in requests {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             // Ensure that the block requests cannot be inserted twice.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap_err();
             // Check that the block requests are still inserted.
@@ -1187,9 +1364,9 @@ mod tests {
         // Add a peer.
         sync.update_peer_locators(sample_peer_ip(1), sample_block_locators(10)).unwrap();
 
-        // Inserting a block height that is already canonized should fail.
+        // Inserting a block height that is already in the ledger should fail.
         sync.insert_block_request(9, (None, None, indexset![sample_peer_ip(1)])).unwrap_err();
-        // Inserting a block height that is not canonized should succeed.
+        // Inserting a block height that is not in the ledger should succeed.
         sync.insert_block_request(10, (None, None, indexset![sample_peer_ip(1)])).unwrap();
     }
 
@@ -1265,6 +1442,7 @@ mod tests {
 
     #[test]
     fn test_requests_insert_remove_insert() {
+        let rng = &mut TestRng::default();
         let sync = sample_sync_at_height(0);
 
         // Add a peer.
@@ -1272,10 +1450,13 @@ mod tests {
         sync.update_peer_locators(peer_ip, sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, sync_peers) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 10);
 
-        for (height, (hash, previous_hash, sync_ips)) in requests.clone() {
+        for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
@@ -1293,23 +1474,69 @@ mod tests {
         }
 
         // As there is no peer, it should not be possible to prepare block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, _) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 0);
 
         // Add the peer again.
         sync.update_peer_locators(peer_ip, sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
-        let requests = sync.prepare_block_requests();
+        let (requests, _) = sync.prepare_block_requests();
         assert_eq!(requests.len(), 10);
 
-        for (height, (hash, previous_hash, sync_ips)) in requests {
+        for (height, (hash, previous_hash, num_sync_ips)) in requests {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
             assert_eq!(sync.get_block_request(height), Some((hash, previous_hash, sync_ips)));
             assert!(sync.get_block_request_timestamp(height).is_some());
         }
+    }
+
+    #[test]
+    fn test_obsolete_block_requests() {
+        let rng = &mut TestRng::default();
+        let sync = sample_sync_at_height(0);
+
+        let locator_height = rng.gen_range(0..50);
+
+        // Add a peer.
+        let locators = sample_block_locators(locator_height);
+        sync.update_peer_locators(sample_peer_ip(1), locators.clone()).unwrap();
+
+        // Construct block requests
+        let (requests, sync_peers) = sync.prepare_block_requests();
+        assert_eq!(requests.len(), locator_height as usize);
+
+        // Add the block requests to the sync module.
+        for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> =
+                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            // Insert the block request.
+            sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
+            // Check that the block requests were inserted.
+            assert_eq!(sync.get_block_request(height), Some((hash, previous_hash, sync_ips)));
+            assert!(sync.get_block_request_timestamp(height).is_some());
+        }
+
+        // Duplicate a new sync module with a different height to simulate block advancement.
+        // This range needs to be inclusive, so that the range is never empty,
+        // even with a locator height of 0.
+        let ledger_height = rng.gen_range(0..=locator_height);
+        let new_sync = duplicate_sync_at_new_height(&sync, ledger_height);
+
+        // Check that the number of requests is the same.
+        assert_eq!(new_sync.requests.read().len(), requests.len());
+
+        // Remove timed out block requests.
+        new_sync.remove_timed_out_block_requests();
+
+        // Check that the number of requests is reduced based on the ledger height.
+        assert_eq!(new_sync.requests.read().len(), (locator_height - ledger_height) as usize);
     }
 
     // TODO: duplicate responses, ensure fails.

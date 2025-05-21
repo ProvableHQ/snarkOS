@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -15,51 +16,58 @@
 #[macro_use]
 extern crate tracing;
 
+use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft::{
-    helpers::{init_consensus_channels, init_primary_channels, ConsensusReceiver, PrimarySender, Storage},
-    Primary,
     BFT,
-    MAX_GC_ROUNDS,
     MEMORY_POOL_PORT,
+    Primary,
+    helpers::{ConsensusReceiver, PrimarySender, Storage, init_consensus_channels, init_primary_channels},
 };
-use snarkos_node_bft_ledger_service::MockLedgerService;
+use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkvm::{
+    console::{account::PrivateKey, algorithms::BHP256, types::Address},
     ledger::{
-        committee::{Committee, MIN_VALIDATOR_STAKE},
-        narwhal::Data,
-    },
-    prelude::{
+        Block,
+        Ledger,
         block::Transaction,
-        coinbase::{ProverSolution, PuzzleCommitment},
-        Field,
-        Network,
-        Uniform,
+        committee::{Committee, MIN_VALIDATOR_STAKE},
+        narwhal::{BatchHeader, Data},
+        puzzle::{Solution, SolutionID},
+        store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
+    prelude::{Field, Hash, Network, Uniform, VM},
+    utilities::{FromBytes, TestRng, ToBits, ToBytes, to_bytes_le},
 };
 
 use ::bytes::Bytes;
-use anyhow::{anyhow, ensure, Error, Result};
+use anyhow::{Error, Result, anyhow, ensure};
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use axum_extra::response::ErasedJson;
 use clap::{Parser, ValueEnum};
 use indexmap::IndexMap;
-use rand::{Rng, SeedableRng};
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
+use rand::{CryptoRng, Rng, SeedableRng};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
+};
 use tokio::{net::TcpListener, sync::oneshot};
 use tracing_subscriber::{
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
 };
 
-type CurrentNetwork = snarkvm::prelude::Testnet3;
+type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
 /**************************************************************************************************/
 
@@ -80,7 +88,7 @@ pub fn initialize_logger(verbosity: u8) {
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap())
             .add_directive("want=off".parse().unwrap())
-            .add_directive("warp=off".parse().unwrap());
+            .add_directive("h2=off".parse().unwrap());
 
         let filter = if verbosity > 3 {
             filter.add_directive("snarkos_node_bft::gateway=trace".parse().unwrap())
@@ -113,15 +121,20 @@ pub async fn start_bft(
     let (sender, receiver) = init_primary_channels();
     // Initialize the components.
     let (committee, account) = initialize_components(node_id, num_nodes)?;
-    // Initialize the mock ledger service.
-    let ledger = Arc::new(MockLedgerService::new(committee));
+    // Initialize the translucent ledger service.
+    let ledger = create_ledger(&account, num_nodes, committee, node_id);
     // Initialize the storage.
-    let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), MAX_GC_ROUNDS);
-    // Initialize the gateway IP and dev mode.
-    let (ip, dev) = match peers.get(&node_id) {
-        Some(ip) => (Some(*ip), None),
-        None => (None, Some(node_id)),
+    let storage = Storage::new(
+        ledger.clone(),
+        Arc::new(BFTMemoryService::new()),
+        BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
+    );
+    // Initialize the gateway IP and storage mode.
+    let ip = match peers.get(&node_id) {
+        Some(ip) => Some(*ip),
+        None => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + node_id)),
     };
+    let storage_mode = StorageMode::new_test(None);
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     // Initialize the consensus channels.
@@ -129,7 +142,7 @@ pub async fn start_bft(
     // Initialize the consensus receiver handler.
     consensus_handler(consensus_receiver);
     // Initialize the BFT instance.
-    let mut bft = BFT::<CurrentNetwork>::new(account, storage, ledger, ip, &trusted_validators, dev)?;
+    let mut bft = BFT::<CurrentNetwork>::new(account, storage, ledger, ip, &trusted_validators, storage_mode)?;
     // Run the BFT instance.
     bft.run(Some(consensus_sender), sender.clone(), receiver).await?;
     // Retrieve the BFT's primary.
@@ -150,25 +163,105 @@ pub async fn start_primary(
     let (sender, receiver) = init_primary_channels();
     // Initialize the components.
     let (committee, account) = initialize_components(node_id, num_nodes)?;
-    // Initialize the mock ledger service.
-    let ledger = Arc::new(MockLedgerService::new(committee));
+    // Initialize the translucent ledger service.
+    let ledger = create_ledger(&account, num_nodes, committee, node_id);
     // Initialize the storage.
-    let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), MAX_GC_ROUNDS);
-    // Initialize the gateway IP and dev mode.
-    let (ip, dev) = match peers.get(&node_id) {
-        Some(ip) => (Some(*ip), None),
-        None => (None, Some(node_id)),
+    let storage = Storage::new(
+        ledger.clone(),
+        Arc::new(BFTMemoryService::new()),
+        BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
+    );
+    // Initialize the gateway IP and storage mode.
+    let ip = match peers.get(&node_id) {
+        Some(ip) => Some(*ip),
+        None => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + node_id)),
     };
+    let storage_mode = StorageMode::new_test(None);
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     // Initialize the primary instance.
-    let mut primary = Primary::<CurrentNetwork>::new(account, storage, ledger, ip, &trusted_validators, dev)?;
+    let mut primary = Primary::<CurrentNetwork>::new(account, storage, ledger, ip, &trusted_validators, storage_mode)?;
     // Run the primary instance.
     primary.run(None, sender.clone(), receiver).await?;
     // Handle OS signals.
     handle_signals(&primary);
     // Return the primary instance.
     Ok((primary, sender))
+}
+
+/// Initialize the translucent ledger service.
+fn create_ledger(
+    account: &Account<CurrentNetwork>,
+    num_nodes: u16,
+    committee: Committee<snarkvm::prelude::MainnetV0>,
+    node_id: u16,
+) -> Arc<TranslucentLedgerService<snarkvm::prelude::MainnetV0, ConsensusMemory<snarkvm::prelude::MainnetV0>>> {
+    let gen_key = account.private_key();
+    let public_balance_per_validator =
+        (CurrentNetwork::STARTING_SUPPLY - (num_nodes as u64) * MIN_VALIDATOR_STAKE) / (num_nodes as u64);
+    let mut balances = IndexMap::<Address<CurrentNetwork>, u64>::new();
+    for address in committee.members().keys() {
+        balances.insert(*address, public_balance_per_validator);
+    }
+    let mut rng = TestRng::default();
+    let gen_ledger = genesis_ledger(*gen_key, committee.clone(), balances.clone(), node_id, &mut rng);
+    Arc::new(TranslucentLedgerService::new(gen_ledger, Arc::new(AtomicBool::new(false))))
+}
+
+pub type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
+
+fn genesis_cache() -> &'static Mutex<HashMap<Vec<u8>, Block<CurrentNetwork>>> {
+    static CACHE: OnceLock<Mutex<HashMap<Vec<u8>, Block<CurrentNetwork>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn genesis_block(
+    genesis_private_key: PrivateKey<CurrentNetwork>,
+    committee: Committee<CurrentNetwork>,
+    public_balances: IndexMap<Address<CurrentNetwork>, u64>,
+    rng: &mut (impl Rng + CryptoRng),
+) -> Block<CurrentNetwork> {
+    // Initialize the store.
+    let store = ConsensusStore::<_, ConsensusMemory<_>>::open(StorageMode::new_test(None)).unwrap();
+    // Initialize a new VM.
+    let vm = VM::from(store).unwrap();
+    // Initialize the genesis block.
+    let bonded_balances: IndexMap<_, _> =
+        committee.members().iter().map(|(address, (amount, _, _))| (*address, (*address, *address, *amount))).collect();
+    vm.genesis_quorum(&genesis_private_key, committee, public_balances, bonded_balances, rng).unwrap()
+}
+
+fn genesis_ledger(
+    genesis_private_key: PrivateKey<CurrentNetwork>,
+    committee: Committee<CurrentNetwork>,
+    public_balances: IndexMap<Address<CurrentNetwork>, u64>,
+    node_id: u16,
+    rng: &mut (impl Rng + CryptoRng),
+) -> CurrentLedger {
+    let cache_key =
+        to_bytes_le![genesis_private_key, committee, public_balances.iter().collect::<Vec<(_, _)>>()].unwrap();
+    // Initialize the genesis block on the first call; other callers
+    // will wait for it on the mutex.
+    let block = genesis_cache()
+        .lock()
+        .unwrap()
+        .entry(cache_key.clone())
+        .or_insert_with(|| {
+            let hasher = BHP256::<CurrentNetwork>::setup("aleo.dev.block").unwrap();
+            let file_name = hasher.hash(&cache_key.to_bits_le()).unwrap().to_string() + ".genesis";
+            let file_path = std::env::temp_dir().join(file_name);
+            if file_path.exists() {
+                let buffer = std::fs::read(file_path).unwrap();
+                return Block::from_bytes_le(&buffer).unwrap();
+            }
+
+            let block = genesis_block(genesis_private_key, committee, public_balances, rng);
+            std::fs::write(&file_path, block.to_bytes_le().unwrap()).unwrap();
+            block
+        })
+        .clone();
+    // Initialize the ledger with the genesis block.
+    CurrentLedger::load(block, aleo_std::StorageMode::Development(node_id)).unwrap()
 }
 
 /// Initializes the components of the node.
@@ -187,7 +280,7 @@ fn initialize_components(node_id: u16, num_nodes: u16) -> Result<(Committee<Curr
         // Sample the account.
         let account = Account::new(&mut rand_chacha::ChaChaRng::seed_from_u64(i as u64))?;
         // Add the validator.
-        members.insert(account.address(), (MIN_VALIDATOR_STAKE, false));
+        members.insert(account.address(), (MIN_VALIDATOR_STAKE, false, i as u8));
         println!("  Validator {}: {}", i, account.address());
     }
     println!();
@@ -266,28 +359,27 @@ fn fire_unconfirmed_solutions(sender: &PrimarySender<CurrentNetwork>, node_id: u
         // This RNG samples *different* fake solutions for each node.
         let mut unique_rng = rand_chacha::ChaChaRng::seed_from_u64(node_id as u64);
 
-        // A closure to generate a commitment and solution.
-        fn sample(mut rng: impl Rng) -> (PuzzleCommitment<CurrentNetwork>, Data<ProverSolution<CurrentNetwork>>) {
-            // Sample a random fake puzzle commitment.
-            // TODO (howardwu): Use a mutex to bring in the real 'proof target' and change this sampling to a while loop.
-            let commitment = PuzzleCommitment::<CurrentNetwork>::from_g1_affine(rng.gen());
+        // A closure to generate a solution ID and solution.
+        fn sample(mut rng: impl Rng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
+            // Sample a random fake solution ID.
+            let solution_id = rng.gen::<u64>().into();
             // Sample random fake solution bytes.
             let solution = Data::Buffer(Bytes::from((0..1024).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
             // Return the ID and solution.
-            (commitment, solution)
+            (solution_id, solution)
         }
 
         // Initialize a counter.
         let mut counter = 0;
 
         loop {
-            // Sample a random fake puzzle commitment and solution.
-            let (commitment, solution) =
+            // Sample a random fake solution ID and solution.
+            let (solution_id, solution) =
                 if counter % 2 == 0 { sample(&mut shared_rng) } else { sample(&mut unique_rng) };
             // Initialize a callback sender and receiver.
             let (callback, callback_receiver) = oneshot::channel();
             // Send the fake solution.
-            if let Err(e) = tx_unconfirmed_solution.send((commitment, solution, callback)).await {
+            if let Err(e) = tx_unconfirmed_solution.send((solution_id, solution, callback)).await {
                 error!("Failed to send unconfirmed solution: {e}");
             }
             let _ = callback_receiver.await;
@@ -514,7 +606,7 @@ async fn main() -> Result<()> {
     #[cfg(feature = "metrics")]
     if args.metrics {
         info!("Initializing metrics...");
-        metrics::initialize_metrics();
+        metrics::initialize_metrics(SocketAddr::from_str(&format!("0.0.0.0:{}", 9000 + args.id)).ok());
     }
 
     // Start the monitoring server.

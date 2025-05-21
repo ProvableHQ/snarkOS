@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -19,13 +20,16 @@ use std::{
     net::{IpAddr, SocketAddr},
     ops::Deref,
     sync::{
-        atomic::{AtomicUsize, Ordering::*},
         Arc,
+        atomic::{AtomicUsize, Ordering::*},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::Mutex;
 use once_cell::sync::OnceCell;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use tokio::{
     io::split,
@@ -37,11 +41,12 @@ use tokio::{
 use tracing::*;
 
 use crate::{
-    connections::{Connection, ConnectionSide, Connections},
-    protocols::{Protocol, Protocols},
+    BannedPeers,
     Config,
     KnownPeers,
     Stats,
+    connections::{Connection, ConnectionSide, Connections},
+    protocols::{Protocol, Protocols},
 };
 
 // A sequential numeric identifier assigned to `Tcp`s that were not provided with a name.
@@ -75,6 +80,8 @@ pub struct InnerTcp {
     connections: Connections,
     /// Collects statistics related to the node's peers.
     known_peers: KnownPeers,
+    /// Contains the set of currently banned peers.
+    banned_peers: BannedPeers,
     /// Collects statistics related to the node itself.
     stats: Stats,
     /// The node's tasks.
@@ -101,7 +108,8 @@ impl Tcp {
             connecting: Default::default(),
             connections: Default::default(),
             known_peers: Default::default(),
-            stats: Default::default(),
+            banned_peers: Default::default(),
+            stats: Stats::new(Instant::now()),
             tasks: Default::default(),
         }));
 
@@ -165,6 +173,12 @@ impl Tcp {
         &self.known_peers
     }
 
+    /// Returns a reference to the set of currently banned peers.
+    #[inline]
+    pub fn banned_peers(&self) -> &BannedPeers {
+        &self.banned_peers
+    }
+
     /// Returns a reference to the statistics.
     #[inline]
     pub fn stats(&self) -> &Stats {
@@ -225,27 +239,37 @@ impl Tcp {
             return Err(io::ErrorKind::AlreadyExists.into());
         }
 
-        let stream =
-            match timeout(Duration::from_millis(self.config().connection_timeout_ms.into()), TcpStream::connect(addr))
-                .await
-            {
-                Ok(Ok(stream)) => Ok(stream),
-                Ok(err) => {
-                    self.connecting.lock().remove(&addr);
-                    err
-                }
-                Err(err) => {
-                    self.connecting.lock().remove(&addr);
-                    error!("connection timeout error: {}", err);
-                    Err(io::ErrorKind::TimedOut.into())
-                }
-            }?;
+        let timeout_duration = Duration::from_millis(self.config().connection_timeout_ms.into());
+
+        // Bind the tcp socket to the configured listener ip if it's set.
+        // Otherwise default to the system's default interface.
+        let res = if let Some(listen_ip) = self.config().listener_ip {
+            let sock =
+                if listen_ip.is_ipv4() { tokio::net::TcpSocket::new_v4()? } else { tokio::net::TcpSocket::new_v6()? };
+            sock.bind(SocketAddr::new(listen_ip, 0))?;
+            timeout(timeout_duration, sock.connect(addr)).await
+        } else {
+            timeout(timeout_duration, TcpStream::connect(addr)).await
+        };
+
+        let stream = match res {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(err) => {
+                self.connecting.lock().remove(&addr);
+                err
+            }
+            Err(err) => {
+                self.connecting.lock().remove(&addr);
+                error!("connection timeout error: {}", err);
+                Err(io::ErrorKind::TimedOut.into())
+            }
+        }?;
 
         let ret = self.adapt_stream(stream, addr, ConnectionSide::Initiator).await;
 
         if let Err(ref e) = ret {
             self.connecting.lock().remove(&addr);
-            self.known_peers().register_failure(addr);
+            self.known_peers().register_failure(addr.ip());
             error!(parent: self.span(), "Unable to initiate a connection with {addr}: {e}");
         }
 
@@ -270,13 +294,6 @@ impl Tcp {
             // Shut down the associated tasks of the peer.
             for task in conn.tasks.iter().rev() {
                 task.abort();
-            }
-
-            // If the (owning) Tcp was not the initiator of the connection, it doesn't know the listening address
-            // of the associated peer, so the related stats are unreliable; the next connection initiated by the
-            // peer could be bound to an entirely different port number
-            if conn.side() == ConnectionSide::Initiator {
-                self.known_peers().remove(conn.addr());
             }
 
             debug!(parent: self.span(), "Disconnected from {}", conn.addr());
@@ -376,7 +393,7 @@ impl Tcp {
         tokio::spawn(async move {
             if let Err(e) = tcp.adapt_stream(stream, addr, ConnectionSide::Responder).await {
                 tcp.connecting.lock().remove(&addr);
-                tcp.known_peers().register_failure(addr);
+                tcp.known_peers().register_failure(addr.ip());
                 error!(parent: tcp.span(), "Failed to connect with {addr}: {e}");
             }
         });
@@ -416,7 +433,7 @@ impl Tcp {
 
     /// Prepares the freshly acquired connection to handle the protocols the Tcp implements.
     async fn adapt_stream(&self, stream: TcpStream, peer_addr: SocketAddr, own_side: ConnectionSide) -> io::Result<()> {
-        self.known_peers.add(peer_addr);
+        self.known_peers.add(peer_addr.ip());
 
         // Register the port seen by the peer.
         if own_side == ConnectionSide::Initiator {

@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-node-consensus"
-version = "2.2.7"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node consensus for a decentralized operating system"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,13 +12,24 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2021"
 
 [features]
 default = [ ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-bft/locktick",
+  "snarkos-node-bft-ledger-service/locktick",
+  "snarkos-node-bft-storage-service/locktick",
+  "snarkvm/locktick"
+]
 metrics = [ "dep:metrics" ]
+cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
+
+[dependencies.aleo-std]
+workspace = true
 
 [dependencies.anyhow]
 version = "1.0.79"
@@ -30,13 +41,18 @@ version = "2"
 version = "2.1"
 features = [ "serde", "rayon" ]
 
+[dependencies.locktick]
+version = "0.3"
+features = [ "parking_lot" ]
+optional = true
+
 [dependencies.lru]
 version = "0.12.1"
 
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "../metrics"
-version = "=2.2.7"
+version = "=3.6.0"
 optional = true
 
 [dependencies.parking_lot]
@@ -47,23 +63,27 @@ version = "0.8"
 
 [dependencies.snarkos-account]
 path = "../../account"
-version = "=2.2.7"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-bft]
 path = "../bft"
-version = "=2.2.7"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-bft-ledger-service]
 path = "../bft/ledger-service"
-version = "=2.2.7"
+version = "=3.6.0"
 default-features = false
 features = [ "ledger", "ledger-write" ]
 
 [dependencies.snarkos-node-bft-storage-service]
 path = "../bft/storage-service"
-version = "=2.2.7"
+version = "=3.6.0"
 default-features = false
 features = [ "persistent" ]
+
+[dependencies.snarkos-node-sync]
+path = "../sync"
+version = "=3.6.0"
 
 [dependencies.snarkvm]
 workspace = true

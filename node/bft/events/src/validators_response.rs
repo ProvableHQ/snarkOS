@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -57,13 +58,13 @@ impl<N: Network> FromBytes for ValidatorsResponse<N> {
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::{challenge_request::prop_tests::any_valid_address, ValidatorsResponse};
+    use crate::{ValidatorsResponse, challenge_request::prop_tests::any_valid_address};
 
     use bytes::{Buf, BufMut, BytesMut};
     use indexmap::IndexMap;
     use proptest::{
         collection::hash_map,
-        prelude::{any, BoxedStrategy, Strategy},
+        prelude::{BoxedStrategy, Strategy, any},
     };
     use snarkvm::{
         prelude::Address,
@@ -72,7 +73,7 @@ pub mod prop_tests {
     use std::net::{IpAddr, SocketAddr};
     use test_strategy::proptest;
 
-    type CurrentNetwork = snarkvm::prelude::Testnet3;
+    type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
     pub fn any_valid_socket_addr() -> BoxedStrategy<SocketAddr> {
         any::<(IpAddr, u16)>().prop_map(|(ip_addr, port)| SocketAddr::new(ip_addr, port)).boxed()

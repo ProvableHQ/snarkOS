@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -60,7 +61,7 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
 
 impl<N: Network> ChallengeRequest<N> {
     pub fn new(listener_port: u16, node_type: NodeType, address: Address<N>, nonce: u64) -> Self {
-        Self { version: Message::<N>::VERSION, listener_port, node_type, address, nonce }
+        Self { version: Message::<N>::latest_message_version(), listener_port, node_type, address, nonce }
     }
 }
 
@@ -73,10 +74,10 @@ pub mod prop_tests {
     };
 
     use bytes::{Buf, BufMut, BytesMut};
-    use proptest::prelude::{any, BoxedStrategy, Strategy};
+    use proptest::prelude::{BoxedStrategy, Strategy, any};
     use test_strategy::proptest;
 
-    type CurrentNetwork = snarkvm::prelude::Testnet3;
+    type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
     pub fn any_valid_address() -> BoxedStrategy<Address<CurrentNetwork>> {
         any::<u64>().prop_map(|seed| Address::rand(&mut TestRng::fixed(seed))).boxed()

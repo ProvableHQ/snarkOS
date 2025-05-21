@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-node-sync"
-version = "2.2.7"
+version = "3.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A synchronization module for a decentralized operating system"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,12 +12,21 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2021"
 
 [features]
 default = [ ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-bft-ledger-service/locktick",
+  "snarkos-node-router/locktick",
+  "snarkos-node-tcp/locktick",
+  "snarkvm/locktick"
+]
+metrics = [ "dep:metrics" ]
+cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]
 test = [ "snarkos-node-sync-locators/test" ]
 
 [dependencies.anyhow]
@@ -29,6 +38,11 @@ features = [ "serde", "rayon" ]
 
 [dependencies.itertools]
 version = "0.12"
+
+[dependencies.locktick]
+version = "0.3"
+features = [ "parking_lot" ]
+optional = true
 
 [dependencies.once_cell]
 version = "1"
@@ -44,16 +58,30 @@ version = "1"
 
 [dependencies.snarkos-node-bft-ledger-service]
 path = "../bft/ledger-service"
-version = "=2.2.7"
+version = "=3.6.0"
 features = [ "ledger-write" ]
+
+[dependencies.metrics]
+package = "snarkos-node-metrics"
+path = "../metrics"
+version = "=3.6.0"
+optional = true
+
+[dependencies.snarkos-node-router]
+path = "../router"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-sync-communication-service]
 path = "communication-service"
-version = "=2.2.7"
+version = "=3.6.0"
 
 [dependencies.snarkos-node-sync-locators]
 path = "locators"
-version = "=2.2.7"
+version = "=3.6.0"
+
+[dependencies.snarkos-node-tcp]
+path = "../tcp"
+version = "=3.6.0"
 
 [dependencies.snarkvm]
 workspace = true

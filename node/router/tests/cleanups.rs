@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -17,11 +18,8 @@ use common::*;
 
 use deadline::deadline;
 use peak_alloc::PeakAlloc;
-use snarkos_node_router::Routing;
-use snarkos_node_tcp::{
-    protocols::{Disconnect, Handshake},
-    P2P,
-};
+use snarkos_node_router::{Outbound, Routing};
+use snarkos_node_tcp::protocols::{Disconnect, Handshake, OnConnect};
 use snarkvm::{prelude::Rng, utilities::TestRng};
 
 use core::time::Duration;
@@ -43,7 +41,7 @@ async fn test_connection_cleanups() {
         let node = match rng.gen_range(0..3) % 3 {
             0 => client(0, 1).await,
             1 => prover(0, 1).await,
-            2 => validator(0, 1).await,
+            2 => validator(0, 1, &[], true).await,
             _ => unreachable!(),
         };
 
@@ -57,6 +55,9 @@ async fn test_connection_cleanups() {
     nodes[0].enable_disconnect().await;
     nodes[1].enable_disconnect().await;
 
+    nodes[0].enable_on_connect().await;
+    nodes[1].enable_on_connect().await;
+
     nodes[0].enable_listener().await;
     nodes[1].enable_listener().await;
 
@@ -69,9 +70,10 @@ async fn test_connection_cleanups() {
         nodes[1].connect(nodes[0].local_ip());
 
         // Wait until the connection is complete.
-        let tcp0 = nodes[0].tcp().clone();
-        let tcp1 = nodes[1].tcp().clone();
-        deadline!(Duration::from_secs(3), move || tcp0.num_connected() == 1 && tcp1.num_connected() == 1);
+        let node0 = nodes[0].clone();
+        let node1 = nodes[1].clone();
+        deadline!(Duration::from_secs(3), move || node0.router().number_of_connected_peers() == 1
+            && node1.router().number_of_connected_peers() == 1);
 
         // Since the connectee doesn't read from the connector, it can't tell that the connector disconnected
         // from it, so it needs to disconnect from it manually.
@@ -79,9 +81,10 @@ async fn test_connection_cleanups() {
         nodes[1].disconnect(nodes[0].local_ip());
 
         // Wait until the disconnect is complete.
-        let tcp0 = nodes[0].tcp().clone();
-        let tcp1 = nodes[1].tcp().clone();
-        deadline!(Duration::from_secs(3), move || tcp0.num_connected() == 0 && tcp1.num_connected() == 0);
+        let node0 = nodes[0].clone();
+        let node1 = nodes[1].clone();
+        deadline!(Duration::from_secs(3), move || node0.router().number_of_connected_peers() == 0
+            && node1.router().number_of_connected_peers() == 0);
 
         // Register heap use after a single connection.
         if i == 0 {

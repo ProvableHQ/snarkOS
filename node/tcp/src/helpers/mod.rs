@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -15,6 +16,9 @@
 mod config;
 pub use config::Config;
 
+mod banned_peers;
+pub use banned_peers::BannedPeers;
+
 pub mod connections;
 pub use connections::{Connection, ConnectionSide};
 
@@ -24,7 +28,7 @@ pub use known_peers::KnownPeers;
 mod stats;
 pub use stats::Stats;
 
-use tracing::{debug_span, error_span, info_span, trace_span, warn_span, Span};
+use tracing::{Span, debug_span, error_span, info_span, trace_span, warn_span};
 
 /// Creates the Tcp's tracing span based on its name.
 pub fn create_span(tcp_name: &str) -> Span {

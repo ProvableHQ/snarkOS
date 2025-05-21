@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -72,12 +73,6 @@ impl Config {
 impl Default for Config {
     /// Initializes a new Tcp configuration with the default values.
     fn default() -> Self {
-        #[cfg(feature = "test")]
-        fn default_ip() -> Option<IpAddr> {
-            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
-        }
-
-        #[cfg(not(feature = "test"))]
         fn default_ip() -> Option<IpAddr> {
             Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
         }

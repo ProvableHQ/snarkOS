@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -22,6 +23,8 @@ use std::{net::SocketAddr, time::Instant};
 pub struct Peer<N: Network> {
     /// The IP address of the peer, with the port set to the listener port.
     peer_ip: SocketAddr,
+    /// The connected address of the peer.
+    peer_addr: SocketAddr,
     /// The Aleo address of the peer.
     address: Address<N>,
     /// The node type of the peer.
@@ -36,9 +39,10 @@ pub struct Peer<N: Network> {
 
 impl<N: Network> Peer<N> {
     /// Initializes a new instance of `Peer`.
-    pub fn new(listening_ip: SocketAddr, challenge_request: &ChallengeRequest<N>) -> Self {
+    pub fn new(listening_ip: SocketAddr, connected_ip: SocketAddr, challenge_request: &ChallengeRequest<N>) -> Self {
         Self {
             peer_ip: listening_ip,
+            peer_addr: connected_ip,
             address: challenge_request.address,
             node_type: challenge_request.node_type,
             version: challenge_request.version,
@@ -50,6 +54,11 @@ impl<N: Network> Peer<N> {
     /// Returns the IP address of the peer, with the port set to the listener port.
     pub const fn ip(&self) -> SocketAddr {
         self.peer_ip
+    }
+
+    /// Returns the connected address of the peer.
+    pub const fn addr(&self) -> SocketAddr {
+        self.peer_addr
     }
 
     /// Returns the Aleo address of the peer.

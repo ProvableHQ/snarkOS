@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -12,32 +13,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{CurrentAleo, CurrentNetwork, Developer};
-
+use super::Developer;
 use snarkvm::{
-    console::program::ProgramOwner,
+    circuit::{Aleo, AleoCanaryV0, AleoTestnetV0, AleoV0},
+    console::{
+        network::{CanaryV0, MainnetV0, Network, TestnetV0},
+        program::ProgramOwner,
+    },
     prelude::{
-        block::Transaction,
-        deployment_cost,
-        query::Query,
-        store::{helpers::memory::ConsensusMemory, ConsensusStore},
         PrivateKey,
         ProgramID,
         VM,
+        block::Transaction,
+        deployment_cost,
+        query::Query,
+        store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
 };
 
-use anyhow::{bail, Result};
+use aleo_std::StorageMode;
+use anyhow::{Result, bail};
 use clap::Parser;
 use colored::Colorize;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 use zeroize::Zeroize;
 
 /// Deploys an Aleo program.
 #[derive(Debug, Parser)]
 pub struct Deploy {
     /// The name of the program to deploy.
-    program_id: ProgramID<CurrentNetwork>,
+    program_id: String,
+    /// Specify the network to create a deployment for.
+    #[clap(default_value = "0", long = "network")]
+    pub network: u16,
     /// A path to a directory containing a manifest file. Defaults to the current working directory.
     #[clap(long)]
     path: Option<String>,
@@ -62,6 +70,10 @@ pub struct Deploy {
     /// Store generated deployment transaction to a local file.
     #[clap(long)]
     store: Option<String>,
+    /// Specify the path to a directory containing the ledger. Overrides the default path (also for
+    /// dev).
+    #[clap(long = "storage_path")]
+    storage_path: Option<PathBuf>,
 }
 
 impl Drop for Deploy {
@@ -79,19 +91,33 @@ impl Deploy {
             bail!("❌ Please specify one of the following actions: --broadcast, --dry-run, --store");
         }
 
+        // Construct the deployment for the specified network.
+        match self.network {
+            MainnetV0::ID => self.construct_deployment::<MainnetV0, AleoV0>(),
+            TestnetV0::ID => self.construct_deployment::<TestnetV0, AleoTestnetV0>(),
+            CanaryV0::ID => self.construct_deployment::<CanaryV0, AleoCanaryV0>(),
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        }
+    }
+
+    /// Construct and process the deployment transaction.
+    fn construct_deployment<N: Network, A: Aleo<Network = N, BaseField = N::Field>>(&self) -> Result<String> {
         // Specify the query
         let query = Query::from(&self.query);
 
         // Retrieve the private key.
         let private_key = PrivateKey::from_str(&self.private_key)?;
 
-        // Fetch the package from the directory.
-        let package = Developer::parse_package(self.program_id, &self.path)?;
+        // Retrieve the program ID.
+        let program_id = ProgramID::from_str(&self.program_id)?;
 
-        println!("📦 Creating deployment transaction for '{}'...\n", &self.program_id.to_string().bold());
+        // Fetch the package from the directory.
+        let package = Developer::parse_package(program_id, &self.path)?;
+
+        println!("📦 Creating deployment transaction for '{}'...\n", &program_id.to_string().bold());
 
         // Generate the deployment
-        let deployment = package.deploy::<CurrentAleo>(None)?;
+        let deployment = package.deploy::<A>(None)?;
         let deployment_id = deployment.to_deployment_id()?;
 
         // Generate the deployment transaction.
@@ -99,12 +125,18 @@ impl Deploy {
             // Initialize an RNG.
             let rng = &mut rand::thread_rng();
 
+            // Initialize the storage.
+            let storage_mode = match &self.storage_path {
+                Some(path) => StorageMode::Custom(path.clone()),
+                None => StorageMode::Production,
+            };
+            let store = ConsensusStore::<N, ConsensusMemory<N>>::open(storage_mode)?;
+
             // Initialize the VM.
-            let store = ConsensusStore::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>::open(None)?;
             let vm = VM::from(store)?;
 
             // Compute the minimum deployment cost.
-            let (minimum_deployment_cost, (_, _)) = deployment_cost(&deployment)?;
+            let (minimum_deployment_cost, (_, _, _)) = deployment_cost(&deployment)?;
 
             // Prepare the fees.
             let fee = match &self.record {
@@ -137,23 +169,17 @@ impl Deploy {
             // Create a new transaction.
             Transaction::from_deployment(owner, deployment, fee)?
         };
-        println!("✅ Created deployment transaction for '{}'", self.program_id.to_string().bold());
+        println!("✅ Created deployment transaction for '{}'", program_id.to_string().bold());
 
         // Determine if the transaction should be broadcast, stored, or displayed to the user.
-        Developer::handle_transaction(
-            &self.broadcast,
-            self.dry_run,
-            &self.store,
-            transaction,
-            self.program_id.to_string(),
-        )
+        Developer::handle_transaction(&self.broadcast, self.dry_run, &self.store, transaction, program_id.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{Command, CLI};
+    use crate::commands::{CLI, Command};
 
     #[test]
     fn clap_snarkos_deploy() {
@@ -174,7 +200,8 @@ mod tests {
         let cli = CLI::parse_from(arg_vec);
 
         if let Command::Developer(Developer::Deploy(deploy)) = cli.command {
-            assert_eq!(deploy.program_id, "hello.aleo".try_into().unwrap());
+            assert_eq!(deploy.network, 0);
+            assert_eq!(deploy.program_id, "hello.aleo");
             assert_eq!(deploy.private_key, "PRIVATE_KEY");
             assert_eq!(deploy.query, "QUERY");
             assert_eq!(deploy.priority_fee, 77);

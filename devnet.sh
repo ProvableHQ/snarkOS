@@ -8,8 +8,12 @@ total_validators=${total_validators:-4}
 read -p "Enter the total number of clients (default: 2): " total_clients
 total_clients=${total_clients:-2}
 
-# Ask the user if they want to run 'cargo install --path .' or use a pre-installed binary
-read -p "Do you want to run 'cargo install --path .' to build the binary? (y/n, default: y): " build_binary
+# Read the network ID from user or use a default value of 1
+read -p "Enter the network ID (mainnet = 0, testnet = 1, canary = 2) (default: 1): " network_id
+network_id=${network_id:-1}
+
+# Ask the user if they want to run 'cargo install --locked --path .' or use a pre-installed binary
+read -p "Do you want to run 'cargo install --locked --path .' to build the binary? (y/n, default: y): " build_binary
 build_binary=${build_binary:-y}
 
 # Ask the user whether to clear the existing ledger history
@@ -17,8 +21,21 @@ read -p "Do you want to clear the existing ledger history? (y/n, default: n): " 
 clear_ledger=${clear_ledger:-n}
 
 if [[ $build_binary == "y" ]]; then
-  # Build the binary using 'cargo install --path .'
-  cargo install --path . || exit 1
+  # Ask the user if they want to enable validator telemetry
+  read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
+  enable_telemetry=${enable_telemetry:-y}
+
+  # Build command
+  build_cmd="cargo install --locked --path ."
+
+  # Add the telemetry feature if requested
+  if [[ $enable_telemetry == "y" ]]; then
+    build_cmd+=" --features telemetry"
+  fi
+
+  # Build command
+  echo "Running build command: \"$build_cmd\""
+  eval "$build_cmd" || exit 1
 fi
 
 # Clear the ledger logs for each validator if the user chooses to clear ledger
@@ -26,9 +43,9 @@ if [[ $clear_ledger == "y" ]]; then
   # Create an array to store background processes
   clean_processes=()
 
-  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-    # Run 'snarkos clean' for each validator in the background
-    snarkos clean --dev $validator_index &
+  for ((index = 0; index < $((total_validators + total_clients)); index++)); do
+    # Run 'snarkos clean' for each node in the background
+    snarkos clean --network $network_id --dev $index &
 
     # Store the process ID of the background task
     clean_processes+=($!)
@@ -64,31 +81,33 @@ for validator_index in "${validator_indices[@]}"; do
 
   # Send the command to start the validator to the new window and capture output to the log file
   if [ "$validator_index" -eq 0 ]; then
-    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --dev $validator_index --dev-num-validators $total_validators --validator --logfile $log_file --metrics" C-m
+    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --metrics" C-m
   else
     # Create a new window with a unique name
     window_index=$((validator_index + index_offset))
     tmux new-window -t "devnet:$window_index" -n "window$validator_index"
-    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --dev $validator_index --dev-num-validators $total_validators --validator --logfile $log_file" C-m
+    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file" C-m
   fi
 done
 
-# Generate client indices from 0 to (total_clients - 1)
-client_indices=($(seq 0 $((total_clients - 1))))
+if [ "$total_clients" -ne 0 ]; then
+  # Generate client indices from 0 to (total_clients - 1)
+  client_indices=($(seq 0 $((total_clients - 1))))
 
-# Loop through the list of client indices and create a new window for each
-for client_index in "${client_indices[@]}"; do
-  # Generate a unique and incrementing log file name based on the client index
-  log_file="$log_dir/client-$client_index.log"
+  # Loop through the list of client indices and create a new window for each
+  for client_index in "${client_indices[@]}"; do
+    # Generate a unique and incrementing log file name based on the client index
+    log_file="$log_dir/client-$client_index.log"
 
-  window_index=$((client_index + total_validators + index_offset))
+    window_index=$((client_index + total_validators + index_offset))
 
-  # Create a new window with a unique name
-  tmux new-window -t "devnet:$window_index" -n "window-$window_index"
+    # Create a new window with a unique name
+    tmux new-window -t "devnet:$window_index" -n "window-$window_index"
 
-  # Send the command to start the validator to the new window and capture output to the log file
-  tmux send-keys -t "devnet:window-$window_index" "snarkos start --nodisplay --dev $window_index --client --logfile $log_file" C-m
-done
+    # Send the command to start the client to the new window and capture output to the log file
+    tmux send-keys -t "devnet:window-$window_index" "snarkos start --nodisplay --network $network_id --dev $window_index --dev-num-validators $total_validators --client --logfile $log_file" C-m
+  done
+fi
 
 # Attach to the tmux session to view and interact with the windows
 tmux attach-session -t "devnet"

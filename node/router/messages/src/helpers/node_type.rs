@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -12,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkvm::prelude::{error, FromBytes, ToBytes};
+use snarkvm::prelude::{FromBytes, ToBytes, error};
 
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -76,7 +77,7 @@ impl FromBytes for NodeType {
             0 => Ok(Self::Client),
             1 => Ok(Self::Prover),
             2 => Ok(Self::Validator),
-            _ => Err(error("Invalid node type")),
+            x => Err(error(format!("Invalid node type: expected 0, 1, or 2, got {x}."))),
         }
     }
 }

@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -18,7 +19,10 @@ use snarkvm::{
 };
 
 use indexmap::IndexSet;
-use std::{collections::HashMap, fmt::Debug};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+};
 
 pub trait StorageService<N: Network>: Debug + Send + Sync {
     /// Returns `true` if the storage contains the specified `transmission ID`.
@@ -33,6 +37,7 @@ pub trait StorageService<N: Network>: Debug + Send + Sync {
         &self,
         batch_header: &BatchHeader<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
+        aborted_transmissions: HashSet<TransmissionID<N>>,
     ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>>;
 
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
@@ -40,6 +45,7 @@ pub trait StorageService<N: Network>: Debug + Send + Sync {
         &self,
         certificate_id: Field<N>,
         transmission_ids: IndexSet<TransmissionID<N>>,
+        aborted_transmission_ids: HashSet<TransmissionID<N>>,
         missing_transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
     );
 

@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -16,6 +17,9 @@ use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use futures_util::sink::SinkExt;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use tokio::{
     io::AsyncWrite,
@@ -25,12 +29,12 @@ use tokio_util::codec::{Encoder, FramedWrite};
 use tracing::*;
 
 #[cfg(doc)]
-use crate::{protocols::Handshake, Config, Tcp};
+use crate::{Config, Tcp, protocols::Handshake};
 use crate::{
-    protocols::{Protocol, ProtocolHandler, ReturnableConnection},
     Connection,
     ConnectionSide,
     P2P,
+    protocols::{Protocol, ProtocolHandler, ReturnableConnection},
 };
 
 type WritingSenders = Arc<RwLock<HashMap<SocketAddr, mpsc::Sender<WrappedMessage>>>>;
@@ -47,7 +51,9 @@ where
     /// obscure potential issues with your implementation (like slow serialization) or network.
     ///
     /// The default value is 1024.
-    const MESSAGE_QUEUE_DEPTH: usize = 1024;
+    fn message_queue_depth(&self) -> usize {
+        1024
+    }
 
     /// The type of the outbound messages; unless their serialization is expensive and the message
     /// is broadcasted (in which case it would get serialized multiple times), serialization should
@@ -192,7 +198,7 @@ impl<W: Writing> WritingInternal for W {
         let writer = conn.writer.take().expect("missing connection writer!");
         let mut framed = FramedWrite::new(writer, codec);
 
-        let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(Self::MESSAGE_QUEUE_DEPTH);
+        let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(self.message_queue_depth());
 
         // register the connection's message sender with the Writing protocol handler
         conn_senders.write().insert(addr, outbound_message_sender);
@@ -219,12 +225,12 @@ impl<W: Writing> WritingInternal for W {
                 match self_clone.write_to_stream(*msg, &mut framed).await {
                     Ok(len) => {
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
-                        node.known_peers().register_sent_message(addr, len);
+                        node.known_peers().register_sent_message(addr.ip(), len);
                         node.stats().register_sent_message(len);
                         trace!(parent: node.span(), "sent {}B to {}", len, addr);
                     }
                     Err(e) => {
-                        node.known_peers().register_failure(addr);
+                        node.known_peers().register_failure(addr.ip());
                         error!(parent: node.span(), "couldn't send a message to {}: {}", addr, e);
                         let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
                         let _ = wrapped_msg.delivery_notification.send(Err(e));

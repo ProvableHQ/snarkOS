@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -12,20 +13,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{traits::NodeInterface, Client, Prover, Validator};
+use crate::{Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
 use snarkos_node_router::messages::NodeType;
 use snarkvm::prelude::{
-    block::Block,
-    store::helpers::{memory::ConsensusMemory, rocksdb::ConsensusDB},
     Address,
     Network,
     PrivateKey,
     ViewKey,
+    block::Block,
+    store::helpers::{memory::ConsensusMemory, rocksdb::ConsensusDB},
 };
 
+use aleo_std::StorageMode;
 use anyhow::Result;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 pub enum Node<N: Network> {
     /// A validator is a full node, capable of validating blocks.
@@ -48,7 +53,10 @@ impl<N: Network> Node<N> {
         trusted_validators: &[SocketAddr],
         genesis: Block<N>,
         cdn: Option<String>,
-        dev: Option<u16>,
+        storage_mode: StorageMode,
+        allow_external_peers: bool,
+        dev_txs: bool,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
             Validator::new(
@@ -61,7 +69,10 @@ impl<N: Network> Node<N> {
                 trusted_validators,
                 genesis,
                 cdn,
-                dev,
+                storage_mode,
+                allow_external_peers,
+                dev_txs,
+                shutdown,
             )
             .await?,
         )))
@@ -73,9 +84,10 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        dev: Option<u16>,
+        storage_mode: StorageMode,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, dev).await?)))
+        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, shutdown).await?)))
     }
 
     /// Initializes a new client node.
@@ -87,10 +99,24 @@ impl<N: Network> Node<N> {
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
         cdn: Option<String>,
-        dev: Option<u16>,
+        storage_mode: StorageMode,
+        rotate_external_peers: bool,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
-            Client::new(node_ip, rest_ip, rest_rps, account, trusted_peers, genesis, cdn, dev).await?,
+            Client::new(
+                node_ip,
+                rest_ip,
+                rest_rps,
+                account,
+                trusted_peers,
+                genesis,
+                cdn,
+                storage_mode,
+                rotate_external_peers,
+                shutdown,
+            )
+            .await?,
         )))
     }
 

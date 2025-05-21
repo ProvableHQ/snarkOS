@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -17,24 +18,24 @@
 #![allow(clippy::await_holding_lock)]
 
 use snarkvm::prelude::{
-    block::Block,
-    store::{cow_to_copied, ConsensusStorage},
     Deserialize,
     DeserializeOwned,
     Ledger,
     Network,
     Serialize,
+    block::Block,
+    store::{ConsensusStorage, cow_to_copied},
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
 use parking_lot::Mutex;
 use reqwest::Client;
 use std::{
     cmp,
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -47,8 +48,13 @@ const CONCURRENT_REQUESTS: u32 = 16;
 const MAXIMUM_PENDING_BLOCKS: u32 = BLOCKS_PER_FILE * CONCURRENT_REQUESTS * 2;
 /// Maximum number of attempts for a request to the CDN.
 const MAXIMUM_REQUEST_ATTEMPTS: u8 = 10;
-/// The supported network.
-const NETWORK_ID: u16 = 3;
+
+/// Updates the metrics during CDN sync.
+#[cfg(feature = "metrics")]
+fn update_block_metrics(height: u32) {
+    // Update the BFT height metric.
+    crate::metrics::gauge(crate::metrics::bft::HEIGHT, height as f64);
+}
 
 /// Loads blocks from a CDN into the ledger.
 ///
@@ -107,13 +113,8 @@ pub async fn load_blocks<N: Network>(
     shutdown: Arc<AtomicBool>,
     process: impl FnMut(Block<N>) -> Result<()> + Clone + Send + Sync + 'static,
 ) -> Result<u32, (u32, anyhow::Error)> {
-    // If the network is not supported, return.
-    if N::ID != NETWORK_ID {
-        return Err((start_height, anyhow!("The network ({}) is not supported", N::ID)));
-    }
-
     // Create a Client to maintain a connection pool throughout the sync.
-    let client = match Client::builder().build() {
+    let client = match Client::builder().use_rustls_tls().build() {
         Ok(client) => client,
         Err(error) => {
             return Err((start_height.saturating_sub(1), anyhow!("Failed to create a CDN request client - {error}")));
@@ -153,7 +154,7 @@ pub async fn load_blocks<N: Network>(
         return Ok(cdn_end);
     }
 
-    // A collection of dowloaded blocks pending insertion into the ledger.
+    // A collection of downloaded blocks pending insertion into the ledger.
     let pending_blocks: Arc<Mutex<Vec<Block<N>>>> = Default::default();
 
     // Start a timer.
@@ -171,7 +172,7 @@ pub async fn load_blocks<N: Network>(
     let mut current_height = start_height.saturating_sub(1);
     while current_height < end_height - 1 {
         // If we are instructed to shut down, abort.
-        if shutdown.load(Ordering::Relaxed) {
+        if shutdown.load(Ordering::Acquire) {
             info!("Stopping block sync at {} - shutting down", current_height);
             // We can shut down cleanly from here, as the node hasn't been started yet.
             std::process::exit(0);
@@ -201,27 +202,41 @@ pub async fn load_blocks<N: Network>(
         let next_blocks = std::mem::replace(&mut *candidate_blocks, retained_blocks);
         drop(candidate_blocks);
 
+        // Initialize a temporary threadpool that can use the full CPU.
+        let threadpool = rayon::ThreadPoolBuilder::new().build().unwrap();
+
         // Attempt to advance the ledger using the CDN block bundle.
         let mut process_clone = process.clone();
         let shutdown_clone = shutdown.clone();
         current_height = tokio::task::spawn_blocking(move || {
-            for block in next_blocks.into_iter().filter(|b| (start_height..end_height).contains(&b.height())) {
-                // If we are instructed to shut down, abort.
-                if shutdown_clone.load(Ordering::Relaxed) {
-                    info!("Stopping block sync at {} - the node is shutting down", current_height);
-                    // We can shut down cleanly from here, as the node hasn't been started yet.
-                    std::process::exit(0);
+            threadpool.install(|| {
+                for block in next_blocks.into_iter().filter(|b| (start_height..end_height).contains(&b.height())) {
+                    // If we are instructed to shut down, abort.
+                    if shutdown_clone.load(Ordering::Relaxed) {
+                        info!("Stopping block sync at {} - the node is shutting down", current_height);
+                        // We can shut down cleanly from here, as the node hasn't been started yet.
+                        std::process::exit(0);
+                    }
+
+                    // Register the next block's height, as the block gets consumed next.
+                    let block_height = block.height();
+
+                    // Insert the block into the ledger.
+                    process_clone(block)?;
+
+                    // Update the current height.
+                    current_height = block_height;
+
+                    // Update metrics.
+                    #[cfg(feature = "metrics")]
+                    update_block_metrics(current_height);
+
+                    // Log the progress.
+                    log_progress::<BLOCKS_PER_FILE>(timer, current_height, cdn_start, cdn_end, "block");
                 }
 
-                // Insert the block into the ledger.
-                process_clone(block)?;
-                current_height += 1;
-
-                // Log the progress.
-                log_progress::<BLOCKS_PER_FILE>(timer, current_height, cdn_start, cdn_end, "block");
-            }
-
-            Ok(current_height)
+                Ok(current_height)
+            })
         })
         .await
         .map_err(|e| (current_height, e.into()))?
@@ -245,7 +260,7 @@ async fn download_block_bundles<N: Network>(
     let mut start = cdn_start;
     while start < cdn_end - 1 {
         // If we are instructed to shut down, stop downloading.
-        if shutdown.load(Ordering::Relaxed) {
+        if shutdown.load(Ordering::Acquire) {
             break;
         }
 
@@ -318,7 +333,7 @@ async fn download_block_bundles<N: Network>(
                                 shutdown_clone.store(true, Ordering::Relaxed);
                                 break;
                             }
-                            tokio::time::sleep(Duration::from_secs(attempts as u64)).await;
+                            tokio::time::sleep(Duration::from_secs(attempts as u64 * 10)).await;
                             warn!("{error} - retrying ({attempts} attempt(s) so far)");
                         }
                     }
@@ -430,17 +445,17 @@ fn log_progress<const OBJECTS_PER_FILE: u32>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        blocks::{cdn_get, cdn_height, log_progress, BLOCKS_PER_FILE},
+        blocks::{BLOCKS_PER_FILE, cdn_height, log_progress},
         load_blocks,
     };
-    use snarkvm::prelude::{block::Block, Testnet3};
+    use snarkvm::prelude::{MainnetV0, block::Block};
 
     use parking_lot::RwLock;
     use std::{sync::Arc, time::Instant};
 
-    type CurrentNetwork = Testnet3;
+    type CurrentNetwork = MainnetV0;
 
-    const TEST_BASE_URL: &str = "https://s3.us-west-1.amazonaws.com/testnet3.blocks/phase3";
+    const TEST_BASE_URL: &str = "https://cdn.provable.com/v0/blocks/mainnet";
 
     fn check_load_blocks(start: u32, end: Option<u32>, expected: usize) {
         let blocks = Arc::new(RwLock::new(Vec::new()));
@@ -465,10 +480,10 @@ mod tests {
     }
 
     #[test]
-    fn test_load_blocks_1_to_50() {
-        let start_height = 1;
+    fn test_load_blocks_0_to_50() {
+        let start_height = 0;
         let end_height = Some(50);
-        check_load_blocks(start_height, end_height, 49);
+        check_load_blocks(start_height, end_height, 50);
     }
 
     #[test]
@@ -479,10 +494,10 @@ mod tests {
     }
 
     #[test]
-    fn test_load_blocks_1_to_123() {
-        let start_height = 1;
+    fn test_load_blocks_0_to_123() {
+        let start_height = 0;
         let end_height = Some(123);
-        check_load_blocks(start_height, end_height, 122);
+        check_load_blocks(start_height, end_height, 123);
     }
 
     #[test]
@@ -495,20 +510,9 @@ mod tests {
     #[test]
     fn test_cdn_height() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let client = reqwest::Client::builder().build().unwrap();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
         rt.block_on(async {
             let height = cdn_height::<BLOCKS_PER_FILE>(&client, TEST_BASE_URL).await.unwrap();
-            assert!(height > 0);
-        });
-    }
-
-    #[test]
-    fn test_cdn_get() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let client = reqwest::Client::new();
-            let height =
-                cdn_get::<u32>(client, &format!("{TEST_BASE_URL}/testnet3/latest/height"), "height").await.unwrap();
             assert!(height > 0);
         });
     }

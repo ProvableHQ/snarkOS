@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -12,12 +13,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::events::BlockRequest;
 use snarkvm::{console::types::Field, ledger::narwhal::TransmissionID, prelude::Network};
 
 use core::hash::Hash;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     net::{IpAddr, SocketAddr},
 };
 use time::OffsetDateTime;
@@ -32,6 +37,8 @@ pub struct Cache<N: Network> {
     seen_inbound_certificates: RwLock<BTreeMap<i64, HashMap<Field<N>, u32>>>,
     /// The ordered timestamp map of transmission IDs and cache hits.
     seen_inbound_transmissions: RwLock<BTreeMap<i64, HashMap<TransmissionID<N>, u32>>>,
+    /// The ordered timestamp map of inbound block requests and cache hits.
+    seen_inbound_block_requests: RwLock<BTreeMap<i64, HashMap<SocketAddr, u32>>>,
     /// The ordered timestamp map of peer IPs and their cache hits on outbound events.
     seen_outbound_events: RwLock<BTreeMap<i64, HashMap<SocketAddr, u32>>>,
     /// The ordered timestamp map of peer IPs and their cache hits on certificate requests.
@@ -40,6 +47,8 @@ pub struct Cache<N: Network> {
     seen_outbound_transmissions: RwLock<BTreeMap<i64, HashMap<SocketAddr, u32>>>,
     /// The map of IPs to the number of validators requests.
     seen_outbound_validators_requests: RwLock<HashMap<SocketAddr, u32>>,
+    /// The ordered timestamp map of outbound block requests and cache hits.
+    seen_outbound_block_requests: RwLock<HashMap<SocketAddr, HashSet<BlockRequest>>>,
 }
 
 impl<N: Network> Default for Cache<N> {
@@ -57,10 +66,12 @@ impl<N: Network> Cache<N> {
             seen_inbound_events: Default::default(),
             seen_inbound_certificates: Default::default(),
             seen_inbound_transmissions: Default::default(),
+            seen_inbound_block_requests: Default::default(),
             seen_outbound_events: Default::default(),
             seen_outbound_certificates: Default::default(),
             seen_outbound_transmissions: Default::default(),
             seen_outbound_validators_requests: Default::default(),
+            seen_outbound_block_requests: Default::default(),
         }
     }
 }
@@ -84,6 +95,11 @@ impl<N: Network> Cache<N> {
     /// Inserts a transmission ID into the cache, returning the number of recent events.
     pub fn insert_inbound_transmission(&self, key: TransmissionID<N>, interval_in_secs: i64) -> usize {
         Self::retain_and_insert(&self.seen_inbound_transmissions, key, interval_in_secs)
+    }
+
+    /// Inserts a block request into the cache, returning the number of recent events.
+    pub fn insert_inbound_block_request(&self, key: SocketAddr, interval_in_secs: i64) -> usize {
+        Self::retain_and_insert(&self.seen_inbound_block_requests, key, interval_in_secs)
     }
 }
 
@@ -118,6 +134,30 @@ impl<N: Network> Cache<N> {
     /// Decrement the IP's number of validators requests, returning the updated number of validators requests.
     pub fn decrement_outbound_validators_requests(&self, peer_ip: SocketAddr) -> u32 {
         Self::decrement_counter(&self.seen_outbound_validators_requests, peer_ip)
+    }
+
+    /// Clears the the IP's number of validator requests.
+    pub fn clear_outbound_validators_requests(&self, peer_ip: SocketAddr) {
+        self.seen_outbound_validators_requests.write().remove(&peer_ip);
+    }
+
+    /// Inserts the block request for the given peer.
+    pub fn insert_outbound_block_request(&self, peer_ip: SocketAddr, request: BlockRequest) {
+        self.seen_outbound_block_requests.write().entry(peer_ip).or_default().insert(request);
+    }
+
+    /// Removes the block request for the given peer. Returns whether the request was present.
+    pub fn remove_outbound_block_request(&self, peer_ip: SocketAddr, request: &BlockRequest) -> bool {
+        self.seen_outbound_block_requests
+            .write()
+            .get_mut(&peer_ip)
+            .map(|requests| requests.remove(request))
+            .unwrap_or(false)
+    }
+
+    /// Clears the peer's number of outbound block requests.
+    pub fn clear_outbound_block_requests(&self, peer_ip: SocketAddr) {
+        self.seen_outbound_block_requests.write().remove(&peer_ip);
     }
 }
 
@@ -191,11 +231,11 @@ impl<N: Network> Cache<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snarkvm::prelude::Testnet3;
+    use snarkvm::prelude::MainnetV0;
 
     use std::{net::Ipv4Addr, thread, time::Duration};
 
-    type CurrentNetwork = Testnet3;
+    type CurrentNetwork = MainnetV0;
 
     trait Input {
         fn input() -> Self;
@@ -221,7 +261,7 @@ mod tests {
 
     impl Input for TransmissionID<CurrentNetwork> {
         fn input() -> Self {
-            TransmissionID::Transaction(Default::default())
+            TransmissionID::Transaction(Default::default(), Default::default())
         }
     }
 
@@ -292,5 +332,28 @@ mod tests {
        outbound_event,
        outbound_certificate,
        outbound_transmission
+    }
+
+    #[test]
+    fn test_seen_outbound_validators_requests() {
+        let cache = Cache::<CurrentNetwork>::default();
+        let input = Input::input();
+
+        // Check the map is empty.
+        assert!(!cache.contains_outbound_validators_request(input));
+
+        // Insert some requests.
+        for _ in 0..3 {
+            cache.increment_outbound_validators_requests(input);
+            assert!(cache.contains_outbound_validators_request(input));
+        }
+
+        // Remove a request.
+        cache.decrement_outbound_validators_requests(input);
+        assert!(cache.contains_outbound_validators_request(input));
+
+        // Clear all requests.
+        cache.clear_outbound_validators_requests(input);
+        assert!(!cache.contains_outbound_validators_request(input));
     }
 }

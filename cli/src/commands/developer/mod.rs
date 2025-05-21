@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -28,9 +29,9 @@ mod transfer_private;
 pub use transfer_private::*;
 
 use snarkvm::{
+    console::network::Network,
     package::Package,
     prelude::{
-        block::Transaction,
         Address,
         Ciphertext,
         Identifier,
@@ -43,16 +44,14 @@ use snarkvm::{
         ToBytes,
         Value,
         ViewKey,
+        block::Transaction,
     },
 };
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use clap::Parser;
 use colored::Colorize;
 use std::{path::PathBuf, str::FromStr};
-
-type CurrentAleo = snarkvm::circuit::AleoV0;
-type CurrentNetwork = snarkvm::prelude::Testnet3;
 
 /// Commands to deploy and execute transactions
 #[derive(Debug, Parser)]
@@ -81,7 +80,7 @@ impl Developer {
     }
 
     /// Parse the package from the directory.
-    fn parse_package(program_id: ProgramID<CurrentNetwork>, path: &Option<String>) -> Result<Package<CurrentNetwork>> {
+    fn parse_package<N: Network>(program_id: ProgramID<N>, path: &Option<String>) -> Result<Package<N>> {
         // Instantiate a path to the directory containing the manifest file.
         let directory = match path {
             Some(path) => PathBuf::from_str(path)?,
@@ -101,34 +100,40 @@ impl Developer {
     }
 
     /// Parses the record string. If the string is a ciphertext, then attempt to decrypt it.
-    fn parse_record(
-        private_key: &PrivateKey<CurrentNetwork>,
-        record: &str,
-    ) -> Result<Record<CurrentNetwork, Plaintext<CurrentNetwork>>> {
+    fn parse_record<N: Network>(private_key: &PrivateKey<N>, record: &str) -> Result<Record<N, Plaintext<N>>> {
         match record.starts_with("record1") {
             true => {
                 // Parse the ciphertext.
-                let ciphertext = Record::<CurrentNetwork, Ciphertext<CurrentNetwork>>::from_str(record)?;
+                let ciphertext = Record::<N, Ciphertext<N>>::from_str(record)?;
                 // Derive the view key.
                 let view_key = ViewKey::try_from(private_key)?;
                 // Decrypt the ciphertext.
                 ciphertext.decrypt(&view_key)
             }
-            false => Record::<CurrentNetwork, Plaintext<CurrentNetwork>>::from_str(record),
+            false => Record::<N, Plaintext<N>>::from_str(record),
         }
     }
 
     /// Fetch the program from the given endpoint.
-    fn fetch_program(program_id: &ProgramID<CurrentNetwork>, endpoint: &str) -> Result<Program<CurrentNetwork>> {
+    fn fetch_program<N: Network>(program_id: &ProgramID<N>, endpoint: &str) -> Result<Program<N>> {
+        // Get the network being used.
+        let network = match N::ID {
+            snarkvm::console::network::MainnetV0::ID => "mainnet",
+            snarkvm::console::network::TestnetV0::ID => "testnet",
+            snarkvm::console::network::CanaryV0::ID => "canary",
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        };
+
         // Send a request to the query node.
-        let response = ureq::get(&format!("{endpoint}/testnet3/program/{program_id}")).call();
+        let response = ureq::get(&format!("{endpoint}/{network}/program/{program_id}")).call();
 
         // Deserialize the program.
         match response {
             Ok(response) => response.into_json().map_err(|err| err.into()),
             Err(err) => match err {
                 ureq::Error::Status(_status, response) => {
-                    bail!(response.into_string().unwrap_or("Response too large!".to_owned()))
+                    // Debug formatting displays more useful info, especially if the response body is empty.
+                    bail!("Failed to fetch program {program_id}: {response:?}")
                 }
                 err => bail!(err),
             },
@@ -136,17 +141,25 @@ impl Developer {
     }
 
     /// Fetch the public balance in microcredits associated with the address from the given endpoint.
-    fn get_public_balance(address: &Address<CurrentNetwork>, endpoint: &str) -> Result<u64> {
+    fn get_public_balance<N: Network>(address: &Address<N>, endpoint: &str) -> Result<u64> {
         // Initialize the program id and account identifier.
-        let credits = ProgramID::<CurrentNetwork>::from_str("credits.aleo")?;
-        let account_mapping = Identifier::<CurrentNetwork>::from_str("account")?;
+        let credits = ProgramID::<N>::from_str("credits.aleo")?;
+        let account_mapping = Identifier::<N>::from_str("account")?;
+
+        // Get the network being used.
+        let network = match N::ID {
+            snarkvm::console::network::MainnetV0::ID => "mainnet",
+            snarkvm::console::network::TestnetV0::ID => "testnet",
+            snarkvm::console::network::CanaryV0::ID => "canary",
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        };
 
         // Send a request to the query node.
         let response =
-            ureq::get(&format!("{endpoint}/testnet3/program/{credits}/mapping/{account_mapping}/{address}")).call();
+            ureq::get(&format!("{endpoint}/{network}/program/{credits}/mapping/{account_mapping}/{address}")).call();
 
         // Deserialize the balance.
-        let balance: Result<Option<Value<CurrentNetwork>>> = match response {
+        let balance: Result<Option<Value<N>>> = match response {
             Ok(response) => response.into_json().map_err(|err| err.into()),
             Err(err) => match err {
                 ureq::Error::Status(_status, response) => {
@@ -158,7 +171,7 @@ impl Developer {
 
         // Return the balance in microcredits.
         match balance {
-            Ok(Some(Value::Plaintext(Plaintext::Literal(Literal::<CurrentNetwork>::U64(amount), _)))) => Ok(*amount),
+            Ok(Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _)))) => Ok(*amount),
             Ok(None) => Ok(0),
             Ok(Some(..)) => bail!("Failed to deserialize balance for {address}"),
             Err(err) => bail!("Failed to fetch balance for {address}: {err}"),
@@ -166,11 +179,11 @@ impl Developer {
     }
 
     /// Determine if the transaction should be broadcast or displayed to user.
-    fn handle_transaction(
+    fn handle_transaction<N: Network>(
         broadcast: &Option<String>,
         dry_run: bool,
         store: &Option<String>,
-        transaction: Transaction<CurrentNetwork>,
+        transaction: Transaction<N>,
         operation: String,
     ) -> Result<String> {
         // Get the transaction id.

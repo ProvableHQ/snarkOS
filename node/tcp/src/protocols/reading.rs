@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -13,12 +14,12 @@
 // limitations under the License.
 
 #[cfg(doc)]
-use crate::{protocols::Handshake, Config};
+use crate::{Config, protocols::Handshake};
 use crate::{
-    protocols::{ProtocolHandler, ReturnableConnection},
     ConnectionSide,
-    Tcp,
     P2P,
+    Tcp,
+    protocols::{ProtocolHandler, ReturnableConnection},
 };
 
 use async_trait::async_trait;
@@ -49,7 +50,9 @@ where
     /// attacks.
     ///
     /// The default value is 1024.
-    const MESSAGE_QUEUE_DEPTH: usize = 1024;
+    fn message_queue_depth(&self) -> usize {
+        1024
+    }
 
     /// The initial size of a per-connection buffer for reading inbound messages. Can be set to the maximum expected size
     /// of the inbound message in order to only allocate it once.
@@ -128,7 +131,7 @@ impl<R: Reading> ReadingInternal for R {
             framed.read_buffer_mut().reserve(Self::INITIAL_BUFFER_SIZE);
         }
 
-        let (inbound_message_sender, mut inbound_message_receiver) = mpsc::channel(Self::MESSAGE_QUEUE_DEPTH);
+        let (inbound_message_sender, mut inbound_message_receiver) = mpsc::channel(self.message_queue_depth());
 
         // use a channel to know when the processing task is ready
         let (tx_processing, rx_processing) = oneshot::channel::<()>();
@@ -143,7 +146,7 @@ impl<R: Reading> ReadingInternal for R {
             while let Some(msg) = inbound_message_receiver.recv().await {
                 if let Err(e) = self_clone.process_message(addr, msg).await {
                     error!(parent: node.span(), "can't process a message from {addr}: {e}");
-                    node.known_peers().register_failure(addr);
+                    node.known_peers().register_failure(addr.ip());
                 }
                 #[cfg(feature = "metrics")]
                 metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
@@ -178,7 +181,7 @@ impl<R: Reading> ReadingInternal for R {
                     }
                     Err(e) => {
                         error!(parent: node.span(), "can't read from {addr}: {e}");
-                        node.known_peers().register_failure(addr);
+                        node.known_peers().register_failure(addr.ip());
                         if node.config().fatal_io_errors.contains(&e.kind()) {
                             break;
                         }
@@ -229,7 +232,7 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
 
             if ret.is_some() {
                 self.acc = 0;
-                self.node.known_peers().register_received_message(self.addr, read_len);
+                self.node.known_peers().register_received_message(self.addr.ip(), read_len);
                 self.node.stats().register_received_message(read_len);
             } else {
                 self.acc = read_len;

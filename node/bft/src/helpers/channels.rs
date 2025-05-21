@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -22,16 +23,16 @@ use crate::events::{
 };
 use snarkos_node_sync::locators::BlockLocators;
 use snarkvm::{
-    console::{network::*, types::Field},
+    console::network::*,
     ledger::{
         block::{Block, Transaction},
-        coinbase::{ProverSolution, PuzzleCommitment},
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        puzzle::{Solution, SolutionID},
     },
     prelude::Result,
 };
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use std::net::SocketAddr;
 use tokio::sync::{mpsc, oneshot};
 
@@ -61,25 +62,13 @@ pub fn init_consensus_channels<N: Network>() -> (ConsensusSender<N>, ConsensusRe
 
 #[derive(Clone, Debug)]
 pub struct BFTSender<N: Network> {
-    pub tx_last_election_certificate_ids: mpsc::Sender<oneshot::Sender<IndexSet<Field<N>>>>,
     pub tx_primary_round: mpsc::Sender<(u64, oneshot::Sender<bool>)>,
     pub tx_primary_certificate: mpsc::Sender<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
-    pub tx_sync_bft_dag_at_bootup:
-        mpsc::Sender<(Vec<(BatchCertificate<N>, IndexSet<Field<N>>)>, Vec<BatchCertificate<N>>)>,
+    pub tx_sync_bft_dag_at_bootup: mpsc::Sender<Vec<BatchCertificate<N>>>,
     pub tx_sync_bft: mpsc::Sender<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
 }
 
 impl<N: Network> BFTSender<N> {
-    /// Retrieves the last election certificate IDs.
-    pub async fn get_last_election_certificate_ids(&self) -> Result<IndexSet<Field<N>>> {
-        // Initialize a callback sender and receiver.
-        let (callback_sender, callback_receiver) = oneshot::channel();
-        // Send the request to get the last election certificate IDs.
-        self.tx_last_election_certificate_ids.send(callback_sender).await?;
-        // Await the callback to continue.
-        Ok(callback_receiver.await?)
-    }
-
     /// Sends the current round to the BFT.
     pub async fn send_primary_round_to_bft(&self, current_round: u64) -> Result<bool> {
         // Initialize a callback sender and receiver.
@@ -113,36 +102,21 @@ impl<N: Network> BFTSender<N> {
 
 #[derive(Debug)]
 pub struct BFTReceiver<N: Network> {
-    pub rx_last_election_certificate_ids: mpsc::Receiver<oneshot::Sender<IndexSet<Field<N>>>>,
     pub rx_primary_round: mpsc::Receiver<(u64, oneshot::Sender<bool>)>,
     pub rx_primary_certificate: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
-    pub rx_sync_bft_dag_at_bootup:
-        mpsc::Receiver<(Vec<(BatchCertificate<N>, IndexSet<Field<N>>)>, Vec<BatchCertificate<N>>)>,
+    pub rx_sync_bft_dag_at_bootup: mpsc::Receiver<Vec<BatchCertificate<N>>>,
     pub rx_sync_bft: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
 }
 
 /// Initializes the BFT channels.
 pub fn init_bft_channels<N: Network>() -> (BFTSender<N>, BFTReceiver<N>) {
-    let (tx_last_election_certificate_ids, rx_last_election_certificate_ids) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_primary_round, rx_primary_round) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_primary_certificate, rx_primary_certificate) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_sync_bft_dag_at_bootup, rx_sync_bft_dag_at_bootup) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_sync_bft, rx_sync_bft) = mpsc::channel(MAX_CHANNEL_SIZE);
 
-    let sender = BFTSender {
-        tx_last_election_certificate_ids,
-        tx_primary_round,
-        tx_primary_certificate,
-        tx_sync_bft_dag_at_bootup,
-        tx_sync_bft,
-    };
-    let receiver = BFTReceiver {
-        rx_last_election_certificate_ids,
-        rx_primary_round,
-        rx_primary_certificate,
-        rx_sync_bft_dag_at_bootup,
-        rx_sync_bft,
-    };
+    let sender = BFTSender { tx_primary_round, tx_primary_certificate, tx_sync_bft_dag_at_bootup, tx_sync_bft };
+    let receiver = BFTReceiver { rx_primary_round, rx_primary_certificate, rx_sync_bft_dag_at_bootup, rx_sync_bft };
 
     (sender, receiver)
 }
@@ -152,10 +126,8 @@ pub struct PrimarySender<N: Network> {
     pub tx_batch_propose: mpsc::Sender<(SocketAddr, BatchPropose<N>)>,
     pub tx_batch_signature: mpsc::Sender<(SocketAddr, BatchSignature<N>)>,
     pub tx_batch_certified: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub tx_primary_ping:
-        mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>, IndexMap<Field<N>, Data<BatchCertificate<N>>>)>,
-    pub tx_unconfirmed_solution:
-        mpsc::Sender<(PuzzleCommitment<N>, Data<ProverSolution<N>>, oneshot::Sender<Result<()>>)>,
+    pub tx_primary_ping: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
+    pub tx_unconfirmed_solution: mpsc::Sender<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
     pub tx_unconfirmed_transaction: mpsc::Sender<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
 }
 
@@ -163,8 +135,8 @@ impl<N: Network> PrimarySender<N> {
     /// Sends the unconfirmed solution to the primary.
     pub async fn send_unconfirmed_solution(
         &self,
-        solution_id: PuzzleCommitment<N>,
-        solution: Data<ProverSolution<N>>,
+        solution_id: SolutionID<N>,
+        solution: Data<Solution<N>>,
     ) -> Result<()> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
@@ -194,10 +166,8 @@ pub struct PrimaryReceiver<N: Network> {
     pub rx_batch_propose: mpsc::Receiver<(SocketAddr, BatchPropose<N>)>,
     pub rx_batch_signature: mpsc::Receiver<(SocketAddr, BatchSignature<N>)>,
     pub rx_batch_certified: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub rx_primary_ping:
-        mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>, IndexMap<Field<N>, Data<BatchCertificate<N>>>)>,
-    pub rx_unconfirmed_solution:
-        mpsc::Receiver<(PuzzleCommitment<N>, Data<ProverSolution<N>>, oneshot::Sender<Result<()>>)>,
+    pub rx_primary_ping: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
+    pub rx_unconfirmed_solution: mpsc::Receiver<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
     pub rx_unconfirmed_transaction:
         mpsc::Receiver<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
 }
@@ -272,6 +242,9 @@ impl<N: Network> SyncSender<N> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the request to update the peer locators.
+        // This `tx_block_sync_update_peer_locators.send()` call
+        // causes the `rx_block_sync_update_peer_locators.recv()` call
+        // in one of the loops in [`Sync::run()`] to return.
         self.tx_block_sync_update_peer_locators.send((peer_ip, block_locators, callback_sender)).await?;
         // Await the callback to continue.
         callback_receiver.await?
@@ -282,6 +255,9 @@ impl<N: Network> SyncSender<N> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the request to advance with sync blocks.
+        // This `tx_block_sync_advance_with_sync_blocks.send()` call
+        // causes the `rx_block_sync_advance_with_sync_blocks.recv()` call
+        // in one of the loops in [`Sync::run()`] to return.
         self.tx_block_sync_advance_with_sync_blocks.send((peer_ip, blocks, callback_sender)).await?;
         // Await the callback to continue.
         callback_receiver.await?

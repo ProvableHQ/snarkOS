@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -13,7 +14,7 @@
 // limitations under the License.
 
 use colored::Colorize;
-use self_update::{backends::github, version::bump_is_greater, Status};
+use self_update::{Status, backends::github, version::bump_is_greater};
 use std::fmt::Write;
 
 pub struct Updater;
@@ -21,7 +22,7 @@ pub struct Updater;
 impl Updater {
     const SNARKOS_BIN_NAME: &'static str = "snarkos";
     const SNARKOS_REPO_NAME: &'static str = "snarkOS";
-    const SNARKOS_REPO_OWNER: &'static str = "AleoHQ";
+    const SNARKOS_REPO_OWNER: &'static str = "ProvableHQ";
 
     /// Show all available releases for `snarkos`.
     pub fn show_available_releases() -> Result<String, UpdaterError> {

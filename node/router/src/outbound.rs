@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -13,8 +14,8 @@
 // limitations under the License.
 
 use crate::{
-    messages::{Message, Ping},
     Router,
+    messages::{Message, Ping},
 };
 use snarkos_node_sync_locators::BlockLocators;
 use snarkos_node_tcp::protocols::Writing;
@@ -27,6 +28,12 @@ use tokio::sync::oneshot;
 pub trait Outbound<N: Network>: Writing<Message = Message<N>> {
     /// Returns a reference to the router.
     fn router(&self) -> &Router<N>;
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    fn is_block_synced(&self) -> bool;
+
+    /// Returns the number of blocks this node is behind the greatest peer height.
+    fn num_blocks_behind(&self) -> u32;
 
     /// Sends a "Ping" message to the given peer.
     fn send_ping(&self, peer_ip: SocketAddr, block_locators: Option<BlockLocators<N>>) {

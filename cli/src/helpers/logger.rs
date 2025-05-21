@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -12,15 +13,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::helpers::LogWriter;
+use crate::helpers::{DynamicFormatter, LogWriter};
 
 use crossterm::tty::IsTty;
-use std::{fs::File, io, path::Path};
+use std::{
+    fs::File,
+    io,
+    path::Path,
+    sync::{Arc, atomic::AtomicBool},
+};
 use tokio::sync::mpsc;
 use tracing_subscriber::{
+    EnvFilter,
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
-    EnvFilter,
 };
 
 /// Initializes the logger.
@@ -34,7 +40,12 @@ use tracing_subscriber::{
 /// 5 => info, debug, trace, snarkos_node_router=trace
 /// 6 => info, debug, trace, snarkos_node_tcp=trace
 /// ```
-pub fn initialize_logger<P: AsRef<Path>>(verbosity: u8, nodisplay: bool, logfile: P) -> mpsc::Receiver<Vec<u8>> {
+pub fn initialize_logger<P: AsRef<Path>>(
+    verbosity: u8,
+    nodisplay: bool,
+    logfile: P,
+    shutdown: Arc<AtomicBool>,
+) -> mpsc::Receiver<Vec<u8>> {
     match verbosity {
         0 => std::env::set_var("RUST_LOG", "info"),
         1 => std::env::set_var("RUST_LOG", "debug"),
@@ -49,7 +60,7 @@ pub fn initialize_logger<P: AsRef<Path>>(verbosity: u8, nodisplay: bool, logfile
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("reqwest=off".parse().unwrap())
             .add_directive("want=off".parse().unwrap())
-            .add_directive("warp=off".parse().unwrap());
+            .add_directive("h2=off".parse().unwrap());
 
         let filter = if verbosity >= 2 {
             filter.add_directive("snarkos_node_sync=trace".parse().unwrap())
@@ -87,8 +98,9 @@ pub fn initialize_logger<P: AsRef<Path>>(verbosity: u8, nodisplay: bool, logfile
     // Create the directories tree for a logfile if it doesn't exist.
     let logfile_dir = logfile.as_ref().parent().expect("Root directory passed as a logfile");
     if !logfile_dir.exists() {
-        std::fs::create_dir_all(logfile_dir)
-            .expect("Failed to create a directories: '{logfile_dir}', please check if user has permissions");
+        std::fs::create_dir_all(logfile_dir).unwrap_or_else(|e| {
+            panic!("Failed to create a directory: '{}' ({e})", logfile_dir.display());
+        });
     }
     // Create a file to write logs to.
     let logfile =
@@ -111,6 +123,7 @@ pub fn initialize_logger<P: AsRef<Path>>(verbosity: u8, nodisplay: bool, logfile
                 .with_ansi(log_sender.is_none() && io::stdout().is_tty())
                 .with_writer(move || LogWriter::new(&log_sender))
                 .with_target(verbosity > 2)
+                .event_format(DynamicFormatter::new(shutdown))
                 .with_filter(filter),
         )
         .with(

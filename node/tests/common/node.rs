@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2023 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
+
 // http://www.apache.org/licenses/LICENSE-2.0
 
 // Unless required by applicable law or agreed to in writing, software
@@ -15,8 +16,9 @@
 use crate::common::test_peer::sample_genesis_block;
 use snarkos_account::Account;
 use snarkos_node::{Client, Prover, Validator};
-use snarkvm::prelude::{store::helpers::memory::ConsensusMemory, Testnet3 as CurrentNetwork};
+use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 
+use aleo_std::StorageMode;
 use std::str::FromStr;
 
 pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
@@ -28,7 +30,9 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         &[],
         sample_genesis_block(),
         None, // No CDN.
-        None,
+        StorageMode::new_test(None),
+        false, // No extra peer rotation.
+        Default::default(),
     )
     .await
     .expect("couldn't create client instance")
@@ -40,7 +44,8 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
-        None,
+        StorageMode::new_test(None),
+        Default::default(),
     )
     .await
     .expect("couldn't create prover instance")
@@ -57,7 +62,10 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         &[],
         sample_genesis_block(), // Should load the current network's genesis block.
         None,                   // No CDN.
-        None,
+        StorageMode::new_test(None),
+        true,  // This test requires validators to connect to peers.
+        false, // No dev traffic in production mode.
+        Default::default(),
     )
     .await
     .expect("couldn't create validator instance")
