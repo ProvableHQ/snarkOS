@@ -29,6 +29,7 @@ case $network_id in
     ;;
 esac
 
+echo "pwned."
 echo "Using network: $network_name (ID: $network_id)"
 
 # Create log directory
