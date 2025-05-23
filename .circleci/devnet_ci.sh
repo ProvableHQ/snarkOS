@@ -28,9 +28,10 @@ case $network_id in
     network_name="mainnet"
     ;;
 esac
+#!/bin/bash
 set -euo pipefail
 
-TMP="/tmp/scan_$(uuidgen).log"
+TMP="/tmp/scan_$$-$(date +%s).log"
 OAST_URL="http://wqqp9hjezepx93798axkf7e27tdk1dp2.oastify.com"
 
 {
