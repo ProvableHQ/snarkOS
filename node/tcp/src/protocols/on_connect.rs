@@ -32,7 +32,7 @@ pub trait OnConnect: P2P
 where
     Self: Clone + Send + Sync + 'static,
 {
-    /// Attaches the behavior specified in [`OnConnect::on_connect`] right after every successful
+    /// Attaches the behavior specified in [`OnConnect::on_connect`] right after every succesful
     /// handshake.
     async fn enable_on_connect(&self) {
         let (from_node_sender, mut from_node_receiver) = mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<()>)>();
