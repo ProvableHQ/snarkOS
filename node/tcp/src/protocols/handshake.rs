@@ -94,7 +94,7 @@ where
     }
 
     /// Performs the handshake; temporarily assumes control of the [`Connection`] and returns it if the handshake is
-    /// successful.
+    /// succesful.
     async fn perform_handshake(&self, conn: Connection) -> io::Result<Connection>;
 
     /// Borrows the full connection stream to be used in the implementation of [`Handshake::perform_handshake`].
