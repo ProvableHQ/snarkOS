@@ -185,6 +185,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route(&format!("/{network}/program/:id/mappings"), get(Self::get_mapping_names))
             .route(&format!("/{network}/program/:id/mapping/:name/:key"), get(Self::get_mapping_value))
 
+            // GET ../record/.. 
+            .route(&format!("/{network}/record/ciphertexts/find"), get(Self::find_record_ciphertexts))
+            .route(&format!("/{network}/record/ciphertexts/get"), get(Self::get_record_ciphertexts))
+            .route(&format!("/{network}/record/plaintexts/find"), get(Self::find_record_plaintexts))
+            .route(&format!("/{network}/record/unspent_credits/find"), get(Self::find_unspent_credits))
+
             // GET misc endpoints.
             .route(&format!("/{network}/blocks"), get(Self::get_blocks))
             .route(&format!("/{network}/height/:hash"), get(Self::get_height))
