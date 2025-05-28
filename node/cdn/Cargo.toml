@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-cdn"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CDN client for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -45,7 +45,7 @@ version = "0.12"
 
 [dependencies.snarkos-node-metrics]
 path = "../metrics"
-version = "=3.6.0"
+version = "=3.7.1"
 optional = true
 features = [ "metrics" ]
 

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A synchronization module for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -58,30 +58,30 @@ version = "1"
 
 [dependencies.snarkos-node-bft-ledger-service]
 path = "../bft/ledger-service"
-version = "=3.6.0"
+version = "=3.7.1"
 features = [ "ledger-write" ]
 
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "../metrics"
-version = "=3.6.0"
+version = "=3.7.1"
 optional = true
 
 [dependencies.snarkos-node-router]
 path = "../router"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-sync-communication-service]
 path = "communication-service"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-sync-locators]
 path = "locators"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-tcp]
 path = "../tcp"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkvm]
 workspace = true

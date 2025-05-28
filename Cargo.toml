@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -45,9 +45,9 @@ default-features = false
 
 [workspace.dependencies.snarkvm] # If this is updated, the rev in `node/rest/Cargo.toml` must be updated as well.
 #path = "../snarkVM"
-git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "a87ceb9"
-version = "=1.6.0"
+#git = "https://github.com/ProvableHQ/snarkVM.git"
+#rev = "e60c5b0"
+version = "=3.7.1"
 features = [ "circuit", "console", "rocks" ]
 
 [[bin]]
@@ -102,52 +102,52 @@ version = "1"
 
 [dependencies.snarkos-account]
 path = "./account"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-cli]
 path = "./cli"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-display]
 path = "./display"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node]
 path = "./node"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-bft]
 path = "./node/bft"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-cdn]
 path = "./node/cdn"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-consensus]
 path = "./node/consensus"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-metrics]
 path = "./node/metrics"
-version = "=3.6.0"
+version = "=3.7.1"
 optional = true
 
 [dependencies.snarkos-node-rest]
 path = "./node/rest"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-router]
 path = "./node/router"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-sync]
 path = "./node/sync"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-tcp]
 path = "./node/tcp"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.5"

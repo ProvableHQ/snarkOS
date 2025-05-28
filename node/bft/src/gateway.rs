@@ -1120,7 +1120,7 @@ impl<N: Network> Transport<N> for Gateway<N> {
             Event::BlockRequest(request) => {
                 // Insert the outbound request so we can match it to responses.
                 self.cache.insert_outbound_block_request(peer_ip, request);
-                // Send the event to the peer and updatet the outbound event cache, use the general rate limit.
+                // Send the event to the peer and update the outbound event cache, use the general rate limit.
                 send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
             }
             _ => {

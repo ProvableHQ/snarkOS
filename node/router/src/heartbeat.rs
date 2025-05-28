@@ -105,12 +105,12 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         }
     }
 
-    /// Returns a sorted vector of network addresess of all removable connected peers
-    /// where the first entry has the lowest priority andthe last one the highest.
+    /// Returns a sorted vector of network addresses of all removable connected peers
+    /// where the first entry has the lowest priority and the last one the highest.
     ///
     /// Rules:
     ///     - Trusted peers and bootstrap nodes are not removable.
-    ///     - Peers that we are currently syncing with are not remeovable.
+    ///     - Peers that we are currently syncing with are not removable.
     ///     - Validators are considered higher priority than provers or clients.
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<Peer<N>> {
@@ -128,7 +128,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let mut peers = self.router().get_connected_peers();
         peers.sort_by_key(|peer| (peer.is_validator(), peer.last_seen()));
 
-        // Deterimine which of the peers can be removed.
+        // Determine which of the peers can be removed.
         peers
             .into_iter()
             .filter(|peer| {
@@ -214,7 +214,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             let peers_to_disconnect = self
                 .get_removable_peers()
                 .into_iter()
-                .filter(|peer| !peer.is_prover()) // remove provers as those are handled seperately
+                .filter(|peer| !peer.is_prover()) // remove provers as those are handled separately
                 .map(|p| p.ip())
                 .take(num_surplus_clients_validators);
 
