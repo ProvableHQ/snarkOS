@@ -78,9 +78,10 @@ path = "../router"
 version = "=3.7.1"
 
 [dependencies.snarkvm-synthesizer]
-path = "../../../snarkVM/synthesizer"
-#git = "https://github.com/ProvableHQ/snarkVM.git"
+#path = "../../../snarkVM/synthesizer"
+git = "https://github.com/ProvableHQ/snarkVM.git"
 #rev = "e60c5b0"
+branch = "feat/records-api"
 #version = "=3.7.1"
 default-features = false
 optional = true

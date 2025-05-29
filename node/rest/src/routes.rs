@@ -304,122 +304,96 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Err(err) => Err(RestError(format!("Unable to read mapping - {err}"))),
         }
     }
-    
-    // Get /<network>/record/ciphertexts/find?view_key={view_key}&filter={filter}
+
+    // POST /<network>/record/ciphertexts/find
     pub(crate) async fn find_record_ciphertexts(
         State(rest): State<Self>,
-        Query(find_records): Query<FindRecords>
+        Query(find_records): Query<FindRecords>,
     ) -> Result<ErasedJson, RestError> {
-        // Parse the view key from the query.
         let view_key = ViewKey::<N>::from_str(&find_records.view_key)
-            .map_err(|_| RestError("Invalid view key".to_string()))?;
+            .map_err(|e| RestError(format!("Invalid view key: {}", e)))?;
+        let filter = parse_records_filter(find_records.filter.as_deref())?;
 
-        // Parse the records filter.
-        let filter = match find_records.filter.as_deref() {
-            Some("all") => RecordsFilter::All,
-            Some("spent") => RecordsFilter::Spent,
-            Some("unspent") => RecordsFilter::Unspent,
-            _ => return Err(RestError("Invalid filter, must be one of: all, spent, unspent".to_string())),
-        };
+        // Offload to blocking thread, annotate return type
+        let recs: Vec<_> = tokio::task::spawn_blocking(move || -> Result<_, RestError> {
+            Ok(rest
+                .ledger
+                .find_record_ciphertexts(&view_key, filter)?
+                .map(|(commitment, record)| (commitment, record.into_owned()))
+                .collect::<Vec<_>>())
+        })
+        .await
+        .map_err(|e| RestError(format!("Failed to retrieve ciphertexts: {}", e)))??;
 
-        // Retrieve the record ciphertexts from the ledger.
-        let record_ciphertexts = rest.ledger.find_record_ciphertexts(&view_key, filter)?
-            .map(|(commitment, record)| (commitment, record.into_owned()))
-            .collect::<Vec<_>>();
-
-        Ok(ErasedJson::pretty(record_ciphertexts))
+        Ok(ErasedJson::pretty(recs))
     }
 
-    // GET /<network>/record/ciphertexts/get?start={start_height}&end={end_height}&program={program_id}
+    // GET /<network>/record/ciphertexts/get
     pub(crate) async fn get_record_ciphertexts(
         State(rest): State<Self>,
         Query(params): Query<RecordCiphertexts>,
     ) -> Result<ErasedJson, RestError> {
-        // Ensure the end height is greater than the start height.
-        if params.start > params.end.unwrap_or(params.start) {
+        let end_height = params.end.unwrap_or(params.start + 1);
+        if params.start >= end_height {
             return Err(RestError("Invalid record range".to_string()));
         }
-        
-        // Ensure the program ID is valid if provided.
-        let program_id = params
-            .program
-            .map(|program_string| {
-                ProgramID::<N>::from_str(&program_string).map_err(|_| RestError("Invalid program ID".to_string()))
-            })
-            .transpose()?;
 
-        // Initialize the end height, defaulting to the start height if not provided.
-        let end_height = params.end.unwrap_or(params.start + 1);
-
-        // Initialize the range of block heights to retrieve.
-        let block_range = params.start..end_height;
-
-        // Retrieve the blocks from the ledger,
-        // filter out the transitions that do match the program ID,
-        // filter out the outputs that do not match the record name,
-        // and collect the ciphertexts along with their associated block heights, index within the block, and output index.
-        let record_ciphertexts = cfg_into_iter!(block_range)
-            .flat_map(|height| {
-                let transitions = rest
-                    .ledger
-                    .get_transactions(height)
-                    .into_iter()
-                    .flat_map(|transaction| transaction.into_transitions())
-                    .enumerate();
-                let filtered_by_program = transitions
-                    .filter(|(_, transition)| program_id.as_ref().map_or(true, |id| transition.program_id() == id));
-                let filtered_by_record = filtered_by_program.flat_map(|(block_index, transition)| {
-                    transition
-                        .outputs()
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(output_index, output)| {
-                            output.record().map(|(commitment, record)| {
-                                (height, block_index as u32, output_index as u32, *commitment, record.clone())
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                });
-                filtered_by_record.collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
-        Ok(ErasedJson::pretty(record_ciphertexts))
-    }
-
-    // Get /<network>/record/plaintexts/find?view_key={view_key}&filter={filter}
-    pub(crate) async fn find_record_plaintexts(
-        State(rest): State<Self>,
-        Query(find_records): Query<FindRecords>
-    ) -> Result<ErasedJson, RestError> {
-        // Parse the view key from the query.
-        let view_key = ViewKey::<N>::from_str(&find_records.view_key)
-            .map_err(|_| RestError("Invalid view key".to_string()))?;
-
-        // Parse the records filter.
-        let filter = match find_records.filter.as_deref() {
-            Some("all") => RecordsFilter::All,
-            Some("spent") => RecordsFilter::Spent,
-            Some("unspent") => RecordsFilter::Unspent,
-            _ => return Err(RestError("Invalid filter, must be one of: all, spent, unspent".to_string())),
+        let program_id = if let Some(prog_str) = params.program {
+            Some(ProgramID::<N>::from_str(&prog_str).map_err(|_| RestError("Invalid program ID".to_string()))?)
+        } else {
+            None
         };
 
-        // Retrieve the record plaintext from the ledger.
-        let record_plaintexts = rest.ledger.find_records(&view_key, filter)?
-            .collect::<Vec<_>>();
+        let recs = tokio::task::spawn_blocking(move || -> Result<Vec<_>, RestError> {
+            let mut all: Vec<_> = Vec::new();
+            for height in params.start..end_height {
+                let txs = rest.ledger.get_transactions(height)?;
+                for (block_index, transition) in txs.into_transitions().enumerate() {
+                    if let Some(id) = &program_id {
+                        if transition.program_id() != id {
+                            continue;
+                        }
+                    }
+                    for (output_index, output) in transition.outputs().iter().enumerate() {
+                        if let Some((commitment, record)) = output.record() {
+                            all.push((height, block_index as u32, output_index as u32, *commitment, record.clone()));
+                        }
+                    }
+                }
+            }
+            Ok(all)
+        })
+        .await
+        .map_err(|e| RestError(format!("Failed to retrieve record ciphertexts: {}", e)))??;
 
-        Ok(ErasedJson::pretty(record_plaintexts))
+        Ok(ErasedJson::pretty(recs))
     }
 
-    // Get /<network>/record/unspent_credits/find?view_key={view_key}
+    // POST /<network>/record/plaintexts/find
+    pub(crate) async fn find_record_plaintexts(
+        State(rest): State<Self>,
+        Query(find_records): Query<FindRecords>,
+    ) -> Result<ErasedJson, RestError> {
+        let view_key = ViewKey::<N>::from_str(&find_records.view_key)
+            .map_err(|e| RestError(format!("Invalid view key: {}", e)))?;
+        let filter = parse_records_filter(find_records.filter.as_deref())?;
+
+        let recs: Vec<_> = tokio::task::spawn_blocking(move || -> Result<_, RestError> {
+            Ok(rest.ledger.find_records(&view_key, filter)?.collect::<Vec<_>>())
+        })
+        .await
+        .map_err(|e| RestError(format!("Failed to retrieve plaintexts: {}", e)))??;
+
+        Ok(ErasedJson::pretty(recs))
+    }
+
+    // GET /<network>/record/unspent_credits/find
     pub(crate) async fn find_unspent_credits(
         State(rest): State<Self>,
         Query(view_key): Query<ViewKey<N>>,
     ) -> Result<ErasedJson, RestError> {
-        // Retrieve the unspent credits for the given view key.
-        let unspent_credits = rest.ledger.find_unspent_credits_records(&view_key)?;
-
-        Ok(ErasedJson::pretty(unspent_credits))
+        let credits = rest.ledger.find_unspent_credits_records(&view_key)?;
+        Ok(ErasedJson::pretty(credits))
     }
 
     // GET /<network>/statePath/{commitment}
@@ -668,5 +642,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
             None => Err(RestError("Route isn't available for this node type".to_string())),
         }
+    }
+}
+
+// Helper to parse record filters, defaulting to 'all'.
+fn parse_records_filter<N: Network>(opt: Option<&str>) -> Result<RecordsFilter<N>, RestError> {
+    match opt.unwrap_or("all") {
+        "all" => Ok(RecordsFilter::All),
+        "spent" => Ok(RecordsFilter::Spent),
+        "unspent" => Ok(RecordsFilter::Unspent),
+        other => Err(RestError(format!("Invalid filter '{}', must be one of: all, spent, unspent", other))),
     }
 }
