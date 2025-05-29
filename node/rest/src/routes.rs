@@ -310,11 +310,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Query(find_records): Query<FindRecords>,
     ) -> Result<ErasedJson, RestError> {
+        // Parse the view key from the query parameters.
         let view_key = ViewKey::<N>::from_str(&find_records.view_key)
             .map_err(|e| RestError(format!("Invalid view key: {}", e)))?;
+        // Parse the filter from the query parameters.
         let filter = parse_records_filter(find_records.filter.as_deref())?;
-
-        // Offload to blocking thread, annotate return type
+        // Get the records from the ledger.
         let recs: Vec<_> = tokio::task::spawn_blocking(move || -> Result<_, RestError> {
             Ok(rest
                 .ledger
@@ -333,17 +334,24 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Query(params): Query<RecordCiphertexts>,
     ) -> Result<ErasedJson, RestError> {
-        let end_height = params.end.unwrap_or(params.start + 1);
+        // Validate the start and end heights.
+        let end_height = params.end.unwrap_or(params.start.saturating_add(1));
         if params.start >= end_height {
             return Err(RestError("Invalid record range".to_string()));
         }
 
-        let program_id = if let Some(prog_str) = params.program {
-            Some(ProgramID::<N>::from_str(&prog_str).map_err(|_| RestError("Invalid program ID".to_string()))?)
-        } else {
-            None
-        };
+        // Get the program ID from the query parameters, if provided.
+        let program_id = params.program.as_ref().map(|id| {
+            ProgramID::<N>::from_str(id).map_err(|e| RestError(format!("Invalid program ID: {}", e)))
+        }).transpose()?;
 
+        // Retrieve the record ciphertexts from the ledger, by
+        //  - iterating over the block heights from `start` to `end_height`
+        //  - retrieving the transactions for each block height
+        //  - iterating over the transitions in each transaction
+        //  - filtering by the program ID if provided
+        //  - collecting the record ciphertexts into a vector of tuples
+        //    (height, block_index, output_index, commitment, record).
         let recs = tokio::task::spawn_blocking(move || -> Result<Vec<_>, RestError> {
             let mut all: Vec<_> = Vec::new();
             for height in params.start..end_height {
@@ -374,16 +382,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Query(find_records): Query<FindRecords>,
     ) -> Result<ErasedJson, RestError> {
+        // Parse the view key from the query parameters.
         let view_key = ViewKey::<N>::from_str(&find_records.view_key)
             .map_err(|e| RestError(format!("Invalid view key: {}", e)))?;
+        // Parse the filter from the query parameters.
         let filter = parse_records_filter(find_records.filter.as_deref())?;
-
+        // Get the records from the ledger.
         let recs: Vec<_> = tokio::task::spawn_blocking(move || -> Result<_, RestError> {
             Ok(rest.ledger.find_records(&view_key, filter)?.collect::<Vec<_>>())
         })
         .await
         .map_err(|e| RestError(format!("Failed to retrieve plaintexts: {}", e)))??;
-
+        
         Ok(ErasedJson::pretty(recs))
     }
 
@@ -392,8 +402,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Query(view_key): Query<ViewKey<N>>,
     ) -> Result<ErasedJson, RestError> {
-        let credits = rest.ledger.find_unspent_credits_records(&view_key)?;
-        Ok(ErasedJson::pretty(credits))
+        // Get the records.
+        let credits_records = rest.ledger.find_unspent_credits_records(&view_key)?;
+        
+        Ok(ErasedJson::pretty(credits_records))
     }
 
     // GET /<network>/statePath/{commitment}
