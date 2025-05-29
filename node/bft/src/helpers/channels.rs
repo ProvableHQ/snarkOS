@@ -60,7 +60,7 @@ pub fn init_consensus_channels<N: Network>() -> (ConsensusSender<N>, ConsensusRe
     (sender, receiver)
 }
 
-/// Outbound channels the primary uses to communicate with the BFT.
+/// Outbound channels that the `primary` uses to communicate with the BFT.
 #[derive(Clone, Debug)]
 pub struct BFTSender<N: Network> {
     pub tx_primary_round: mpsc::Sender<(u64, oneshot::Sender<bool>)>,
