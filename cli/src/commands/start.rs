@@ -33,7 +33,8 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
+use base64::prelude::{BASE64_STANDARD, Engine};
 use clap::Parser;
 use colored::Colorize;
 use core::str::FromStr;
@@ -76,19 +77,23 @@ impl FromStr for BondedBalances {
 
 /// Starts the snarkOS node.
 #[derive(Clone, Debug, Parser)]
+#[command(group(
+    // Ensure at most one node type is specified
+    clap::ArgGroup::new("node_type").required(false).multiple(false)
+))]
 pub struct Start {
-    /// Specify the network ID of this node
-    #[clap(default_value = "0", long = "network")]
+    /// Specify the network ID of this node (0 = mainnet, 1 = testnet, 2 = canary)
+    #[clap(default_value_t=MainnetV0::ID, long = "network", value_parser = clap::value_parser!(u16).range((MainnetV0::ID as i64)..=(CanaryV0::ID as i64)))]
     pub network: u16,
 
-    /// Specify this node as a validator
-    #[clap(long = "validator")]
+    /// Start the node as a validator
+    #[clap(long = "validator", group = "node_type")]
     pub validator: bool,
-    /// Specify this node as a prover
-    #[clap(long = "prover")]
+    /// Start the node as a prover
+    #[clap(long = "prover", group = "node_type")]
     pub prover: bool,
-    /// Specify this node as a client
-    #[clap(long = "client")]
+    /// Start the node as a client (default)
+    #[clap(long = "client", group = "node_type")]
     pub client: bool,
 
     /// Specify the account private key of the node
@@ -110,7 +115,9 @@ pub struct Start {
     /// Specify the IP address and port of the validator(s) to connect to
     #[clap(default_value = "", long = "validators")]
     pub validators: String,
-    /// If the flag is set, a validator will allow untrusted peers to connect
+    /// If the flag is set, a validator will allow untrusted peers to connect.
+    /// Client and Prover nodes ignore the flag and always allow untrusted peers
+    /// to connect.
     #[clap(long = "allow-external-peers")]
     pub allow_external_peers: bool,
     /// If the flag is set, a client will periodically evict more external peers
@@ -123,6 +130,12 @@ pub struct Start {
     /// Specify the requests per second (RPS) rate limit per IP for the REST server
     #[clap(default_value = "10", long = "rest-rps")]
     pub rest_rps: u32,
+    /// Specify the JWT secret for the REST server (16B, base64-encoded).
+    #[clap(long)]
+    pub jwt_secret: Option<String>,
+    /// Specify the JWT creation timestamp; can be any time in the last 10 years.
+    #[clap(long)]
+    pub jwt_timestamp: Option<i64>,
     /// If the flag is set, the node will not initialize the REST server
     #[clap(long)]
     pub norest: bool,
@@ -182,35 +195,39 @@ impl Start {
             crate::helpers::initialize_logger(self.verbosity, self.nodisplay, self.logfile.clone(), shutdown.clone());
         // Initialize the runtime.
         Self::runtime().block_on(async move {
+            // Error messages.
+            let node_parse_error = || "Failed to parse node arguments";
+            let display_start_error = || "Failed to initialize the display";
+
             // Clone the configurations.
             let mut cli = self.clone();
             // Parse the network.
             match cli.network {
                 MainnetV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<MainnetV0>(shutdown.clone()).await.expect("Failed to parse the node");
+                    let node = cli.parse_node::<MainnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
-                        Display::start(node, log_receiver).expect("Failed to initialize the display");
+                        Display::start(node, log_receiver).with_context(display_start_error)?;
                     }
                 }
                 TestnetV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<TestnetV0>(shutdown.clone()).await.expect("Failed to parse the node");
+                    let node = cli.parse_node::<TestnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
-                        Display::start(node, log_receiver).expect("Failed to initialize the display");
+                        Display::start(node, log_receiver).with_context(display_start_error)?;
                     }
                 }
                 CanaryV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<CanaryV0>(shutdown.clone()).await.expect("Failed to parse the node");
+                    let node = cli.parse_node::<CanaryV0>(shutdown.clone()).await.with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
-                        Display::start(node, log_receiver).expect("Failed to initialize the display");
+                        Display::start(node, log_receiver).with_context(display_start_error)?;
                     }
                 }
                 _ => panic!("Invalid network ID specified"),
@@ -218,9 +235,8 @@ impl Start {
             // Note: Do not move this. The pending await must be here otherwise
             // other snarkOS commands will not exit.
             std::future::pending::<()>().await;
-        });
-
-        Ok(String::new())
+            Ok(String::new())
+        })
     }
 }
 
@@ -504,7 +520,8 @@ impl Start {
         }
     }
 
-    /// Returns the node type, from the given configurations.
+    /// Returns the node type specified in the command-line arguments.
+    /// This will return `NodeType::Client` if no node type was specified by the user.
     const fn parse_node_type(&self) -> NodeType {
         if self.validator {
             NodeType::Validator
@@ -572,11 +589,24 @@ impl Start {
             );
 
             // If the node is running a REST server, print the REST IP and JWT.
-            if node_type.is_validator() {
+            if node_type.is_validator() || node_type.is_client() {
                 if let Some(rest_ip) = rest_ip {
                     println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
 
-                    if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address()).to_jwt_string() {
+                    let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
+                        if self.jwt_timestamp.is_none() {
+                            bail!("The '--jwt-timestamp' flag must be set if the '--jwt-secret' flag is set");
+                        }
+                        let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
+                        if jwt_bytes.len() != 16 {
+                            bail!("The JWT secret must be 16 bytes long");
+                        }
+                        Some(jwt_bytes)
+                    } else {
+                        None
+                    };
+
+                    if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
                         println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
                     }
                 }

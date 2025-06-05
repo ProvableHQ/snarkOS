@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use snarkos_node::bft::helpers::proposal_cache_path;
+use snarkvm::console::network::{CanaryV0, MainnetV0, Network};
 
 use aleo_std::StorageMode;
 use anyhow::{Result, bail};
@@ -24,8 +25,8 @@ use std::path::PathBuf;
 /// Cleans the snarkOS node storage.
 #[derive(Debug, Parser)]
 pub struct Clean {
-    /// Specify the network to remove from storage.
-    #[clap(default_value = "0", long = "network")]
+    /// Specify the network to remove from storage (0 = mainnet, 1 = testnet, 2 = canary)
+    #[clap(default_value_t=MainnetV0::ID, long = "network", value_parser = clap::value_parser!(u16).range((MainnetV0::ID as i64)..=(CanaryV0::ID as i64)))]
     pub network: u16,
     /// Enables development mode, specify the unique ID of the local node to clean.
     #[clap(long)]

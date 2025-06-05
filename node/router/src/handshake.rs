@@ -318,7 +318,7 @@ impl<N: Network> Router<N> {
         if self.is_connected(&peer_ip) {
             bail!("Dropping connection request from '{peer_ip}' (already connected)")
         }
-        // Only allow trusted peers to connect if allow_external_peers is set
+        // Ensure either the peer is trusted or `allow_external_peers` is true.
         if !self.allow_external_peers() && !self.is_trusted(&peer_ip) {
             bail!("Dropping connection request from '{peer_ip}' (untrusted)")
         }

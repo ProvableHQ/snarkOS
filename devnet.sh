@@ -20,6 +20,9 @@ build_binary=${build_binary:-y}
 read -p "Do you want to clear the existing ledger history? (y/n, default: n): " clear_ledger
 clear_ledger=${clear_ledger:-n}
 
+# Log verbosity is set to 1 (DEBUG) by default.
+verbosity=1
+
 if [[ $build_binary == "y" ]]; then
   # Ask the user if they want to enable validator telemetry
   read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
@@ -62,7 +65,7 @@ log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 
 # Create a new tmux session named "devnet"
-tmux new-session -d -s "devnet" -n "window0"
+tmux new-session -d -s "devnet" -n "validator-0"
 
 # Get the tmux's base-index for windows
 # we have to create all windows with index offset by this much
@@ -76,18 +79,20 @@ validator_indices=($(seq 0 $((total_validators - 1))))
 
 # Loop through the list of validator indices and create a new window for each
 for validator_index in "${validator_indices[@]}"; do
-  # Generate a unique and incrementing log file name based on the validator index
-  log_file="$log_dir/validator-$validator_index.log"
+  # Generate a unique and incrementing log file name based on the validator indexi
+  name="validator-$validator_index"
+  log_file="$log_dir/$name.log"
+  window_index=$((validator_index + index_offset))
+
+  # We don't need to create a window for the first validator because the tmux
+  # session already starts with one window.
+  if [ "$validator_index" -ne 0 ]; then
+    # Create a new window with a unique name
+    tmux new-window -t "devnet:$window_index" -n $name
+  fi
 
   # Send the command to start the validator to the new window and capture output to the log file
-  if [ "$validator_index" -eq 0 ]; then
-    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --metrics" C-m
-  else
-    # Create a new window with a unique name
-    window_index=$((validator_index + index_offset))
-    tmux new-window -t "devnet:$window_index" -n "window$validator_index"
-    tmux send-keys -t "devnet:window$validator_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file" C-m
-  fi
+  tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity" C-m
 done
 
 if [ "$total_clients" -ne 0 ]; then
@@ -97,15 +102,16 @@ if [ "$total_clients" -ne 0 ]; then
   # Loop through the list of client indices and create a new window for each
   for client_index in "${client_indices[@]}"; do
     # Generate a unique and incrementing log file name based on the client index
-    log_file="$log_dir/client-$client_index.log"
+    name="client-$client_index"
+    log_file="$log_dir/$name.log"
 
     window_index=$((client_index + total_validators + index_offset))
 
     # Create a new window with a unique name
-    tmux new-window -t "devnet:$window_index" -n "window-$window_index"
+    tmux new-window -t "devnet:$window_index" -n $name
 
     # Send the command to start the client to the new window and capture output to the log file
-    tmux send-keys -t "devnet:window-$window_index" "snarkos start --nodisplay --network $network_id --dev $window_index --dev-num-validators $total_validators --client --logfile $log_file" C-m
+    tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $window_index --dev-num-validators $total_validators --client --logfile $log_file  --verbosity $verbosity" C-m
   done
 fi
 

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CLI for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -46,8 +46,8 @@ version = "1"
 [dependencies.anyhow]
 version = "1.0.79"
 
-[dependencies.bincode]
-version = "1.0"
+[dependencies.base64]
+workspace = true
 
 [dependencies.clap]
 version = "4.4"
@@ -71,7 +71,7 @@ optional = true
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "../node/metrics"
-version = "=3.6.0"
+version = "=3.7.1"
 optional = true
 
 [dependencies.num_cpus]
@@ -104,23 +104,23 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
 path = "../account"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-display]
 path = "../display"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node]
 path = "../node"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-cdn]
 path = "../node/cdn"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-rest]
 path = "../node/rest"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkvm]
 workspace = true
@@ -155,5 +155,14 @@ version = "2.9"
 version = "1"
 features = [ "derive" ]
 
+#TODO remove this once we upgrade to Rust 1.85 or above
+[dependencies.base64ct]
+version = "=1.7"
+
 [target."cfg(target_family = \"unix\")".dependencies.nix]
 version = "0.26"
+
+[package.metadata.cargo-machete]
+ignored = [
+  "base64ct", # needed to force a version compatible with Rust 1.82
+]

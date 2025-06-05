@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -46,9 +46,12 @@ default-features = false
 [workspace.dependencies.snarkvm] # If this is updated, the rev in `node/rest/Cargo.toml` must be updated as well.
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "a87ceb9"
-version = "=1.6.0"
+rev = "45f3223"
+#version = "=3.7.1"
 features = [ "circuit", "console", "rocks" ]
+
+[workspace.dependencies.base64]
+version = "0.22"
 
 [[bin]]
 name = "snarkos"
@@ -90,64 +93,54 @@ version = "1.0.79"
 version = "4.4"
 features = [ "derive" ]
 
-[dependencies.crossterm]
-version = "0.27.0"
-
 [dependencies.locktick]
 version = "0.3"
 optional = true
 
-[dependencies.once_cell]
-version = "1"
-
 [dependencies.snarkos-account]
 path = "./account"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-cli]
 path = "./cli"
-version = "=3.6.0"
-
-[dependencies.snarkos-display]
-path = "./display"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node]
 path = "./node"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-bft]
 path = "./node/bft"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-cdn]
 path = "./node/cdn"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-consensus]
 path = "./node/consensus"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-metrics]
 path = "./node/metrics"
-version = "=3.6.0"
+version = "=3.7.1"
 optional = true
 
 [dependencies.snarkos-node-rest]
 path = "./node/rest"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-router]
 path = "./node/router"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-sync]
 path = "./node/sync"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [dependencies.snarkos-node-tcp]
 path = "./node/tcp"
-version = "=3.6.0"
+version = "=3.7.1"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.5"
@@ -196,3 +189,17 @@ lto = "thin"
 incremental = true
 debug = true
 debug-assertions = true
+
+[package.metadata.cargo-machete]
+ignored = [
+  "snarkos-account", # Needed for cuda feature
+  "snarkos-node", # Needed for metrics feature
+  "snarkos-node-bft", # Needed for cuda and locktick features
+  "snarkos-node-cdn", # Needed for cuda and locktick features
+  "snarkos-node-consensus", # Needed for cuda and locktick features
+  "snarkos-node-tcp", # Needed for locktick feature
+  "snarkos-node-rest", # Needed for cuda and locktick features
+  "snarkos-node-sync", # Needed for cuda and locktick features
+  "snarkos-node-router", # Needed for cuda and locktick features
+  "snarkos-node-metrics", # Needed for locktick feature
+]

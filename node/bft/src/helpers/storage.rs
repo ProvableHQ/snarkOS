@@ -942,7 +942,7 @@ pub(crate) mod tests {
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
-        ledger::narwhal::Data,
+        ledger::narwhal::{Data, batch_certificate::test_helpers::sample_batch_certificate_for_round_with_committee},
         prelude::{Rng, TestRng},
     };
 
@@ -1128,6 +1128,213 @@ pub(crate) mod tests {
         assert!(storage.contains_certificate(certificate_id));
         // Check that the underlying storage representation remains unchanged.
         assert_storage(&storage, &rounds, &certificates, &batch_ids, &transmissions);
+    }
+
+    /// Test that `check_incoming_certificate` does not reject a valid cert.
+    #[test]
+    fn test_valid_incoming_certificate() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 5, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+
+        // Go through many rounds of valid certificates and ensure they're accepted.
+        let mut previous_certs = IndexSet::default();
+
+        for round in 1..=100 {
+            let mut new_certs = IndexSet::default();
+
+            // Generate one cert per validator
+            for private_key in private_keys.iter() {
+                let other_keys: Vec<_> = private_keys.iter().cloned().filter(|k| k != private_key).collect();
+
+                let certificate = sample_batch_certificate_for_round_with_committee(
+                    round,
+                    previous_certs.clone(),
+                    private_key,
+                    &other_keys,
+                    rng,
+                );
+                storage.check_incoming_certificate(&certificate).expect("Valid certificate rejected");
+                new_certs.insert(certificate.id());
+
+                // Construct the sample 'transmissions'.
+                let (missing_transmissions, _transmissions) = sample_transmissions(&certificate, rng);
+                storage.insert_certificate_atomic(certificate, Default::default(), missing_transmissions);
+            }
+
+            previous_certs = new_certs;
+        }
+    }
+
+    /// Make sure that we reject all certificates without sufficient signatures early.
+    #[test]
+    fn test_invalid_incoming_certificate_missing_signature() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 10, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+
+        // Go through many rounds of valid certificates and ensure they're accepted.
+        let mut previous_certs = IndexSet::default();
+
+        for round in 1..=5 {
+            let mut new_certs = IndexSet::default();
+
+            // Generate one cert per validator
+            for private_key in private_keys.iter() {
+                if round < 5 {
+                    let other_keys: Vec<_> = private_keys.iter().cloned().filter(|k| k != private_key).collect();
+
+                    let certificate = sample_batch_certificate_for_round_with_committee(
+                        round,
+                        previous_certs.clone(),
+                        private_key,
+                        &other_keys,
+                        rng,
+                    );
+                    storage.check_incoming_certificate(&certificate).expect("Valid certificate rejected");
+                    new_certs.insert(certificate.id());
+
+                    // Construct the sample 'transmissions'.
+                    let (missing_transmissions, _transmissions) = sample_transmissions(&certificate, rng);
+                    storage.insert_certificate_atomic(certificate, Default::default(), missing_transmissions);
+                } else {
+                    // Pick a few signers, but not enough to form a quorum.
+                    let other_keys: Vec<_> = private_keys[0..=3].iter().cloned().filter(|k| k != private_key).collect();
+
+                    let certificate = sample_batch_certificate_for_round_with_committee(
+                        round,
+                        previous_certs.clone(),
+                        private_key,
+                        &other_keys,
+                        rng,
+                    );
+                    assert!(storage.check_incoming_certificate(&certificate).is_err());
+                }
+            }
+
+            previous_certs = new_certs;
+        }
+    }
+
+    /// Verify that `insert_certificate` rejects certs with less edges than required.
+    #[test]
+    fn test_invalid_certificate_insufficient_previous_certs() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 10, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+
+        // Go through many rounds of valid certificates and ensure they're accepted.
+        let mut previous_certs = IndexSet::default();
+
+        for round in 1..=6 {
+            let mut new_certs = IndexSet::default();
+
+            // Generate one cert per validator
+            for private_key in private_keys.iter() {
+                let other_keys: Vec<_> = private_keys.iter().cloned().filter(|k| k != private_key).collect();
+
+                let certificate = sample_batch_certificate_for_round_with_committee(
+                    round,
+                    previous_certs.clone(),
+                    private_key,
+                    &other_keys,
+                    rng,
+                );
+
+                // Construct the sample 'transmissions'.
+                let (_missing_transmissions, transmissions) = sample_transmissions(&certificate, rng);
+                let transmissions = transmissions.into_iter().map(|(k, (t, _))| (k, t)).collect();
+
+                if round <= 5 {
+                    new_certs.insert(certificate.id());
+                    storage
+                        .insert_certificate(certificate, transmissions, Default::default())
+                        .expect("Valid certificate rejected");
+                } else {
+                    assert!(storage.insert_certificate(certificate, transmissions, Default::default()).is_err());
+                }
+            }
+
+            if round < 5 {
+                previous_certs = new_certs;
+            } else {
+                // Remove more than half of the previous certs.
+                previous_certs = new_certs.into_iter().skip(6).collect();
+            }
+        }
+    }
+
+    /// Verify that `insert_certificate` rejects certs that do not increment the round number.
+    #[test]
+    fn test_invalid_certificate_wrong_round_number() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 10, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+
+        // Go through many rounds of valid certificates and ensure they're accepted.
+        let mut previous_certs = IndexSet::default();
+
+        for round in 1..=6 {
+            let mut new_certs = IndexSet::default();
+
+            // Generate one cert per validator
+            for private_key in private_keys.iter() {
+                let cert_round = round.min(5); // In the sixth round, do not increment
+                let other_keys: Vec<_> = private_keys.iter().cloned().filter(|k| k != private_key).collect();
+
+                let certificate = sample_batch_certificate_for_round_with_committee(
+                    cert_round,
+                    previous_certs.clone(),
+                    private_key,
+                    &other_keys,
+                    rng,
+                );
+
+                // Construct the sample 'transmissions'.
+                let (_missing_transmissions, transmissions) = sample_transmissions(&certificate, rng);
+                let transmissions = transmissions.into_iter().map(|(k, (t, _))| (k, t)).collect();
+
+                if round <= 5 {
+                    new_certs.insert(certificate.id());
+                    storage
+                        .insert_certificate(certificate, transmissions, Default::default())
+                        .expect("Valid certificate rejected");
+                } else {
+                    assert!(storage.insert_certificate(certificate, transmissions, Default::default()).is_err());
+                }
+            }
+
+            if round < 5 {
+                previous_certs = new_certs;
+            } else {
+                // Remove more than half of the previous certs.
+                previous_certs = new_certs.into_iter().skip(6).collect();
+            }
+        }
     }
 }
 

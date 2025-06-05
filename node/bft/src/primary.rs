@@ -1359,24 +1359,27 @@ impl<N: Network> Primary<N> {
                     continue;
                 }
                 // Attempt to increment to the next round.
-                let next_round = self_.current_round().saturating_add(1);
+                let current_round = self_.current_round();
+                let next_round = current_round.saturating_add(1);
                 // Determine if the quorum threshold is reached for the current round.
                 let is_quorum_threshold_reached = {
-                    // Retrieve the certificate authors for the next round.
-                    let authors = self_.storage.get_certificate_authors_for_round(next_round);
+                    // Retrieve the certificate authors for the current round.
+                    let authors = self_.storage.get_certificate_authors_for_round(current_round);
                     // If there are no certificates, then skip this check.
                     if authors.is_empty() {
                         continue;
                     }
-                    let Ok(committee_lookback) = self_.ledger.get_committee_lookback_for_round(next_round) else {
-                        warn!("Failed to retrieve the committee lookback for round {next_round}");
+                    // Retrieve the committee lookback for the current round.
+                    let Ok(committee_lookback) = self_.ledger.get_committee_lookback_for_round(current_round) else {
+                        warn!("Failed to retrieve the committee lookback for round {current_round}");
                         continue;
                     };
+                    // Check if the quorum threshold is reached for the current round.
                     committee_lookback.is_quorum_threshold_reached(&authors)
                 };
                 // Attempt to increment to the next round if the quorum threshold is reached.
                 if is_quorum_threshold_reached {
-                    debug!("Quorum threshold reached for round {}", next_round);
+                    debug!("Quorum threshold reached for round {}", current_round);
                     if let Err(e) = self_.try_increment_to_the_next_round(next_round).await {
                         warn!("Failed to increment to the next round - {e}");
                     }

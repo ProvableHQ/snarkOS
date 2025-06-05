@@ -72,7 +72,12 @@ fn main() -> anyhow::Result<()> {
     match cli.command.parse() {
         Ok(output) => println!("{output}\n"),
         Err(error) => {
-            println!("⚠️  {error}\n");
+            // Print the top level error and then any additional context.
+            println!("⚠️  {error}");
+            for entry in error.chain().skip(1) {
+                println!("     ↳ {entry}");
+            }
+            println!();
             exit(1);
         }
     }

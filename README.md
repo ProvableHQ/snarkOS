@@ -25,6 +25,8 @@
 * [6. Development Guide](#6-development-guide)
   * [6.1 Quick Start](#61-quick-start)
   * [6.2 Operations](#62-operations)
+  * [6.3 Local Devnet](#63-local-devnet)
+  * [6.4 Feature Flags](#64-feature-flags)
 * [7. Contributors](#7-contributors)
 * [8. License](#8-license)
 
@@ -280,7 +282,7 @@ nvcc --version   # Check installed CUDA version
 2. Sign a message with your private key using `snarkos account sign --raw -m "Message" --private-key-file=<PRIVATE_KEY_FILE>`
 3. Verify your signature with `snarkos account verify --raw -m "Message" -s sign1SignatureHere -a aleo1YourAccountAddress`
 
-Note, using the `--raw` flag with the command will sign plaintext messages as bytes rather than [Aleo](https://developer.aleo.org/aleo/language#data-types-and-values) values such as `1u8` or `100field`.
+Note, using the `--raw` flag with the command will sign plaintext messages as bytes rather than [Aleo values](https://developer.aleo.org/guides/aleo/language#data-types-and-values) such as `1u8` or `100field`.
 
 
 ## 5. Command Line Interface
@@ -469,7 +471,7 @@ cargo run --release -- clean --dev <NODE_ID>
 
 ## 6.4 Feature Flags
 
-By default, the metrics feature is turnned on for some internal crates.
+By default, the metrics feature is turned on for some internal crates.
 
 * **history** -
   Enables a /history REST endpoint.

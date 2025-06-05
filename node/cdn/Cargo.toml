@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-cdn"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CDN client for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -18,7 +18,7 @@ edition = "2021"
 
 [features]
 default = [ "parallel" ]
-locktick = [ "dep:locktick", "snarkvm/locktick" ]
+locktick = [ "snarkvm/locktick" ]
 parallel = [ "rayon" ]
 cuda = [ "snarkvm/cuda" ]
 metrics = [ "dep:snarkos-node-metrics" ]
@@ -32,20 +32,12 @@ version = "1.0"
 [dependencies.colored]
 version = "2"
 
-[dependencies.futures]
-version = "0.3"
-
-[dependencies.locktick]
-version = "0.3"
-features = [ "parking_lot" ]
-optional = true
-
 [dependencies.parking_lot]
 version = "0.12"
 
 [dependencies.snarkos-node-metrics]
 path = "../metrics"
-version = "=3.6.0"
+version = "=3.7.1"
 optional = true
 features = [ "metrics" ]
 
@@ -81,3 +73,6 @@ features = [ "rt", "rt-multi-thread" ]
 
 [dev-dependencies.tokio-test]
 version = "0.4"
+
+[package.metadata.cargo-machete]
+ignored = ["serde"]

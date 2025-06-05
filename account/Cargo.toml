@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-account"
-version = "3.6.0"
+version = "3.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Account for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -20,15 +20,8 @@ edition = "2021"
 cuda = [ "snarkvm/cuda" ]
 test_targets = [ "snarkvm/test_targets" ]
 
-[dependencies.anyhow]
-version = "1.0.79"
-
 [dependencies.colored]
 version = "2"
-
-[dependencies.rand]
-version = "0.8"
-default-features = false
 
 [dependencies.snarkvm]
 workspace = true
