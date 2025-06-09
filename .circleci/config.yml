@@ -378,6 +378,39 @@ jobs:
       - clear_environment:
           cache_key: v3.3.1-rust-1.88.0-check-other-crates-cache
 
+  devnet-sync-test:
+    docker:
+      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v3.3.1-rust-1.83.0-devnet-sync-test-cache
+      - run:
+          name: "Setup GCP"
+          command: |
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install google-cloud-cli -y
+            echo "$GCLOUD_SERVICE_KEY" > ${HOME}/gcloud-key.json
+            gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
+      - run:
+          name: Install snarkOS
+          command: cargo install --path=. --locked
+      - run:
+          name: "Fetch Data"
+          command: |
+            gcloud config set project protocol-development-sandbox
+            gcloud storage cp gs://ci_testdata/sync-ledger.zip .
+            unzip sync-ledger.zip
+
+      - run:
+          name: "Run Sync Test"
+          command: ./.circleci/devnet_sync_ci.sh
+      - clear_environment:
+          cache_key: v3.3.1-rust-1.83.0-devnet-sync-test-cache
+
   check-fmt:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
@@ -482,6 +515,7 @@ workflows:
       - check-cargo-audit
       - check-other-crates
       - devnet-test
+      - devnet-sync-test
 
   windows-workflow:
     jobs:
