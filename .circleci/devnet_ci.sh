@@ -14,23 +14,7 @@ min_height=$4
 
 . ./.circleci/utils.sh
 
-# Determine network name based on network_id
-case $network_id in
-  0)
-    network_name="mainnet"
-    ;;
-  1)
-    network_name="testnet"
-    ;;
-  2)
-    network_name="canary"
-    ;;
-  *)
-    echo "Unknown network ID: $network_id, defaulting to mainnet"
-    network_name="mainnet"
-    ;;
-esac
-
+network_name=$(get_network_name $network_id)
 echo "Using network: $network_name (ID: $network_id)"
 
 # Create log directory
@@ -74,7 +58,7 @@ sleep 30
 # Check heights periodically with a timeout
 total_wait=0
 while [ $total_wait -lt 900 ]; do  # 15 minutes max
-  if check_heights $total_validators $total_clients $min_height; then
+  if check_heights $total_validators $total_clients $min_height "$network_name"; then
     echo "🎉 Test passed! All nodes reached minimum height."
     
     # Cleanup: kill all processes
@@ -87,6 +71,8 @@ while [ $total_wait -lt 900 ]; do  # 15 minutes max
     else
       exit 1
     fi
+    shutdown "${PIDS[@]}"
+    exit 0
   fi
   
   # Continue waiting
@@ -104,9 +90,5 @@ for ((validator_index = 0; validator_index < $total_validators; validator_index+
   tail -n 20 "$log_dir/validator-$validator_index.log"
 done
 
-# Cleanup: kill all processes
-for pid in "${PIDS[@]}"; do
-  kill -9 $pid 2>/dev/null || true
-done
-
+shutdown "${PIDS[@]}"
 exit 1
