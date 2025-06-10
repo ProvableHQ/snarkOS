@@ -2,6 +2,9 @@
 
 network_id=1
 min_height=200
+num_clients=4
+
+. ./.circleci/utils.sh
 
 # Determine network name based on network_id
 case $network_id in
@@ -34,32 +37,16 @@ log_file="$log_dir/client-0.log"
 snarkos start --nodisplay --network $network_id --dev 0 --client --logfile $log_file &
 PIDS[0]=$!
 
-# The client that will sync the ledger
-log_file="$log_dir/client-1.log"
-snarkos start --nodisplay --network $network_id --dev 1 --client --logfile $log_file --peers=127.0.0.1:4130 &
-PIDS[1]=$!
-
-# Function to check block heights
-check_height() {
-  echo "Checking block height of syncing client..."
-  reached=true
+for ((client_index = 1; client_index < $num_clients; client_index++)); do
+   # The clients that will sync the ledger
+  prev_port=$((4130+$client_index-1))
+  log_file="$log_dir/client-$client_index.log"
+  snarkos start --nodisplay --network $network_id --dev $client_index --client --logfile $log_file --peers=127.0.0.1:$prev_port &
+  PIDS[$client_index]=$!
   
-  port=3031
-  height=$(curl -s "http://127.0.0.1:$port/$network_name/block/height/latest" || echo "0")
-  echo "Syncing client has height: $height"
-    
-  if ! [[ "$height" =~ ^[0-9]+$ ]] || [ $height -lt $min_height ]; then
-    reached=false
-  fi
-  
-  if $reached; then
-    echo "✅ SUCCESS: Syncing node reached minimum height of $min_height"
-    return 0
-  else
-    echo "⏳ WAITING: Syncing node has not reached height of $min_height yet"
-    return 1
-  fi
-}
+  # Add 1-second delay between starting nodes to avoid hitting rate limits
+  sleep 1
+done
 
 # Wait for 60 seconds to let the network start up
 echo "Waiting 60 seconds for network to start up..."
@@ -67,8 +54,8 @@ sleep 60
 
 # Check heights periodically with a timeout
 total_wait=0
-while [ $total_wait -lt 300 ]; do  # 15 minutes max
-  if check_height; then
+while [ $total_wait -lt 300 ]; do  # 5 minutes max
+  if check_heights 0 $num_clients $min_height; then
     echo "🎉 Test passed!."
     
     # Cleanup: kill all processes
@@ -85,7 +72,7 @@ while [ $total_wait -lt 300 ]; do  # 15 minutes max
   echo "Waited $total_wait seconds so far..."
 done
 
-echo "❌ Test failed! Client did not sync within 5 minutes."
+echo "❌ Test failed! Clients did not sync within 5 minutes."
 
 # Print logs for debugging
 echo "Last 20 lines of client logs:"

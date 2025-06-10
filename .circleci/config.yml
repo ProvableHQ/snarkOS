@@ -404,7 +404,6 @@ jobs:
             gcloud config set project protocol-development-sandbox
             gcloud storage cp gs://ci_testdata/sync-ledger.zip .
             unzip sync-ledger.zip
-
       - run:
           name: "Run Sync Test"
           command: ./.circleci/devnet_sync_ci.sh
