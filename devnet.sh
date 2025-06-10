@@ -92,20 +92,15 @@ for validator_index in "${validator_indices[@]}"; do
   name="validator-$validator_index"
   log_file="$log_dir/$name.log"
   window_index=$((validator_index + index_offset))
-  metrics_flag=""
+  metrics_port=$((validator_index + 9000))
 
-  if [ "$validator_index" -eq 0 ]; then
+  if [ "$validator_index" -ne 0 ]; then
     # We don't need to create a window for the first validator because the tmux session already starts with one window.
-
-    # Enable metrics only for the first validator.
-    metrics_flag="--metrics"
-  else
-    # Create a new window with a unique name
     tmux new-window -t "devnet:$window_index" -n $name
   fi
 
   # Send the command to start the validator to the new window and capture output to the log file
-  tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity $metrics_flag" C-m
+  tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity --metrics --metrics_ip=0.0.0.0:$metrics_port" C-m
 done
 
 if [ "$total_clients" -ne 0 ]; then
