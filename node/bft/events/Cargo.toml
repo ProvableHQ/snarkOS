@@ -19,6 +19,11 @@ edition = "2024"
 [features]
 default = [ ]
 metrics = [ "snarkvm/metrics" ]
+test = [
+  "snarkvm/test-helpers",
+  "snarkvm/test",
+  "snarkos-node-sync-locators/test"
+]
 
 [dependencies.anyhow]
 workspace = true
@@ -47,12 +52,12 @@ features = [ "codec" ]
 [dependencies.tracing]
 workspace = true
 
+[dev-dependencies.snarkos-node-bft-events]
+path = "."
+features = [ "test" ]
+
 [dev-dependencies.proptest]
 workspace = true
-
-[dev-dependencies.snarkvm]
-workspace = true
-features = [ "test-helpers" ]
 
 [dev-dependencies.test-strategy]
 workspace = true
