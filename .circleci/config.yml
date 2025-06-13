@@ -32,7 +32,9 @@ commands:
     steps:
       - checkout
       - restore_cache:
-          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+          keys:
+            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}i
+            - cargo-cache-{{ arch }}- # fallback to an older version
       - run:
           name: "Install Rust and run cargo check"
           command: |
@@ -59,7 +61,7 @@ commands:
             - C:\Users\circleci\.cargo\registry
             - C:\Users\circleci\.cargo\git
             - target
-          key: cargo-cache-{{ arch }}-{{ checksum "rust-version" }}-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
 
   setup_environment:
     description: "Setup testing environment"
@@ -113,6 +115,7 @@ commands:
       - restore_cache:
           keys:
             - << parameters.cache_key >>-{{ checksum "cache-key-suffix" }}
+            - << parameters.cache_key >>-  # fallback to a different day
 
   store_cache:
     description: "Store the updated cache (once per day)"
