@@ -95,9 +95,36 @@ commands:
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm pkg-config xz-utils make libssl-dev libssl-dev
+      - fetch_cache:
+          cache_key: << parameters.cache_key >>
+
+  fetch_cache:
+    description: "Fetch the cached data"
+    parameters:
+      cache_key:
+        type: string
+    steps:
+      - run:
+          name: Generate daily cache key
+          command: |
+            CACHE_DATE=$(date +%Y-%m-%d)
+            echo "Cache date is $CACHE_DATE"
+            echo "$CACHE_DATE" >> cache-key-suffix
       - restore_cache:
           keys:
-            - << parameters.cache_key >>
+            - << parameters.cache_key >>-{{ checksum "cache-key-suffix" }}
+
+  store_cache:
+    description: "Store the updated cache (once per day)"
+    parameters:
+      cache_key:
+        type: string
+    steps:
+      - save_cache:
+          key: << parameters.cache_key >>-{{ checksum "cache-key-suffix" }}
+          paths:
+            - .cache/sccache
+            - .cargo
 
   clear_environment:
     description: "Clear environment"
@@ -109,11 +136,8 @@ commands:
       - run:
           name: Show sccache statistics
           command: $CIRCLE_WORKING_DIRECTORY/.bin/sccache -s
-      - save_cache:
-          key: << parameters.cache_key >>
-          paths:
-            - .cache/sccache
-            - .cargo
+      - store_cache:
+          cache_key: << parameters.cache_key >>
 
   run_serial:
     description: "Build and run tests"
