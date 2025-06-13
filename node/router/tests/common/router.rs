@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use crate::common::sample_genesis_block;
+
 use snarkos_node_network::{NodeType, Peer, PeerPoolHandling, Resolver};
 use snarkos_node_router::{
     Heartbeat,
@@ -32,6 +33,7 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
+use snarkos_node_sync::locators::BlockLocators;
 use snarkos_node_tcp::{
     Connection,
     ConnectionSide,
@@ -47,6 +49,7 @@ use snarkvm::prelude::{
     puzzle::Solution,
 };
 
+use anyhow::Result;
 use async_trait::async_trait;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -209,8 +212,8 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        true
+    fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> Result<bool> {
+        Ok(true)
     }
 
     /// Handles a `BlockResponse` message.
@@ -219,18 +222,26 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
         _peer_ip: SocketAddr,
         _blocks: Vec<Block<N>>,
         _latest_consensus_version: Option<ConsensusVersion>,
-    ) -> bool {
-        true
+    ) -> Result<bool> {
+        Ok(true)
+    }
+
+    async fn block_locators_request(&self, _peer_ip: SocketAddr, _start_height: u32, _end_height: u32) -> Result<bool> {
+        Ok(true)
+    }
+
+    async fn block_locators_response(&self, _peer_ip: SocketAddr, _locators: BlockLocators<N>) -> Result<bool> {
+        Ok(true)
     }
 
     /// Handles an `Ping` message.
-    fn ping(&self, _peer_ip: SocketAddr, _message: Ping<N>) -> bool {
-        true
+    async fn ping(&self, _peer_ip: SocketAddr, _message: Ping) -> Result<()> {
+        Ok(())
     }
 
     /// Handles an `Pong` message.
-    fn pong(&self, _peer_ip: SocketAddr, _message: Pong) -> bool {
-        true
+    fn pong(&self, _peer_ip: SocketAddr, _message: Pong) -> Result<()> {
+        Ok(())
     }
 
     /// Handles an `PuzzleRequest` message.

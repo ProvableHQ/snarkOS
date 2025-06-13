@@ -185,7 +185,7 @@ features = [ "test" ]
 
 [dev-dependencies.snarkos-node-sync]
 workspace = true
-features = [ "test" ]
+features = [ "test-helpers" ]
 
 [dev-dependencies.test-strategy]
 workspace = true

@@ -452,6 +452,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Loads any previously cached peer addresses so they can be introduced as initial
     /// candidate peers to connect to.
     fn load_cached_peers(storage_mode: &StorageMode, filename: &str) -> Result<Vec<SocketAddr>> {
+        if matches!(storage_mode, StorageMode::Test(_)) {
+            return Ok(vec![]);
+        }
+
         let mut peer_cache_path = aleo_ledger_dir(N::ID, storage_mode);
         peer_cache_path.push(filename);
 

@@ -123,8 +123,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Initialize the block synchronization logic.
         let sync = Arc::new(BlockSync::new(ledger_service.clone()));
-        let locators = sync.get_block_locators()?;
-        let ping = Arc::new(Ping::new(router.clone(), locators));
+        let ping = Arc::new(Ping::new(router.clone(), ledger.latest_height()));
 
         // Initialize the consensus layer.
         let consensus = Consensus::new(

@@ -173,8 +173,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let sync = Arc::new(BlockSync::new(ledger_service.clone()));
 
         // Set up the ping logic.
-        let locators = sync.get_block_locators()?;
-        let ping = Arc::new(Ping::new(router.clone(), locators));
+        let current_height = ledger.latest_height();
+        let ping = Arc::new(Ping::new(router.clone(), current_height));
 
         // Initialize the node.
         let mut node = Self {
@@ -293,7 +293,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Client-side version of [`snarkvm_node_bft::Sync::try_advancing_block_synchronization`].
     async fn try_advancing_block_synchronization(&self) {
-        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
+        let had_new_blocks = match self.sync.try_advancing_block_synchronization().await {
             Ok(val) => val,
             Err(err) => {
                 error!("Block synchronization failed - {err}");
@@ -302,11 +302,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         };
 
         // If there are new blocks, we need to update the block locators.
-        if has_new_blocks {
-            match self.sync.get_block_locators() {
-                Ok(locators) => self.ping.update_block_locators(locators),
-                Err(err) => error!("Failed to get block locators: {err}"),
-            }
+        if had_new_blocks {
+            let height = self.ledger.latest_height();
+            self.ping.update_block_height(height);
         }
     }
 
@@ -350,10 +348,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         };
 
         if has_new_blocks {
-            match self.sync.get_block_locators() {
-                Ok(locators) => self.ping.update_block_locators(locators),
-                Err(err) => error!("Failed to get block locators: {err}"),
-            }
+            self.ping.update_block_height(self.ledger.latest_height());
 
             // If these were the last blocks to process, do not continue.
             if !self.sync.can_block_sync() {
@@ -363,7 +358,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.sync.prepare_block_requests();
+        let (block_requests, sync_peers) = self.sync.prepare_block_requests(self).await;
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.

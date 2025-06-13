@@ -21,13 +21,13 @@ use snarkvm::prelude::{FromBytes, ToBytes};
 use std::borrow::Cow;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Ping<N: Network> {
+pub struct Ping {
     pub version: u32,
     pub node_type: NodeType,
-    pub block_locators: Option<BlockLocators<N>>,
+    pub block_height: Option<u32>,
 }
 
-impl<N: Network> MessageTrait for Ping<N> {
+impl MessageTrait for Ping {
     /// Returns the message name.
     #[inline]
     fn name(&self) -> Cow<'static, str> {
@@ -35,13 +35,13 @@ impl<N: Network> MessageTrait for Ping<N> {
     }
 }
 
-impl<N: Network> ToBytes for Ping<N> {
+impl ToBytes for Ping {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         self.version.write_le(&mut writer)?;
         self.node_type.write_le(&mut writer)?;
-        if let Some(locators) = &self.block_locators {
+        if let Some(height) = &self.block_height {
             1u8.write_le(&mut writer)?;
-            locators.write_le(&mut writer)?;
+            height.write_le(&mut writer)?;
         } else {
             0u8.write_le(&mut writer)?;
         }
@@ -50,55 +50,48 @@ impl<N: Network> ToBytes for Ping<N> {
     }
 }
 
-impl<N: Network> FromBytes for Ping<N> {
+impl FromBytes for Ping {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
         let version = u32::read_le(&mut reader)?;
         let node_type = NodeType::read_le(&mut reader)?;
 
         let selector = u8::read_le(&mut reader)?;
-        let block_locators = match selector {
+        let block_height = match selector {
             0 => None,
-            1 => Some(BlockLocators::read_le(&mut reader)?),
+            1 => Some(u32::read_le(&mut reader)?),
             _ => return Err(error("Invalid block locators marker")),
         };
 
-        Ok(Self { version, node_type, block_locators })
+        Ok(Self { version, node_type, block_height })
     }
 }
 
-impl<N: Network> Ping<N> {
-    pub fn new(node_type: NodeType, block_locators: Option<BlockLocators<N>>) -> Self {
-        Self { version: <Message<N>>::latest_message_version(), node_type, block_locators }
+impl Ping {
+    pub fn new<N: Network>(node_type: NodeType, block_height: Option<u32>) -> Self {
+        Self { version: <Message<N>>::latest_message_version(), node_type, block_height }
     }
 }
 
 #[cfg(test)]
 pub mod prop_tests {
     use crate::{Ping, challenge_request::prop_tests::any_node_type};
-    use snarkos_node_sync_locators::{BlockLocators, test_helpers::sample_block_locators};
     use snarkvm::utilities::{FromBytes, ToBytes};
 
     use bytes::{Buf, BufMut, BytesMut};
     use proptest::prelude::{BoxedStrategy, Strategy, any};
     use test_strategy::proptest;
 
-    type CurrentNetwork = snarkvm::prelude::MainnetV0;
-
-    pub fn any_block_locators() -> BoxedStrategy<BlockLocators<CurrentNetwork>> {
-        any::<u32>().prop_map(sample_block_locators).boxed()
-    }
-
-    pub fn any_ping() -> BoxedStrategy<Ping<CurrentNetwork>> {
-        (any::<u32>(), any_block_locators(), any_node_type())
-            .prop_map(|(version, bls, node_type)| Ping { version, block_locators: Some(bls), node_type })
+    pub fn any_ping() -> BoxedStrategy<Ping> {
+        (any::<u32>(), any::<u32>(), any_node_type())
+            .prop_map(|(version, height, node_type)| Ping { version, block_height: Some(height), node_type })
             .boxed()
     }
 
     #[proptest]
-    fn ping_roundtrip(#[strategy(any_ping())] ping: Ping<CurrentNetwork>) {
+    fn ping_roundtrip(#[strategy(any_ping())] ping: Ping) {
         let mut bytes = BytesMut::default().writer();
         ping.write_le(&mut bytes).unwrap();
-        let decoded = Ping::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap();
+        let decoded = Ping::read_le(&mut bytes.into_inner().reader()).unwrap();
         assert_eq!(ping, decoded);
     }
 }

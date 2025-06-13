@@ -14,8 +14,10 @@
 // limitations under the License.
 
 use super::*;
+
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::{
+    BlockLocatorsResponse,
     BlockRequest,
     BlockResponse,
     DataBlocks,
@@ -26,13 +28,16 @@ use snarkos_node_router::messages::{
     Pong,
     UnconfirmedTransaction,
 };
+use snarkos_node_sync::locators::BlockLocators;
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
+
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
-    utilities::{flatten_error, io_error},
+    utilities::io_error,
 };
 
+use anyhow::{Context, bail, ensure};
 use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Validator<N, C> {
@@ -65,13 +70,13 @@ where
 {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
-            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
-                if peer.node_type != NodeType::BootstrapClient {
-                    // Send the first `Ping` message to the peer.
-                    self.ping.on_peer_connected(listener_addr);
-                }
-            }
+        let Some(listener_addr) = self.router.resolve_to_listener(peer_addr) else { return };
+
+        if let Some(peer) = self.router().get_connected_peer(listener_addr)
+            && peer.node_type != NodeType::BootstrapClient
+        {
+            // Send the first `Ping` message to the peer.
+            self.ping.on_peer_connected(listener_addr);
         }
     }
 }
@@ -173,32 +178,25 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
     }
 
     /// Retrieves the blocks within the block request range, and returns the block response to the peer.
-    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
+    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> Result<bool> {
         let BlockRequest { start_height, end_height } = &message;
 
         // Get the latest consensus version, i.e., the one for the last block's height.
-        let latest_consensus_version = match N::CONSENSUS_VERSION(end_height.saturating_sub(1)) {
-            Ok(version) => version,
-            Err(err) => {
-                error!("{}", flatten_error(err.context("Failed to retrieve consensus version")));
-                return false;
-            }
-        };
+        let latest_consensus_version = N::CONSENSUS_VERSION(end_height.saturating_sub(1))
+            .with_context(|| format!("Failed to retrieve consensus version for height {end_height}"))?;
 
         // Retrieve the blocks within the requested range.
-        let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
-            Ok(blocks) => DataBlocks(blocks),
-            Err(err) => {
-                let err =
-                    err.context(format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"));
-                error!("{}", flatten_error(err));
-                return false;
-            }
-        };
+        let blocks = self
+            .ledger
+            .get_blocks(*start_height..*end_height)
+            .with_context(|| format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"))?;
+
         // Send the `BlockResponse` message to the peer.
-        self.router()
-            .send(peer_ip, Message::BlockResponse(BlockResponse::new(message, blocks, latest_consensus_version)));
-        true
+        self.router().send(
+            peer_ip,
+            Message::BlockResponse(BlockResponse::new(message, DataBlocks(blocks), latest_consensus_version)),
+        );
+        Ok(true)
     }
 
     /// Handles a `BlockResponse` message.
@@ -207,25 +205,24 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         peer_ip: SocketAddr,
         _blocks: Vec<Block<N>>,
         _latest_consensus_version: Option<ConsensusVersion>,
-    ) -> bool {
-        warn!("Received a block response through P2P, not BFT, from {peer_ip}");
-        false
+    ) -> Result<bool> {
+        bail!("Received a block response through P2P, not BFT, from {peer_ip}");
     }
 
     /// Processes a ping message from a client (or prover) and sends back a `Pong` message.
-    fn ping(&self, peer_ip: SocketAddr, _message: Ping<N>) -> bool {
+    async fn ping(&self, peer_ip: SocketAddr, _message: Ping) -> Result<()> {
         // In gateway/validator mode, we do not need to process client block locators.
         // Instead, locators are fetched from other validators in `Gateway` using `PrimaryPing` messages.
 
         // Send a `Pong` message to the peer.
         self.router().send(peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
-        true
+        Ok(())
     }
 
     /// Process a Pong message (response to a Ping).
-    fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> bool {
+    fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> Result<()> {
         self.ping.on_pong_received(peer_ip);
-        true
+        Ok(())
     }
 
     /// Retrieves the latest epoch hash and latest block header, and returns the puzzle response to the peer.
@@ -285,5 +282,28 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         // Propagate the "UnconfirmedTransaction" to the connected validators.
         self.propagate_to_validators(message, &[peer_ip]);
         true
+    }
+
+    /// Handles a `BlockLocatorsRequest` message.
+    async fn block_locators_request(&self, peer_ip: SocketAddr, start_height: u32, end_height: u32) -> Result<bool> {
+        ensure!(start_height < end_height, "Invalid block locators range");
+
+        let locators = self.sync.get_block_locators(start_height, end_height)?;
+        let event = Message::BlockLocatorsResponse(BlockLocatorsResponse { locators });
+
+        if let Some(result) = self.router.send(peer_ip, event) {
+            if let Err(err) = result.await {
+                bail!("Send failed: {err}");
+            }
+        } else {
+            bail!("Failed to send block locator response to peer {peer_ip}");
+        }
+        Ok(true)
+    }
+
+    /// Handles a `BlockResponse` message.
+    async fn block_locators_response(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<bool> {
+        self.sync.update_peer_block_locators(peer_ip, locators).await?;
+        Ok(true)
     }
 }

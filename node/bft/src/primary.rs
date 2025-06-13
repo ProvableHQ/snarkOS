@@ -1242,14 +1242,14 @@ impl<N: Network> Primary<N> {
                 tokio::time::sleep(Duration::from_millis(PRIMARY_PING_IN_MS)).await;
 
                 // Retrieve the block locators.
-                let self__ = self_.clone();
-                let block_locators = match spawn_blocking!(self__.sync.get_block_locators()) {
+                /* let self__ = self_.clone();
+                               let block_locators = match spawn_blocking!(self__.sync.get_block_locators()) {
                     Ok(block_locators) => block_locators,
                     Err(e) => {
                         warn!("Failed to retrieve block locators - {e}");
                         continue;
                     }
-                };
+                };*/
 
                 // Retrieve the latest certificate of the primary.
                 let primary_certificate = {
@@ -1284,7 +1284,8 @@ impl<N: Network> Primary<N> {
                 };
 
                 // Construct the primary ping.
-                let primary_ping = PrimaryPing::from((<Event<N>>::VERSION, block_locators, primary_certificate));
+                let primary_ping =
+                    PrimaryPing::from((<Event<N>>::VERSION, self_.ledger.latest_block_height(), primary_certificate));
                 // Broadcast the event.
                 self_.gateway.broadcast(Event::PrimaryPing(primary_ping));
             }
@@ -2474,7 +2475,11 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary
+            .sync
+            .testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0, 0))
+            .await
+            .unwrap();
         primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should succeed.
@@ -2512,7 +2517,11 @@ mod tests {
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // Add a high block locator to indicate we are not synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary
+            .sync
+            .testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0, 20))
+            .await
+            .unwrap();
 
         // Try to process the batch proposal from the peer, should fail
         assert!(
@@ -2553,7 +2562,11 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary
+            .sync
+            .testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0, 0))
+            .await
+            .unwrap();
         primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should succeed.
@@ -2738,11 +2751,19 @@ mod tests {
         primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // primary v4 must be considered synced.
-        primary_v4.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary_v4
+            .sync
+            .testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0, 0))
+            .await
+            .unwrap();
         primary_v4.sync.testing_only_try_block_sync_testing_only().await;
 
         // primary v5 must be ocnsidered synced.
-        primary_v5.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary_v5
+            .sync
+            .testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0, 0))
+            .await
+            .unwrap();
         primary_v5.sync.testing_only_try_block_sync_testing_only().await;
 
         // Check the spend limit is enforced from V5 onwards.

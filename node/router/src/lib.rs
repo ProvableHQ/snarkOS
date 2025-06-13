@@ -44,7 +44,7 @@ pub use routing::*;
 
 mod writing;
 
-use crate::messages::{BlockRequest, Message, MessageCodec};
+use crate::messages::{BlockLocatorsRequest, BlockRequest, Message, MessageCodec};
 
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -65,7 +65,7 @@ use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 use aleo_std::StorageMode;
 use anyhow::Result;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::{Mutex, RwLock};
+use locktick::{parking_lot::Mutex, parking_lot::RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use std::{collections::HashMap, future::Future, io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
@@ -298,6 +298,11 @@ impl<N: Network> CommunicationService for Router<N> {
     fn prepare_block_request(start_height: u32, end_height: u32) -> Self::Message {
         debug_assert!(start_height < end_height, "Invalid block request format");
         Message::BlockRequest(BlockRequest { start_height, end_height })
+    }
+
+    /// Prepare a block locators request to be sent
+    fn prepare_block_locators_request(start_height: u32, end_height: u32) -> Self::Message {
+        Message::BlockLocatorsRequest(BlockLocatorsRequest { start_height, end_height })
     }
 
     /// Sends the given message to specified peer.

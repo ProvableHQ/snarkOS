@@ -24,6 +24,9 @@ pub use helpers::*;
 mod block_request;
 pub use block_request::BlockRequest;
 
+mod block_locators;
+pub use block_locators::{BlockLocatorsRequest, BlockLocatorsResponse};
+
 mod block_response;
 pub use block_response::BlockResponse;
 
@@ -62,7 +65,6 @@ pub use unconfirmed_transaction::UnconfirmedTransaction;
 
 pub use snarkos_node_bft_events::DataBlocks;
 
-use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::prelude::{
     Address,
     ConsensusVersion,
@@ -91,12 +93,14 @@ pub enum Message<N: Network> {
     Disconnect(Disconnect),
     PeerRequest(PeerRequest),
     PeerResponse(PeerResponse),
-    Ping(Ping<N>),
+    Ping(Ping),
     Pong(Pong),
     PuzzleRequest(PuzzleRequest),
     PuzzleResponse(PuzzleResponse<N>),
     UnconfirmedSolution(UnconfirmedSolution<N>),
     UnconfirmedTransaction(UnconfirmedTransaction<N>),
+    BlockLocatorsRequest(BlockLocatorsRequest),
+    BlockLocatorsResponse(BlockLocatorsResponse<N>),
 }
 
 impl<N: Network> From<DisconnectReason> for Message<N> {
@@ -167,6 +171,8 @@ impl<N: Network> Message<N> {
             Self::PuzzleResponse(message) => message.name(),
             Self::UnconfirmedSolution(message) => message.name(),
             Self::UnconfirmedTransaction(message) => message.name(),
+            Self::BlockLocatorsRequest(message) => message.name(),
+            Self::BlockLocatorsResponse(message) => message.name(),
         }
     }
 
@@ -187,6 +193,8 @@ impl<N: Network> Message<N> {
             Self::PuzzleResponse(..) => 10,
             Self::UnconfirmedSolution(..) => 11,
             Self::UnconfirmedTransaction(..) => 12,
+            Self::BlockLocatorsRequest(..) => 13,
+            Self::BlockLocatorsResponse(..) => 14,
         }
     }
 
@@ -231,6 +239,8 @@ impl<N: Network> ToBytes for Message<N> {
             Self::PuzzleResponse(message) => message.write_le(writer),
             Self::UnconfirmedSolution(message) => message.write_le(writer),
             Self::UnconfirmedTransaction(message) => message.write_le(writer),
+            Self::BlockLocatorsRequest(message) => message.write_le(writer),
+            Self::BlockLocatorsResponse(message) => message.write_le(writer),
         }
     }
 }
@@ -257,7 +267,9 @@ impl<N: Network> FromBytes for Message<N> {
             10 => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
             11 => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
             12 => Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?),
-            13.. => return Err(error("Unknown message ID {id}")),
+            13 => Self::BlockLocatorsRequest(BlockLocatorsRequest::read_le(&mut reader)?),
+            14 => Self::BlockLocatorsResponse(BlockLocatorsResponse::read_le(&mut reader)?),
+            15.. => return Err(error("Unknown message ID {id}")),
         };
 
         // Ensure that there are no "dangling" bytes.
