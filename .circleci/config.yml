@@ -68,22 +68,33 @@ commands:
         type: string
         default: v3.3.1-rust-1.83.0-snarkos-stable-cache
     steps:
-      - run: set -e
       - run:
-          name: Prepare environment and install dependencies
+          name: Set environment variables
           command: |
-            export SCCACHE_CACHE_SIZE=200M
-            export WORK_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
-            export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
+            # CircleCI runs a new shell for every step, so exported variables are lost
+            # This workaround is suggested here: https://circleci.com/docs/env-vars/#parameters-and-bash-environment
+            echo 'set -e' >> "$BASH_ENV"
+            echo 'export SCCACHE_CACHE_SIZE=200M' >> "$BASH_ENV"
+            echo 'export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"' >> "$BASH_ENV"
+            echo 'export RUSTC_WRAPPER="$CIRCLE_WORKING_DIRECTORY/.bin/sccache"' >> "$BASH_ENV"  
+
+      - run:
+          name: Install sccache
+          command: |
             mkdir -p "$CIRCLE_WORKING_DIRECTORY/.bin"
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            mv $CIRCLE_WORKING_DIRECTORY/.bin/sccache-v0.3.0-x86_64-unknown-linux-musl/sccache $CIRCLE_WORKING_DIRECTORY/.bin/sccache
-            export PATH="$PATH:$CIRCLE_WORKING_DIRECTORY/.bin"
-            export RUSTC_WRAPPER="sccache"
+            export SCCACHE_VERSION=v0.10.0
+            export SCCACHE_PKG="sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+            wget "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/$SCCACHE_PKG.tar.gz"
+            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf "$SCCACHE_PKG.tar.gz"
+            mv "$CIRCLE_WORKING_DIRECTORY/.bin/$SCCACHE_PKG/sccache" "$CIRCLE_WORKING_DIRECTORY/.bin/sccache"
             rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+
+      - run:
+          name: Install debian packages
+          command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm pkg-config xz-utils make libssl-dev libssl-dev
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -95,8 +106,9 @@ commands:
         type: string
         default: v3.3.1-rust-1.83.0-snarkos-stable-cache
     steps:
-      - run: (sccache -s||true)
-      - run: set +e
+      - run:
+          name: Show sccache statistics
+          command: $CIRCLE_WORKING_DIRECTORY/.bin/sccache -s
       - save_cache:
           key: << parameters.cache_key >>
           paths:
