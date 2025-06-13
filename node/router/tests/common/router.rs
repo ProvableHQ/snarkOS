@@ -31,6 +31,7 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
+use snarkos_node_sync_locators::BlockLocators;
 use snarkos_node_tcp::{
     Connection,
     ConnectionSide,
@@ -45,6 +46,7 @@ use snarkvm::prelude::{
     puzzle::Solution,
 };
 
+use anyhow::Result;
 use async_trait::async_trait;
 use std::{io, net::SocketAddr, str::FromStr};
 use tracing::*;
@@ -177,23 +179,33 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        true
+    fn block_request(&self, _peer_ip: SocketAddr, _message: BlockRequest) -> Result<bool> {
+        Ok(true)
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, _peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
-        true
+    fn block_response(&self, _peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Handles a `BlockRequest` message.
+    async fn block_locators_request(&self, _peer_ip: SocketAddr, _start: u32, _end: u32) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// Handles a `BlockResponse` message.
+    async fn block_locators_response(&self, _peer_ip: SocketAddr, _locators: BlockLocators<N>) -> Result<bool> {
+        Ok(true)
     }
 
     /// Handles an `Ping` message.
-    fn ping(&self, _peer_ip: SocketAddr, _message: Ping<N>) -> bool {
-        true
+    async fn ping(&self, _peer_ip: SocketAddr, _message: Ping) -> Result<()> {
+        Ok(())
     }
 
     /// Handles an `Pong` message.
-    fn pong(&self, _peer_ip: SocketAddr, _message: Pong) -> bool {
-        true
+    fn pong(&self, _peer_ip: SocketAddr, _message: Pong) -> Result<()> {
+        Ok(())
     }
 
     /// Handles an `PuzzleRequest` message.

@@ -172,8 +172,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let sync = Arc::new(BlockSync::new(ledger_service.clone()));
 
         // Set up the ping logic.
-        let locators = sync.get_block_locators()?;
-        let ping = Arc::new(Ping::new(router.clone(), locators));
+        let current_height = ledger.latest_height();
+        let ping = Arc::new(Ping::new(router.clone(), current_height));
 
         // Initialize the node.
         let mut node = Self {
@@ -307,7 +307,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.sync.prepare_block_requests();
+        let (block_requests, sync_peers) = self.sync.prepare_block_requests(self).await;
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.
@@ -323,10 +323,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             };
 
             if has_new_blocks {
-                match self.sync.get_block_locators() {
-                    Ok(locators) => self.ping.update_block_locators(locators),
-                    Err(err) => error!("Failed to get block locators: {err}"),
-                }
+                self.ping.update_block_height(self.ledger.latest_height());
             }
         } else if block_requests.is_empty() {
             let total_requests = self.sync.num_total_block_requests();

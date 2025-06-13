@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use super::*;
+
 use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkvm::{
     ledger::puzzle::Solution,
@@ -221,8 +222,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     // GET /<network>/sync/peers
     pub(crate) async fn get_sync_peers(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
-        let peers: HashMap<String, u32> =
-            rest.block_sync.get_peer_heights().into_iter().map(|(addr, height)| (addr.to_string(), height)).collect();
+        let peers: HashMap<String, u32> = rest
+            .block_sync
+            .get_peer_heights()
+            .await
+            .into_iter()
+            .map(|(addr, height)| (addr.to_string(), height))
+            .collect();
         Ok(ErasedJson::pretty(peers))
     }
 

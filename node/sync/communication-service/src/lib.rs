@@ -32,6 +32,9 @@ pub trait CommunicationService: Send + Sync {
     /// Generates the service-specific message for a block request.
     fn prepare_block_request(start: u32, end: u32) -> Self::Message;
 
+    /// Generates the service-specific message for a block locators request.
+    fn prepare_block_locators_request(start: u32, end: u32) -> Self::Message;
+
     /// Sends the given message to specified peer.
     ///
     /// This function returns as soon as the message is queued to be sent,
@@ -65,6 +68,10 @@ pub mod test_helpers {
         type Message = DummyMessage;
 
         fn prepare_block_request(_start: u32, _end: u32) -> Self::Message {
+            Self::Message {}
+        }
+
+        fn prepare_block_locators_request(_start: u32, _end: u32) -> Self::Message {
             Self::Message {}
         }
 

@@ -17,6 +17,8 @@ use super::*;
 use snarkos_node_router::{
     Routing,
     messages::{
+        BlockLocatorsRequest,
+        BlockLocatorsResponse,
         BlockRequest,
         BlockResponse,
         DataBlocks,
@@ -29,13 +31,14 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
-use snarkos_node_sync::communication_service::CommunicationService;
+use snarkos_node_sync::{communication_service::CommunicationService, locators::BlockLocators};
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
     prelude::{Network, block::Transaction},
 };
 
+use anyhow::{Context, bail, ensure};
 use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Client<N, C> {
@@ -70,6 +73,7 @@ impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
         if self.router.bootstrap_peers().contains(&peer_ip) {
             self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
         }
+
         // Send the first `Ping` message to the peer.
         self.ping.on_peer_connected(peer_ip);
     }
@@ -143,6 +147,11 @@ impl<N: Network, C: ConsensusStorage<N>> CommunicationService for Client<N, C> {
         Message::BlockRequest(BlockRequest { start_height, end_height })
     }
 
+    /// Prepares a block locators request to be sent.
+    fn prepare_block_locators_request(start_height: u32, end_height: u32) -> Self::Message {
+        Message::BlockLocatorsRequest(BlockLocatorsRequest { start_height, end_height })
+    }
+
     /// Sends the given message to specified peer.
     ///
     /// This function returns as soon as the message is queued to be sent,
@@ -204,53 +213,52 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
+    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> Result<bool> {
         let BlockRequest { start_height, end_height } = &message;
 
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => Data::Object(DataBlocks(blocks)),
             Err(error) => {
-                error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
-                return false;
+                bail!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
             }
         };
         // Send the `BlockResponse` message to the peer.
         self.router().send(peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
-        true
+        Ok(true)
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
+    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<bool> {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks) {
             warn!("Failed to insert block response: {err}");
-            false
+            Ok(false)
         } else {
-            true
+            Ok(true)
         }
     }
 
     /// Processes the block locators and sends back a `Pong` message.
-    fn ping(&self, peer_ip: SocketAddr, message: Ping<N>) -> bool {
+    async fn ping(&self, peer_ip: SocketAddr, message: Ping) -> Result<()> {
         // If block locators were provided, then update the peer in the sync pool.
-        if let Some(block_locators) = message.block_locators {
+        if let Some(height) = message.block_height {
             // Check the block locators are valid, and update the peer in the sync pool.
-            if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
-                warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
-                return false;
-            }
+            let sync = self.sync.clone();
+            sync.update_peer_block_height(peer_ip, height)
+                .await
+                .with_context(|| format!("Peer '{peer_ip}' sent invalid block height"))?;
         }
 
         // Send a `Pong` message to the peer.
         self.router().send(peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
-        true
+        Ok(())
     }
 
     /// Sleeps for a period and then sends a `Ping` message to the peer.
-    fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> bool {
+    fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> Result<()> {
         self.ping.on_pong_received(peer_ip);
-        true
+        Ok(())
     }
 
     /// Retrieves the latest epoch hash and latest block header, and returns the puzzle response to the peer.
@@ -317,5 +325,26 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         }
 
         true // Maintain the connection
+    }
+
+    /// Handles a `BlockRequest` message.
+    async fn block_locators_request(&self, peer_ip: SocketAddr, start_height: u32, end_height: u32) -> Result<bool> {
+        ensure!(start_height < end_height, "Invalid block locators range");
+
+        let locators = self.sync.get_block_locators(start_height, end_height)?;
+        let event = Message::BlockLocatorsResponse(BlockLocatorsResponse { locators });
+
+        let Some(result) = self.send(peer_ip, event).await else {
+            bail!("Failed to send block locator response to peer {peer_ip}");
+        };
+
+        result.await.with_context(|| "Tokio error")?.with_context(|| "Sending block request failed")?;
+        Ok(true)
+    }
+
+    /// Handles a `BlockResponse` message.
+    async fn block_locators_response(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<bool> {
+        self.sync.update_peer_block_locators(peer_ip, locators).await?;
+        Ok(true)
     }
 }
