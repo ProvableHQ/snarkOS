@@ -78,7 +78,9 @@ commands:
             echo 'set -e' >> "$BASH_ENV"
             echo 'export SCCACHE_CACHE_SIZE=200M' >> "$BASH_ENV"
             echo 'export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"' >> "$BASH_ENV"
-            echo 'export RUSTC_WRAPPER="$CIRCLE_WORKING_DIRECTORY/.bin/sccache"' >> "$BASH_ENV"  
+            echo 'export RUSTC_WRAPPER="$CIRCLE_WORKING_DIRECTORY/.bin/sccache"' >> "$BASH_ENV"
+            # Disable incremental builds so that sccache works as expected
+            echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
 
       - run:
           name: Install sccache
