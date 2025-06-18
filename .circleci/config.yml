@@ -160,7 +160,7 @@ commands:
           cache_key:  v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
       - run:
           no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
+          command: cd << parameters.workspace_member >> && cargo test << parameters.flags >>
       - clear_environment:
           cache_key: v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
 
@@ -180,7 +180,7 @@ commands:
           cache_key: << parameters.cache_key >>
       - run:
           no_output_timeout: 300m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
+          command: cd << parameters.workspace_member >> && cargo test << parameters.flags >>
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
