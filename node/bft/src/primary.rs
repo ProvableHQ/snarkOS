@@ -465,7 +465,9 @@ impl<N: Network> Primary<N> {
             let mut connected_validators = self.gateway.connected_addresses();
             // Append the primary to the set.
             connected_validators.insert(self.gateway.account().address());
+            info!("committee_lookback:467: {committee_lookback:?}");
             // If quorum threshold is not reached, return early.
+            // TODO: imagine the entire committee changes from one round to the next, then we couldn't connect anymore right? So I guess that's a liveness issue.
             if !committee_lookback.is_quorum_threshold_reached(&connected_validators) {
                 debug!(
                     "Primary is safely skipping a batch proposal for round {round} {}",

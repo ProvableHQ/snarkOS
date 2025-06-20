@@ -175,6 +175,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the committee lookback for the given round.
+    /// TODO: this is duplicate with snarkVM, which also has this logic... Consider just going straight into snarkVM.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
         // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
         // because committees are updated in even rounds.

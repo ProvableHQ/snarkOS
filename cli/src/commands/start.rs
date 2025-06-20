@@ -481,6 +481,7 @@ impl Start {
             let development_addresses = dev_keys.iter().map(Address::<N>::try_from).collect::<Result<Vec<_>>>()?;
 
             // Construct the committee based on the state of the bonded balances.
+            // TODO: ensure this is the latest committee when using --dev
             let (committee, bonded_balances) = match &self.dev_bonded_balances {
                 Some(bonded_balances) => {
                     // Parse the bonded balances.
@@ -602,6 +603,9 @@ impl Start {
         // Print the welcome.
         println!("{}", crate::helpers::welcome_message());
 
+        // Save if we're in dev mode.
+        let dev = self.dev.is_some();
+
         // Check if we are running with the lower coinbase and proof targets. This should only be
         // allowed in --dev mode and should not be allowed in mainnet mode.
         if cfg!(feature = "test_network") && self.dev.is_none() {
@@ -708,9 +712,9 @@ impl Start {
 
         // Initialize the node.
         match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, shutdown.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, shutdown).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, shutdown.clone(), dev).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, shutdown.clone(), dev).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, shutdown, dev).await,
         }
     }
 

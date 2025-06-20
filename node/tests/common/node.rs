@@ -33,6 +33,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         StorageMode::new_test(None),
         false, // No extra peer rotation.
         Default::default(),
+        false, // No dev mode.
     )
     .await
     .expect("couldn't create client instance")
@@ -46,6 +47,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         sample_genesis_block(),
         StorageMode::new_test(None),
         Default::default(),
+        false,
     )
     .await
     .expect("couldn't create prover instance")
@@ -66,6 +68,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         true,  // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         Default::default(),
+        false, // No dev mode.
     )
     .await
     .expect("couldn't create validator instance")

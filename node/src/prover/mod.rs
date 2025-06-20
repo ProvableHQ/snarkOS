@@ -97,8 +97,9 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        storage_mode: StorageMode,
+        _storage_mode: StorageMode,
         shutdown: Arc<AtomicBool>,
+        dev: bool,
     ) -> Result<Self> {
         // Initialize the signal handler.
         let signal_node = Self::handle_signals(shutdown.clone());
@@ -120,7 +121,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
-            matches!(storage_mode, StorageMode::Development(_)),
+            dev,
         )
         .await?;
 

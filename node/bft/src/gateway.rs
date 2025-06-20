@@ -397,6 +397,8 @@ impl<N: Network> Gateway<N> {
             return true;
         }
 
+        info!("Current committee: {:?}", self.ledger.current_committee());
+
         // Determine if the validator is in the latest committee on the ledger.
         if self.ledger.current_committee().map_or(false, |committee| committee.is_committee_member(validator_address)) {
             return true;
