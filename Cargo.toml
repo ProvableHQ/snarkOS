@@ -328,7 +328,6 @@ version = "2"
 [profile.release]
 opt-level = 3
 lto = "thin"
-incremental = true
 # uncomment the 2 lines below when building with the locktick feature
 # debug = "line-tables-only"
 # strip = "none"
@@ -338,18 +337,15 @@ opt-level = 3
 debug = false
 rpath = false
 lto = "thin"
-incremental = true
 debug-assertions = false
 
 [profile.dev]
 opt-level = 2
 lto = "off"
-incremental = true
 
 [profile.test]
 opt-level = 2
 lto = "thin"
-incremental = true
 debug = true
 debug-assertions = true
 
