@@ -123,7 +123,11 @@ pub fn add_transmission_latency_metric<N: Network>(
 
             if elapsed_time.as_secs() > AGE_THRESHOLD_SECONDS as u64 {
                 // This entry is stale-- remove it from transmission queue and record it as a stale transmission.
-                increment_counter(consensus::STALE_UNCONFIRMED_TRANSMISSIONS);
+                match transmission_id {
+                    TransmissionID::Solution(..) => increment_counter(consensus::STALE_UNCONFIRMED_SOLUTIONS),
+                    TransmissionID::Transaction(..) => increment_counter(consensus::STALE_UNCONFIRMED_TRANSACTIONS),
+                    _ => {}
+                }
                 Some(*transmission_id)
             } else {
                 let transmission_type = match transmission_id {
