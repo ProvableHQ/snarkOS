@@ -135,7 +135,7 @@ impl Execute {
         // Retrieve the inputs.
         let inputs = self.inputs.iter().map(|input| Value::from_str(input)).collect::<Result<Vec<Value<N>>>>()?;
 
-        let locator = Locator::<N>::from_str(&format!("{}/{}", program_id, function))?;
+        let locator = Locator::<N>::from_str(&format!("{program_id}/{function}"))?;
         println!("📦 Creating execution transaction for '{}'...\n", &locator.to_string().bold());
 
         // Generate the execution transaction.

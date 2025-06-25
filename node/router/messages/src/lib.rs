@@ -259,6 +259,7 @@ impl<N: Network> FromBytes for Message<N> {
         };
 
         // Ensure that there are no "dangling" bytes.
+        #[allow(clippy::unbuffered_bytes)]
         if reader.bytes().next().is_some() {
             return Err(error("Leftover bytes in a Message"));
         }

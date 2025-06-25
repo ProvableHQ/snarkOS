@@ -16,7 +16,7 @@
 pub mod node;
 pub mod test_peer;
 
-use std::{env, str::FromStr};
+use std::str::FromStr;
 
 use snarkos_account::Account;
 use snarkvm::prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, block::Block};
@@ -32,20 +32,21 @@ pub fn sample_genesis_block() -> Block<CurrentNetwork> {
 }
 
 /// Enables logging in tests.
-pub fn initialise_logger(level: u8) {
-    match level {
-        0 => env::set_var("RUST_LOG", "info"),
-        1 => env::set_var("RUST_LOG", "debug"),
-        2 | 3 => env::set_var("RUST_LOG", "trace"),
-        _ => env::set_var("RUST_LOG", "info"),
+pub fn initialize_logger(verbosity: u8) {
+    let verbosity_str = match verbosity {
+        0 => "info",
+        1 => "debug",
+        2..=4 => "trace",
+        _ => "info",
     };
 
     // Filter out undesirable logs.
-    let filter = tracing_subscriber::EnvFilter::from_default_env()
+    let filter = tracing_subscriber::EnvFilter::from_str(verbosity_str)
+        .unwrap()
         .add_directive("snarkos=off".parse().unwrap())
         .add_directive("tokio_util=off".parse().unwrap())
         .add_directive("mio=off".parse().unwrap());
 
     // Initialize tracing.
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(level == 3).try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(verbosity > 2).try_init();
 }

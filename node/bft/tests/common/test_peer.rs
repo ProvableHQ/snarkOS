@@ -136,9 +136,10 @@ impl Reading for InnerNode {
     }
 
     async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) -> io::Result<()> {
-        self.inbound_tx.send((peer_addr, message)).await.map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "failed to send message to test peer, all receivers have been dropped")
-        })
+        self.inbound_tx
+            .send((peer_addr, message))
+            .await
+            .map_err(|_| io::Error::other("failed to send message to test peer, all receivers have been dropped"))
     }
 }
 

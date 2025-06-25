@@ -55,7 +55,7 @@ impl Claims {
             JWT_SECRET.set(secret)
         } else {
             JWT_SECRET.set({
-                let seed: [u8; 16] = ::rand::thread_rng().gen();
+                let seed: [u8; 16] = ::rand::thread_rng().r#gen();
                 seed.to_vec()
             })
         }

@@ -14,7 +14,7 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ ]
@@ -25,6 +25,7 @@ metrics = [ "dep:metrics", "snarkvm/metrics" ]
 mock = [ "parking_lot", "tracing" ]
 prover = [ ]
 cuda = [ "snarkvm/cuda" ]
+serial = [ "snarkvm/serial" ]
 test = [ "mock", "translucent" ]
 translucent = [ "ledger" ]
 

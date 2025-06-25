@@ -26,6 +26,7 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -130,7 +131,7 @@ impl<N: Network> Telemetry<N> {
         let certificate_id = certificate.id();
 
         // If the certificate already exists in the tracker, then return early.
-        if tracked_certificates.get(&certificate_round).map_or(false, |certs| certs.contains(&certificate_id)) {
+        if tracked_certificates.get(&certificate_round).is_some_and(|certs| certs.contains(&certificate_id)) {
             return;
         }
 
@@ -337,7 +338,7 @@ mod tests {
             assert!(*participation_scores.get(address).unwrap() > 0.0);
         }
 
-        println!("{:?}", participation_scores);
+        println!("{participation_scores:?}");
     }
 
     #[test]

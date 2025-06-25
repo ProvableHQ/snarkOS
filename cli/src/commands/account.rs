@@ -542,7 +542,7 @@ mod tests {
         let message = "Hello, world!".to_string();
 
         let mut file = NamedTempFile::new().expect("Failed to create temp file");
-        writeln!(file, "{}", key).expect("Failed to write key to temp file");
+        writeln!(file, "{key}").expect("Failed to write key to temp file");
 
         let path = file.path().display().to_string();
         let account = Account::Sign { network: 0, private_key: None, private_key_file: Some(path), message, raw: true };

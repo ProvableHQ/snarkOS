@@ -21,6 +21,7 @@ use snarkvm::{
 };
 
 use indexmap::IndexMap;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

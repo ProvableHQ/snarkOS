@@ -118,7 +118,7 @@ pub(crate) mod tests {
             let address = Address::try_from(&private_key).unwrap();
 
             // Add the signed proposal to the map.
-            let round = rng.gen();
+            let round = rng.r#gen();
             let batch_id = Field::rand(rng);
             let signature = signer.sign(&[batch_id], rng).unwrap();
             signed_proposals.insert(address, (round, batch_id, signature));

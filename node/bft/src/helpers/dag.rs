@@ -69,12 +69,12 @@ impl<N: Network> DAG<N> {
 
     /// Returns `true` if the given certificate ID was recently committed.
     pub fn is_recently_committed(&self, round: u64, certificate_id: Field<N>) -> bool {
-        self.recent_committed_ids.get(&round).map_or(false, |ids| ids.contains(&certificate_id))
+        self.recent_committed_ids.get(&round).is_some_and(|ids| ids.contains(&certificate_id))
     }
 
     /// Returns `true` if the given certificate ID exists in the given round.
     pub fn contains_certificate_in_round(&self, round: u64, certificate_id: Field<N>) -> bool {
-        self.graph.get(&round).map_or(false, |map| map.values().any(|certificate| certificate.id() == certificate_id))
+        self.graph.get(&round).is_some_and(|map| map.values().any(|certificate| certificate.id() == certificate_id))
     }
 
     /// Returns the batch certificate for the given round and author.

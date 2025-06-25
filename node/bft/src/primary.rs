@@ -69,6 +69,7 @@ use locktick::{
 };
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -992,7 +993,7 @@ impl<N: Network> Primary<N> {
         let signer = signature.to_address();
 
         // Ensure the batch signature is signed by the validator.
-        if self.gateway.resolver().get_address(peer_ip).map_or(true, |address| address != signer) {
+        if self.gateway.resolver().get_address(peer_ip) != Some(signer) {
             // Proceed to disconnect the validator.
             self.gateway.disconnect(peer_ip);
             bail!("Malicious peer - batch signature is from a different validator ({signer})");
@@ -1080,7 +1081,7 @@ impl<N: Network> Primary<N> {
     /// This method performs the following steps:
     /// 1. Stores the given batch certificate, after ensuring it is valid.
     /// 2. If there are enough certificates to reach quorum threshold for the current round,
-    ///     then proceed to advance to the next round.
+    ///    then proceed to advance to the next round.
     async fn process_batch_certificate_from_peer(
         &self,
         peer_ip: SocketAddr,
@@ -2031,7 +2032,7 @@ mod tests {
     // Creates a mock solution.
     fn sample_unconfirmed_solution(rng: &mut TestRng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
         // Sample a random fake solution ID.
-        let solution_id = rng.gen::<u64>().into();
+        let solution_id = rng.r#gen::<u64>().into();
         // Vary the size of the solutions.
         let size = rng.gen_range(1024..10 * 1024);
         // Sample random fake solution bytes.
@@ -2952,7 +2953,7 @@ mod tests {
         let mut aborted_transmissions = HashSet::new();
         let mut transmissions_without_aborted = HashMap::new();
         for (transmission_id, transmission) in transmissions.clone() {
-            match rng.gen::<bool>() || aborted_transmissions.is_empty() {
+            match rng.r#gen::<bool>() || aborted_transmissions.is_empty() {
                 true => {
                     // Insert the aborted transmission.
                     aborted_transmissions.insert(transmission_id);

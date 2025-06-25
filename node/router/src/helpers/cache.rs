@@ -223,7 +223,7 @@ impl<N: Network> Cache<N> {
         // Insert the new timestamp.
         timestamps.push_back(now);
         // Retain only the timestamps that are within the recent interval.
-        while timestamps.front().map_or(false, |t| now - *t > Duration::seconds(interval_in_secs)) {
+        while timestamps.front().is_some_and(|t| now - *t > Duration::seconds(interval_in_secs)) {
             timestamps.pop_front();
         }
         // Return the frequency of recent requests.
@@ -243,7 +243,7 @@ impl<N: Network> Cache<N> {
         // Load the entry for the key.
         let timestamps = map_write.entry(key).or_default();
         // Retain only the timestamps that are within the recent interval.
-        while timestamps.front().map_or(false, |t| now - *t > Duration::seconds(interval_in_secs)) {
+        while timestamps.front().is_some_and(|t| now - *t > Duration::seconds(interval_in_secs)) {
             timestamps.pop_front();
         }
         // Return the frequency of recent requests.

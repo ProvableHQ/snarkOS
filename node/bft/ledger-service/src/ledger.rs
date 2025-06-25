@@ -32,7 +32,9 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
+
 use std::{
     collections::BTreeMap,
     fmt,

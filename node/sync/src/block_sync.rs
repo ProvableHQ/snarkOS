@@ -1449,8 +1449,7 @@ mod tests {
                 assert_eq!(sync.get_peer_height(&peer2_ip), Some(peer2_height));
 
                 // Compute the distance between the peers.
-                let distance =
-                    if peer1_height > peer2_height { peer1_height - peer2_height } else { peer2_height - peer1_height };
+                let distance = peer1_height.abs_diff(peer2_height);
 
                 // Check the common ancestor.
                 if distance < NUM_RECENT_BLOCKS as u32 {

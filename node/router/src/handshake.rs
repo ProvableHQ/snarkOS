@@ -158,7 +158,7 @@ impl<N: Network> Router<N> {
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
-        let our_nonce = rng.gen();
+        let our_nonce = rng.r#gen();
         // Send a challenge request to the peer.
         let our_request = ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce);
         send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
@@ -193,7 +193,7 @@ impl<N: Network> Router<N> {
         }
         /* Step 3: Send the challenge response. */
 
-        let response_nonce: u64 = rng.gen();
+        let response_nonce: u64 = rng.r#gen();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
         // Sign the counterparty nonce.
         let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
@@ -252,7 +252,7 @@ impl<N: Network> Router<N> {
         let rng = &mut OsRng;
 
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.gen();
+        let response_nonce: u64 = rng.r#gen();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
         let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
             return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
@@ -267,7 +267,7 @@ impl<N: Network> Router<N> {
         send(&mut framed, peer_addr, Message::ChallengeResponse(our_response)).await?;
 
         // Sample a random nonce.
-        let our_nonce = rng.gen();
+        let our_nonce = rng.r#gen();
         // Send the challenge request.
         let our_request = ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce);
         send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;

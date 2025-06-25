@@ -204,23 +204,24 @@ mod tests {
         let rng = &mut TestRng::default();
 
         // Sample random fake bytes.
-        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let data =
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
 
         // Initialize the ready queue.
         let mut ready = Ready::<CurrentNetwork>::new();
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_3 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the solutions.
@@ -243,8 +244,8 @@ mod tests {
 
         // Check that an unknown solution ID is not in the ready queue.
         let solution_id_unknown = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         assert!(!ready.contains(solution_id_unknown));
 
@@ -287,8 +288,8 @@ mod tests {
 
         // Initialize the solution ID.
         let solution_id = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the solution.
@@ -305,19 +306,20 @@ mod tests {
     #[test]
     fn test_insert_front() {
         let rng = &mut TestRng::default();
-        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let data =
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
 
         // Initialize the ready queue.
         let mut ready = Ready::<CurrentNetwork>::new();
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the solutions.
@@ -349,25 +351,25 @@ mod tests {
     fn test_clear_solutions() {
         let rng = &mut TestRng::default();
         let solution_data =
-            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
         let transaction_data =
-            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
 
         // Initialize the ready queue.
         let mut ready = Ready::<CurrentNetwork>::new();
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let transaction_id = TransmissionID::Transaction(
             <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
-            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.r#gen::<u128>()),
         );
 
         // Initialize the transmissions.

@@ -68,7 +68,7 @@ pub mod prop_tests {
         any::<u64>()
             .prop_map(|seed| {
                 let mut rng = TestRng::fixed(seed);
-                rng.gen()
+                rng.r#gen()
             })
             .boxed()
     }

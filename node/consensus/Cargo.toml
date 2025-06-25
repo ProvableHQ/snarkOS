@@ -14,10 +14,15 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ ]
+serial = [
+  "snarkos-node-bft/serial",
+  "snarkos-node-bft-ledger-service/serial",
+  "snarkvm/serial"
+]
 locktick = [
   "dep:locktick",
   "snarkos-node-bft/locktick",

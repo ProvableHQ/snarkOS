@@ -102,7 +102,7 @@ mod tests {
     ) -> Result<Record<N, Ciphertext<N>>> {
         // Prepare the record.
         let randomizer = Scalar::rand(rng);
-        let version = match rng.gen() {
+        let version = match rng.r#gen() {
             true => U8::<N>::one(),
             false => U8::<N>::zero(),
         };

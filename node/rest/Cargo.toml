@@ -14,11 +14,15 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ "parallel" ]
 parallel = [ "rayon" ]
+serial = [
+  "snarkvm/serial",
+  "snarkos-node-consensus/serial",
+]
 history = [ "snarkvm/history" ]
 telemetry = [ "snarkos-node-consensus/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]

@@ -358,17 +358,17 @@ impl<N: Network> Router<N> {
 
     /// Returns `true` if the given peer IP is a connected validator.
     pub fn is_connected_validator(&self, peer_ip: &SocketAddr) -> bool {
-        self.connected_peers.read().get(peer_ip).map_or(false, |peer| peer.is_validator())
+        self.connected_peers.read().get(peer_ip).is_some_and(|peer| peer.is_validator())
     }
 
     /// Returns `true` if the given peer IP is a connected prover.
     pub fn is_connected_prover(&self, peer_ip: &SocketAddr) -> bool {
-        self.connected_peers.read().get(peer_ip).map_or(false, |peer| peer.is_prover())
+        self.connected_peers.read().get(peer_ip).is_some_and(|peer| peer.is_prover())
     }
 
     /// Returns `true` if the given peer IP is a connected client.
     pub fn is_connected_client(&self, peer_ip: &SocketAddr) -> bool {
-        self.connected_peers.read().get(peer_ip).map_or(false, |peer| peer.is_client())
+        self.connected_peers.read().get(peer_ip).is_some_and(|peer| peer.is_client())
     }
 
     /// Returns `true` if the node is currently connecting to the given peer IP.
