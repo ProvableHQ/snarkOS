@@ -37,6 +37,9 @@ pub use proposal_cache::*;
 pub mod ready;
 pub use ready::*;
 
+pub mod ready_priority;
+pub use ready_priority::*;
+
 pub mod resolver;
 pub use resolver::*;
 

@@ -2350,10 +2350,10 @@ mod tests {
 
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
-        // Expect 2/5 transactions to be included in the proposal in addition to the solution.
-        assert_eq!(primary.proposed_batch.read().as_ref().unwrap().transmissions().len(), 3);
+        // Expect 2/5 transactions to be included in the proposal.
+        assert_eq!(primary.proposed_batch.read().as_ref().unwrap().transmissions().len(), 2);
         // Check the transmissions were correctly drained from the workers.
-        assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 3);
+        assert_eq!(primary.workers().iter().map(|worker| worker.num_transmissions()).sum::<usize>(), 4);
     }
 
     #[tokio::test]

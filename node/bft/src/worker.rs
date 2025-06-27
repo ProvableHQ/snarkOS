@@ -19,12 +19,12 @@ use crate::{
     ProposedBatch,
     Transport,
     events::{Event, TransmissionRequest, TransmissionResponse},
-    helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
+    helpers::{Pending, Ready, ReadyPriority, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
     spawn_blocking,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
-    console::prelude::*,
+    console::{prelude::*, types::U64},
     ledger::{
         block::Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
@@ -58,6 +58,8 @@ pub struct Worker<N: Network> {
     proposed_batch: Arc<ProposedBatch<N>>,
     /// The ready queue.
     ready: Arc<RwLock<Ready<N>>>,
+    /// The priority queue.
+    ready_priority: Arc<RwLock<ReadyPriority<N>>>,
     /// The pending transmissions queue.
     pending: Arc<Pending<TransmissionID<N>, Transmission<N>>>,
     /// The spawned handles.
@@ -83,6 +85,7 @@ impl<N: Network> Worker<N> {
             ledger,
             proposed_batch,
             ready: Default::default(),
+            ready_priority: Default::default(),
             pending: Default::default(),
             handles: Default::default(),
         })
@@ -115,7 +118,7 @@ impl<N: Network> Worker<N> {
 
     /// Returns the number of transmissions in the ready queue.
     pub fn num_transmissions(&self) -> usize {
-        self.ready.read().num_transmissions()
+        self.ready_priority.read().num_transactions().saturating_add(self.ready.read().num_transmissions())
     }
 
     /// Returns the number of ratifications in the ready queue.
@@ -130,7 +133,7 @@ impl<N: Network> Worker<N> {
 
     /// Returns the number of transactions in the ready queue.
     pub fn num_transactions(&self) -> usize {
-        self.ready.read().num_transactions()
+        self.ready_priority.read().num_transactions().saturating_add(self.ready.read().num_transactions())
     }
 }
 
@@ -215,23 +218,67 @@ impl<N: Network> Worker<N> {
     }
 
     /// Inserts the transmission at the front of the ready queue.
-    pub(crate) fn insert_front(&self, key: TransmissionID<N>, value: Transmission<N>) {
-        self.ready.write().insert_front(key, value);
+    ///
+    /// Note: it is assumed this method is called with a deserialized transmission.
+    pub(crate) fn insert_front(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
+        // If a priority fee is present and isn't zero, insert into the transmission into the
+        // priority queue.
+        if let (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(Data::Object(transaction))) =
+            (transmission_id, transmission.clone())
+        {
+            let Ok(priority_fee) = transaction.priority_fee_amount() else { return };
+
+            if priority_fee != U64::zero() {
+                self.ready_priority.write().insert(transaction_id, transaction, priority_fee);
+                return;
+            }
+        }
+
+        // Otherwise, insert into the ready queue.
+        self.ready.write().insert_front(transmission_id, transmission);
     }
 
     /// Removes and returns the transmission at the front of the ready queue.
+    ///
+    /// Note: it is assumed this method is called with a deserialized transmission.
     pub(crate) fn remove_front(&self) -> Option<(TransmissionID<N>, Transmission<N>)> {
+        if let Some((transaction_id, transaction)) = self.ready_priority.write().remove_front() {
+            // Reconstruct the transmission from the transaction.
+            let transaction = Data::Object(transaction);
+            let checksum = transaction.to_checksum::<N>().ok()?;
+            let transmission_id = TransmissionID::Transaction(transaction_id, checksum);
+            let transmission = Transmission::Transaction(transaction);
+
+            return Some((transmission_id, transmission));
+        }
+
         self.ready.write().remove_front()
     }
 
     /// Reinserts the specified transmission into the ready queue.
+    ///
+    /// Note: it is assumed this method is called with a deserialized transmission.
     pub(crate) fn reinsert(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
-        // Check if the transmission ID exists.
-        if !self.contains_transmission(transmission_id) {
-            // Insert the transmission into the ready queue.
-            return self.ready.write().insert(transmission_id, transmission);
+        // Return early if the transmission already exists.
+        if self.contains_transmission(transmission_id) {
+            return false;
         }
-        false
+
+        // If a priority fee is present and isn't zero, insert into the transmission into the
+        // priority queue.
+        if let (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(Data::Object(transaction))) =
+            (transmission_id, transmission.clone())
+        {
+            let Ok(priority_fee) = transaction.priority_fee_amount() else { return false };
+
+            if priority_fee != U64::zero() {
+                self.ready_priority.write().insert(transaction_id, transaction, priority_fee);
+                return true;
+            }
+        }
+
+        // Otherwise, insert into the ready queue.
+        self.ready.write().insert(transmission_id, transmission)
     }
 
     /// Broadcasts a worker ping event.
@@ -294,6 +341,8 @@ impl<N: Network> Worker<N> {
     }
 
     /// Handles the incoming transmission from a peer.
+    ///
+    /// Note: it is assumed this method is called with a deserialized transmission.
     pub(crate) fn process_transmission_from_peer(
         &self,
         peer_ip: SocketAddr,
@@ -398,9 +447,18 @@ impl<N: Network> Worker<N> {
         })?;
 
         // Check that the transaction is well-formed and unique.
-        self.ledger.check_transaction_basic(transaction_id, transaction).await?;
-        // Adds the transaction to the ready queue.
-        if self.ready.write().insert(transmission_id, transmission) {
+        self.ledger.check_transaction_basic(transaction_id, transaction.clone()).await?;
+
+        // If a priority fee is present, insert into the transmission into the
+        // priority queue, otherwise insert into the ready queue.
+        let priority_fee = transaction.priority_fee_amount()?;
+        let is_inserted = if priority_fee != U64::zero() {
+            self.ready_priority.write().insert(transaction_id, transaction, priority_fee)
+        } else {
+            self.ready.write().insert(transmission_id, transmission)
+        };
+
+        if is_inserted {
             trace!(
                 "Worker {}.{} - Added unconfirmed transaction '{}'",
                 self.id,
@@ -844,7 +902,8 @@ mod tests {
         let result = worker.process_unconfirmed_transaction(transaction_id, transaction_data).await;
         assert!(result.is_ok());
         assert!(!worker.pending.contains(transmission_id));
-        assert!(worker.ready.read().contains(transmission_id));
+        assert!(!worker.ready.read().contains(transmission_id));
+        assert!(worker.ready_priority.read().contains(&transaction_id));
     }
 
     #[tokio::test]
@@ -962,7 +1021,7 @@ mod tests {
         assert_eq!(worker.pending.num_sent_requests(transmission_id), 0);
         assert_eq!(worker.pending.num_callbacks(transmission_id), 0);
         assert!(!worker.pending.contains(transmission_id));
-        assert!(worker.ready.read().contains(transmission_id));
+        assert!(worker.ready_priority.read().contains(&transaction_id));
     }
 
     #[tokio::test]
