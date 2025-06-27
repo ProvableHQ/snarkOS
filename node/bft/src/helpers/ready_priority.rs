@@ -116,3 +116,320 @@ impl<N: Network> ReadyPriority<N> {
         self.transmissions.remove(&transmission_id).map(|transmission| (transmission_id, transmission))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snarkvm::{
+        ledger::narwhal::Data,
+        prelude::{Field, TestRng, Uniform},
+    };
+
+    use ::bytes::Bytes;
+    use indexmap::IndexSet;
+    use rand::{Rng, RngCore};
+
+    type CurrentNetwork = snarkvm::prelude::MainnetV0;
+
+    #[test]
+    fn test_ready_priority() {
+        let rng = &mut TestRng::default();
+
+        // Sample random fake bytes.
+        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+
+        // Initialize the priority queue.
+        let mut ready_priority = ReadyPriority::<CurrentNetwork>::new();
+
+        // Initialize the transmission IDs.
+        let transmission_id_1 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_2 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_3 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+
+        // Initialize the transmissions.
+        let transmission_1 = Transmission::Transaction(data(rng));
+        let transmission_2 = Transmission::Transaction(data(rng));
+        let transmission_3 = Transmission::Transaction(data(rng));
+
+        // Insert the transmissions with different fees.
+        assert!(ready_priority.insert(transmission_id_1, transmission_1.clone(), U64::new(100u64)));
+        assert!(ready_priority.insert(transmission_id_2, transmission_2.clone(), U64::new(200u64)));
+        assert!(ready_priority.insert(transmission_id_3, transmission_3.clone(), U64::new(150u64)));
+
+        // Check the number of transmissions.
+        assert_eq!(ready_priority.num_transmissions(), 3);
+        assert_eq!(ready_priority.num_transactions(), 3);
+
+        // Check the transmission IDs.
+        let transmission_ids =
+            vec![transmission_id_1, transmission_id_2, transmission_id_3].into_iter().collect::<IndexSet<_>>();
+        assert_eq!(ready_priority.transmission_ids().copied().collect::<IndexSet<_>>(), transmission_ids);
+        transmission_ids.iter().for_each(|id| assert!(ready_priority.contains(id)));
+
+        // Check that an unknown transmission ID is not in the priority queue.
+        let transmission_id_unknown = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        assert!(!ready_priority.contains(&transmission_id_unknown));
+
+        // Check the transmissions.
+        assert_eq!(ready_priority.get(&transmission_id_1), Some(transmission_1.clone()));
+        assert_eq!(ready_priority.get(&transmission_id_2), Some(transmission_2.clone()));
+        assert_eq!(ready_priority.get(&transmission_id_3), Some(transmission_3.clone()));
+        assert_eq!(ready_priority.get(&transmission_id_unknown), None);
+
+        // Check that transmissions are removed in priority order (highest fee first).
+        // transmission_id_2 has fee 200 (highest)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_2);
+        assert_eq!(removed_transmission, transmission_2);
+
+        // transmission_id_3 has fee 150 (second highest)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_3);
+        assert_eq!(removed_transmission, transmission_3);
+
+        // transmission_id_1 has fee 100 (lowest)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_1);
+        assert_eq!(removed_transmission, transmission_1);
+
+        // Check the priority queue is now empty.
+        assert_eq!(ready_priority.num_transmissions(), 0);
+        assert_eq!(ready_priority.num_transactions(), 0);
+        assert!(ready_priority.remove_front().is_none());
+    }
+
+    #[test]
+    fn test_ready_priority_duplicate() {
+        let rng = &mut TestRng::default();
+
+        // Sample random fake bytes.
+        let mut vec = vec![0u8; 512];
+        rng.fill_bytes(&mut vec);
+        let data = Data::Buffer(Bytes::from(vec));
+
+        // Initialize the priority queue.
+        let mut ready_priority = ReadyPriority::<CurrentNetwork>::new();
+
+        // Initialize the transmission ID.
+        let transmission_id = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+
+        // Initialize the transmission.
+        let transmission = Transmission::Transaction(data);
+
+        // Insert the transmission ID.
+        assert!(ready_priority.insert(transmission_id, transmission.clone(), U64::new(100u64)));
+        assert!(!ready_priority.insert(transmission_id, transmission, U64::new(200u64)));
+
+        // Check the number of transmissions.
+        assert_eq!(ready_priority.num_transmissions(), 1);
+        assert_eq!(ready_priority.num_transactions(), 1);
+    }
+
+    #[test]
+    fn test_ready_priority_same_fee_fifo() {
+        let rng = &mut TestRng::default();
+
+        // Sample random fake bytes.
+        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+
+        // Initialize the priority queue.
+        let mut ready_priority = ReadyPriority::<CurrentNetwork>::new();
+
+        // Initialize the transmission IDs.
+        let transmission_id_1 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_2 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_3 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+
+        // Initialize the transmissions.
+        let transmission_1 = Transmission::Transaction(data(rng));
+        let transmission_2 = Transmission::Transaction(data(rng));
+        let transmission_3 = Transmission::Transaction(data(rng));
+
+        // Insert the transmissions with the same fee (should maintain FIFO order).
+        let fee = U64::new(100u64);
+        assert!(ready_priority.insert(transmission_id_1, transmission_1.clone(), fee));
+        assert!(ready_priority.insert(transmission_id_2, transmission_2.clone(), fee));
+        assert!(ready_priority.insert(transmission_id_3, transmission_3.clone(), fee));
+
+        // Check that transmissions are removed in FIFO order when fees are the same.
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_1);
+        assert_eq!(removed_transmission, transmission_1);
+
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_2);
+        assert_eq!(removed_transmission, transmission_2);
+
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_3);
+        assert_eq!(removed_transmission, transmission_3);
+
+        // Check the priority queue is now empty.
+        assert_eq!(ready_priority.num_transmissions(), 0);
+        assert!(ready_priority.remove_front().is_none());
+    }
+
+    #[test]
+    fn test_ready_priority_mixed_fees() {
+        let rng = &mut TestRng::default();
+
+        // Sample random fake bytes.
+        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+
+        // Initialize the priority queue.
+        let mut ready_priority = ReadyPriority::<CurrentNetwork>::new();
+
+        // Initialize the transmission IDs.
+        let transmission_id_1 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_2 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_3 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_4 = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+
+        // Initialize the transmissions.
+        let transmission_1 = Transmission::Transaction(data(rng));
+        let transmission_2 = Transmission::Transaction(data(rng));
+        let transmission_3 = Transmission::Transaction(data(rng));
+        let transmission_4 = Transmission::Transaction(data(rng));
+
+        // Insert transmissions with mixed fees and some same fees.
+        assert!(ready_priority.insert(transmission_id_1, transmission_1.clone(), U64::new(100u64))); // First with fee 100
+        assert!(ready_priority.insert(transmission_id_2, transmission_2.clone(), U64::new(200u64))); // Highest fee
+        assert!(ready_priority.insert(transmission_id_3, transmission_3.clone(), U64::new(100u64))); // Second with fee 100
+        assert!(ready_priority.insert(transmission_id_4, transmission_4.clone(), U64::new(150u64))); // Middle fee
+
+        // Check that transmissions are removed in priority order:
+        // 1. transmission_id_2 (fee 200 - highest)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_2);
+        assert_eq!(removed_transmission, transmission_2);
+
+        // 2. transmission_id_4 (fee 150 - second highest)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_4);
+        assert_eq!(removed_transmission, transmission_4);
+
+        // 3. transmission_id_1 (fee 100 - first inserted)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_1);
+        assert_eq!(removed_transmission, transmission_1);
+
+        // 4. transmission_id_3 (fee 100 - second inserted, FIFO order)
+        let (removed_id, removed_transmission) = ready_priority.remove_front().unwrap();
+        assert_eq!(removed_id, transmission_id_3);
+        assert_eq!(removed_transmission, transmission_3);
+
+        // Check the priority queue is now empty.
+        assert_eq!(ready_priority.num_transmissions(), 0);
+        assert!(ready_priority.remove_front().is_none());
+    }
+
+    #[test]
+    fn test_ready_priority_transactions_method() {
+        let rng = &mut TestRng::default();
+
+        // Sample random fake bytes.
+        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+
+        // Initialize the priority queue.
+        let mut ready_priority = ReadyPriority::<CurrentNetwork>::new();
+
+        // Initialize the transaction IDs directly.
+        let tx_id_1 = <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng));
+        let tx_id_2 = <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng));
+
+        let transmission_id_1 = TransmissionID::Transaction(
+            tx_id_1,
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        let transmission_id_2 = TransmissionID::Transaction(
+            tx_id_2,
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+
+        // Initialize the transmissions.
+        let transmission_1 = Transmission::Transaction(data(rng));
+        let transmission_2 = Transmission::Transaction(data(rng));
+
+        // Insert the transmissions.
+        assert!(ready_priority.insert(transmission_id_1, transmission_1.clone(), U64::new(100u64)));
+        assert!(ready_priority.insert(transmission_id_2, transmission_2.clone(), U64::new(200u64)));
+
+        // Check the transactions method returns all transactions.
+        let transactions = ready_priority.transactions();
+        assert_eq!(transactions.len(), 2);
+
+        // Verify both transactions are present (order doesn't matter for this test).
+        let transaction_ids: Vec<_> = transactions.iter().map(|(id, _)| *id).collect();
+        assert!(transaction_ids.contains(&tx_id_1));
+        assert!(transaction_ids.contains(&tx_id_2));
+    }
+
+    #[test]
+    fn test_ready_priority_default() {
+        let ready_priority = ReadyPriority::<CurrentNetwork>::default();
+
+        assert_eq!(ready_priority.num_transmissions(), 0);
+        assert_eq!(ready_priority.num_transactions(), 0);
+        assert!(ready_priority.transmission_ids().next().is_none());
+        assert!(ready_priority.transmissions().next().is_none());
+        assert!(ready_priority.transactions().is_empty());
+    }
+
+    #[test]
+    fn test_ready_priority_empty_operations() {
+        let mut ready_priority = ReadyPriority::<CurrentNetwork>::new();
+
+        // Test operations on empty queue
+        assert_eq!(ready_priority.num_transmissions(), 0);
+        assert_eq!(ready_priority.num_transactions(), 0);
+        assert!(ready_priority.transmission_ids().next().is_none());
+        assert!(ready_priority.transmissions().next().is_none());
+        assert!(ready_priority.transactions().is_empty());
+        assert!(ready_priority.remove_front().is_none());
+
+        // Test contains and get on empty queue
+        let rng = &mut TestRng::default();
+        let transmission_id = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.gen::<u128>()),
+        );
+        assert!(!ready_priority.contains(&transmission_id));
+        assert_eq!(ready_priority.get(&transmission_id), None);
+    }
+}
