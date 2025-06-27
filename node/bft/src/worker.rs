@@ -118,7 +118,7 @@ impl<N: Network> Worker<N> {
 
     /// Returns the number of transmissions in the ready queue.
     pub fn num_transmissions(&self) -> usize {
-        self.ready_priority.read().num_transactions().saturating_add(self.ready.read().num_transmissions())
+        self.ready_priority.read().num_transmissions().saturating_add(self.ready.read().num_transmissions())
     }
 
     /// Returns the number of ratifications in the ready queue.
@@ -171,7 +171,8 @@ impl<N: Network> Worker<N> {
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         let transmission_id = transmission_id.into();
         // Check if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
-        self.ready.read().contains(transmission_id)
+        self.ready_priority.read().contains(&transmission_id)
+            || self.ready.read().contains(transmission_id)
             || self.proposed_batch.read().as_ref().map_or(false, |p| p.contains_transmission(transmission_id))
             || self.storage.contains_transmission(transmission_id)
             || self.ledger.contains_transmission(&transmission_id).unwrap_or(false)
@@ -223,13 +224,13 @@ impl<N: Network> Worker<N> {
     pub(crate) fn insert_front(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
         // If a priority fee is present and isn't zero, insert into the transmission into the
         // priority queue.
-        if let (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(Data::Object(transaction))) =
+        if let (TransmissionID::Transaction(_, _), Transmission::Transaction(Data::Object(transaction))) =
             (transmission_id, transmission.clone())
         {
             let Ok(priority_fee) = transaction.priority_fee_amount() else { return };
 
             if priority_fee != U64::zero() {
-                self.ready_priority.write().insert(transaction_id, transaction, priority_fee);
+                self.ready_priority.write().insert(transmission_id, transmission, priority_fee);
                 return;
             }
         }
@@ -242,13 +243,7 @@ impl<N: Network> Worker<N> {
     ///
     /// Note: it is assumed this method is called with a deserialized transmission.
     pub(crate) fn remove_front(&self) -> Option<(TransmissionID<N>, Transmission<N>)> {
-        if let Some((transaction_id, transaction)) = self.ready_priority.write().remove_front() {
-            // Reconstruct the transmission from the transaction.
-            let transaction = Data::Object(transaction);
-            let checksum = transaction.to_checksum::<N>().ok()?;
-            let transmission_id = TransmissionID::Transaction(transaction_id, checksum);
-            let transmission = Transmission::Transaction(transaction);
-
+        if let Some((transmission_id, transmission)) = self.ready_priority.write().remove_front() {
             return Some((transmission_id, transmission));
         }
 
@@ -266,13 +261,13 @@ impl<N: Network> Worker<N> {
 
         // If a priority fee is present and isn't zero, insert into the transmission into the
         // priority queue.
-        if let (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(Data::Object(transaction))) =
+        if let (TransmissionID::Transaction(_, _), Transmission::Transaction(Data::Object(transaction))) =
             (transmission_id, transmission.clone())
         {
             let Ok(priority_fee) = transaction.priority_fee_amount() else { return false };
 
             if priority_fee != U64::zero() {
-                self.ready_priority.write().insert(transaction_id, transaction, priority_fee);
+                self.ready_priority.write().insert(transmission_id, transmission, priority_fee);
                 return true;
             }
         }
@@ -453,7 +448,7 @@ impl<N: Network> Worker<N> {
         // priority queue, otherwise insert into the ready queue.
         let priority_fee = transaction.priority_fee_amount()?;
         let is_inserted = if priority_fee != U64::zero() {
-            self.ready_priority.write().insert(transaction_id, transaction, priority_fee)
+            self.ready_priority.write().insert(transmission_id, transmission, priority_fee)
         } else {
             self.ready.write().insert(transmission_id, transmission)
         };
@@ -903,7 +898,7 @@ mod tests {
         assert!(result.is_ok());
         assert!(!worker.pending.contains(transmission_id));
         assert!(!worker.ready.read().contains(transmission_id));
-        assert!(worker.ready_priority.read().contains(&transaction_id));
+        assert!(worker.ready_priority.read().contains(&transmission_id));
     }
 
     #[tokio::test]
@@ -1021,7 +1016,7 @@ mod tests {
         assert_eq!(worker.pending.num_sent_requests(transmission_id), 0);
         assert_eq!(worker.pending.num_callbacks(transmission_id), 0);
         assert!(!worker.pending.contains(transmission_id));
-        assert!(worker.ready_priority.read().contains(&transaction_id));
+        assert!(worker.ready_priority.read().contains(&transmission_id));
     }
 
     #[tokio::test]

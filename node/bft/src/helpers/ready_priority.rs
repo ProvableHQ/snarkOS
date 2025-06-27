@@ -18,21 +18,30 @@ use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
 };
 
-use snarkvm::{console::types::U64, ledger::Transaction, prelude::Network};
+use snarkvm::{
+    console::types::U64,
+    ledger::narwhal::{Transmission, TransmissionID},
+    prelude::Network,
+};
 
+/// Maintains a queue of verified and prioritised ("ready") transmissions.
 #[derive(Clone, Debug)]
 pub struct ReadyPriority<N: Network> {
+    /// A counter to ensure fifo ordering for transmissions with the same fee.
     seq_counter: u64,
-    transaction_ids: BTreeMap<(Reverse<U64<N>>, u64), N::TransactionID>,
-    transactions: HashMap<N::TransactionID, Transaction<N>>,
+    /// A map of transmissions ordered by fee and by fifo sequence.
+    transmission_ids: BTreeMap<(Reverse<U64<N>>, u64), TransmissionID<N>>,
+    /// A map of transmission IDs to transmissions.
+    transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
 }
 
 impl<N: Network> Default for ReadyPriority<N> {
+    /// Initializes a new instance of the priority queue.
     fn default() -> Self {
         ReadyPriority {
             seq_counter: Default::default(),
-            transaction_ids: Default::default(),
-            transactions: Default::default(),
+            transmission_ids: Default::default(),
+            transmissions: Default::default(),
         }
     }
 }
@@ -43,18 +52,28 @@ impl<N: Network> ReadyPriority<N> {
         Self::default()
     }
 
+    /// Returns the number of transmissions in the priority queue.
+    pub fn num_transmissions(&self) -> usize {
+        self.transmissions.len()
+    }
+
+    /// Returns the number of transactions in the priority queue.
     pub fn num_transactions(&self) -> usize {
-        self.transactions.len()
+        // All transmissions in the priority queue are transactions.
+        self.transmissions.len()
     }
 
-    pub fn contains(&self, transaction_id: &N::TransactionID) -> bool {
-        self.transactions.contains_key(transaction_id)
+    /// Returns `true` if the priority queue contains the specified `transmission ID`.
+    pub fn contains(&self, transmission_id: &TransmissionID<N>) -> bool {
+        self.transmissions.contains_key(transmission_id)
     }
 
-    pub fn insert(&mut self, transaction_id: N::TransactionID, transaction: Transaction<N>, fee: U64<N>) -> bool {
-        if let Entry::Vacant(entry) = self.transactions.entry(transaction_id) {
-            entry.insert(transaction);
-            self.transaction_ids.insert((Reverse(fee), self.seq_counter), transaction_id);
+    /// Inserts the specified (`transmission ID`, `transmission`) to the priority queue.
+    /// Returns `true` if the transmission is new, and was added to the priority queue.
+    pub fn insert(&mut self, transmission_id: TransmissionID<N>, transmission: Transmission<N>, fee: U64<N>) -> bool {
+        if let Entry::Vacant(entry) = self.transmissions.entry(transmission_id) {
+            entry.insert(transmission);
+            self.transmission_ids.insert((Reverse(fee), self.seq_counter), transmission_id);
             self.seq_counter += 1;
             true
         } else {
@@ -62,8 +81,9 @@ impl<N: Network> ReadyPriority<N> {
         }
     }
 
-    pub fn remove_front(&mut self) -> Option<(N::TransactionID, Transaction<N>)> {
-        let (_, transaction_id) = self.transaction_ids.pop_first()?;
-        self.transactions.remove(&transaction_id).map(|transaction| (transaction_id, transaction))
+    /// Removes and returns the transmission at the front of the priority queue.
+    pub fn remove_front(&mut self) -> Option<(TransmissionID<N>, Transmission<N>)> {
+        let (_, transmission_id) = self.transmission_ids.pop_first()?;
+        self.transmissions.remove(&transmission_id).map(|transmission| (transmission_id, transmission))
     }
 }
