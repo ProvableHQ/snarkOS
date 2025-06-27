@@ -22,7 +22,6 @@ use snarkvm::{
     },
 };
 
-use indexmap::{IndexMap, IndexSet};
 use std::collections::{HashMap, VecDeque, hash_map::Entry::Vacant};
 
 /// Maintains a queue of verified ("ready") transmissions.
@@ -77,13 +76,13 @@ impl<N: Network> Ready<N> {
     }
 
     /// Returns the transmission IDs in the ready queue.
-    pub fn transmission_ids(&self) -> IndexSet<TransmissionID<N>> {
-        self.transmission_ids.keys().copied().collect()
+    pub fn transmission_ids(&self) -> impl Iterator<Item = &TransmissionID<N>> {
+        self.transmission_ids.keys()
     }
 
     /// Returns the transmissions in the ready queue.
-    pub fn transmissions(&self) -> IndexMap<TransmissionID<N>, Transmission<N>> {
-        self.transmissions.iter().cloned().collect()
+    pub fn transmissions(&self) -> impl Iterator<Item = (&TransmissionID<N>, &Transmission<N>)> {
+        self.transmissions.iter().map(|(id, transmission)| (id, transmission))
     }
 
     /// Returns the solutions in the ready queue.
@@ -196,6 +195,7 @@ mod tests {
     use snarkvm::{ledger::narwhal::Data, prelude::Field};
 
     use ::bytes::Bytes;
+    use indexmap::IndexSet;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
@@ -238,7 +238,7 @@ mod tests {
 
         // Check the transmission IDs.
         let transmission_ids = vec![solution_id_1, solution_id_2, solution_id_3].into_iter().collect::<IndexSet<_>>();
-        assert_eq!(ready.transmission_ids(), transmission_ids);
+        assert_eq!(ready.transmission_ids().copied().collect::<IndexSet<_>>(), transmission_ids);
         transmission_ids.iter().for_each(|id| assert!(ready.contains(*id)));
 
         // Check that an unknown solution ID is not in the ready queue.
@@ -263,7 +263,7 @@ mod tests {
         // Check the number of transmissions.
         assert!(ready.is_empty());
         // Check the transmission IDs.
-        assert_eq!(ready.transmission_ids(), IndexSet::new());
+        assert_eq!(ready.transmission_ids().collect::<IndexSet<_>>(), IndexSet::new());
         // Check the transmissions.
         assert_eq!(transmissions, vec![
             (solution_id_1, solution_1),

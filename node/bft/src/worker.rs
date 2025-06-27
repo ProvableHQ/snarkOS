@@ -138,14 +138,19 @@ impl<N: Network> Worker<N> {
 }
 
 impl<N: Network> Worker<N> {
-    /// Returns the transmission IDs in the ready queue.
+    /// Returns the transmission IDs in the ready and priority queues.
     pub fn transmission_ids(&self) -> IndexSet<TransmissionID<N>> {
-        self.ready.read().transmission_ids()
+        self.ready_priority.read().transmission_ids().chain(self.ready.read().transmission_ids()).copied().collect()
     }
 
     /// Returns the transmissions in the ready queue.
     pub fn transmissions(&self) -> IndexMap<TransmissionID<N>, Transmission<N>> {
-        self.ready.read().transmissions()
+        self.ready_priority
+            .read()
+            .transmissions()
+            .chain(self.ready.read().transmissions())
+            .map(|(id, transmission)| (*id, transmission.clone()))
+            .collect()
     }
 
     /// Returns the solutions in the ready queue.
@@ -155,7 +160,7 @@ impl<N: Network> Worker<N> {
 
     /// Returns the transactions in the ready queue.
     pub fn transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
-        self.ready.read().transactions().into_iter()
+        self.ready_priority.read().transactions().into_iter().chain(self.ready.read().transactions())
     }
 }
 
@@ -284,8 +289,6 @@ impl<N: Network> Worker<N> {
     pub(crate) fn broadcast_ping(&self) {
         // Retrieve the transmission IDs.
         let transmission_ids = self
-            .ready
-            .read()
             .transmission_ids()
             .into_iter()
             .choose_multiple(&mut rand::thread_rng(), Self::MAX_TRANSMISSIONS_PER_WORKER_PING)
@@ -308,7 +311,7 @@ impl<N: Network> Worker<N> {
         }
         // If the ready queue is full, then skip this transmission.
         // Note: We must prioritize the unconfirmed solutions and unconfirmed transactions, not transmissions.
-        if self.ready.read().num_transmissions() > Self::MAX_TRANSMISSIONS_PER_WORKER {
+        if self.num_transmissions() > Self::MAX_TRANSMISSIONS_PER_WORKER {
             return;
         }
         // Attempt to fetch the transmission from the peer.
@@ -470,7 +473,7 @@ impl<N: Network> Worker<N> {
         // If a priority fee is present, insert into the transmission into the
         // priority queue, otherwise insert into the ready queue.
         let priority_fee = transaction.priority_fee_amount()?;
-        let is_inserted = if priority_fee != U64::zero() {
+        let is_inserted = if !priority_fee.is_zero() {
             self.ready_priority.write().insert(transmission_id, transmission, priority_fee)
         } else {
             self.ready.write().insert(transmission_id, transmission)
@@ -484,6 +487,7 @@ impl<N: Network> Worker<N> {
                 fmt_id(checksum).dimmed()
             );
         }
+
         Ok(())
     }
 }

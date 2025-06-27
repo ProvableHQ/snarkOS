@@ -20,7 +20,10 @@ use std::{
 
 use snarkvm::{
     console::types::U64,
-    ledger::narwhal::{Transmission, TransmissionID},
+    ledger::{
+        Transaction,
+        narwhal::{Data, Transmission, TransmissionID},
+    },
     prelude::Network,
 };
 
@@ -63,11 +66,33 @@ impl<N: Network> ReadyPriority<N> {
         self.transmissions.len()
     }
 
+    /// Returns the transmission IDs in the priority queue.
+    pub fn transmission_ids(&self) -> impl Iterator<Item = &TransmissionID<N>> {
+        self.transmissions.keys()
+    }
+
+    /// Returns the transmissions in the priority queue.
+    pub fn transmissions(&self) -> impl Iterator<Item = (&TransmissionID<N>, &Transmission<N>)> {
+        self.transmissions.iter()
+    }
+
+    /// Returns the transactions in the priority queue.
+    pub fn transactions(&self) -> Vec<(N::TransactionID, Data<Transaction<N>>)> {
+        self.transmissions
+            .iter()
+            .filter_map(|(id, transmission)| match (id, transmission) {
+                (TransmissionID::Transaction(id, _), Transmission::Transaction(tx)) => Some((*id, tx.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Returns `true` if the priority queue contains the specified `transmission ID`.
     pub fn contains(&self, transmission_id: &TransmissionID<N>) -> bool {
         self.transmissions.contains_key(transmission_id)
     }
 
+    /// Returns the transmission, given the specified `transmission ID`.
     pub fn get(&self, transmission_id: &TransmissionID<N>) -> Option<Transmission<N>> {
         self.transmissions.get(transmission_id).cloned()
     }
