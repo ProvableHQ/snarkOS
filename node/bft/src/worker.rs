@@ -24,7 +24,7 @@ use crate::{
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
-    console::{prelude::*, types::U64},
+    console::prelude::*,
     ledger::{
         block::Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
@@ -238,7 +238,7 @@ impl<N: Network> Worker<N> {
         {
             let Ok(priority_fee) = transaction.priority_fee_amount() else { return };
 
-            if priority_fee != U64::zero() {
+            if !priority_fee.is_zero() {
                 self.ready_priority.write().insert(transmission_id, transmission, priority_fee);
                 return;
             }
@@ -275,7 +275,7 @@ impl<N: Network> Worker<N> {
         {
             let Ok(priority_fee) = transaction.priority_fee_amount() else { return false };
 
-            if priority_fee != U64::zero() {
+            if !priority_fee.is_zero() {
                 self.ready_priority.write().insert(transmission_id, transmission, priority_fee);
                 return true;
             }
