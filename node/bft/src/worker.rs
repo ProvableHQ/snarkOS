@@ -370,7 +370,7 @@ impl<N: Network> Worker<N> {
             return;
         }
 
-        let log_confirmation_trace = || {
+        let log_insert_trace = || {
             trace!(
                 "Worker {} - Added transmission '{}.{}' from '{peer_ip}'",
                 self.id,
@@ -397,14 +397,14 @@ impl<N: Network> Worker<N> {
             let Ok(priority_fee) = tx.priority_fee_amount() else { return };
             if !priority_fee.is_zero() {
                 self.ready_priority.write().insert(transmission_id, transmission, priority_fee);
-                log_confirmation_trace();
+                log_insert_trace();
                 return;
             }
         }
 
         // Otherwise, insert the transmission into the ready queue.
         if self.ready.write().insert(transmission_id, transmission) {
-            log_confirmation_trace()
+            log_insert_trace()
         }
     }
 

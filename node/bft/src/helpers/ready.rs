@@ -82,6 +82,7 @@ impl<N: Network> Ready<N> {
 
     /// Returns the transmissions in the ready queue.
     pub fn transmissions(&self) -> impl Iterator<Item = (&TransmissionID<N>, &Transmission<N>)> {
+        // A little pattern destructuring magic... &(a, b) -> (&a, &b)
         self.transmissions.iter().map(|(id, transmission)| (id, transmission))
     }
 
