@@ -68,6 +68,10 @@ impl<N: Network> ReadyPriority<N> {
         self.transmissions.contains_key(transmission_id)
     }
 
+    pub fn get(&self, transmission_id: &TransmissionID<N>) -> Option<Transmission<N>> {
+        self.transmissions.get(transmission_id).cloned()
+    }
+
     /// Inserts the specified (`transmission ID`, `transmission`) to the priority queue.
     /// Returns `true` if the transmission is new, and was added to the priority queue.
     pub fn insert(&mut self, transmission_id: TransmissionID<N>, transmission: Transmission<N>, fee: U64<N>) -> bool {

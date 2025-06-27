@@ -183,6 +183,10 @@ impl<N: Network> Worker<N> {
     /// Note: We explicitly forbid retrieving a transmission from the ledger, as transmissions
     /// in the ledger are not guaranteed to be invalid for the current batch.
     pub fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>> {
+        // Check if the transmission ID exists in the priority queue.
+        if let Some(transmission) = self.ready_priority.read().get(&transmission_id) {
+            return Some(transmission);
+        }
         // Check if the transmission ID exists in the ready queue.
         if let Some(transmission) = self.ready.read().get(transmission_id) {
             return Some(transmission);
@@ -358,6 +362,20 @@ impl<N: Network> Worker<N> {
             // All other combinations are clearly invalid.
             _ => false,
         };
+
+        if !is_well_formed {
+            return;
+        }
+
+        let log_confirmation_trace = || {
+            trace!(
+                "Worker {} - Added transmission '{}.{}' from '{peer_ip}'",
+                self.id,
+                fmt_id(transmission_id),
+                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+            )
+        };
+
         // If the transmission is a deserialized execution, verify it immediately.
         // This takes heavy transaction verification out of the hot path during block generation.
         if let (TransmissionID::Transaction(tx_id, _), Transmission::Transaction(Data::Object(tx))) =
@@ -370,15 +388,20 @@ impl<N: Network> Worker<N> {
                     let _ = self_.ledger.check_transaction_basic(tx_id, tx_).await;
                 });
             }
+
+            // If a priority fee is present and isn't zero, insert into the transmission into the
+            // priority queue.
+            let Ok(priority_fee) = tx.priority_fee_amount() else { return };
+            if !priority_fee.is_zero() {
+                self.ready_priority.write().insert(transmission_id, transmission, priority_fee);
+                log_confirmation_trace();
+                return;
+            }
         }
-        // If the transmission ID and transmission type matches, then insert the transmission into the ready queue.
-        if is_well_formed && self.ready.write().insert(transmission_id, transmission) {
-            trace!(
-                "Worker {} - Added transmission '{}.{}' from '{peer_ip}'",
-                self.id,
-                fmt_id(transmission_id),
-                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
-            );
+
+        // Otherwise, insert the transmission into the ready queue.
+        if self.ready.write().insert(transmission_id, transmission) {
+            log_confirmation_trace()
         }
     }
 
