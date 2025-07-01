@@ -149,7 +149,7 @@ pub struct Start {
 
     /// Allow untrusted peers (not listed in `--peers`) to connect (as a comma-separated list)..
     ///
-    /// This behavior is always enabled for lient and Prover nodes ignore the flag and always allow untrusted peers to connect.
+    /// This behavior is always enabled for client and Prover nodes ignore the flag and always allow untrusted peers to connect.
     #[clap(long, verbatim_doc_comment)]
     pub allow_external_peers: bool,
 
