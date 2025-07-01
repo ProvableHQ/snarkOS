@@ -172,7 +172,7 @@ impl<N: Network> Sync<N> {
 
     /// Starts the sync module.
     ///
-    /// When this function returns sucessfully, the sync module will have spawned background tasks
+    /// When this function returns successfully, the sync module will have spawned background tasks
     /// that fetch blocks from other validators.
     pub async fn run(&self, ping: Option<Arc<Ping<N>>>, sync_receiver: SyncReceiver<N>) -> Result<()> {
         info!("Starting the sync module...");
@@ -299,8 +299,8 @@ impl<N: Network> Sync<N> {
     /// This is called periodically by a tokio background task spawned in `Self::run`.
     /// Some unit tests also call this function directly to manually trigger block synchronization.
     pub(crate) async fn try_block_sync(&self) -> bool {
-        // Do not attept to sync if there are no blocks to sync.
-        // This prevents redudant log messages and performing unnecessary computation.
+        // Do not attempt to sync if there are no blocks to sync.
+        // This prevents redundant log messages and performing unnecessary computation.
         if !self.block_sync.can_block_sync() {
             return false;
         }
@@ -326,7 +326,7 @@ impl<N: Network> Sync<N> {
         self.block_sync.insert_block_responses(peer_ip, blocks)?;
 
         // Try to process responses stored in BlockSync.
-        // Note: Do not call `self.block_sync.try_advancing_block_synchronziation` here as it will process
+        // Note: Do not call `self.block_sync.try_advancing_block_synchronization` here as it will process
         // and remove any completed requests, which means the call to `sync_storage_with_blocks` will not process
         // them as expected.
         self.try_advancing_block_synchronization().await?;
