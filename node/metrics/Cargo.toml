@@ -20,7 +20,7 @@ edition = "2021"
 default = [ "rayon", "snarkvm/metrics" ]
 locktick = [ "dep:locktick", "snarkvm/locktick" ]
 metrics = [ "snarkvm/metrics" ]
-serial = [ "snarkvm/metrics" ]
+serial = [ "snarkvm/serial" ]
 
 [dependencies.locktick]
 version = "0.3"

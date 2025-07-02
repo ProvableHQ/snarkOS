@@ -22,7 +22,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
-    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
+    utilities::{cfg_iter, indexmap::cfg_sorted_by},
 };
 
 use indexmap::{IndexMap, IndexSet, map::Entry};
@@ -31,7 +31,8 @@ use locktick::parking_lot::RwLock;
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+#[cfg(not(feature = "serial"))]
+use rayon::iter::ParallelIterator;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
@@ -395,10 +396,10 @@ impl<N: Network> Storage<N> {
         let certificates = self.certificates.read();
 
         // Iterate over the rounds.
-        cfg_sorted_by!(rounds.clone(), |a, _, b, _| a.cmp(b))
+        cfg_sorted_by(rounds.clone(), |a, _, b, _| a.cmp(b))
             .flat_map(|(_, certificates_for_round)| {
                 // Iterate over the certificates for the round.
-                cfg_into_iter!(certificates_for_round).filter_map(|(certificate_id, _)| {
+                cfg_iter(certificates_for_round).filter_map(|(certificate_id, _)| {
                     // Skip the certificate if it already exists in the ledger.
                     if self.ledger.contains_certificate(&certificate_id).unwrap_or(false) {
                         None
@@ -536,7 +537,7 @@ impl<N: Network> Storage<N> {
         );
 
         // Ensure that the signers of the certificate are in the committee.
-        cfg_iter!(signers).try_for_each(|signer| {
+        cfg_iter(&signers).try_for_each(|signer| {
             ensure!(
                 committee_lookback.is_committee_member(*signer),
                 "Signer '{signer}' of certificate '{}' for round {certificate_round} is not in the committee",

@@ -32,7 +32,7 @@ use snarkos_node_router::{
 use snarkvm::{
     console::{program::ProgramID, types::Field},
     ledger::narwhal::Data,
-    prelude::{Ledger, Network, cfg_into_iter, store::ConsensusStorage},
+    prelude::{Ledger, Network, cfg_iter, store::ConsensusStorage},
 };
 
 use anyhow::Result;

@@ -23,7 +23,7 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{Address, Field, FromBytes, Network, Result, bail, cfg_into_iter, deployment_cost, execution_cost_v2},
+    prelude::{Address, Field, FromBytes, Network, Result, bail, cfg_iter, deployment_cost, execution_cost_v2},
 };
 
 use anyhow::anyhow;
@@ -32,6 +32,7 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -139,7 +140,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     /// Returns the blocks in the given block range.
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>> {
-        cfg_into_iter!(heights).map(|height| self.get_block(height)).collect()
+        cfg_iter(heights).map(|height| self.get_block(height)).collect()
     }
 
     /// Returns the solution for the given solution ID.

@@ -27,6 +27,7 @@ prover = [ ]
 cuda = [ "snarkvm/cuda" ]
 test = [ "mock", "translucent" ]
 translucent = [ "ledger" ]
+serial = [ "snarkvm/serial" ]
 
 [dependencies.anyhow]
 workspace = true

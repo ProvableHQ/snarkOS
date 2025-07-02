@@ -74,7 +74,7 @@ pub fn update_block_metrics<N: Network>(block: &Block<N>) {
     let rejected_execute = AtomicUsize::new(0);
 
     // Add transaction to atomic counter based on enum type match.
-    cfg_iter!(block.transactions()).for_each(|tx| match tx {
+    cfg_iter(block.transactions()).for_each(|tx| match tx {
         ConfirmedTransaction::AcceptedDeploy(_, _, _) => {
             accepted_deploy.fetch_add(1, Ordering::Relaxed);
         }
@@ -117,7 +117,7 @@ pub fn add_transmission_latency_metric<N: Network>(
     let ts_now = OffsetDateTime::now_utc().unix_timestamp();
 
     // Determine which keys to remove.
-    let keys_to_remove = cfg_iter!(transmissions_tracker)
+    let keys_to_remove = cfg_iter(&*transmissions_tracker)
         .flat_map(|(transmission_id, timestamp)| {
             let elapsed_time = std::time::Duration::from_secs((ts_now - *timestamp) as u64);
 

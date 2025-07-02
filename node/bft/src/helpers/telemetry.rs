@@ -26,6 +26,7 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -108,8 +109,8 @@ impl<N: Network> Telemetry<N> {
         self.garbage_collect_certificates(next_gc_round);
 
         // Insert the subdag certificates.
-        cfg_iter!(subdag).for_each(|(_round, certificates)| {
-            cfg_iter!(certificates).for_each(|certificate| {
+        cfg_iter(subdag).for_each(|(_round, certificates)| {
+            cfg_iter(certificates).for_each(|certificate| {
                 // TODO (raychu86): Can be greatly optimized by doing a one-shot update instead of individual certificates.
                 self.insert_certificate(certificate);
             })
@@ -180,7 +181,7 @@ impl<N: Network> Telemetry<N> {
         let total_certificates = validator_certificates.values().map(|rounds| rounds.len()).sum::<usize>();
 
         // Calculate the signature participation scores for each validator.
-        let signature_participation_scores: IndexMap<_, _> = cfg_iter!(validator_signatures)
+        let signature_participation_scores: IndexMap<_, _> = cfg_iter(&*validator_signatures)
             .map(|(address, signatures)| {
                 let total_signatures = signatures.values().sum::<u32>() as f64;
                 let score = total_signatures / total_certificates as f64 * 100.0;
@@ -191,10 +192,10 @@ impl<N: Network> Telemetry<N> {
         // Calculate the certificate participation scores for each validator.
         // This score is based on how many certificates the validator has included in every two rounds.
         let tracked_rounds: Vec<_> = tracked_certificates.keys().skip_while(|r| *r % 2 == 0).copied().collect();
-        let certificate_participation_scores: IndexMap<_, _> = cfg_iter!(validator_certificates)
+        let certificate_participation_scores: IndexMap<_, _> = cfg_iter(&*validator_certificates)
             .map(|(address, certificate_rounds)| {
                 // Count the number of round pairs that are included in the certificate rounds.
-                let num_included_round_pairs = cfg_chunks!(tracked_rounds, 2)
+                let num_included_round_pairs = cfg_chunks(&tracked_rounds, 2)
                     .filter(|chunk| chunk.iter().any(|r| certificate_rounds.contains(r)))
                     .count();
                 // Calculate the number of round pairs.

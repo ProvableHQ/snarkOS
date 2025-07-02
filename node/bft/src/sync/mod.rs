@@ -29,7 +29,7 @@ use snarkos_node_tcp::P2P;
 use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
-    prelude::{cfg_into_iter, cfg_iter},
+    prelude::cfg_iter,
 };
 
 use anyhow::{Result, anyhow, bail};
@@ -37,6 +37,7 @@ use anyhow::{Result, anyhow, bail};
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -389,7 +390,7 @@ impl<N: Network> Sync<N> {
             // and as placeholder (irrelevant) block authority in the genesis block.
             if let Authority::Quorum(subdag) = block.authority() {
                 // Reconstruct the unconfirmed transactions.
-                let unconfirmed_transactions = cfg_iter!(block.transactions())
+                let unconfirmed_transactions = cfg_iter(block.transactions())
                     .filter_map(|tx| {
                         tx.to_unconfirmed_transaction().map(|unconfirmed| (unconfirmed.id(), unconfirmed)).ok()
                     })
@@ -397,7 +398,7 @@ impl<N: Network> Sync<N> {
 
                 // Iterate over the certificates.
                 for certificates in subdag.values().cloned() {
-                    cfg_into_iter!(certificates).for_each(|certificate| {
+                    cfg_iter(certificates).for_each(|certificate| {
                         self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
                     });
                 }
@@ -604,7 +605,7 @@ impl<N: Network> Sync<N> {
         // and as placeholder (irrelevant) block authority in the genesis block.
         if let Authority::Quorum(subdag) = block.authority() {
             // Reconstruct the unconfirmed transactions.
-            let unconfirmed_transactions = cfg_iter!(block.transactions())
+            let unconfirmed_transactions = cfg_iter(block.transactions())
                 .filter_map(|tx| {
                     tx.to_unconfirmed_transaction().map(|unconfirmed| (unconfirmed.id(), unconfirmed)).ok()
                 })
@@ -612,7 +613,7 @@ impl<N: Network> Sync<N> {
 
             // Iterate over the certificates.
             for certificates in subdag.values().cloned() {
-                cfg_into_iter!(certificates.clone()).for_each(|certificate| {
+                cfg_iter(certificates.clone()).for_each(|certificate| {
                     // Sync the batch certificate with the block.
                     self.storage.sync_certificate_with_block(&block, certificate.clone(), &unconfirmed_transactions);
                 });
