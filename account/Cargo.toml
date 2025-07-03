@@ -18,7 +18,10 @@ edition = "2021"
 
 [features]
 cuda = [ "snarkvm/cuda" ]
-test_targets = [ "snarkvm/test_targets" ]
+test_network = [
+  "snarkvm/test_consensus_heights",
+  "snarkvm/test_targets",
+]
 
 [dependencies.anyhow]
 version = "1.0.79"

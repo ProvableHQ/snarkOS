@@ -28,6 +28,11 @@ locktick = [
 metrics = [ "dep:metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]
 test = [ "snarkos-node-sync-locators/test" ]
+test_network = [
+  "snarkos-node-sync-locators/test_network",
+  "snarkvm/test_consensus_heights",
+  "snarkvm/test_targets",
+]
 
 [dependencies.anyhow]
 version = "1.0"

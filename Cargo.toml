@@ -44,11 +44,11 @@ version = "1.0.1"
 default-features = false
 
 [workspace.dependencies.snarkvm] # If this is updated, the rev in `node/rest/Cargo.toml` must be updated as well.
-#path = "../snarkVM"
+path = "../snarkVM"
 #git = "https://github.com/ProvableHQ/snarkVM.git"
 #rev = "0d744e9"
-version = "=3.8.0"
-features = [ "circuit", "console", "rocks" ]
+#version = "=3.8.0"
+features = [ "circuit", "console", "rocks", ]
 
 [[bin]]
 name = "snarkos"
@@ -81,7 +81,19 @@ locktick = [
   "snarkos-node-sync/locktick",
   "snarkos-node-tcp/locktick"
 ]
-test_network = [ "snarkos-cli/test_network" ]
+test_network = [
+  "snarkos-account/test_network",
+  "snarkos-cli/test_network",
+  "snarkos-display/test_network",
+  "snarkos-node-bft/test_network",
+  "snarkos-node/test_network",
+  "snarkos-node-cdn/test_network",
+  "snarkos-node-consensus/test_network",
+  "snarkos-node-metrics/test_network",
+  "snarkos-node-rest/test_network",
+  "snarkos-node-router/test_network",
+  "snarkos-node-sync/test_network",
+]
 
 [dependencies.anyhow]
 version = "1.0.79"

@@ -21,6 +21,10 @@ default = [ "rayon", "snarkvm/metrics" ]
 locktick = [ "dep:locktick", "snarkvm/locktick" ]
 metrics = [ "snarkvm/metrics" ]
 serial = [ "snarkvm/metrics" ]
+test_network = [
+  "snarkvm/test_consensus_heights",
+  "snarkvm/test_targets",
+]
 
 [dependencies.locktick]
 version = "0.3"

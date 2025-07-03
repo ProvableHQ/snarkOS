@@ -38,6 +38,13 @@ cuda = [
   "snarkos-node-bft-ledger-service/cuda",
   "snarkos-node-sync/cuda"
 ]
+test_network = [
+  "snarkos-node-bft-events/test_network",
+  "snarkos-node-bft-ledger-service/test_network",
+  "snarkos-node-bft-storage-service/test_network",
+  "snarkvm/test_consensus_heights",
+  "snarkvm/test_targets",
+]
 
 [dependencies.aleo-std]
 workspace = true

@@ -552,6 +552,7 @@ impl Start {
 
         // Parse the genesis block.
         let genesis = self.parse_genesis::<N>()?;
+        println!("Genesis Block: {:?}", genesis);
         // Parse the private key of the node.
         let account = self.parse_private_key::<N>()?;
         // Parse the node type.
@@ -707,6 +708,7 @@ fn load_or_compute_genesis<N: Network>(
     ]?);
 
     // Input the parameters' metadata based on network
+    #[cfg(not(feature = "test_network"))]
     match N::ID {
         snarkvm::console::network::MainnetV0::ID => {
             preimage.extend(snarkvm::parameters::mainnet::BondValidatorVerifier::METADATA.as_bytes());

@@ -32,9 +32,9 @@ cuda = [
   "snarkos-node-cdn/cuda",
   "snarkos-node-rest/cuda"
 ]
-test_network = [ 
-  "snarkvm/test_targets", 
-  "snarkvm/test_consensus_heights" 
+test_network = [
+  "snarkvm/test_consensus_heights",
+  "snarkvm/test_targets",
 ]
 
 [dependencies.aleo-std]

@@ -50,6 +50,10 @@ cuda = [
   "snarkos-node-router/cuda",
   "snarkos-node-sync/cuda"
 ]
+test_network = [
+  "snarkvm/test_consensus_heights",
+  "snarkvm/test_targets",
+]
 
 [dependencies.aleo-std]
 workspace = true
