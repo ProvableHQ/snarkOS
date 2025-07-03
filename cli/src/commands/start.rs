@@ -552,7 +552,6 @@ impl Start {
 
         // Parse the genesis block.
         let genesis = self.parse_genesis::<N>()?;
-        println!("Genesis Block: {:?}", genesis);
         // Parse the private key of the node.
         let account = self.parse_private_key::<N>()?;
         // Parse the node type.
