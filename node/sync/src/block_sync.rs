@@ -27,9 +27,9 @@ use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::{Mutex, RwLock};
+use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rand::seq::{IteratorRandom, SliceRandom};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -37,7 +37,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as TMutex, Notify};
 
 mod sync_state;
 use sync_state::SyncState;
@@ -127,7 +127,7 @@ pub struct BlockSync<N: Network> {
     /// The boolean indicator of whether the node is synced up to the latest block (within the given tolerance).
     sync_state: RwLock<SyncState>,
     /// The lock to guarantee advance_with_sync_blocks() is called only once at a time.
-    advance_with_sync_blocks_lock: Mutex<()>,
+    advance_with_sync_blocks_lock: TMutex<()>,
     /// Gets notified when there was an update to the locators, a peer disconnected, or we received a new block response.
     notify: Notify,
 }
@@ -367,12 +367,12 @@ impl<N: Network> BlockSync<N> {
     /// Validators will not call this function, but instead execute `snarkos_node_bft::Sync::try_advancing_block_synchronization`
     /// which also updates the BFT state.
     #[inline]
-    pub fn try_advancing_block_synchronization(&self) -> bool {
+    pub async fn try_advancing_block_synchronization(&self) -> Result<bool> {
         // Acquire the lock to ensure this function is called only once at a time.
         // If the lock is already acquired, return early.
-        let Some(_lock) = self.advance_with_sync_blocks_lock.try_lock() else {
+        let Ok(_lock) = self.advance_with_sync_blocks_lock.try_lock() else {
             trace!("Skipping attempt to advance block synchronziation as it is already in progress");
-            return false;
+            return Ok(false);
         };
 
         // Start with the current height.
@@ -393,24 +393,32 @@ impl<N: Network> BlockSync<N> {
                 break;
             }
 
-            // Try to check the next block and advance to it.
-            let advanced = match self.ledger.check_next_block(&block) {
-                Ok(_) => match self.ledger.advance_to_next_block(&block) {
-                    Ok(_) => true,
+            let ledger = self.ledger.clone();
+            let advanced = tokio::task::spawn_blocking(move || {
+                // Try to check the next block and advance to it.
+                match ledger.check_next_block(&block) {
+                    Ok(_) => match ledger.advance_to_next_block(&block) {
+                        Ok(_) => true,
+                        Err(err) => {
+                            warn!(
+                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                                block.height(),
+                                block.hash()
+                            );
+                            false
+                        }
+                    },
                     Err(err) => {
                         warn!(
-                            "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                            "The next block (height: {}, hash: '{}') is invalid - {err}",
                             block.height(),
                             block.hash()
                         );
                         false
                     }
-                },
-                Err(err) => {
-                    warn!("The next block (height: {}, hash: '{}') is invalid - {err}", block.height(), block.hash());
-                    false
                 }
-            };
+            })
+            .await?;
 
             // Remove the block response.
             self.remove_block_response(next_height);
@@ -426,9 +434,9 @@ impl<N: Network> BlockSync<N> {
 
         if current_height > start_height {
             self.set_sync_height(current_height);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 }

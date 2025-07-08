@@ -190,9 +190,11 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
 
     /// Handles a `BlockResponse` message.
     fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
+        //TODO (kaimast): do validators ever receive block responses from clients?
         match self.sync.insert_block_responses(peer_ip, blocks) {
             Ok(()) => {
-                self.sync.try_advancing_block_synchronization();
+                let sync = self.sync.clone();
+                tokio::spawn(async move { sync.try_advancing_block_synchronization().await });
                 true
             }
             Err(error) => {

@@ -220,7 +220,12 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
         match self.sync.insert_block_responses(peer_ip, blocks) {
             Ok(()) => {
-                self.sync.try_advancing_block_synchronization();
+                let sync = self.sync.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = sync.try_advancing_block_synchronization().await {
+                        warn!("Block sync failed: {err}");
+                    }
+                });
                 true
             }
             Err(error) => {
