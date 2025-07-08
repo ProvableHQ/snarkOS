@@ -157,14 +157,14 @@ impl<N: Network> BlockSync<N> {
         self.sync_state.read().is_block_synced()
     }
 
-    /// Returns `true` if there a blocks to sync from other nodes.
+    /// Returns `true` if there a blocks to fetch or responses to process.
     ///
     /// This will always return true if [`Self::is_block_synced`] returns false,
     /// but it can return true when [`Self::is_block_synced`] returns true
     /// (due to the latter having a tolerance of one block).
     #[inline]
     pub fn can_block_sync(&self) -> bool {
-        self.sync_state.read().can_block_sync()
+        self.sync_state.read().can_block_sync() || self.has_pending_responses()
     }
 
     /// Returns the number of blocks the node is behind the greatest peer height,
