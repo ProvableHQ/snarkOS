@@ -60,6 +60,9 @@ workspace = true
 [dependencies.rayon]
 workspace = true
 
+[dependencies.thiserror]
+workspace = true
+
 [dependencies.snarkos-account]
 workspace = true
 

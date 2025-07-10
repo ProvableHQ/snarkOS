@@ -34,6 +34,7 @@ use snarkvm::{
     prelude::{Network, block::Transaction, error},
 };
 
+use anyhow::bail;
 use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Validator<N, C> {
@@ -165,26 +166,27 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
     }
 
     /// Retrieves the blocks within the block request range, and returns the block response to the peer.
-    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
+    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> Result<()> {
         let BlockRequest { start_height, end_height } = &message;
 
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => Data::Object(DataBlocks(blocks)),
-            Err(error) => {
-                error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
-                return false;
+            Err(err) => {
+                return Err(
+                    err.context(format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"))
+                );
             }
         };
+
         // Send the `BlockResponse` message to the peer.
         self.router().send(peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
-        true
+        Ok(())
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
-        warn!("Received a block response through P2P, not BFT, from {peer_ip}");
-        false
+    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> Result<()> {
+        bail!("Received a block response through P2P, not BFT, from {peer_ip}")
     }
 
     /// Processes a ping message from a client (or prover) and sends back a `Pong` message.
@@ -232,16 +234,17 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         peer_ip: SocketAddr,
         serialized: UnconfirmedSolution<N>,
         solution: Solution<N>,
-    ) -> bool {
+    ) -> Result<()> {
         // Add the unconfirmed solution to the memory pool.
         if let Err(error) = self.consensus.add_unconfirmed_solution(solution).await {
             trace!("[UnconfirmedSolution] {error}");
-            return true; // Maintain the connection.
+            return Ok(()); // Maintain the connection.
         }
-        let message = Message::UnconfirmedSolution(serialized);
+
         // Propagate the "UnconfirmedSolution" to the connected validators.
+        let message = Message::UnconfirmedSolution(serialized);
         self.propagate_to_validators(message, &[peer_ip]);
-        true
+        Ok(())
     }
 
     /// Handles an `UnconfirmedTransaction` message.
@@ -250,15 +253,16 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         peer_ip: SocketAddr,
         serialized: UnconfirmedTransaction<N>,
         transaction: Transaction<N>,
-    ) -> bool {
+    ) -> Result<()> {
         // Add the unconfirmed transaction to the memory pool.
         if let Err(error) = self.consensus.add_unconfirmed_transaction(transaction).await {
             trace!("[UnconfirmedTransaction] {error}");
-            return true; // Maintain the connection.
+            return Ok(()); // Maintain the connection.
         }
-        let message = Message::UnconfirmedTransaction(serialized);
+
         // Propagate the "UnconfirmedTransaction" to the connected validators.
+        let message = Message::UnconfirmedTransaction(serialized);
         self.propagate_to_validators(message, &[peer_ip]);
-        true
+        Ok(())
     }
 }

@@ -440,6 +440,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                         transaction.clone(),
                     )
                     .await
+                    .is_ok()
                 {
                     info!("Transaction pool broadcasted the transaction");
                 }

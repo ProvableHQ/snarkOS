@@ -15,6 +15,7 @@
 
 use super::*;
 use snarkos_node_router::{
+    InboundError,
     PeerPoolHandling,
     Routing,
     bootstrap_peers,
@@ -121,13 +122,25 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         message: <Client<N, C> as snarkos_node_tcp::protocols::Reading>::Message,
     ) {
         // Process the message. Disconnect if the peer violated the protocol.
-        if let Err(error) = self.inbound(peer_addr, message).await {
-            warn!("Failed to process inbound message from '{peer_addr}' - {error}");
-            if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
-                warn!("Disconnecting from '{peer_ip}' for protocol violation");
-                self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
-                // Disconnect from this peer.
-                self.router().disconnect(peer_ip);
+        match self.inbound(peer_addr, message).await {
+            Ok(_) => {}
+            // Already disconnected. Ignore message.
+            Err(InboundError::Disconnected) => {}
+            // A regular disconnect.
+            Err(InboundError::Disconnecting(reason)) => {
+                if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
+                    info!("Peer '{peer_addr}' decided to disconnect due to '{reason:?}'");
+                    self.router().disconnect(peer_ip);
+                }
+            }
+            // Any other error is a protocol violation.
+            Err(InboundError::Other(error)) => {
+                warn!("Failed to process inbound message from '{peer_addr}' - {error}");
+                if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
+                    warn!("Disconnecting from '{peer_ip}' for protocol violation");
+                    self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
+                    self.router().disconnect(peer_ip);
+                }
             }
         }
     }
@@ -169,31 +182,27 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
+    fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> Result<()> {
         let BlockRequest { start_height, end_height } = &message;
 
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => Data::Object(DataBlocks(blocks)),
             Err(error) => {
-                error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
-                return false;
+                return Err(
+                    error.context(format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"))
+                );
             }
         };
         // Send the `BlockResponse` message to the peer.
         self.router().send(peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
-        true
+        Ok(())
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
+    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
-        if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks) {
-            warn!("Failed to insert block response: {err}");
-            false
-        } else {
-            true
-        }
+        self.sync.insert_block_responses(peer_ip, blocks)
     }
 
     /// Processes the block locators and sends back a `Pong` message.
@@ -250,14 +259,15 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         peer_ip: SocketAddr,
         serialized: UnconfirmedSolution<N>,
         solution: Solution<N>,
-    ) -> bool {
+    ) -> Result<()> {
         // Try to add the solution to the verification queue, without changing LRU status of known solutions.
         let mut solution_queue = self.solution_queue.lock();
         if !solution_queue.contains(&solution.id()) {
             solution_queue.put(solution.id(), (peer_ip, serialized, solution));
         }
 
-        true // Maintain the connection
+        Ok(())
+        // Maintain the connection
     }
 
     /// Handles an `UnconfirmedTransaction` message.
@@ -266,7 +276,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         peer_ip: SocketAddr,
         serialized: UnconfirmedTransaction<N>,
         transaction: Transaction<N>,
-    ) -> bool {
+    ) -> Result<()> {
         // Try to add the transaction to a verification queue, without changing LRU status of known transactions.
         match &transaction {
             Transaction::<N>::Fee(..) => (), // Fee Transactions are not valid.
@@ -284,6 +294,6 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
             }
         }
 
-        true // Maintain the connection
+        Ok(()) // Maintain the connection
     }
 }
