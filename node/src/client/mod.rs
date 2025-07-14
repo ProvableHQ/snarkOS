@@ -298,7 +298,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // First see if any peers need removal.
         let peers_to_ban = self.sync.remove_timed_out_block_requests();
         for peer_ip in peers_to_ban {
-            trace!("Banning peer {peer_ip} for timing out on block requests");
+            debug!("Banning peer {peer_ip} for timing out on block requests");
 
             let tcp = self.router.tcp().clone();
             tcp.banned_peers().update_ip_ban(peer_ip.ip());
@@ -346,7 +346,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 );
             }
         } else {
-            trace!("Prepared {} new block requests.", block_requests.len());
+            debug!("Prepared {} new block request(s).", block_requests.len());
 
             // Issues the block requests in batches.
             for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
