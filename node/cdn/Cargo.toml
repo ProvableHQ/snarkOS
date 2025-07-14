@@ -55,7 +55,7 @@ version = "0.12"
 features = [ "rustls-tls" ]
 
 [dependencies.serde]
-version = "1"
+workspace = true
 
 [dependencies.serde_json]
 version = "1"

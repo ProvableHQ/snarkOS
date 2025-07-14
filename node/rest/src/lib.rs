@@ -29,6 +29,7 @@ use snarkos_node_router::{
     Routing,
     messages::{Message, UnconfirmedTransaction},
 };
+use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{program::ProgramID, types::Field},
     ledger::narwhal::Data,
@@ -75,6 +76,8 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     routing: Arc<R>,
     /// The server handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// A reference to BlockSync,
+    block_sync: Arc<BlockSync<N>>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -86,9 +89,10 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
         ledger: Ledger<N, C>,
         routing: Arc<R>,
         cdn_sync: Option<Arc<CdnBlockSync>>,
+        block_sync: Arc<BlockSync<N>>,
     ) -> Result<Self> {
         // Initialize the server.
-        let mut server = Self { consensus, ledger, routing, cdn_sync, handles: Default::default() };
+        let mut server = Self { consensus, ledger, routing, cdn_sync, block_sync, handles: Default::default() };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await;
         // Return the server.
@@ -199,8 +203,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route(&format!("/{network}/program/{{id}}/mappings"), get(Self::get_mapping_names))
             .route(&format!("/{network}/program/{{id}}/mapping/{{name}}/{{key}}"), get(Self::get_mapping_value))
 
-            // GET misc endpoints.
+            // GET sync endpoints.
+            // Note: keeping sync_status for compatibility
             .route(&format!("/{network}/sync_status"), get(Self::get_sync_status))
+            .route(&format!("/{network}/sync/status"), get(Self::get_sync_status))
+            .route(&format!("/{network}/sync/peers"), get(Self::get_sync_peers))
+            .route(&format!("/{network}/sync/requests"), get(Self::get_sync_requests))
+
+            // GET misc endpoints.
             .route(&format!("/{network}/blocks"), get(Self::get_blocks))
             .route(&format!("/{network}/height/{{hash}}"), get(Self::get_height))
             .route(&format!("/{network}/memoryPool/transmissions"), get(Self::get_memory_pool_transmissions))

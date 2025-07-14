@@ -28,7 +28,7 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.serde]
-version = "1"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true

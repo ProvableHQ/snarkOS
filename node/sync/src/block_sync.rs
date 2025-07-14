@@ -81,6 +81,15 @@ struct OutstandingRequest<N: Network> {
     response: Option<Block<N>>,
 }
 
+/// Information about a block request (used for the REST API).
+#[derive(Clone, serde::Serialize)]
+pub struct RequestInfo {
+    /// Seconds since the request was created
+    elapsed: u64,
+    /// Has the request been responded to?
+    done: bool,
+}
+
 impl<N: Network> OutstandingRequest<N> {
     /// Get a reference to the IPs of peers that have not responded to the request (yet).
     fn sync_ips(&self) -> &IndexSet<SocketAddr> {
@@ -200,6 +209,25 @@ impl<N: Network> BlockSync<N> {
     #[inline]
     pub fn num_total_block_requests(&self) -> usize {
         self.requests.read().len()
+    }
+
+    //// Returns the latest locator height for all known peers.
+    pub fn get_peer_heights(&self) -> HashMap<SocketAddr, u32> {
+        self.locators.read().iter().map(|(addr, locators)| (*addr, locators.latest_locator_height())).collect()
+    }
+
+    //// Returns information about all outstanding block requests.
+    pub fn get_block_requests_info(&self) -> HashMap<u32, RequestInfo> {
+        self.requests
+            .read()
+            .iter()
+            .map(|(height, request)| {
+                (*height, RequestInfo {
+                    done: request.sync_ips().is_empty(),
+                    elapsed: request.timestamp.elapsed().as_secs(),
+                })
+            })
+            .collect()
     }
 }
 

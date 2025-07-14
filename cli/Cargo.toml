@@ -96,7 +96,7 @@ version = "0.42"
 features = [ "archive-zip", "compression-zip-deflate" ]
 
 [dependencies.serde]
-version = "1"
+workspace = true
 
 [dependencies.serde_json]
 version = "1"

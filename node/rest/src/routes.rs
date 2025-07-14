@@ -25,6 +25,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
+use std::collections::HashMap;
 
 /// The `get_blocks` query object.
 #[derive(Deserialize, Serialize)]
@@ -142,7 +143,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
     }
 
-    // GET /<network>/status
+    // GET /<network>/sync/status
     pub(crate) async fn get_sync_status(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
         // Get the CDN height (if we are syncing from a CDN)
         let (cdn_sync, cdn_height) = if let Some(cdn_sync) = &rest.cdn_sync {
@@ -165,9 +166,22 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             cdn_height,
             is_synced: !cdn_sync && rest.routing.is_block_synced(),
             ledger_height: rest.ledger.latest_height(),
-            p2p_height: rest.routing.greatest_peer_block_height(),
-            outstanding_block_requests: rest.routing.num_outstanding_block_requests(),
+            p2p_height: rest.block_sync.greatest_peer_block_height(),
+            outstanding_block_requests: rest.block_sync.num_outstanding_block_requests(),
         }))
+    }
+
+    // GET /<network>/sync/peers
+    pub(crate) async fn get_sync_peers(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        let peers: HashMap<String, u32> =
+            rest.block_sync.get_peer_heights().into_iter().map(|(addr, height)| (addr.to_string(), height)).collect();
+        Ok(ErasedJson::pretty(peers))
+    }
+
+    // GET /<network>/sync/requests
+    pub(crate) async fn get_sync_requests(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        let requests = rest.block_sync.get_block_requests_info();
+        Ok(ErasedJson::pretty(requests))
     }
 
     // GET /<network>/height/{blockHash}

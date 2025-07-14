@@ -49,6 +49,9 @@ optional = true
 [dependencies.parking_lot]
 version = "0.12"
 
+[dependencies.serde]
+workspace = true
+
 [dependencies.tokio]
 workspace = true
 features = [ "sync" ]

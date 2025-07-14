@@ -183,7 +183,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             ledger: ledger.clone(),
             router,
             rest: None,
-            sync,
+            sync: sync.clone(),
             genesis,
             ping,
             puzzle: ledger.puzzle().clone(),
@@ -202,10 +202,12 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             trace!("CDN sync is enabled");
             Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown))
         });
+
         // Initialize the REST server.
         if let Some(rest_ip) = rest_ip {
             node.rest = Some(
-                Rest::start(rest_ip, rest_rps, None, ledger.clone(), Arc::new(node.clone()), cdn_sync.clone()).await?,
+                Rest::start(rest_ip, rest_rps, None, ledger.clone(), Arc::new(node.clone()), cdn_sync.clone(), sync)
+                    .await?,
             );
         }
 

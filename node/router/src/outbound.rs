@@ -25,15 +25,9 @@ pub trait Outbound<N: Network> {
     /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
     fn is_block_synced(&self) -> bool;
 
-    /// Returns the greatest block height of any connected peer.
-    fn greatest_peer_block_height(&self) -> Option<u32>;
-
     /// Returns the number of blocks this node is behind the greatest peer height,
     /// or `None` if not connected to peers yet.
     fn num_blocks_behind(&self) -> Option<u32>;
-
-    /// The number of blocks we requested but have not received yet from peers.
-    fn num_outstanding_block_requests(&self) -> usize;
 
     /// Sends the given message to every connected peer, excluding the sender and any specified peer IPs.
     fn propagate(&self, message: Message<N>, excluded_peers: &[SocketAddr]) {
