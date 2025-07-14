@@ -684,28 +684,15 @@ impl<N: Network> BlockSync<N> {
             max_outstanding_block_requests.saturating_sub(self.num_outstanding_block_requests() as u32);
 
         // Prepare the block requests.
-        if self.num_total_block_requests() >= max_total_requests as usize {
-            trace!(
-                "We are already requested at least {max_total_requests} blocks that have not been fully processed yet. Will not issue more."
-            );
-
-            print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
-        } else if max_new_blocks_to_request == 0 {
-            trace!(
-                "Already reached the maximum number of outstanding blocks ({max_outstanding_block_requests}). Will not issue more."
-            );
-            print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
-        } else if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
+        if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
             // Retrieve the highest block height.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
             // Update the state of `is_block_synced` for the sync module.
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
+
+            // Ensure that there are no outdated requests.
+            self.requests.write().retain(|h, _| *h > current_height);
+
             // Return the list of block requests.
             (
                 self.construct_requests(
@@ -1051,7 +1038,20 @@ impl<N: Network> BlockSync<N> {
         }
 
         // Compute the end height for the block request.
-        let end_height = (min_common_ancestor + 1).min(start_height + max_blocks_to_request);
+        let end_height = {
+            let requests = self.requests.read();
+            let mut end_height = (min_common_ancestor + 1).min(start_height + max_blocks_to_request);
+
+            loop {
+                if requests.contains_key(&end_height) {
+                    end_height -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            end_height
+        };
 
         // Construct the block hashes to request.
         let mut request_hashes = IndexMap::with_capacity((start_height..end_height).len());
