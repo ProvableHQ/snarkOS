@@ -28,6 +28,8 @@ use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
+#[cfg(feature = "locktick")]
+use locktick::tokio::Mutex as TMutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use rand::seq::{IteratorRandom, SliceRandom};
@@ -37,7 +39,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex as TMutex, Notify};
+#[cfg(not(feature = "locktick"))]
+use tokio::sync::Mutex as TMutex;
+use tokio::sync::Notify;
 
 mod sync_state;
 use sync_state::SyncState;
