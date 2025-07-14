@@ -30,7 +30,7 @@ use snarkvm::prelude::{
 use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::Mutex;
+use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -42,7 +42,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{sync::Mutex as TMutex, task::JoinHandle};
+#[cfg(not(feature = "locktick"))]
+use tokio::sync::Mutex as TMutex;
+use tokio::task::JoinHandle;
 
 /// The number of blocks per file.
 const BLOCKS_PER_FILE: u32 = 50;
