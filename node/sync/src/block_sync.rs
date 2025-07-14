@@ -345,12 +345,16 @@ impl<N: Network> BlockSync<N> {
     /// Inserts a new block response from the given peer IP.
     ///
     /// Returns an error if the block was malformed, or we already received a different block for this height.
+    /// This functiona also removes all block requests from the given peer IP on failure.
+    ///
     /// Note, that this only queues the response. After this, you most likely want to call `Self::try_advancing_block_synchronization`.
+    ///
     #[inline]
     pub fn insert_block_responses(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
         // Insert the candidate blocks into the sync pool.
         for block in blocks {
             if let Err(error) = self.insert_block_response(peer_ip, block) {
+                self.remove_block_requests_to_peer(&peer_ip);
                 bail!("{error}");
             }
         }
@@ -723,37 +727,48 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Inserts the given block response, after checking that the request exists and the response is well-formed.
-    /// On success, this function removes the peer IP from the requests map.
-    /// On failure, this function removes all block requests from the given peer IP.
+    /// On success, this function removes the peer IP from the request sync peers and inserts the response.
     fn insert_block_response(&self, peer_ip: SocketAddr, block: Block<N>) -> Result<()> {
         // Retrieve the block height.
         let height = block.height();
+        let mut requests = self.requests.write();
 
-        // Ensure the block (response) from the peer is well-formed. On failure, remove all block requests to the peer.
-        if let Err(error) = self.check_block_response(&peer_ip, &block) {
-            // Remove all block requests to the peer.
-            self.remove_block_requests_to_peer(&peer_ip);
-            return Err(error);
+        if self.ledger.contains_block_height(height) {
+            bail!("The sync request was removed because we already advanced");
+        }
+
+        let Some(entry) = requests.get_mut(&height) else { bail!("The sync pool did not request block {height}") };
+
+        // Retrieve the request entry for the candidate block.
+        let (expected_hash, expected_previous_hash, sync_ips) = &entry.request;
+
+        // Ensure the candidate block hash matches the expected hash.
+        if let Some(expected_hash) = expected_hash {
+            if block.hash() != *expected_hash {
+                bail!("The block hash for candidate block {height} from '{peer_ip}' is incorrect")
+            }
+        }
+        // Ensure the previous block hash matches if it exists.
+        if let Some(expected_previous_hash) = expected_previous_hash {
+            if block.previous_hash() != *expected_previous_hash {
+                bail!("The previous block hash in candidate block {height} from '{peer_ip}' is incorrect")
+            }
+        }
+        // Ensure the sync pool requested this block from the given peer.
+        if !sync_ips.contains(&peer_ip) {
+            bail!("The sync pool did not request block {height} from '{peer_ip}'")
         }
 
         // Remove the peer IP from the request entry.
-        // This `if` never fails, because of the postcondition of `check_block_response` (called above).
-        let mut requests = self.requests.write();
-        if let Some(e) = requests.get_mut(&height) {
-            e.sync_ips_mut().swap_remove(&peer_ip);
+        entry.sync_ips_mut().swap_remove(&peer_ip);
 
-            if let Some(existing_block) = &e.response {
-                // If the candidate block was already present, ensure it is the same block.
-                if block != *existing_block {
-                    // Drop the write lock on the responses map.
-                    drop(requests);
-                    // Remove all block requests to the peer.
-                    self.remove_block_requests_to_peer(&peer_ip);
-                    bail!("Candidate block {height} from '{peer_ip}' is malformed");
-                }
-            } else {
-                e.response = Some(block.clone());
+        if let Some(existing_block) = &entry.response {
+            // If the candidate block was already present, ensure it is the same block.
+            if block != *existing_block {
+                bail!("Candidate block {height} from '{peer_ip}' is malformed");
             }
+        } else {
+            entry.response = Some(block.clone());
         }
 
         // Notify the sync loop that something changed.
@@ -774,41 +789,6 @@ impl<N: Network> BlockSync<N> {
         }
 
         Ok(())
-    }
-
-    /// Checks the given block (response) from a peer against the expected block hash and previous block hash.
-    ///
-    /// Postcondition: If this function returns `Ok`, then `self.requests` has `height` as a key.
-    fn check_block_response(&self, peer_ip: &SocketAddr, block: &Block<N>) -> Result<()> {
-        // Retrieve the block height.
-        let height = block.height();
-
-        // Retrieve the request entry for the candidate block.
-        if let Some(e) = self.requests.read().get(&height) {
-            let (expected_hash, expected_previous_hash, sync_ips) = &e.request;
-
-            // Ensure the candidate block hash matches the expected hash.
-            if let Some(expected_hash) = expected_hash {
-                if block.hash() != *expected_hash {
-                    bail!("The block hash for candidate block {height} from '{peer_ip}' is incorrect")
-                }
-            }
-            // Ensure the previous block hash matches if it exists.
-            if let Some(expected_previous_hash) = expected_previous_hash {
-                if block.previous_hash() != *expected_previous_hash {
-                    bail!("The previous block hash in candidate block {height} from '{peer_ip}' is incorrect")
-                }
-            }
-            // Ensure the sync pool requested this block from the given peer.
-            if !sync_ips.contains(peer_ip) {
-                bail!("The sync pool did not request block {height} from '{peer_ip}'")
-            }
-            Ok(())
-        } else if self.ledger.contains_block_height(height) {
-            bail!("The sync request was removed because we already advanced")
-        } else {
-            bail!("The sync pool did not request block {height}")
-        }
     }
 
     /// Removes the entire block request for the given height, if it exists.
