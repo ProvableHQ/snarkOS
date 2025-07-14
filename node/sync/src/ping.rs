@@ -17,6 +17,9 @@ use crate::locators::BlockLocators;
 use snarkos_node_router::Router;
 use snarkvm::prelude::Network;
 
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::Mutex;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use std::{
     collections::BTreeMap,
