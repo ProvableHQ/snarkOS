@@ -299,16 +299,16 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // First see if any peers need removal.
         let peers_to_ban = self.sync.remove_timed_out_block_requests();
-        for peer_ip in peers_to_ban {
-            debug!("Banning peer {peer_ip} for timing out on block requests");
+        // for peer_ip in peers_to_ban {
+        //     debug!("Banning peer {peer_ip} for timing out on block requests");
 
-            let tcp = self.router.tcp().clone();
-            tcp.banned_peers().update_ip_ban(peer_ip.ip());
+        //     let tcp = self.router.tcp().clone();
+        //     tcp.banned_peers().update_ip_ban(peer_ip.ip());
 
-            tokio::spawn(async move {
-                tcp.disconnect(peer_ip).await;
-            });
-        }
+        //     tokio::spawn(async move {
+        //         tcp.disconnect(peer_ip).await;
+        //     });
+        // }
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
