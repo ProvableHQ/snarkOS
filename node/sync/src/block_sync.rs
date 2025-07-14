@@ -1095,8 +1095,8 @@ impl<N: Network> BlockSync<N> {
             start_height
         };
 
-        // If the minimum common ancestor is at or below the latest ledger height, then return early.
-        if min_common_ancestor <= start_height {
+        // If the minimum common ancestor is below the start height, then return early.
+        if min_common_ancestor < start_height {
             if start_height < greatest_peer_height {
                 trace!(
                     "No request to construct. Height for the next block request is {start_height}, but minimum common block locator ancestor is only {min_common_ancestor} (sync_height={sync_height} greatest_peer_height={greatest_peer_height})"
