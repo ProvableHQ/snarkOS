@@ -46,7 +46,7 @@ commands:
             refreshenv
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.83.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
             # Verify the installation.
             cargo --version --verbose
@@ -68,7 +68,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run:
           name: Set environment variables
@@ -76,7 +76,7 @@ commands:
             # CircleCI runs a new shell for every step, so exported variables are lost
             # This workaround is suggested here: https://circleci.com/docs/env-vars/#parameters-and-bash-environment
             echo 'set -e' >> "$BASH_ENV"
-            echo 'export SCCACHE_CACHE_SIZE=200M' >> "$BASH_ENV"
+            echo 'export SCCACHE_CACHE_SIZE=1G' >> "$BASH_ENV"
             echo 'export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"' >> "$BASH_ENV"
             echo 'export RUSTC_WRAPPER="$CIRCLE_WORKING_DIRECTORY/.bin/sccache"' >> "$BASH_ENV"
             # Disable incremental builds so that sccache works as expected
@@ -136,7 +136,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run:
           name: Show sccache statistics
@@ -144,45 +144,28 @@ commands:
       - store_cache:
           cache_key: << parameters.cache_key >>
 
-  run_serial:
+  run_test:
     description: "Build and run tests"
     parameters:
       workspace_member:
         type: string
-      cache_key:
-        type: string
       flags:
         type: string
         default: ""
     steps:
       - checkout
       - setup_environment:
-          cache_key:  v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key:  v4.0.0-rust-1.88.0-<< parameters.workspace_member >>-cache
       - run:
-          no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && cargo test << parameters.flags >>
-      - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
-
-  run_serial_long:
-    description: "Build and run long running tests"
-    parameters:
-      workspace_member:
-        type: string
-      cache_key:
-        type: string
-      flags:
-        type: string
-        default: ""
-    steps:
-      - checkout
-      - setup_environment:
-          cache_key: << parameters.cache_key >>
+          name: Build Tests
+          timeout: 15m
+          command: cargo test --package=<< parameters.workspace_member >> --no-run << parameters.flags >>
       - run:
-          no_output_timeout: 300m
-          command: cd << parameters.workspace_member >> && cargo test << parameters.flags >>
+          name: Run Tests
+          timeout: 15m
+          command: cargo test --package=<< parameters.workspace_member >> << parameters.flags >>
       - clear_environment:
-          cache_key: << parameters.cache_key >>
+          cache_key: v4.0.0-rust-1.88.0-<< parameters.workspace_member >>-cache
 
   run_devnet:
     description: "Run devnet for integration testing"
@@ -236,139 +219,122 @@ commands:
 jobs:
   snarkos:
     executor: rust-docker
-    resource_class: << pipeline.parameters.xlarge >>
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: .
-          cache_key: stable
+      - run_test:
+          workspace_member: snarkos
 
   account:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: account
-          cache_key: account
+      - run_test:
+          workspace_member: snarkos-account
 
   cli:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: cli
-          cache_key: cli
+      - run_test:
+          workspace_member: snarkos-cli
 
   node:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: node
-          cache_key: node
+      - run_test:
+          workspace_member: snarkos-node
 
   node-bft:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: node/bft
-          cache_key: node-bft
+      - run_test:
+          workspace_member: snarkos-node-bft
 
   node-bft-events:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/bft/events
-          cache_key: node-bft-events
+      - run_test:
+          workspace_member: snarkos-node-bft-events
 
   node-bft-ledger-service:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/bft/ledger-service
-          cache_key: node-bft-ledger-service
+      - run_test:
+          workspace_member: snarkos-node-bft-ledger-service
 
   node-bft-storage-service:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/bft/storage-service
-          cache_key: node-bft-storage-service
+      - run_test:
+          workspace_member: snarkos-node-bft-storage-service
 
   node-cdn:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/cdn
-          cache_key: node-cdn
+      - run_test:
+          workspace_member: snarkos-node-cdn
 
   node-consensus:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/consensus
-          cache_key: node-consensus
+      - run_test:
+          workspace_member: snarkos-node-consensus
 
   node-rest:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/rest
-          cache_key: node-rest
+      - run_test:
+          workspace_member: snarkos-node-rest
 
   node-router:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/router
-          cache_key: node-router
+      - run_test:
+          workspace_member: snarkos-node-router
 
   node-router-messages:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/router/messages
-          cache_key: node-router-messages-
+      - run_test:
+          workspace_member: snarkos-node-router-messages
 
   node-sync:
     executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
-      - run_serial:
-          workspace_member: node/sync
-          cache_key: node-sync
+      - run_test:
+          workspace_member: snarkos-node-sync
 
   node-sync-communication-service:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/sync/communication-service
-          cache_key: node-sync-communication-service
+      - run_test:
+          workspace_member: snarkos-node-sync-communication-service
 
   node-sync-locators:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/sync/locators
-          cache_key: node-sync-locators
+      - run_test:
+          workspace_member: snarkos-node-sync-locators
 
   node-tcp:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/tcp
-          cache_key: node-tcp
+      - run_test:
+          workspace_member: snarkos-node-tcp
 
   devnet-test:
     executor: rust-docker
@@ -376,7 +342,7 @@ jobs:
     steps:
       - run_devnet:
           workspace_member: .
-          cache_key: v3.3.1-rust-1.88.0-devnet-test-cache
+          cache_key: v4.0.0-rust-1.88.0-devnet-test-cache
 
   # Check crates that do not have any tests individually
   check-other-crates:
@@ -404,13 +370,13 @@ jobs:
       - checkout
       - install_rust_nightly
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-fmt-cache
+          cache_key: v4.0.0-rust-1.88.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +nightly fmt --all -- --check
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-fmt-cache
+          cache_key: v4.0.0-rust-1.88.0-fmt-cache
 
   check-unused-dependencies:
     executor: rust-docker
@@ -418,7 +384,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-machete-cache
+          cache_key: v4.0.0-rust-1.88.0-machete-cache
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
@@ -426,7 +392,7 @@ jobs:
             cargo install cargo-machete@0.7.0
             cargo machete
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-machete-cache
+          cache_key: v4.0.0-rust-1.88.0-machete-cache
 
   check-cargo-audit:
     executor: rust-docker
@@ -434,7 +400,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
+          cache_key: v4.0.0-rust-1.88.0-cargo-audit-cache
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
@@ -442,7 +408,7 @@ jobs:
             cargo install cargo-audit@0.21.2 --locked
             cargo audit -D warnings
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
+          cache_key: v4.0.0-rust-1.88.0-cargo-audit-cache
 
   check-clippy:
     executor: rust-docker
@@ -450,7 +416,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-clippy-cache
+          cache_key: v4.0.O-rust-1.88.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -458,7 +424,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-clippy-cache
+          cache_key: v4.0.0-rust-1.88.0-clippy-cache
 
   verify-windows:
     executor:
