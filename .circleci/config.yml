@@ -33,7 +33,7 @@ commands:
       - checkout
       - restore_cache:
           keys:
-            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}i
+            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
             - cargo-cache-{{ arch }}- # fallback to an older version
       - run:
           name: "Install Rust and run cargo check"
@@ -71,17 +71,28 @@ commands:
         default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run:
+          name: "Setup GCP"
+          command: |
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install google-cloud-cli -y
+            echo $GCLOUD_SERVICE_KEY > /home/circleci/gcloud-key.json
+            gcloud auth activate-service-account --key-file=/home/circleci/gcloud-key.json
+            gcloud config set project protocol-development-sandbox
+      - run:
           name: Set environment variables
           command: |
             # CircleCI runs a new shell for every step, so exported variables are lost
             # This workaround is suggested here: https://circleci.com/docs/env-vars/#parameters-and-bash-environment
             echo 'set -e' >> "$BASH_ENV"
-            echo 'export SCCACHE_CACHE_SIZE=1G' >> "$BASH_ENV"
-            echo 'export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"' >> "$BASH_ENV"
+            echo 'export SCCACHE_CACHE_SIZE=10G' >> "$BASH_ENV"
+            echo 'export SCCACHE_GCS_KEY_PATH=/home/circleci/gcloud-key.json' >> "$BASH_ENV"
+            echo 'export SCCACHE_GCS_BUCKET=ci_sccache' >> "$BASH_ENV"
+            echo 'export SCCACHE_GCS_RW_MODE=READ_WRITE' >> "$BASH_ENV"
             echo 'export RUSTC_WRAPPER="$CIRCLE_WORKING_DIRECTORY/.bin/sccache"' >> "$BASH_ENV"
             # Disable incremental builds so that sccache works as expected
             echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
-
       - run:
           name: Install sccache
           command: |
@@ -94,7 +105,7 @@ commands:
             rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
 
       - run:
-          name: Install debian packages
+          name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
@@ -128,7 +139,6 @@ commands:
       - save_cache:
           key: << parameters.cache_key >>-{{ checksum "cache-key-suffix" }}
           paths:
-            - .cache/sccache
             - .cargo
 
   clear_environment:
@@ -136,7 +146,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
+        default: v4.0.0-rust-1.88.0-snarkos-stable-cache
     steps:
       - run:
           name: Show sccache statistics
@@ -152,6 +162,9 @@ commands:
       flags:
         type: string
         default: ""
+      extra_build_flags:
+        type: string
+        default: ""
     steps:
       - checkout
       - setup_environment:
@@ -159,11 +172,11 @@ commands:
       - run:
           name: Build Tests
           timeout: 15m
-          command: cargo test --package=<< parameters.workspace_member >> --no-run << parameters.flags >>
+          command: cargo test --package=<< parameters.workspace_member >> --locked --no-run << parameters.flags >> << parameters.extra_build_flags >>
       - run:
           name: Run Tests
           timeout: 15m
-          command: cargo test --package=<< parameters.workspace_member >> << parameters.flags >>
+          command: cargo test --package=<< parameters.workspace_member >> --locked << parameters.flags >>
       - clear_environment:
           cache_key: v4.0.0-rust-1.88.0-<< parameters.workspace_member >>-cache
 
@@ -244,6 +257,7 @@ jobs:
     steps:
       - run_test:
           workspace_member: snarkos-node
+          extra_build_flags: "-j2"
 
   node-bft:
     executor: rust-docker
@@ -251,6 +265,7 @@ jobs:
     steps:
       - run_test:
           workspace_member: snarkos-node-bft
+          extra_build_flags: "-j4"
 
   node-bft-events:
     executor: rust-docker
