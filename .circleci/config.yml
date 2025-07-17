@@ -165,6 +165,9 @@ commands:
       extra_build_flags:
         type: string
         default: ""
+      profile:
+        type: string
+        default: "test"
     steps:
       - checkout
       - setup_environment:
@@ -172,11 +175,11 @@ commands:
       - run:
           name: Build Tests
           timeout: 15m
-          command: cargo test --package=<< parameters.workspace_member >> --locked --no-run << parameters.flags >> << parameters.extra_build_flags >>
+          command: cargo test --package=<< parameters.workspace_member >> --locked --no-run << parameters.flags >> << parameters.extra_build_flags >> --profile=<<parameters.profile >>
       - run:
           name: Run Tests
           timeout: 15m
-          command: cargo test --package=<< parameters.workspace_member >> --locked << parameters.flags >>
+          command: cargo test --package=<< parameters.workspace_member >> --locked << parameters.flags >> --profile=<<parameters.profile >>
       - clear_environment:
           cache_key: v4.0.0-rust-1.88.0-<< parameters.workspace_member >>-cache
 
@@ -273,6 +276,7 @@ jobs:
       - run_test:
           workspace_member: snarkos-node-bft
           extra_build_flags: "-j4"
+          profile: test-optimized
 
   node-bft-events:
     executor: rust-docker
