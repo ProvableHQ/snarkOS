@@ -246,6 +246,7 @@ version = "2"
 opt-level = 3
 lto = "thin"
 incremental = true
+panic = "abort"
 # uncomment the 2 lines below when building with the locktick feature
 # debug = "line-tables-only"
 # strip = "none"
@@ -268,6 +269,16 @@ opt-level = 2
 lto = "thin"
 incremental = true
 debug = true
+debug-assertions = true
+
+# Useful for tests that are really compute intensive but break
+# on the release profile.
+[profile.test-optimized]
+inherits = "test"
+opt-level = 3
+lto = "thin"
+incremental = true
+debug = false
 debug-assertions = true
 
 [package.metadata.cargo-machete]
