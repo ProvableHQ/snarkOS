@@ -168,6 +168,11 @@ impl<N: Network> Storage<N> {
         self.max_gc_rounds
     }
 
+    /// Returns the highest seen certificate round.
+    pub fn highest_seen_certificate_round(&self) -> u64 {
+        self.rounds.read().keys().last().copied().unwrap_or(0)
+    }
+
     /// Increments storage to the next round, updating the current round.
     /// Note: This method is only called once per round, upon certification of the primary's batch.
     pub fn increment_to_next_round(&self, current_round: u64) -> Result<u64> {
@@ -704,7 +709,7 @@ impl<N: Network> Storage<N> {
     ///
     /// If the certificate was successfully removed, `true` is returned.
     /// If the certificate did not exist in storage, `false` is returned.
-    fn remove_certificate(&self, certificate_id: Field<N>) -> bool {
+    pub fn remove_certificate(&self, certificate_id: Field<N>) -> bool {
         // Retrieve the certificate.
         let Some(certificate) = self.get_certificate(certificate_id) else {
             warn!("Certificate {certificate_id} does not exist in storage");
@@ -879,11 +884,6 @@ impl<N: Network> Storage<N> {
     /// Returns the ledger service.
     pub fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
         &self.ledger
-    }
-
-    /// Returns an iterator over the `(round, (certificate ID, batch ID, author))` entries.
-    pub fn rounds_iter(&self) -> impl Iterator<Item = (u64, IndexSet<(Field<N>, Address<N>)>)> {
-        self.rounds.read().clone().into_iter()
     }
 
     /// Returns an iterator over the `(certificate ID, certificate)` entries.

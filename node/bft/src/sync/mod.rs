@@ -27,21 +27,24 @@ use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 use snarkvm::{
     console::{network::Network, types::Field},
-    ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
-    prelude::{cfg_into_iter, cfg_iter},
+    ledger::{authority::Authority, block::Block, narwhal::{BatchCertificate, BatchHeader, Subdag}, committee::{Committee, MIN_VALIDATOR_STAKE}},
+    prelude::{cfg_into_iter, cfg_iter, Header, Address, PrivateKey},
 };
 
 use anyhow::{Result, anyhow, bail};
-use indexmap::IndexMap;
+use indexmap::{IndexSet, IndexMap, indexset};
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
+use rand::SeedableRng;
+use rand_chacha::ChaChaRng;
 use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap},
     future::Future,
     net::SocketAddr,
+    ops::Deref,
     sync::Arc,
     time::Duration,
 };
@@ -51,6 +54,8 @@ use tokio::{
     sync::{OnceCell, oneshot},
     task::JoinHandle,
 };
+
+const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
 
 /// Block synchronization logic for validators.
 ///
@@ -370,7 +375,7 @@ impl<N: Network> Sync<N> {
         // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
         let gc_height = block_height.saturating_sub(max_gc_blocks);
         // Retrieve the blocks.
-        let blocks = self.ledger.get_blocks(gc_height..block_height.saturating_add(1))?;
+        let mut blocks = self.ledger.get_blocks(gc_height..block_height.saturating_add(1))?;
 
         // Acquire the sync lock.
         let _lock = self.sync_lock.lock().await;
@@ -385,6 +390,105 @@ impl<N: Network> Sync<N> {
         self.storage.sync_round_with_block(latest_block.round());
         // Perform GC on the latest block round.
         self.storage.garbage_collect_certificates(latest_block.round());
+        // TODO: guard this by a feature flag.
+        // Remove certificates from the storage which are newer than the latest block.
+        let highest_seen_certificate_round = self.storage.highest_seen_certificate_round();
+        info!("Removing certificates from storage for rounds {} to {}", latest_block.round() + 1, highest_seen_certificate_round);
+        for round in latest_block.round()+1..=highest_seen_certificate_round {
+            // Iterate over the certificates for the GC round.
+            for id in self.storage.get_certificate_ids_for_round(round).into_iter() {
+                // Remove the certificate from storage.
+                self.storage.remove_certificate(id); // TODO: wrap the above logic so we don't have to expose `remove_certificate`
+            }
+        }
+        // Construct the dev committee.
+        let mut rng = ChaChaRng::seed_from_u64(DEVELOPMENT_MODE_RNG_SEED);
+        // Initialize the development private keys.
+        let dev_keys =
+            (0..4).map(|_| PrivateKey::<N>::new(&mut rng)).collect::<Result<Vec<_>>>()?;
+        // Initialize the development addresses.
+        let authors = dev_keys.iter().map(Address::<N>::try_from).collect::<Result<Vec<_>>>()?;
+        let authors = authors
+            .into_iter()
+            .map(|address| (address, (MIN_VALIDATOR_STAKE, true, 0)))
+            .collect::<IndexMap<_, _>>();
+        let dev_committee = Committee::new_genesis(authors)?;
+        // Replace the latest certificate with a dev committee certificate.
+        // TODO: I'll actually have to replace the tip block with this newly constructed block...
+        // Pop the last block from the blocks.
+        let block_at_tip = blocks.pop().unwrap(); // TODO: do we want to support this from genesis?
+        let dev_block_at_tip = if let Authority::Quorum(subdag) = block_at_tip.authority() {
+            // Determine the certificate at the tip of the subdag.
+            let certificate_at_tip = subdag.values().last().unwrap().last().unwrap().clone();
+            let batch_header_at_tip = certificate_at_tip.batch_header();
+            // Construct a dev committee batch header at the tip.
+            let dev_batch_header_at_tip = BatchHeader::new(
+                &dev_keys[0],
+                batch_header_at_tip.round(),
+                batch_header_at_tip.timestamp(),
+                dev_committee.id(),
+                batch_header_at_tip.transmission_ids().clone(),
+                batch_header_at_tip.previous_certificate_ids().clone(),
+                &mut rng,
+            )?;
+            let dev_batch_id = dev_batch_header_at_tip.batch_id();
+            let dev_signatures = dev_keys
+                .iter()
+                .skip(1)
+                .map(|key| key.sign(&[dev_batch_id], &mut rng))
+                .collect::<Result<IndexSet<_>>>()?;
+            let dev_certificate_at_tip = BatchCertificate::from(
+                dev_batch_header_at_tip,
+                dev_signatures,
+            )?;
+            let mut dev_subdag_inner = subdag.deref().clone();
+            if let Some(certificates_at_tip) = dev_subdag_inner.get_mut(&batch_header_at_tip.round()) {
+                *certificates_at_tip = indexset! {dev_certificate_at_tip};
+            } else {
+                bail!("Failed to find the certificates at the tip of the subdag.");
+            }
+            let dev_subdag = Subdag::from(dev_subdag_inner)?;
+            // previous_state_root: N::StateRoot,
+            // transactions_root: Field<N>,
+            // finalize_root: Field<N>,
+            // ratifications_root: Field<N>,
+            // solutions_root: Field<N>,
+            // subdag_root: Field<N>,
+            // metadata: Metadata<N>,
+            let header = Header::from(
+                block_at_tip.header().previous_state_root(),
+                block_at_tip.header().transactions_root(),
+                block_at_tip.header().finalize_root(),
+                block_at_tip.header().ratifications_root(),
+                block_at_tip.header().solutions_root(),
+                dev_subdag.to_subdag_root()?,
+                block_at_tip.header().metadata().clone(),
+            )?;
+            // previous_hash: N::BlockHash,
+            // header: Header<N>,
+            // subdag: Subdag<N>,
+            // ratifications: Ratifications<N>,
+            // solutions: Solutions<N>,
+            // aborted_solution_ids: Vec<SolutionID<N>>,
+            // transactions: Transactions<N>,
+            // aborted_transaction_ids: Vec<N::TransactionID>,
+            Block::new_quorum(
+                block_at_tip.previous_hash().clone(),
+                header,
+                dev_subdag,
+                block_at_tip.ratifications().clone(),
+                block_at_tip.solutions().clone(),
+                block_at_tip.aborted_solution_ids().clone(),
+                block_at_tip.transactions().clone(),
+                block_at_tip.aborted_transaction_ids().clone(),
+            )?
+        } else {
+            // TODO: consider whether we want to run this logic from genesis.
+            bail!("Received a block with an unexpected authority type.");
+        };
+        // Add the dev block at tip to the blocks.
+        blocks.push(dev_block_at_tip);
+
         // Iterate over the blocks.
         for block in &blocks {
             // If the block authority is a sub-DAG, then sync the batch certificates with the block.

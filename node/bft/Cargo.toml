@@ -91,6 +91,10 @@ workspace = true
 [dependencies.rand]
 version = "0.8"
 
+[dependencies.rand_chacha]
+version = "0.3.0"
+default-features = false
+
 [dependencies.rayon]
 version = "1"
 

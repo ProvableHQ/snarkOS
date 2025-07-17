@@ -99,6 +99,8 @@ for validator_index in "${validator_indices[@]}"; do
     tmux new-window -t "devnet:$window_index" -n $name
   fi
 
+  # TODO: set custom storage path at real ledger
+
   # Send the command to start the validator to the new window and capture output to the log file
   tmux send-keys -t "devnet:$window_index" "./target/debug/snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity --metrics --no-dev-txs --metrics-ip=0.0.0.0:$metrics_port" C-m
 done

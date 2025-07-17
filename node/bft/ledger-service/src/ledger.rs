@@ -175,20 +175,23 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the committee lookback for the given round.
-    /// TODO: this is duplicate with snarkVM, which also has this logic... Consider just going straight into snarkVM.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
-        // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
-        // because committees are updated in even rounds.
-        let previous_round = match round % 2 == 0 {
-            true => round.saturating_sub(1),
-            false => round.saturating_sub(2),
-        };
+        match self.ledger.get_committee_lookback_for_round(round)? {
+            Some(committee) => Ok(committee),
+            None => bail!("No committee lookback found for round {round} in the ledger"),
+        }
+        // // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
+        // // because committees are updated in even rounds.
+        // let previous_round = match round % 2 == 0 {
+        //     true => round.saturating_sub(1),
+        //     false => round.saturating_sub(2),
+        // };
 
-        // Get the committee lookback round.
-        let committee_lookback_round = previous_round.saturating_sub(Committee::<N>::COMMITTEE_LOOKBACK_RANGE);
+        // // Get the committee lookback round.
+        // let committee_lookback_round = previous_round.saturating_sub(Committee::<N>::COMMITTEE_LOOKBACK_RANGE);
 
-        // Retrieve the committee for the committee lookback round.
-        self.get_committee_for_round(committee_lookback_round)
+        // // Retrieve the committee for the committee lookback round.
+        // self.get_committee_for_round(committee_lookback_round)
     }
 
     /// Returns `true` if the ledger contains the given certificate ID in block history.

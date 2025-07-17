@@ -649,6 +649,13 @@ impl Start {
                 N::NAME.bold(),
                 node_ip.to_string().bold()
             );
+            // Print the BFT IP if it is set.
+            // "127.0.0.1:{}", MEMORY_POOL_PORT + dev
+            // if let Some(bft_ip) = self.bft {
+            //     println!("🔗 Connecting to the BFT at {}.\n", bft_ip.to_string().bold());
+            // } else {
+            //     println!("🔗 No BFT IP specified, using default: {}",);
+            // }
 
             // If the node is running a REST server, print the REST IP and JWT.
             if node_type.is_validator() || node_type.is_client() {
