@@ -21,8 +21,10 @@ executors:
   # The default docker image used in the main-workflow
   rust-docker:
      docker:
-      - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-
+      # Attention: The docker file should be rebuilt whenever the rust toolchain
+      # (or another dependency is updated)
+      - image: cskama/snarkos-ci:4.0.0
+ 
 commands:
   check_windows:
     description: "Runs cargo check on Windows"
@@ -44,7 +46,7 @@ commands:
             refreshenv
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.83.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
             # Verify the installation.
             cargo --version --verbose
@@ -66,24 +68,16 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v4.0.0-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: set -e
       - run:
-          name: Prepare environment and install dependencies
+          name: Prepare Environment
           command: |
             export SCCACHE_CACHE_SIZE=200M
             export WORK_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
             export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
-            mkdir -p "$CIRCLE_WORKING_DIRECTORY/.bin"
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            mv $CIRCLE_WORKING_DIRECTORY/.bin/sccache-v0.3.0-x86_64-unknown-linux-musl/sccache $CIRCLE_WORKING_DIRECTORY/.bin/sccache
-            export PATH="$PATH:$CIRCLE_WORKING_DIRECTORY/.bin"
             export RUSTC_WRAPPER="sccache"
-            rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
-            DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -93,7 +87,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v4.0.0-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: (sccache -s||true)
       - run: set +e
@@ -116,12 +110,12 @@ commands:
     steps:
       - checkout
       - setup_environment:
-          cache_key:  v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key:  v4.0.0-rust-1.88.0-<< parameters.cache_key >>-cache
       - run:
           no_output_timeout: 30m
           command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: v4.0.0-rust-1.88.0-<< parameters.cache_key >>-cache
 
   run_serial_long:
     description: "Build and run long running tests"
@@ -187,11 +181,6 @@ commands:
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
-  install_rust_nightly:
-    description: "Install Rust nightly toolchain"
-    steps:
-      - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
-
 jobs:
   snarkos:
     executor: rust-docker
@@ -223,7 +212,7 @@ jobs:
     steps:
       - run_serial:
           workspace_member: display
-          cache_key: v3.3.1-rust-1.83.0-display-cache
+          cache_key: display
 
   node:
     executor: rust-docker
@@ -350,7 +339,6 @@ jobs:
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
-      - install_rust_nightly
       - setup_environment:
           cache_key: v3.3.1-rust-1.88.0-fmt-cache
       - run:
@@ -370,9 +358,7 @@ jobs:
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
-          command: |
-            cargo install cargo-machete@0.7.0
-            cargo machete
+          command: cargo machete
       - clear_environment:
           cache_key: v3.3.1-rust-1.88.0-machete-cache
 
@@ -386,9 +372,7 @@ jobs:
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
-          command: |
-            cargo install cargo-audit@0.21.2 --locked
-            cargo audit -D warnings
+          command: cargo audit -D warnings
       - clear_environment:
           cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
 
