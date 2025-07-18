@@ -56,7 +56,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
 pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
     Validator::new(
         "127.0.0.1:0".parse().unwrap(),
-        None,
+        "127.0.0.1:1".parse().unwrap(),
         None,
         10,
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
@@ -68,7 +68,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         true,  // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         Default::default(),
-        false, // No dev mode.
+        None, // No dev mode.
     )
     .await
     .expect("couldn't create validator instance")

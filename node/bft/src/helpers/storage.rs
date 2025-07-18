@@ -74,7 +74,7 @@ impl<N: Network> std::ops::Deref for Storage<N> {
 #[derive(Debug)]
 pub struct StorageInner<N: Network> {
     /// The ledger service.
-    ledger: Arc<dyn LedgerService<N>>,
+    pub ledger: Arc<dyn LedgerService<N>>, // TODO: clean up interface.
     /* Once per block */
     /// The current height.
     current_height: AtomicU32,

@@ -371,8 +371,8 @@ impl Tcp {
 
     /// Creates an instance of `TcpListener` based on the node's configuration.
     async fn create_listener(&self, listener_ip: IpAddr) -> io::Result<TcpListener> {
-        debug!("Creating a TCP listener on {listener_ip}...");
         let listener = if let Some(port) = self.config().desired_listening_port {
+            debug!("Creating a TCP listener on {listener_ip}:{port}");
             // Construct the desired listening IP address.
             let desired_listening_addr = SocketAddr::new(listener_ip, port);
             // If a desired listening port is set, try to bind to it.
@@ -394,6 +394,7 @@ impl Tcp {
             }
         } else if self.config().allow_random_port {
             let random_available_addr = SocketAddr::new(listener_ip, 0);
+            debug!("Creating a TCP listener on {random_available_addr}");
             TcpListener::bind(random_available_addr).await?
         } else {
             panic!("As 'listener_ip' is set, either 'desired_listening_port' or 'allow_random_port' must be set");

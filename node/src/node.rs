@@ -45,7 +45,7 @@ impl<N: Network> Node<N> {
     /// Initializes a new validator node.
     pub async fn new_validator(
         node_ip: SocketAddr,
-        bft_ip: Option<SocketAddr>,
+        bft_ip: SocketAddr,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
         account: Account<N>,

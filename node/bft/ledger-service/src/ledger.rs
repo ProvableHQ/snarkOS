@@ -393,6 +393,15 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         Ok(())
     }
 
+    /// Replaces the latest block in the ledger with the given block.
+    #[cfg(feature = "ledger-write")]
+    fn replace_latest_block(&self, block: &Block<N>) -> Result<()> {
+        // let latest_block_hash = self.ledger.latest_block().hash();
+        self.ledger.vm().store.block_store().remove_last_n(1)?;
+        *self.ledger.current_block.write() = block.clone();
+        self.advance_to_next_block(block)
+    }
+
     /// Returns the spent cost for a transaction in microcredits.
     /// This is used to limit the amount of compute in the block generation hot
     /// path. This does NOT represent the full costs which a user has to pay.

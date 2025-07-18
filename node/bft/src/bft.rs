@@ -93,12 +93,13 @@ impl<N: Network> BFT<N> {
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
         block_sync: Arc<BlockSync<N>>,
-        ip: Option<SocketAddr>,
+        bft_ip: SocketAddr,
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
+        dev: bool,
     ) -> Result<Self> {
         Ok(Self {
-            primary: Primary::new(account, storage, ledger, block_sync, ip, trusted_validators, storage_mode)?,
+            primary: Primary::new(account, storage, ledger, block_sync, bft_ip, trusted_validators, storage_mode, dev)?,
             dag: Default::default(),
             leader_certificate: Default::default(),
             leader_certificate_timer: Default::default(),
@@ -300,6 +301,7 @@ impl<N: Network> BFT<N> {
 
         // Retrieve the certificates for the current round.
         let current_certificates = self.storage().get_certificates_for_round(current_round);
+        info!("current_certificates: {current_certificates:?}");
         // If there are no current certificates, set the leader certificate to 'None', and return early.
         if current_certificates.is_empty() {
             // Set the leader certificate to 'None'.
@@ -317,7 +319,10 @@ impl<N: Network> BFT<N> {
         };
         // Determine the leader of the current round.
         let leader = match self.ledger().latest_leader() {
-            Some((cached_round, cached_leader)) if cached_round == current_round => cached_leader,
+            Some((cached_round, cached_leader)) if cached_round == current_round => {
+                info!("cached_round: {cached_round}, current_round: {current_round}, cached_leader: {cached_leader:?}");
+                cached_leader
+            },
             _ => {
                 // Compute the leader for the current round.
                 let computed_leader = match committee_lookback.get_leader(current_round) {
@@ -330,6 +335,7 @@ impl<N: Network> BFT<N> {
 
                 // Cache the computed leader.
                 self.ledger().update_latest_leader(current_round, computed_leader);
+                info!("current_round: {current_round}, computed_leader: {computed_leader:?}");
 
                 computed_leader
             }
@@ -991,7 +997,7 @@ mod tests {
         // Create the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         // Initialize the BFT.
-        BFT::new(account.clone(), storage.clone(), ledger.clone(), block_sync, None, &[], StorageMode::new_test(None))
+        BFT::new(account.clone(), storage.clone(), ledger.clone(), block_sync, None, &[], StorageMode::new_test(None), false)
     }
 
     #[test]

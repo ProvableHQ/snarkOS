@@ -156,18 +156,12 @@ impl<N: Network> Gateway<N> {
         account: Account<N>,
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
-        ip: Option<SocketAddr>,
+        bft_ip: SocketAddr,
         trusted_validators: &[SocketAddr],
         dev: Option<u16>,
     ) -> Result<Self> {
-        // Initialize the gateway IP.
-        let ip = match (ip, dev) {
-            (None, Some(dev)) => SocketAddr::from_str(&format!("127.0.0.1:{}", MEMORY_POOL_PORT + dev))?,
-            (None, None) => SocketAddr::from_str(&format!("0.0.0.0:{}", MEMORY_POOL_PORT))?,
-            (Some(ip), _) => ip,
-        };
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(Config::new(bft_ip, Committee::<N>::max_committee_size()?));
 
         // Return the gateway.
         Ok(Self {

@@ -82,7 +82,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     /// Initializes a new validator node.
     pub async fn new(
         node_ip: SocketAddr,
-        bft_ip: Option<SocketAddr>,
+        bft_ip: SocketAddr,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
         account: Account<N>,
@@ -136,6 +136,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             trusted_validators,
             storage_mode.clone(),
             ping.clone(),
+            dev,
         )
         .await?;
 

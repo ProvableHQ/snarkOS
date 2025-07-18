@@ -124,13 +124,20 @@ impl<N: Network> Primary<N> {
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
         block_sync: Arc<BlockSync<N>>,
-        ip: Option<SocketAddr>,
+        bft_ip: SocketAddr,
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
+        dev: bool,
     ) -> Result<Self> {
+        // TODO: this is a hack, update the interface properly
+        let dev = if dev {
+            Some(0)
+        } else {
+            None
+        };
         // Initialize the gateway.
         let gateway =
-            Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, storage_mode.dev())?;
+            Gateway::new(account, storage.clone(), ledger.clone(), bft_ip, trusted_validators, dev)?;
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), ledger.clone(), block_sync);
 
@@ -1998,7 +2005,7 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None)).unwrap();
+            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None), false).unwrap();
 
         // Construct a worker instance.
         primary.workers = Arc::from([Worker::new(

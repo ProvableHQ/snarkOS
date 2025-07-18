@@ -56,6 +56,7 @@ use tokio::{
 };
 
 const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
+const DEV_START_ROUND: u64 = 3668;
 
 /// Block synchronization logic for validators.
 ///
@@ -412,9 +413,8 @@ impl<N: Network> Sync<N> {
             .into_iter()
             .map(|address| (address, (MIN_VALIDATOR_STAKE, true, 0)))
             .collect::<IndexMap<_, _>>();
-        let dev_committee = Committee::new_genesis(authors)?;
-        // Replace the latest certificate with a dev committee certificate.
-        // TODO: I'll actually have to replace the tip block with this newly constructed block...
+        let dev_committee = Committee::new(DEV_START_ROUND, authors)?;
+        // Replace the latest production committee certificate with a dev committee certificate.
         // Pop the last block from the blocks.
         let block_at_tip = blocks.pop().unwrap(); // TODO: do we want to support this from genesis?
         let dev_block_at_tip = if let Authority::Quorum(subdag) = block_at_tip.authority() {
@@ -448,13 +448,6 @@ impl<N: Network> Sync<N> {
                 bail!("Failed to find the certificates at the tip of the subdag.");
             }
             let dev_subdag = Subdag::from(dev_subdag_inner)?;
-            // previous_state_root: N::StateRoot,
-            // transactions_root: Field<N>,
-            // finalize_root: Field<N>,
-            // ratifications_root: Field<N>,
-            // solutions_root: Field<N>,
-            // subdag_root: Field<N>,
-            // metadata: Metadata<N>,
             let header = Header::from(
                 block_at_tip.header().previous_state_root(),
                 block_at_tip.header().transactions_root(),
@@ -464,14 +457,6 @@ impl<N: Network> Sync<N> {
                 dev_subdag.to_subdag_root()?,
                 block_at_tip.header().metadata().clone(),
             )?;
-            // previous_hash: N::BlockHash,
-            // header: Header<N>,
-            // subdag: Subdag<N>,
-            // ratifications: Ratifications<N>,
-            // solutions: Solutions<N>,
-            // aborted_solution_ids: Vec<SolutionID<N>>,
-            // transactions: Transactions<N>,
-            // aborted_transaction_ids: Vec<N::TransactionID>,
             Block::new_quorum(
                 block_at_tip.previous_hash().clone(),
                 header,
@@ -487,7 +472,12 @@ impl<N: Network> Sync<N> {
             bail!("Received a block with an unexpected authority type.");
         };
         // Add the dev block at tip to the blocks.
-        blocks.push(dev_block_at_tip);
+        blocks.push(dev_block_at_tip.clone());
+        // TODO: I'll actually have to replace the tip block with this newly constructed block...
+        // It would be nice if we can avoid this, as it'll mean we don't have to touch storage. Then again, we will be messing with storage anyway.
+        // I could consider doing the following:
+        self.storage.ledger.replace_latest_block(&dev_block_at_tip)?;
+        // self.storage.ledger.vm().store().block_store().insert(dev_block_at_tip)?;
 
         // Iterate over the blocks.
         for block in &blocks {

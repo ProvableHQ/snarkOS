@@ -187,6 +187,12 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         bail!("Cannot advance to next block in prover - {block}")
     }
 
+    /// Replaces the latest block in the ledger with the given block.
+    #[cfg(feature = "ledger-write")]
+    fn replace_latest_block(&self, _block: &Block<N>) -> Result<()> {
+        bail!("Cannot replace latest block in prover")
+    }
+
     /// Returns the spent cost for a transaction in microcredits.
     fn transaction_spent_cost_in_microcredits(
         &self,
