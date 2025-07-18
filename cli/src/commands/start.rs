@@ -454,6 +454,11 @@ impl Start {
                 self.node = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_NODE_PORT + dev)));
             }
 
+            // Set the bft IP to `5000 + dev`.
+            if self.bft.is_none() && self.validator {
+                self.bft = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT + dev)));
+            }
+
             // If the `norest` flag is not set and the REST IP is not already specified set the REST IP to `3030 + dev`.
             if !self.norest && self.rest.is_none() {
                 self.rest = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_REST_PORT + dev)));
@@ -632,6 +637,9 @@ impl Start {
         // Parse the node IP or use the default IP/port.
         let node_ip = self.node.unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_NODE_PORT)));
 
+        // Parse the BFT IP or use the default IP/port.
+        let bft_ip = self.bft.unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)));
+
         // Parse the REST IP.
         let rest_ip = match self.norest {
             true => None,
@@ -643,19 +651,11 @@ impl Start {
             // Print the Aleo address.
             println!("👛 Your Aleo address is {}.\n", account.address().to_string().bold());
             // Print the node type and network.
-            println!(
-                "🧭 Starting {} on {} at {}.\n",
-                node_type.description().bold(),
-                N::NAME.bold(),
-                node_ip.to_string().bold()
-            );
-            // Print the BFT IP if it is set.
-            // "127.0.0.1:{}", MEMORY_POOL_PORT + dev
-            // if let Some(bft_ip) = self.bft {
-            //     println!("🔗 Connecting to the BFT at {}.\n", bft_ip.to_string().bold());
-            // } else {
-            //     println!("🔗 No BFT IP specified, using default: {}",);
-            // }
+            match node_type {
+                NodeType::Validator => println!("Starting validator on {} with router at {} and gateway at {}.\n", N::NAME.bold(), node_ip.to_string().bold(), bft_ip.to_string().bold()),
+                NodeType::Prover => println!("Starting a prover on {} at {}.\n", N::NAME.bold(), node_ip.to_string().bold()),
+                NodeType::Client => println!("Starting a client on {} at {}.\n", N::NAME.bold(), node_ip.to_string().bold()),
+            }
 
             // If the node is running a REST server, print the REST IP and JWT.
             if node_type.is_validator() || node_type.is_client() {
@@ -719,7 +719,7 @@ impl Start {
 
         // Initialize the node.
         match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, shutdown.clone(), dev).await,
+            NodeType::Validator => Node::new_validator(node_ip, bft_ip, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, shutdown.clone(), dev).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, shutdown.clone(), dev).await,
             NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, shutdown, dev).await,
         }
