@@ -63,7 +63,7 @@ impl Logs {
 
         self.log_cache.extend(new_logs.into_iter().take(self.log_limit));
 
-        let combined_logs = self.log_cache.iter().map(|s| s.as_str()).collect::<String>();
+        let combined_logs = self.log_cache.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n");
 
         let combined_logs = Paragraph::new(combined_logs).block(Block::default().borders(Borders::ALL).title("Logs"));
         f.render_widget(combined_logs, chunks[0]);
