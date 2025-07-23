@@ -14,6 +14,8 @@
 // limitations under the License.
 
 use super::*;
+use crate::helpers::{mapping_to_json, value_to_json};
+
 use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkvm::{
     ledger::puzzle::Solution,
@@ -419,15 +421,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let mapping_value = rest.ledger.vm().finalize_store().get_value_confirmed(id, name, &key)?;
 
         // Check if metadata is requested and return the value with metadata if so.
-        if metadata.metadata.unwrap_or(false) {
-            return Ok(ErasedJson::pretty(json!({
-                "data": mapping_value,
+        let json_value = if metadata.metadata.is_some() {
+            json!({
+                "data": value_to_json(mapping_value.as_ref())?,
                 "height": rest.ledger.latest_height(),
-            })));
-        }
+            })
+        } else {
+            value_to_json(mapping_value.as_ref())?
+        };
 
-        // Return the value without metadata.
-        Ok(ErasedJson::pretty(mapping_value))
+        Ok(ErasedJson::pretty(json_value))
     }
 
     /// GET /<network>/program/{programID}/mapping/{mappingName}?all={true}&metadata={true}
@@ -452,15 +455,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         {
             Ok(Ok(mapping_values)) => {
                 // Check if metadata is requested and return the mapping with metadata if so.
-                if metadata.metadata.unwrap_or(false) {
-                    return Ok(ErasedJson::pretty(json!({
-                        "data": mapping_values,
+                let json_value = if metadata.metadata.is_some() {
+                    json!({
+                        "data": mapping_to_json(&mapping_values)?,
                         "height": height,
-                    })));
-                }
+                    })
+                } else {
+                    // Return the full mapping without metadata.
+                    mapping_to_json(&mapping_values)?
+                };
 
-                // Return the full mapping without metadata.
-                Ok(ErasedJson::pretty(mapping_values))
+                Ok(ErasedJson::pretty(json_value))
             }
             Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to read mapping"))),
             Err(err) => Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
