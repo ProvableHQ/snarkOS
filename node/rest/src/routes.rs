@@ -421,7 +421,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let mapping_value = rest.ledger.vm().finalize_store().get_value_confirmed(id, name, &key)?;
 
         // Check if metadata is requested and return the value with metadata if so.
-        let json_value = if metadata.metadata.is_some() {
+        let json_value = if metadata.metadata.unwrap_or(false) {
             json!({
                 "data": value_to_json(mapping_value.as_ref())?,
                 "height": rest.ledger.latest_height(),
@@ -455,7 +455,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         {
             Ok(Ok(mapping_values)) => {
                 // Check if metadata is requested and return the mapping with metadata if so.
-                let json_value = if metadata.metadata.is_some() {
+                let json_value = if metadata.metadata.unwrap_or(false) {
                     json!({
                         "data": mapping_to_json(&mapping_values)?,
                         "height": height,
