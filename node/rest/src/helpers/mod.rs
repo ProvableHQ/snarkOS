@@ -14,6 +14,8 @@
 // limitations under the License.
 
 mod auth;
+
+/// This is used by CLI and needs to be public.
 pub use auth::*;
 
 mod error;
