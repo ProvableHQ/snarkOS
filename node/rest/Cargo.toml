@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "3.8.0"
+version = "4.0.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -112,4 +112,7 @@ features = [ "cors", "trace" ]
 workspace = true
 
 [dev-dependencies.base64]
+workspace = true
+
+[build-dependencies.built]
 workspace = true

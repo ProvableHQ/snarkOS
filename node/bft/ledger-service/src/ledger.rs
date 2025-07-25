@@ -402,10 +402,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         match &transaction {
             // Include the synthesis cost and storage cost for deployments.
             Transaction::Deploy(_, _, _, deployment, _) => {
-                let (_, (storage_cost, synthesis_cost, _)) = deployment_cost(deployment)?;
+                let (_, (storage_cost, synthesis_cost, constructor_cost, _)) =
+                    deployment_cost(&self.ledger.vm().process().read(), deployment)?;
                 storage_cost
                     .checked_add(synthesis_cost)
-                    .ok_or(anyhow!("The storage and synthesis cost computation overflowed for a deployment"))
+                    .and_then(|synthesis_cost| synthesis_cost.checked_add(constructor_cost))
+                    .ok_or(anyhow!(
+                        "The storage, synthesis, and constructor cost computation overflowed for a deployment"
+                    ))
             }
             // Include the finalize cost and storage cost for executions.
             Transaction::Execute(_, _, execution, _) => {

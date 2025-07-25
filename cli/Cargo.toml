@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "3.8.0"
+version = "4.0.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -72,7 +72,7 @@ optional = true
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "../node/metrics"
-version = "=3.8.0"
+version = "=4.0.1"
 optional = true
 
 [dependencies.num_cpus]
@@ -105,23 +105,23 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
 path = "../account"
-version = "=3.8.0"
+version = "=4.0.1"
 
 [dependencies.snarkos-display]
 path = "../display"
-version = "=3.8.0"
+version = "=4.0.1"
 
 [dependencies.snarkos-node]
 path = "../node"
-version = "=3.8.0"
+version = "=4.0.1"
 
 [dependencies.snarkos-node-cdn]
 path = "../node/cdn"
-version = "=3.8.0"
+version = "=4.0.1"
 
 [dependencies.snarkos-node-rest]
 path = "../node/rest"
-version = "=3.8.0"
+version = "=4.0.1"
 
 [dependencies.snarkvm]
 workspace = true
@@ -153,6 +153,7 @@ features = [ "env-filter" ]
 [dependencies.ureq]
 version = "2.9"
 features = ["json"]
+default-features = true
 
 [dependencies.zeroize]
 version = "1"

@@ -23,6 +23,8 @@ pub use helpers::*;
 
 mod routes;
 
+mod version;
+
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_router::{
@@ -212,6 +214,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route(&format!("/{network}/sync/requests/list"), get(Self::get_sync_requests_list))
 
             // GET misc endpoints.
+            .route(&format!("/{network}/version"), get(Self::get_version))
             .route(&format!("/{network}/blocks"), get(Self::get_blocks))
             .route(&format!("/{network}/height/{{hash}}"), get(Self::get_height))
             .route(&format!("/{network}/memoryPool/transmissions"), get(Self::get_memory_pool_transmissions))

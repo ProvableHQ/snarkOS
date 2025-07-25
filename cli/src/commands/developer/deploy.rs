@@ -37,6 +37,10 @@ use aleo_std::StorageMode;
 use anyhow::{Result, bail};
 use clap::Parser;
 use colored::Colorize;
+use snarkvm::{
+    ledger::query::QueryTrait,
+    prelude::{Address, ConsensusVersion},
+};
 use std::{path::PathBuf, str::FromStr};
 use zeroize::Zeroize;
 
@@ -123,7 +127,22 @@ impl Deploy {
         println!("📦 Creating deployment transaction for '{}'...\n", &program_id.to_string().bold());
 
         // Generate the deployment
-        let deployment = package.deploy::<A>(None)?;
+        let mut deployment = package.deploy::<A>(None)?;
+
+        // Get the consensus version.
+        let consensus_version = N::CONSENSUS_VERSION(query.current_block_height()?)?;
+
+        // If the consensus version is less than `V9`, unset the program checksum and owner in the deployment.
+        // Otherwise, set it to the appropriate values.
+        if consensus_version < ConsensusVersion::V9 {
+            deployment.set_program_checksum_raw(None);
+            deployment.set_program_owner_raw(None);
+        } else {
+            deployment.set_program_checksum_raw(Some(package.program().to_checksum()));
+            deployment.set_program_owner_raw(Some(Address::try_from(&private_key)?));
+        };
+
+        // Compute the deployment ID.
         let deployment_id = deployment.to_deployment_id()?;
 
         // Generate the deployment transaction.
@@ -142,7 +161,7 @@ impl Deploy {
             let vm = VM::from(store)?;
 
             // Compute the minimum deployment cost.
-            let (minimum_deployment_cost, (_, _, _)) = deployment_cost(&deployment)?;
+            let (minimum_deployment_cost, (_, _, _, _)) = deployment_cost(&vm.process().read(), &deployment)?;
 
             // Prepare the fees.
             let fee = match &self.record {

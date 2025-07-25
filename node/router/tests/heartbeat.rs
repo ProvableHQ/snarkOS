@@ -127,22 +127,22 @@ async fn peer_priority_ordering() {
     let mut removable_peers = removable_peers.into_iter();
 
     // Client should be lowest priority.
-    assert_eq!(removable_peers.next().unwrap().ip(), client_peer.local_ip());
+    assert_eq!(removable_peers.next().unwrap().listener_addr, client_peer.local_ip());
 
     // Validator 1 has lower priority now because it was seen last.
-    assert_eq!(removable_peers.next().unwrap().ip(), validator_peer1.local_ip());
+    assert_eq!(removable_peers.next().unwrap().listener_addr, validator_peer1.local_ip());
 
     // Validator 2 has highest priority.
-    assert_eq!(removable_peers.next().unwrap().ip(), validator_peer2.local_ip());
+    assert_eq!(removable_peers.next().unwrap().listener_addr, validator_peer2.local_ip());
 
     // Update last seen again to check that priorities get updated correctly.
     heartbeat.router.update_last_seen_for_connected_peer(validator_peer1.local_ip());
 
     // Validator 1 must have higher priority now.
     let mut removable_peers = heartbeat.get_removable_peers().into_iter();
-    assert_eq!(removable_peers.next().unwrap().ip(), client_peer.local_ip());
-    assert_eq!(removable_peers.next().unwrap().ip(), validator_peer2.local_ip());
-    assert_eq!(removable_peers.next().unwrap().ip(), validator_peer1.local_ip());
+    assert_eq!(removable_peers.next().unwrap().listener_addr, client_peer.local_ip());
+    assert_eq!(removable_peers.next().unwrap().listener_addr, validator_peer2.local_ip());
+    assert_eq!(removable_peers.next().unwrap().listener_addr, validator_peer1.local_ip());
 }
 
 /// Checks that trusted peers are never marked as removable.

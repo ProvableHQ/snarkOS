@@ -833,7 +833,7 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let transaction = sample_execution_transaction_with_fee(false, rng);
+        let transaction = sample_execution_transaction_with_fee(false, rng, 0);
         let transaction_id = transaction.id();
         let transaction_data = Data::Object(transaction);
         let checksum = transaction_data.to_checksum::<CurrentNetwork>().unwrap();
@@ -908,7 +908,7 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let transaction = sample_execution_transaction_with_fee(false, rng);
+        let transaction = sample_execution_transaction_with_fee(false, rng, 0);
         let transaction_id = transaction.id();
         let transaction_data = Data::Object(transaction);
         let checksum = transaction_data.to_checksum::<CurrentNetwork>().unwrap();

@@ -17,36 +17,26 @@ use std::{collections::HashMap, net::SocketAddr};
 
 /// The `Resolver` provides the means to map the connected address (used in the lower-level
 /// `tcp` module internals, and provided by the OS) to the listener address (used as the
-/// unique peer identifier in the higher-level functions), and the other way around.
+/// unique peer identifier in the higher-level functions).
 #[derive(Debug, Default)]
 pub(crate) struct Resolver {
-    /// The map of the listener address to (ambiguous) peer address.
-    from_listener: HashMap<SocketAddr, SocketAddr>,
-    /// The map of the (ambiguous) peer address to listener address.
+    /// The map of the connected peer address to the correponding listener address.
     to_listener: HashMap<SocketAddr, SocketAddr>,
 }
 
 impl Resolver {
-    /// Returns the listener address for the given (ambiguous) peer address, if it exists.
-    pub fn get_listener(&self, peer_addr: &SocketAddr) -> Option<SocketAddr> {
-        self.to_listener.get(peer_addr).copied()
+    /// Returns the listener address for the given connected address, if it exists.
+    pub fn get_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
+        self.to_listener.get(connected_addr).copied()
     }
 
-    /// Returns the (ambiguous) peer address for the given listener address, if it exists.
-    pub fn get_ambiguous(&self, peer_ip: &SocketAddr) -> Option<SocketAddr> {
-        self.from_listener.get(peer_ip).copied()
+    /// Inserts a new mapping of a connected address to the corresponding listener address.
+    pub fn insert_peer(&mut self, listener_addr: SocketAddr, connected_addr: SocketAddr) {
+        self.to_listener.insert(connected_addr, listener_addr);
     }
 
-    /// Inserts a bidirectional mapping of the listener address and the (ambiguous) peer address.
-    pub fn insert_peer(&mut self, listener_ip: SocketAddr, peer_addr: SocketAddr) {
-        self.from_listener.insert(listener_ip, peer_addr);
-        self.to_listener.insert(peer_addr, listener_ip);
-    }
-
-    /// Removes the bidirectional mapping of the listener address and the (ambiguous) peer address.
-    pub fn remove_peer(&mut self, listener_ip: &SocketAddr) {
-        if let Some(peer_addr) = self.from_listener.remove(listener_ip) {
-            self.to_listener.remove(&peer_addr);
-        }
+    /// Removes the given mapping.
+    pub fn remove_peer(&mut self, connected_addr: &SocketAddr) {
+        self.to_listener.remove(connected_addr);
     }
 }

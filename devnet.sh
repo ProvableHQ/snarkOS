@@ -33,12 +33,26 @@ if [[ $build_binary == "y" ]]; then
   read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
   enable_telemetry=${enable_telemetry:-y}
 
+  # Ask the user for additional crate features (comma-separated)
+  read -p "Enter crate features to enable (comma separated, default: none): " crate_features
+  crate_features=${crate_features:-}
+
   # Build command
   build_cmd="cargo install --locked --path ."
 
   # Add the telemetry feature if requested
   if [[ $enable_telemetry == "y" ]]; then
     build_cmd+=" --features telemetry"
+  fi
+
+  # Add any extra features if provided
+  if [[ -n $crate_features ]]; then
+    # If telemetry was also enabled, append with a comma separator
+    if [[ $enable_telemetry == "y" ]]; then
+      build_cmd+=",${crate_features}"
+    else
+      build_cmd+=" --features ${crate_features}"
+    fi
   fi
 
   # Build command

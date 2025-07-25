@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync"
-version = "3.8.0"
+version = "4.0.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A synchronization module for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -67,7 +67,7 @@ features = [ "ledger-write" ]
 [dependencies.metrics]
 package = "snarkos-node-metrics"
 path = "../metrics"
-version = "=3.8.0"
+version = "=4.0.1"
 optional = true
 
 [dependencies.snarkos-node-router]

@@ -2048,7 +2048,7 @@ mod tests {
     fn sample_unconfirmed_transaction(
         rng: &mut TestRng,
     ) -> (<CurrentNetwork as Network>::TransactionID, Data<Transaction<CurrentNetwork>>) {
-        let transaction = sample_execution_transaction_with_fee(false, rng);
+        let transaction = sample_execution_transaction_with_fee(false, rng, 0);
         let id = transaction.id();
 
         (id, Data::Object(transaction))

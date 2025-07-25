@@ -195,7 +195,7 @@ commands:
 jobs:
   snarkos:
     executor: rust-docker
-    resource_class: << pipeline.parameters.large >>
+    resource_class: << pipeline.parameters.xlarge >>
     steps:
       - run_serial:
           workspace_member: .

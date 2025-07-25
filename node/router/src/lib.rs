@@ -57,13 +57,12 @@ use parking_lot::{Mutex, RwLock};
 #[cfg(not(any(test)))]
 use std::net::IpAddr;
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     future::Future,
     net::SocketAddr,
     ops::Deref,
     str::FromStr,
     sync::Arc,
-    time::Instant,
 };
 use tokio::task::JoinHandle;
 
@@ -99,17 +98,8 @@ pub struct InnerRouter<N: Network> {
     resolver: RwLock<Resolver>,
     /// The set of trusted peers.
     trusted_peers: HashSet<SocketAddr>,
-    /// The map of connected peer IPs to their peer handlers.
-    connected_peers: RwLock<HashMap<SocketAddr, Peer<N>>>,
-    /// The set of handshaking peers. While `Tcp` already recognizes the connecting IP addresses
-    /// and prevents duplicate outbound connection attempts to the same IP address, it is unable to
-    /// prevent simultaneous "two-way" connections between two peers (i.e. both nodes simultaneously
-    /// attempt to connect to each other). This set is used to prevent this from happening.
-    connecting_peers: Mutex<HashMap<SocketAddr, Option<Peer<N>>>>,
-    /// The set of candidate peer IPs.
-    candidate_peers: RwLock<HashSet<SocketAddr>>,
-    /// The set of restricted peer IPs.
-    restricted_peers: RwLock<HashMap<SocketAddr, Instant>>,
+    /// The collection of both candidate and connected peers.
+    peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// If the flag is set, the node will periodically evict more external peers.
@@ -126,8 +116,6 @@ impl<N: Network> Router<N> {
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
     /// The maximum number of candidate peers permitted to be stored in the node.
     const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
-    /// The maximum number of connection failures permitted by an inbound connecting peer.
-    const MAXIMUM_CONNECTION_FAILURES: usize = 5;
     /// The maximum amount of connection attempts withing a 10 second threshold
     #[cfg(not(test))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
@@ -162,10 +150,7 @@ impl<N: Network> Router<N> {
             cache: Default::default(),
             resolver: Default::default(),
             trusted_peers: trusted_peers.iter().copied().collect(),
-            connected_peers: Default::default(),
-            connecting_peers: Default::default(),
-            candidate_peers: Default::default(),
-            restricted_peers: Default::default(),
+            peer_pool: Default::default(),
             handles: Default::default(),
             rotate_external_peers,
             allow_external_peers,
@@ -195,13 +180,9 @@ impl<N: Network> Router<N> {
             // Attempt to connect to the candidate peer.
             match router.tcp.connect(peer_ip).await {
                 // Remove the peer from the candidate peers.
-                Ok(()) => {
-                    router.remove_candidate_peer(peer_ip);
-                    true
-                }
+                Ok(()) => true,
                 // If the connection was not allowed, log the error.
                 Err(error) => {
-                    router.connecting_peers.lock().remove(&peer_ip);
                     warn!("Unable to connect to '{peer_ip}' - {error}");
                     false
                 }
@@ -224,6 +205,11 @@ impl<N: Network> Router<N> {
         if self.number_of_connected_peers() >= self.max_connected_peers() {
             bail!("Dropping connection attempt to '{peer_ip}' (maximum peers reached)")
         }
+        // Ensure the node is not already connecting to this peer.
+        if self.is_connecting(&peer_ip) {
+            debug!("Dropping connection attempt to '{peer_ip}' (already connecting)");
+            return Ok(true);
+        }
         // Ensure the node is not already connected to this peer.
         if self.is_connected(&peer_ip) {
             debug!("Dropping connection attempt to '{peer_ip}' (already connected)");
@@ -231,42 +217,20 @@ impl<N: Network> Router<N> {
         }
         // Ensure the peer is not restricted.
         if self.is_restricted(&peer_ip) {
-            bail!("Dropping connection attempt to '{peer_ip}' (restricted)")
+            bail!("Dropping connection attempt to '{peer_ip}' (restricted)");
         }
-        // Ensure the node is not already connecting to this peer.
-        match self.connecting_peers.lock().entry(peer_ip) {
-            Entry::Vacant(entry) => {
-                entry.insert(None);
-                Ok(false)
-            }
-            Entry::Occupied(_) => {
-                debug!("Dropping connection attempt to '{peer_ip}' (already shaking hands as the initiator)");
-                Ok(true)
-            }
-        }
+
+        Ok(false)
     }
 
     /// Disconnects from the given peer IP, if the peer is connected.
     pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
         let router = self.clone();
         tokio::spawn(async move {
-            if let Some(peer_addr) = router.resolve_to_ambiguous(&peer_ip) {
-                // Disconnect from this peer.
-                let disconnected = router.tcp.disconnect(peer_addr).await;
-                // FIXME (ljedrz): this shouldn't be necessary; it's a double-check
-                //  that the higher-level collection is cleaned up after the lower-level disconnect.
-                if router.is_connected(&peer_ip) && !router.tcp.is_connected(peer_addr) {
-                    warn!("Disconnecting with fallback safety (report this to @ljedrz)");
-                    router.remove_connected_peer(peer_ip);
-                }
-                disconnected
+            if let Some(peer) = router.get_connected_peer(&peer_ip) {
+                let connected_addr = peer.connected_addr;
+                router.tcp.disconnect(connected_addr).await
             } else {
-                // FIXME (ljedrz): this shouldn't be necessary; it's a double-check
-                //  that the higher-level collection is consistent with the resolver.
-                if router.is_connected(&peer_ip) {
-                    warn!("Fallback connection artifact cleanup (report this to @ljedrz)");
-                    router.remove_connected_peer(peer_ip);
-                }
                 false
             }
         })
@@ -342,47 +306,51 @@ impl<N: Network> Router<N> {
     }
 
     /// Returns the listener IP address from the (ambiguous) peer address.
-    pub fn resolve_to_listener(&self, peer_addr: &SocketAddr) -> Option<SocketAddr> {
-        self.resolver.read().get_listener(peer_addr)
+    pub fn resolve_to_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
+        self.resolver.read().get_listener(connected_addr)
     }
 
     /// Returns the (ambiguous) peer address from the listener IP address.
-    pub fn resolve_to_ambiguous(&self, peer_ip: &SocketAddr) -> Option<SocketAddr> {
-        self.resolver.read().get_ambiguous(peer_ip)
+    pub fn resolve_to_ambiguous(&self, listener_addr: &SocketAddr) -> Option<SocketAddr> {
+        if let Some(Peer::Connected(peer)) = self.peer_pool.read().get(listener_addr) {
+            Some(peer.connected_addr)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the node is connecting to the given peer IP.
+    pub fn is_connecting(&self, ip: &SocketAddr) -> bool {
+        self.peer_pool.read().get(ip).is_some_and(|peer| peer.is_connecting())
     }
 
     /// Returns `true` if the node is connected to the given peer IP.
     pub fn is_connected(&self, ip: &SocketAddr) -> bool {
-        self.connected_peers.read().contains_key(ip)
+        self.peer_pool.read().get(ip).is_some_and(|peer| peer.is_connected())
     }
 
     /// Returns `true` if the given peer IP is a connected validator.
     pub fn is_connected_validator(&self, peer_ip: &SocketAddr) -> bool {
-        self.connected_peers.read().get(peer_ip).is_some_and(|peer| peer.is_validator())
+        self.peer_pool.read().get(peer_ip).is_some_and(|peer| peer.node_type() == Some(NodeType::Validator))
     }
 
     /// Returns `true` if the given peer IP is a connected prover.
     pub fn is_connected_prover(&self, peer_ip: &SocketAddr) -> bool {
-        self.connected_peers.read().get(peer_ip).is_some_and(|peer| peer.is_prover())
+        self.peer_pool.read().get(peer_ip).is_some_and(|peer| peer.node_type() == Some(NodeType::Prover))
     }
 
     /// Returns `true` if the given peer IP is a connected client.
     pub fn is_connected_client(&self, peer_ip: &SocketAddr) -> bool {
-        self.connected_peers.read().get(peer_ip).is_some_and(|peer| peer.is_client())
-    }
-
-    /// Returns `true` if the node is currently connecting to the given peer IP.
-    pub fn is_connecting(&self, ip: &SocketAddr) -> bool {
-        self.connecting_peers.lock().contains_key(ip)
+        self.peer_pool.read().get(peer_ip).is_some_and(|peer| peer.node_type() == Some(NodeType::Client))
     }
 
     /// Returns `true` if the given IP is restricted.
     pub fn is_restricted(&self, ip: &SocketAddr) -> bool {
-        self.restricted_peers
-            .read()
-            .get(ip)
-            .map(|time| time.elapsed().as_secs() < Self::RADIO_SILENCE_IN_SECS)
-            .unwrap_or(false)
+        if let Some(Peer::Candidate(peer)) = self.peer_pool.read().get(ip) {
+            peer.restricted.is_some_and(|ts| ts.elapsed().as_secs() < Self::RADIO_SILENCE_IN_SECS)
+        } else {
+            false
+        }
     }
 
     /// Returns `true` if the given IP is trusted.
@@ -397,73 +365,105 @@ impl<N: Network> Router<N> {
 
     /// Returns the number of connected peers.
     pub fn number_of_connected_peers(&self) -> usize {
-        self.connected_peers.read().len()
+        self.peer_pool.read().iter().filter(|(_, peer)| peer.is_connected()).count()
     }
 
     /// Returns the number of connected validators.
     pub fn number_of_connected_validators(&self) -> usize {
-        self.connected_peers.read().values().filter(|peer| peer.is_validator()).count()
+        self.peer_pool.read().values().filter(|peer| peer.node_type() == Some(NodeType::Validator)).count()
     }
 
     /// Returns the number of connected provers.
     pub fn number_of_connected_provers(&self) -> usize {
-        self.connected_peers.read().values().filter(|peer| peer.is_prover()).count()
+        self.peer_pool.read().values().filter(|peer| peer.node_type() == Some(NodeType::Prover)).count()
     }
 
     /// Returns the number of connected clients.
     pub fn number_of_connected_clients(&self) -> usize {
-        self.connected_peers.read().values().filter(|peer| peer.is_client()).count()
+        self.peer_pool.read().values().filter(|peer| peer.node_type() == Some(NodeType::Client)).count()
     }
 
     /// Returns the number of candidate peers.
     pub fn number_of_candidate_peers(&self) -> usize {
-        self.candidate_peers.read().len()
+        self.peer_pool.read().values().filter(|peer| matches!(peer, Peer::Candidate(_))).count()
     }
 
     /// Returns the number of restricted peers.
     pub fn number_of_restricted_peers(&self) -> usize {
-        self.restricted_peers.read().len()
+        self.peer_pool
+            .read()
+            .values()
+            .filter(|peer| matches!(peer, Peer::Candidate(peer) if peer.restricted.is_some()))
+            .count()
     }
 
     /// Returns the connected peer given the peer IP, if it exists.
-    pub fn get_connected_peer(&self, ip: &SocketAddr) -> Option<Peer<N>> {
-        self.connected_peers.read().get(ip).cloned()
+    pub fn get_connected_peer(&self, ip: &SocketAddr) -> Option<ConnectedPeer<N>> {
+        if let Some(Peer::Connected(peer)) = self.peer_pool.read().get(ip) { Some(peer.clone()) } else { None }
     }
 
     /// Returns the connected peers.
-    pub fn get_connected_peers(&self) -> Vec<Peer<N>> {
-        self.connected_peers.read().values().cloned().collect()
+    pub fn get_connected_peers(&self) -> Vec<ConnectedPeer<N>> {
+        self.peer_pool
+            .read()
+            .values()
+            .filter_map(|peer| if let Peer::Connected(p) = peer { Some(p.clone()) } else { None })
+            .collect()
     }
 
     /// Returns the list of connected peers.
     pub fn connected_peers(&self) -> Vec<SocketAddr> {
-        self.connected_peers.read().keys().copied().collect()
+        self.peer_pool.read().iter().filter_map(|(addr, peer)| peer.is_connected().then_some(*addr)).collect()
     }
 
     /// Returns the list of connected validators.
     pub fn connected_validators(&self) -> Vec<SocketAddr> {
-        self.connected_peers.read().iter().filter(|(_, peer)| peer.is_validator()).map(|(ip, _)| *ip).collect()
+        self.peer_pool
+            .read()
+            .iter()
+            .filter_map(|(addr, peer)| (peer.node_type() == Some(NodeType::Validator)).then_some(*addr))
+            .collect()
     }
 
-    /// Returns the list of connected provers.
+    /// Returns the list of the listening addresses of connected provers.
     pub fn connected_provers(&self) -> Vec<SocketAddr> {
-        self.connected_peers.read().iter().filter(|(_, peer)| peer.is_prover()).map(|(ip, _)| *ip).collect()
+        self.peer_pool
+            .read()
+            .iter()
+            .filter_map(|(addr, peer)| (peer.node_type() == Some(NodeType::Prover)).then_some(*addr))
+            .collect()
     }
 
     /// Returns the list of connected clients.
     pub fn connected_clients(&self) -> Vec<SocketAddr> {
-        self.connected_peers.read().iter().filter(|(_, peer)| peer.is_client()).map(|(ip, _)| *ip).collect()
+        self.peer_pool
+            .read()
+            .iter()
+            .filter_map(|(addr, peer)| (peer.node_type() == Some(NodeType::Client)).then_some(*addr))
+            .collect()
     }
 
     /// Returns the list of candidate peers.
     pub fn candidate_peers(&self) -> HashSet<SocketAddr> {
         let banned_ips = self.tcp().banned_peers().get_banned_ips();
-        self.candidate_peers.read().iter().filter(|peer| !banned_ips.contains(&peer.ip())).copied().collect()
+        self.peer_pool
+            .read()
+            .iter()
+            .filter_map(|(addr, peer)| {
+                (matches!(peer, Peer::Candidate(_)) && !banned_ips.contains(&addr.ip())).then_some(*addr)
+            })
+            .collect()
     }
 
     /// Returns the list of restricted peers.
     pub fn restricted_peers(&self) -> Vec<SocketAddr> {
-        self.restricted_peers.read().keys().copied().collect()
+        self.peer_pool
+            .read()
+            .iter()
+            .filter_map(|(addr, peer)| {
+                matches!(peer, Peer::Candidate(conn) if conn.restricted.is_some()).then_some(*addr)
+            })
+            .collect()
     }
 
     /// Returns the list of trusted peers.
@@ -521,39 +521,14 @@ impl<N: Network> Router<N> {
 
     /// Returns the list of metrics for the connected peers.
     pub fn connected_metrics(&self) -> Vec<(SocketAddr, NodeType)> {
-        self.connected_peers.read().iter().map(|(ip, peer)| (*ip, peer.node_type())).collect()
+        self.get_connected_peers().iter().map(|peer| (peer.listener_addr, peer.node_type)).collect()
     }
 
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
-        metrics::gauge(metrics::router::CONNECTED, self.connected_peers.read().len() as f64);
-        metrics::gauge(metrics::router::CANDIDATE, self.candidate_peers.read().len() as f64);
-        metrics::gauge(metrics::router::RESTRICTED, self.restricted_peers.read().len() as f64);
-    }
-
-    /// Inserts the given peer into the connected peers.
-    pub fn insert_connected_peer(&self, peer_ip: SocketAddr) {
-        // Move the peer from "connecting" to "connected".
-        let peer = match self.connecting_peers.lock().remove(&peer_ip) {
-            Some(Some(peer)) => peer,
-            Some(None) => {
-                warn!("Couldn't promote {peer_ip} from \"connecting\" to \"connected\": Handshake not completed");
-                return;
-            }
-            None => {
-                warn!("Couldn't promote {peer_ip} from \"connecting\" to \"connected\": Public/listen address unknown");
-                return;
-            }
-        };
-        // Add an entry for this `Peer` in the connected peers.
-        self.connected_peers.write().insert(peer_ip, peer);
-        // Remove this peer from the candidate peers, if it exists.
-        self.candidate_peers.write().remove(&peer_ip);
-        // Remove this peer from the restricted peers, if it exists.
-        self.restricted_peers.write().remove(&peer_ip);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
-        info!("Connected to '{peer_ip}'");
+        metrics::gauge(metrics::router::CONNECTED, self.number_of_connected_peers() as f64);
+        metrics::gauge(metrics::router::CANDIDATE, self.number_of_candidate_peers() as f64);
+        metrics::gauge(metrics::router::RESTRICTED, self.number_of_restricted_peers() as f64);
     }
 
     /// Inserts the given peer IPs to the set of candidate peers.
@@ -563,27 +538,22 @@ impl<N: Network> Router<N> {
     pub fn insert_candidate_peers(&self, peers: &[SocketAddr]) {
         // Compute the maximum number of candidate peers.
         let max_candidate_peers = Self::MAXIMUM_CANDIDATE_PEERS.saturating_sub(self.number_of_candidate_peers());
-        // Ensure the combined number of peers does not surpass the threshold.
-        let eligible_peers = peers
-            .iter()
-            .filter(|peer_ip| {
-                // Ensure the peer is not itself, is not already connected, and is not restricted.
-                !self.is_local_ip(peer_ip) && !self.is_connected(peer_ip) && !self.is_restricted(peer_ip)
-            })
-            .take(max_candidate_peers);
+        {
+            let mut peer_pool = self.peer_pool.write();
+            // Ensure the combined number of peers does not surpass the threshold.
+            let eligible_peers = peers
+                .iter()
+                .filter(|peer_ip| {
+                    // Ensure the peer is not itself, is not already connected, and is not restricted.
+                    !self.is_local_ip(peer_ip) && !peer_pool.contains_key(peer_ip)
+                })
+                .take(max_candidate_peers)
+                .map(|addr| (*addr, Peer::new_candidate(*addr)))
+                .collect::<Vec<_>>();
 
-        // Proceed to insert the eligible candidate peer IPs.
-        self.candidate_peers.write().extend(eligible_peers);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
-    }
-
-    /// Inserts the given peer into the restricted peers.
-    pub fn insert_restricted_peer(&self, peer_ip: SocketAddr) {
-        // Remove this peer from the candidate peers, if it exists.
-        self.candidate_peers.write().remove(&peer_ip);
-        // Add the peer to the restricted peers.
-        self.restricted_peers.write().insert(peer_ip, Instant::now());
+            // Proceed to insert the eligible candidate peer IPs.
+            peer_pool.extend(eligible_peers);
+        }
         #[cfg(feature = "metrics")]
         self.update_metrics();
     }
@@ -596,10 +566,10 @@ impl<N: Network> Router<N> {
         mut write_fn: Fn,
     ) -> Result<()> {
         // Retrieve the peer.
-        if let Some(peer) = self.connected_peers.write().get_mut(&peer_ip) {
+        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             // Ensure the node type has not changed.
-            if peer.node_type() != node_type {
-                bail!("Peer '{peer_ip}' has changed node types from {} to {node_type}", peer.node_type())
+            if peer.node_type() != Some(node_type) {
+                bail!("Peer '{peer_ip}' has changed node types");
             }
             // Lastly, update the peer with the given function.
             write_fn(peer);
@@ -608,35 +578,18 @@ impl<N: Network> Router<N> {
     }
 
     pub fn update_last_seen_for_connected_peer(&self, peer_ip: SocketAddr) {
-        if let Some(peer) = self.connected_peers.write().get_mut(&peer_ip) {
-            peer.set_last_seen(Instant::now());
+        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
+            peer.update_last_seen();
         }
     }
 
     /// Removes the connected peer and adds them to the candidate peers.
     pub fn remove_connected_peer(&self, peer_ip: SocketAddr) {
-        // Remove this peer from the connected peers, if it exists.
-        self.connected_peers.write().remove(&peer_ip);
-        // Removes the bidirectional map between the listener address and (ambiguous) peer address.
-        self.resolver.write().remove_peer(&peer_ip);
+        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
+            peer.downgrade_to_candidate(peer_ip, false);
+        }
         // Clear cached entries applicable to the peer.
         self.cache.clear_peer_entries(peer_ip);
-        // Add the peer to the candidate peers.
-        self.candidate_peers.write().insert(peer_ip);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
-    }
-
-    #[cfg(feature = "test")]
-    pub fn clear_candidate_peers(&self) {
-        self.candidate_peers.write().clear();
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
-    }
-
-    /// Removes the given address from the candidate peers, if it exists.
-    pub fn remove_candidate_peer(&self, peer_ip: SocketAddr) {
-        self.candidate_peers.write().remove(&peer_ip);
         #[cfg(feature = "metrics")]
         self.update_metrics();
     }

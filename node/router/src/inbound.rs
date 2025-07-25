@@ -202,11 +202,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
                 // Update the connected peer.
                 if let Err(error) =
-                    self.router().update_connected_peer(peer_ip, message.node_type, |peer: &mut Peer<N>| {
-                        // Update the version of the peer.
-                        peer.set_version(message.version);
-                        // Update the node type of the peer.
-                        peer.set_node_type(message.node_type);
+                    self.router().update_connected_peer(peer_ip, message.node_type, |conn: &mut Peer<N>| {
+                        conn.update_version(message.version);
                     })
                 {
                     bail!("[Ping] {error}");
