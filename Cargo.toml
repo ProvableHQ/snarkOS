@@ -145,7 +145,7 @@ name = "snarkos"
 path = "snarkos/main.rs"
 
 [features]
-default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
+default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics", "snarkos-cli/test_network" ]
 history = [ "snarkos-node/history" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
@@ -172,7 +172,6 @@ locktick = [
   "snarkos-node-tcp/locktick"
 ]
 serial = [ "snarkos-cli/serial" ]
-test_network = [ "snarkos-cli/test_network" ]
 
 [dependencies.anyhow]
 workspace = true
