@@ -54,7 +54,10 @@ use axum_extra::response::ErasedJson;
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, atomic::AtomicUsize},
+};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
@@ -80,6 +83,10 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// A reference to BlockSync,
     block_sync: Arc<BlockSync<N>>,
+    /// The number of ongoing deploy transaction verifications via REST.
+    num_verifying_deploys: Arc<AtomicUsize>,
+    /// The number of ongoing execute transaction verifications via REST.
+    num_verifying_executions: Arc<AtomicUsize>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -94,7 +101,16 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
         block_sync: Arc<BlockSync<N>>,
     ) -> Result<Self> {
         // Initialize the server.
-        let mut server = Self { consensus, ledger, routing, cdn_sync, block_sync, handles: Default::default() };
+        let mut server = Self {
+            consensus,
+            ledger,
+            routing,
+            cdn_sync,
+            block_sync,
+            handles: Default::default(),
+            num_verifying_deploys: Default::default(),
+            num_verifying_executions: Default::default(),
+        };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
         // Return the server.

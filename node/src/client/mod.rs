@@ -42,7 +42,7 @@ use snarkvm::{
         puzzle::{Puzzle, Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::block::Transaction,
+    prelude::{VM, block::Transaction},
 };
 
 use aleo_std::StorageMode;
@@ -72,12 +72,6 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-/// The maximum number of deployments to verify in parallel.
-/// Note: worst case memory to verify a deployment (MAX_DEPLOYMENT_CONSTRAINTS = 1 << 20) is ~2 GiB.
-const MAX_PARALLEL_DEPLOY_VERIFICATIONS: usize = 5;
-/// The maximum number of executions to verify in parallel.
-/// Note: worst case memory to verify an execution is 0.01 GiB.
-const MAX_PARALLEL_EXECUTE_VERIFICATIONS: usize = 1000;
 /// The maximum number of solutions to verify in parallel.
 /// Note: worst case memory to verify a solution is 0.5 GiB.
 const MAX_PARALLEL_SOLUTION_VERIFICATIONS: usize = 20;
@@ -452,7 +446,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 // Determine if the queue contains txs to verify.
                 let queue_is_empty = node.deploy_queue.lock().is_empty();
                 // Determine if our verification counter has space to verify new txs.
-                let counter_is_full = node.num_verifying_deploys.load(Acquire) >= MAX_PARALLEL_DEPLOY_VERIFICATIONS;
+                let counter_is_full =
+                    node.num_verifying_deploys.load(Acquire) >= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS;
 
                 // Sleep to allow the queue to be filled or transactions to be validated.
                 if queue_is_empty || counter_is_full {
@@ -481,7 +476,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                         _node.num_verifying_deploys.fetch_sub(1, Relaxed);
                     });
                     // If we are already at capacity, don't verify more deployments.
-                    if previous_counter + 1 >= MAX_PARALLEL_DEPLOY_VERIFICATIONS {
+                    if previous_counter + 1 >= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS {
                         break;
                     }
                 }
@@ -504,7 +499,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 // Determine if the queue contains txs to verify.
                 let queue_is_empty = node.execute_queue.lock().is_empty();
                 // Determine if our verification counter has space to verify new txs.
-                let counter_is_full = node.num_verifying_executions.load(Acquire) >= MAX_PARALLEL_EXECUTE_VERIFICATIONS;
+                let counter_is_full =
+                    node.num_verifying_executions.load(Acquire) >= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS;
 
                 // Sleep to allow the queue to be filled or transactions to be validated.
                 if queue_is_empty || counter_is_full {
@@ -533,7 +529,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                         _node.num_verifying_executions.fetch_sub(1, Relaxed);
                     });
                     // If we are already at capacity, don't verify more executions.
-                    if previous_counter + 1 >= MAX_PARALLEL_EXECUTE_VERIFICATIONS {
+                    if previous_counter + 1 >= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS {
                         break;
                     }
                 }

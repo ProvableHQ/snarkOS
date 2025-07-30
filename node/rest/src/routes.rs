@@ -17,14 +17,14 @@ use super::*;
 use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkvm::{
     ledger::puzzle::Solution,
-    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, block::Transaction},
+    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
 };
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::atomic::Ordering};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
@@ -50,6 +50,12 @@ pub(crate) struct BackupPath {
 pub(crate) struct Metadata {
     metadata: Option<bool>,
     all: Option<bool>,
+}
+
+/// The query object for `transaction_broadcast`.
+#[derive(Copy, Clone, Deserialize, Serialize)]
+pub(crate) struct CheckTransaction {
+    check_transaction: Option<bool>,
 }
 
 /// The return value for a `sync_status` query.
@@ -534,8 +540,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     // POST /<network>/transaction/broadcast
+    // POST /<network>/transaction/broadcast?check_transaction={true}
     pub(crate) async fn transaction_broadcast(
         State(rest): State<Self>,
+        check_transaction: Query<CheckTransaction>,
         Json(tx): Json<Transaction<N>>,
     ) -> Result<ErasedJson, RestError> {
         // Do not process the transaction if the node is too far behind.
@@ -550,6 +558,40 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let buffer = Vec::with_capacity(3000);
         if tx.write_le(LimitedWriter::new(buffer, N::MAX_TRANSACTION_SIZE)).is_err() {
             return Err(RestError("Transaction size exceeds the byte limit".to_string()));
+        }
+
+        if check_transaction.check_transaction.unwrap_or(false) {
+            // Determine transaction type and appropriate limits.
+            let is_exec = tx.is_execute();
+            // Select counter and limit based on transaction type.
+            let (counter, limit, err_msg) = if is_exec {
+                (
+                    &rest.num_verifying_executions,
+                    VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
+                    "Too many execution verifications in progress",
+                )
+            } else {
+                (
+                    &rest.num_verifying_deploys,
+                    VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
+                    "Too many deploy verifications in progress",
+                )
+            };
+            // Try to acquire a slot.
+            let prev = counter.fetch_add(1, Ordering::Relaxed);
+            if prev >= limit {
+                counter.fetch_sub(1, Ordering::Relaxed);
+                return Err(RestError(err_msg.to_string()));
+            }
+            // Perform the check.
+            let res = rest
+                .ledger
+                .check_transaction_basic(&tx, None, &mut rand::thread_rng())
+                .map_err(|e| RestError(format!("Invalid transaction: {e}")));
+            // Release the slot.
+            counter.fetch_sub(1, Ordering::Relaxed);
+            // Propagate error if any.
+            res?;
         }
 
         // If the consensus module is enabled, add the unconfirmed transaction to the memory pool.
