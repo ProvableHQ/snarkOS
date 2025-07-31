@@ -19,6 +19,7 @@ edition = "2024"
 [features]
 default = [ ]
 test = [ ]
+metrics = [ "dep:snarkos-node-metrics", "snarkvm/metrics" ]
 
 [dependencies.bytes]
 workspace = true
@@ -28,6 +29,10 @@ workspace = true
 
 [dependencies.snarkos-node-bft-events]
 workspace = true
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-sync-locators]
 workspace = true
