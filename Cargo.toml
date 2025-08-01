@@ -140,7 +140,7 @@ default-features = false
 version = "0.4"
 
 [workspace.dependencies.tracing]
-version = "0.1"
+version = "0.1.41"
 default-features = false
 
 [workspace.dependencies.tracing-test]
