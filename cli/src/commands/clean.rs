@@ -50,7 +50,7 @@ impl Clean {
         };
 
         // Remove the current proposal cache file, if it exists.
-        let proposal_cache_path = proposal_cache_path(self.network, &storage_mode);
+        let proposal_cache_path = proposal_cache_path(self.network, &storage_mode, self.dev);
         if proposal_cache_path.exists() {
             if let Err(err) = std::fs::remove_file(&proposal_cache_path) {
                 bail!("Failed to remove the current proposal cache file at {}: {err}", proposal_cache_path.display());

@@ -156,9 +156,9 @@ impl<N: Network> Primary<N> {
     /// Load the proposal cache file and update the Primary state with the stored data.
     async fn load_proposal_cache(&self) -> Result<()> {
         // Fetch the signed proposals from the file system if it exists.
-        match ProposalCache::<N>::exists(&self.storage_mode) {
+        match ProposalCache::<N>::exists(&self.storage_mode, self.gateway.dev()) {
             // If the proposal cache exists, then process the proposal cache.
-            true => match ProposalCache::<N>::load(self.gateway.account().address(), &self.storage_mode) {
+            true => match ProposalCache::<N>::load(self.gateway.account().address(), &self.storage_mode, self.gateway.dev()) {
                 Ok(proposal_cache) => {
                     // Extract the proposal and signed proposals.
                     let (latest_certificate_round, proposed_batch, signed_proposals, pending_certificates) =
@@ -1939,7 +1939,7 @@ impl<N: Network> Primary<N> {
             let pending_certificates = self.storage.get_pending_certificates();
             ProposalCache::new(latest_round, proposal, signed_proposals, pending_certificates)
         };
-        if let Err(err) = proposal_cache.store(&self.storage_mode) {
+        if let Err(err) = proposal_cache.store(&self.storage_mode, self.gateway.dev()) {
             error!("Failed to store the current proposal cache: {err}");
         }
         // Close the gateway.

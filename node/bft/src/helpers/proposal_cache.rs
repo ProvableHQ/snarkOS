@@ -26,7 +26,7 @@ use indexmap::IndexSet;
 use std::{fs, path::PathBuf};
 
 /// Returns the path where a proposal cache file may be stored.
-pub fn proposal_cache_path(network: u16, storage_mode: &StorageMode) -> PathBuf {
+pub fn proposal_cache_path(network: u16, storage_mode: &StorageMode, dev: Option<u16>) -> PathBuf {
     const PROPOSAL_CACHE_FILE_NAME: &str = "current-proposal-cache";
     // Obtain the path to the ledger.
     let mut path = aleo_ledger_dir(network, storage_mode);
@@ -36,7 +36,9 @@ pub fn proposal_cache_path(network: u16, storage_mode: &StorageMode) -> PathBuf 
         path.pop();
     }
     // Append the proposal store's file name.
-    match storage_mode.dev() {
+    // Use the provided dev parameter if available, otherwise fall back to storage_mode.dev()
+    let dev_id = dev.or_else(|| storage_mode.dev());
+    match dev_id {
         Some(id) => path.push(format!(".{PROPOSAL_CACHE_FILE_NAME}-{network}-{id}")),
         None => path.push(format!("{PROPOSAL_CACHE_FILE_NAME}-{network}")),
     }
@@ -80,14 +82,14 @@ impl<N: Network> ProposalCache<N> {
     }
 
     /// Returns `true` if a proposal cache exists for the given network and `dev`.
-    pub fn exists(storage_mode: &StorageMode) -> bool {
-        proposal_cache_path(N::ID, storage_mode).exists()
+    pub fn exists(storage_mode: &StorageMode, dev: Option<u16>) -> bool {
+        proposal_cache_path(N::ID, storage_mode, dev).exists()
     }
 
     /// Load the proposal cache from the file system and ensure that the proposal cache is valid.
-    pub fn load(expected_signer: Address<N>, storage_mode: &StorageMode) -> Result<Self> {
+    pub fn load(expected_signer: Address<N>, storage_mode: &StorageMode, dev: Option<u16>) -> Result<Self> {
         // Construct the proposal cache file system path.
-        let path = proposal_cache_path(N::ID, storage_mode);
+        let path = proposal_cache_path(N::ID, storage_mode, dev);
 
         // Deserialize the proposal cache from the file system.
         let proposal_cache = match fs::read(&path) {
@@ -109,8 +111,8 @@ impl<N: Network> ProposalCache<N> {
     }
 
     /// Store the proposal cache to the file system.
-    pub fn store(&self, storage_mode: &StorageMode) -> Result<()> {
-        let path = proposal_cache_path(N::ID, storage_mode);
+    pub fn store(&self, storage_mode: &StorageMode, dev: Option<u16>) -> Result<()> {
+        let path = proposal_cache_path(N::ID, storage_mode, dev);
         info!("Storing the proposal cache to {}...", path.display());
 
         // Serialize the proposal cache.
