@@ -114,11 +114,6 @@ impl<N: Network> Display<N> {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
                         KeyCode::Esc => {
-                            // // TODO (howardwu): @ljedrz to implement a wrapping scope for Display within Node/Server.
-                            // #[allow(unused_must_use)]
-                            // {
-                            //     self.node.shut_down();
-                            // }
                             return Ok(());
                         }
                         KeyCode::Left => self.tabs.previous(),

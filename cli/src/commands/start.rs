@@ -278,7 +278,9 @@ impl Start {
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
+                        Display::start(node.clone(), log_receiver).with_context(display_start_error)?;
+                        // Perform graceful shutdown when display exits (e.g., ESC pressed)
+                        cli.handle_display_shutdown(node).await;
                     }
                 }
                 TestnetV0::ID => {
@@ -287,7 +289,9 @@ impl Start {
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
+                        Display::start(node.clone(), log_receiver).with_context(display_start_error)?;
+                        // Perform graceful shutdown when display exits (e.g., ESC pressed)
+                        cli.handle_display_shutdown(node).await;
                     }
                 }
                 CanaryV0::ID => {
@@ -296,7 +300,9 @@ impl Start {
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
+                        Display::start(node.clone(), log_receiver).with_context(display_start_error)?;
+                        // Perform graceful shutdown when display exits (e.g., ESC pressed)
+                        cli.handle_display_shutdown(node).await;
                     }
                 }
                 _ => panic!("Invalid network ID specified"),
@@ -310,6 +316,22 @@ impl Start {
 }
 
 impl Start {
+    /// Handles shutdown when ESC is pressed in the display.
+    async fn handle_display_shutdown<N: Network>(&self, node: Node<N>) {
+        // Logs are not shown in display-mode, so use println instead.
+        println!("==========================================================================================");
+        println!("⚠️  Attention - Starting the graceful shutdown procedure (ETA: 30 seconds)...");
+        println!("⚠️  Attention - To avoid DATA CORRUPTION, do NOT interrupt snarkOS (or press Ctrl+C again).");
+        println!("⚠️  Attention - Please wait until the shutdown gracefully completes.");
+        println!("==========================================================================================");
+
+        // Shut down the node
+        node.shut_down().await;
+
+        // Terminate the process.
+        std::process::exit(0);
+    }
+
     /// Returns the initial peer(s) to connect to, from the given configurations.
     fn parse_trusted_addrs(&self, list: &Option<String>) -> Result<Vec<SocketAddr>> {
         let Some(list) = list else { return Ok(vec![]) };
