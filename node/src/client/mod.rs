@@ -298,6 +298,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     }
 
     /// Client-side version of [`snarkvm_node_bft::Sync::try_advancing_block_synchronization`].
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn try_advancing_block_synchronization(&self) {
         let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
             Ok(val) => val,
@@ -317,6 +318,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     }
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn try_issuing_block_requests(&self) {
         // Wait for peer updates or timeout
         let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
@@ -371,6 +373,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         }
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn send_block_requests(
         &self,
         block_requests: Vec<(u32, PrepareSyncRequest<N>)>,
@@ -419,6 +422,11 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let _node = node.clone();
                     // For each solution, spawn a task to verify it.
                     tokio::task::spawn_blocking(move || {
+                        #[cfg(feature = "instrumentation")]
+                        let _span =
+                            tracing::span!(tracing::Level::TRACE, "solution_verification", solution_id = %solution.id())
+                                .entered();
+
                         // Retrieve the latest epoch hash.
                         if let Ok(epoch_hash) = _node.ledger.latest_epoch_hash() {
                             // Check if the prover has reached their solution limit.
@@ -426,12 +434,19 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                             // here prevents the to-be aborted solutions from propagating through the network.
                             let prover_address = solution.address();
                             if _node.ledger.is_solution_limit_reached(&prover_address, 0) {
-                                debug!("Invalid Solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch", fmt_id(solution.id()));
+                                debug!(
+                                    "Invalid Solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch",
+                                    fmt_id(solution.id())
+                                );
                             }
                             // Retrieve the latest proof target.
                             let proof_target = _node.ledger.latest_block().header().proof_target();
                             // Ensure that the solution is valid for the given epoch.
+                            #[cfg(feature = "instrumentation")]
+                            let _check_span = tracing::span!(tracing::Level::INFO, "puzzle_check_solution").entered();
                             let is_valid = _node.puzzle.check_solution(&solution, epoch_hash, proof_target);
+                            #[cfg(feature = "instrumentation")]
+                            drop(_check_span);
 
                             match is_valid {
                                 // If the solution is valid, propagate the `UnconfirmedSolution`.
@@ -501,7 +516,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                         };
                         // Check if the state root is in the ledger.
                         if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
-                            debug!("Failed to find global state root for deployment from peer_ip {peer_ip}, propagating anyway");
+                            debug!(
+                                "Failed to find global state root for deployment from peer_ip {peer_ip}, propagating anyway"
+                            );
                             // Propagate the `UnconfirmedTransaction`.
                             _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
                             _node.num_verifying_deploys.fetch_sub(1, Relaxed);
@@ -541,7 +558,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     info!("Shutting down execution verification");
                     break;
                 }
-
                 // Determine if the queue contains txs to verify.
                 let queue_is_empty = node.execute_queue.lock().is_empty();
                 // Determine if our verification counter has space to verify new txs.

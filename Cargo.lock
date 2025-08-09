@@ -587,9 +587,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.47"
+version = "1.2.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd405d82c84ff7f35739f175f67d8b9fb7687a0e84ccdc78bd3568839827cf07"
+checksum = "c481bdbf0ed3b892f6f806287d72acd515b352a4ec27a208489b8c1bc839633a"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2252,9 +2252,9 @@ dependencies = [
 
 [[package]]
 name = "instability"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "435d80800b936787d62688c927b6490e887c7ef5ff9ce922c6c6050fca75eb9a"
+checksum = "6778b0196eefee7df739db78758e5cf9b37412268bfa5650bfeed028aed20d9c"
 dependencies = [
  "darling 0.20.11",
  "indoc",
@@ -2340,9 +2340,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.82"
+version = "0.3.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b011eec8cc36da2aab2d5cff675ec18454fad408585853910a202391cf9f8e65"
+checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -3651,9 +3651,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94182ad936a0c91c324cd46c6511b9510ed16af436d7b5bab34beab0afd55f7a"
+checksum = "708c0f9d5f54ba0272468c1d306a52c495b31fa155e91bc25371e6df7996908c"
 dependencies = [
  "web-time",
  "zeroize",
@@ -3912,9 +3912,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.16.0"
+version = "3.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10574371d41b0d9b2cff89418eda27da52bcaff2cc8741db26382a77c29131f1"
+checksum = "4fa237f2807440d238e0364a218270b98f767a00d3dada77b1c53ae88940e2e7"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3931,9 +3931,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.16.0"
+version = "3.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08a72d8216842fdd57820dc78d840bef99248e35fb2554ff923319e60f2d686b"
+checksum = "52a8e3ca0ca629121f70ab50f95249e5a6f925cc0f6ffe8256c45b728875706c"
 dependencies = [
  "darling 0.21.3",
  "proc-macro2",
@@ -4114,6 +4114,7 @@ dependencies = [
  "anstyle",
  "anyhow",
  "base64 0.22.1",
+ "cfg-if",
  "clap",
  "colored 3.0.0",
  "console-subscriber",
@@ -4143,6 +4144,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "tracing-flame",
  "tracing-subscriber",
  "ureq",
  "zeroize",
@@ -4263,7 +4265,6 @@ dependencies = [
  "indexmap 2.12.1",
  "proptest",
  "serde",
- "snarkos-node-network",
  "snarkos-node-sync-locators",
  "snarkvm",
  "test-strategy 0.4.3",
@@ -4527,7 +4528,7 @@ dependencies = [
 [[package]]
 name = "snarkvm"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4550,7 +4551,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-algorithms"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4578,7 +4579,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-algorithms-cuda"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "blst",
  "cc",
@@ -4589,7 +4590,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -4603,7 +4604,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-account"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-network",
  "snarkvm-circuit-types",
@@ -4613,7 +4614,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-algorithms"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-types",
  "snarkvm-console-algorithms",
@@ -4623,7 +4624,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-collections"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-types",
@@ -4633,7 +4634,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-environment"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "indexmap 2.12.1",
  "itertools 0.14.0",
@@ -4651,12 +4652,12 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-environment-witness"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 
 [[package]]
 name = "snarkvm-circuit-network"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-collections",
@@ -4667,7 +4668,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-program"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -4681,7 +4682,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-address",
@@ -4696,7 +4697,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-address"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4709,7 +4710,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-boolean"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-console-types-boolean",
@@ -4718,7 +4719,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-field"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4728,7 +4729,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-group"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4740,7 +4741,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-integers"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4752,7 +4753,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-scalar"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4763,7 +4764,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-string"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4775,7 +4776,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-account",
  "snarkvm-console-algorithms",
@@ -4788,7 +4789,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-account"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "bs58",
  "snarkvm-console-network",
@@ -4799,7 +4800,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-algorithms"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "blake2s_simd",
  "hex",
@@ -4814,7 +4815,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-collections"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "rayon",
@@ -4825,7 +4826,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-network"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "enum-iterator",
@@ -4845,7 +4846,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-network-environment"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "bech32",
@@ -4863,7 +4864,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-program"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "enum-iterator",
  "enum_index",
@@ -4884,7 +4885,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-address",
@@ -4899,7 +4900,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-address"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4910,7 +4911,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-boolean"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
 ]
@@ -4918,7 +4919,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-field"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4928,7 +4929,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-group"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4939,7 +4940,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-integers"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4950,7 +4951,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-scalar"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4961,7 +4962,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-string"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4972,7 +4973,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-curves"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "rand 0.8.5",
  "rayon",
@@ -4986,7 +4987,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-fields"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5003,7 +5004,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5033,7 +5034,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-authority"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "rand 0.8.5",
@@ -5045,7 +5046,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-block"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "indexmap 2.12.1",
@@ -5062,12 +5063,13 @@ dependencies = [
  "snarkvm-synthesizer-program",
  "snarkvm-synthesizer-snark",
  "snarkvm-utilities",
+ "tracing",
 ]
 
 [[package]]
 name = "snarkvm-ledger-committee"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "indexmap 2.12.1",
@@ -5086,7 +5088,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-ledger-narwhal-batch-certificate",
  "snarkvm-ledger-narwhal-batch-header",
@@ -5099,7 +5101,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-certificate"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "indexmap 2.12.1",
  "rayon",
@@ -5112,7 +5114,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-header"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "indexmap 2.12.1",
  "rayon",
@@ -5125,7 +5127,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-data"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "bytes",
  "serde_json",
@@ -5136,7 +5138,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-subdag"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "indexmap 2.12.1",
  "rayon",
@@ -5151,7 +5153,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "bytes",
  "serde_json",
@@ -5164,7 +5166,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission-id"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "snarkvm-console",
  "snarkvm-ledger-puzzle",
@@ -5173,7 +5175,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-puzzle"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5193,7 +5195,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-puzzle-epoch"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5216,7 +5218,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-query"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5233,7 +5235,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-store"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std-storage",
  "anyhow",
@@ -5261,7 +5263,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-test-helpers"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5279,7 +5281,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-metrics"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "metrics",
 ]
@@ -5287,7 +5289,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-parameters"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5310,7 +5312,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5344,7 +5346,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-process"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "colored 3.0.0",
@@ -5369,7 +5371,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-program"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "enum-iterator",
  "indexmap 2.12.1",
@@ -5383,12 +5385,13 @@ dependencies = [
  "snarkvm-synthesizer-snark",
  "snarkvm-utilities",
  "tiny-keccak",
+ "tracing",
 ]
 
 [[package]]
 name = "snarkvm-synthesizer-snark"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "bincode",
  "serde_json",
@@ -5401,7 +5404,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-utilities"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5424,7 +5427,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-utilities-derives"
 version = "4.4.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=b176b1409#b176b14095a58bbcba6b31f975015c4293ad18d4"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftracing-instrument#0ba29ef203765a0fd41ea424e92fb72bb6eb7450"
 dependencies = [
  "proc-macro2",
  "quote 1.0.42",
@@ -5697,9 +5700,9 @@ dependencies = [
 
 [[package]]
 name = "test-log-macros"
-version = "0.2.18"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "451b374529930d7601b1eef8d32bc79ae870b6079b069401709c2a8bf9e75f36"
+checksum = "be35209fd0781c5401458ab66e4f98accf63553e8fae7425503e92fdd319783b"
 dependencies = [
  "proc-macro2",
  "quote 1.0.42",
@@ -6132,9 +6135,9 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.41"
+version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
+checksum = "2d15d90a0b5c19378952d479dc858407149d7bb45a14de0142f6c534b16fc647"
 dependencies = [
  "log",
  "pin-project-lite",
@@ -6161,6 +6164,17 @@ checksum = "7a04e24fab5c89c6a36eb8558c9656f30d81de51dfa4d3b45f26b21d61fa0a6c"
 dependencies = [
  "once_cell",
  "valuable",
+]
+
+[[package]]
+name = "tracing-flame"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bae117ee14789185e129aaee5d93750abe67fdc5a9a62650452bfe4e122a3a9"
+dependencies = [
+ "lazy_static",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6425,9 +6439,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da95793dfc411fbbd93f5be7715b0578ec61fe87cb1a42b12eb625caa5c5ea60"
+checksum = "0d759f433fa64a2d763d1340820e46e111a7a5ab75f993d1852d70b03dbb80fd"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -6438,9 +6452,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.55"
+version = "0.4.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "551f88106c6d5e7ccc7cd9a16f312dd3b5d36ea8b4954304657d5dfba115d4a0"
+checksum = "836d9622d604feee9e5de25ac10e3ea5f2d65b41eac0d9ce72eb5deae707ce7c"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -6451,9 +6465,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04264334509e04a7bf8690f2384ef5265f05143a4bff3889ab7a3269adab59c2"
+checksum = "48cb0d2638f8baedbc542ed444afc0644a29166f1595371af4fecf8ce1e7eeb3"
 dependencies = [
  "quote 1.0.42",
  "wasm-bindgen-macro-support",
@@ -6461,9 +6475,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "420bc339d9f322e562942d52e115d57e950d12d88983a14c79b86859ee6c7ebc"
+checksum = "cefb59d5cd5f92d9dcf80e4683949f15ca4b511f4ac0a6e14d4e1ac60c6ecd40"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -6474,18 +6488,18 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76f218a38c84bcb33c25ec7059b07847d465ce0e0a76b995e134a45adcb6af76"
+checksum = "cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "web-sys"
-version = "0.3.82"
+version = "0.3.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a1f95c0d03a47f4ae1f7a64643a6bb97465d9b740f0fa8f90ea33915c99a9a1"
+checksum = "9b32828d774c412041098d182a8b38b16ea816958e07cf40eec2bc080ae137ac"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -6848,18 +6862,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.30"
+version = "0.8.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ea879c944afe8a2b25fef16bb4ba234f47c694565e97383b36f3a878219065c"
+checksum = "fd74ec98b9250adb3ca554bdde269adf631549f51d8a8f8f0a10b50f1cb298c3"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.30"
+version = "0.8.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf955aa904d6040f70dc8e9384444cb1030aed272ba3cb09bbc4ab9e7c1f34f5"
+checksum = "d8a8d209fdf45cf5138cbb5a506f6b52522a25afccc534d1475dad8e31105c6a"
 dependencies = [
  "proc-macro2",
  "quote 1.0.42",
