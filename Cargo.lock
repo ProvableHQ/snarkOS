@@ -3793,6 +3793,7 @@ dependencies = [
  "crossterm 0.29.0",
  "ratatui",
  "snarkos-node",
+ "snarkos-node-tcp",
  "snarkvm",
  "tokio",
 ]
