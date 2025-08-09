@@ -67,6 +67,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         true,  // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
+        None,
         Default::default(),
     )
     .await

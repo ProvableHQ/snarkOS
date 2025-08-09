@@ -94,6 +94,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         allow_external_peers: bool,
         dev_txs: bool,
         dev: Option<u16>,
+        dev_proposal_delay: Option<u64>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         // Initialize the signal handler.
@@ -137,6 +138,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             storage_mode.clone(),
             ping.clone(),
             dev,
+            dev_proposal_delay,
         )
         .await?;
 
@@ -530,7 +532,8 @@ mod tests {
             false,
             dev_txs,
             None,
-            Default::default(),
+            None,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
         .unwrap();

@@ -113,6 +113,8 @@ pub struct Primary<N: Network> {
     propose_lock: Arc<TMutex<u64>>,
     /// The storage mode of the node.
     storage_mode: StorageMode,
+    /// The proposal delay in milliseconds.
+    proposal_delay_ms: u64,
 }
 
 impl<N: Network> Primary<N> {
@@ -130,11 +132,15 @@ impl<N: Network> Primary<N> {
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
         dev: Option<u16>,
+        dev_proposal_delay: Option<u64>,
     ) -> Result<Self> {
         // Initialize the gateway.
         let gateway = Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, dev)?;
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), ledger.clone(), block_sync);
+
+        // Determine the proposal delay.
+        let proposal_delay_ms = dev_proposal_delay.unwrap_or(MAX_BATCH_DELAY_IN_MS);
 
         // Initialize the primary instance.
         Ok(Self {
@@ -150,6 +156,7 @@ impl<N: Network> Primary<N> {
             handles: Default::default(),
             propose_lock: Default::default(),
             storage_mode,
+            proposal_delay_ms,
         })
     }
 
@@ -1301,7 +1308,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly, but longer than if there were no batch.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                tokio::time::sleep(Duration::from_millis(self_.proposal_delay_ms)).await;
                 let current_round = self_.current_round();
                 // If the primary is not synced, then do not propose a batch.
                 if !self_.sync.is_synced() {
@@ -1403,7 +1410,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                tokio::time::sleep(Duration::from_millis(self_.proposal_delay_ms)).await;
                 // If the primary is not synced, then do not increment to the next round.
                 if !self_.sync.is_synced() {
                     trace!("Skipping round increment {}", "(node is syncing)".dimmed());
@@ -1998,7 +2005,7 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None), None).unwrap();
+            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None), None, None).unwrap();
 
         // Construct a worker instance.
         primary.workers = Arc::from([Worker::new(

@@ -110,6 +110,8 @@ pub struct Consensus<N: Network> {
     ping: Arc<Ping<N>>,
     /// The block sync logic.
     block_sync: Arc<BlockSync<N>>,
+    /// The proposal delay in milliseconds.
+    proposal_delay_ms: u64,
 }
 
 impl<N: Network> Consensus<N> {
@@ -124,6 +126,7 @@ impl<N: Network> Consensus<N> {
         storage_mode: StorageMode,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
+        dev_proposal_delay: Option<u64>,
     ) -> Result<Self> {
         // Initialize the primary channels.
         let (primary_sender, primary_receiver) = init_primary_channels::<N>();
@@ -132,8 +135,20 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         // Initialize the BFT.
-        let bft =
-            BFT::new(account, storage, ledger.clone(), block_sync.clone(), ip, trusted_validators, storage_mode, dev)?;
+        let bft = BFT::new(
+            account,
+            storage,
+            ledger.clone(),
+            block_sync.clone(),
+            ip,
+            trusted_validators,
+            storage_mode,
+            dev,
+            dev_proposal_delay,
+        )?;
+
+        // Determine the proposal delay.
+        let proposal_delay_ms = dev_proposal_delay.unwrap_or(MAX_BATCH_DELAY_IN_MS);
         // Create a new instance of Consensus.
         let mut _self = Self {
             ledger,
@@ -148,6 +163,7 @@ impl<N: Network> Consensus<N> {
             transmissions_tracker: Default::default(),
             handles: Default::default(),
             ping: ping.clone(),
+            proposal_delay_ms,
         };
 
         info!("Starting the consensus instance...");
@@ -475,7 +491,7 @@ impl<N: Network> Consensus<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                tokio::time::sleep(Duration::from_millis(self_.proposal_delay_ms)).await;
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(e) = self_.process_unconfirmed_transactions().await {
                     warn!("Cannot process unconfirmed transactions - {e}");

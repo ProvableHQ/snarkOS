@@ -98,9 +98,20 @@ impl<N: Network> BFT<N> {
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
         dev: Option<u16>,
+        dev_proposal_delay: Option<u64>,
     ) -> Result<Self> {
         Ok(Self {
-            primary: Primary::new(account, storage, ledger, block_sync, ip, trusted_validators, storage_mode, dev)?,
+            primary: Primary::new(
+                account,
+                storage,
+                ledger,
+                block_sync,
+                ip,
+                trusted_validators,
+                storage_mode,
+                dev,
+                dev_proposal_delay,
+            )?,
             dag: Default::default(),
             leader_certificate: Default::default(),
             leader_certificate_timer: Default::default(),
@@ -1001,6 +1012,7 @@ mod tests {
             None,
             &[],
             StorageMode::new_test(None),
+            None,
             None,
         )
     }
