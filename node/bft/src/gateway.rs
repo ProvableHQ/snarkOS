@@ -168,10 +168,9 @@ impl<N: Network> Gateway<N> {
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway IP.
-        let ip = match (ip, dev) {
-            (None, Some(dev)) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MEMORY_POOL_PORT + dev)),
-            (None, None) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
-            (Some(ip), _) => ip,
+        let ip = match ip {
+            Some(ip) => ip,
+            None => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
         };
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
