@@ -469,6 +469,13 @@ impl Start {
             if !self.norest && self.rest.is_none() {
                 self.rest = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_REST_PORT + dev)));
             }
+
+            // Set the BFT IP to `5000 + dev` if not already specified.
+            //
+            // Note: This ensures that devnets work correctly even when using custom storage paths.
+            if self.bft.is_none() {
+                self.bft = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT + dev)));
+            }
         }
     }
 
@@ -1219,5 +1226,70 @@ mod tests {
         } else {
             panic!("Unexpected result of clap parsing!");
         }
+    }
+
+    #[test]
+    fn test_parse_development_sets_bft_ip_when_dev_flag_used() {
+        // Test case 1: Dev mode without explicit BFT IP should set it automatically
+        let mut trusted_peers = vec![];
+        let mut trusted_validators = vec![];
+        let mut config = Start::try_parse_from([
+            "snarkos", 
+            "--dev", "1", 
+            "--validator", 
+            "--storage", "/custom/path"
+        ].iter()).unwrap();
+        
+        // Before parse_development, BFT should be None
+        assert!(config.bft.is_none());
+        
+        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        
+        // After parse_development, BFT should be set to MEMORY_POOL_PORT + dev (5000 + 1 = 5001)
+        assert!(config.bft.is_some());
+        assert_eq!(config.bft.unwrap(), SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5001)));
+    }
+
+    #[test]
+    fn test_parse_development_preserves_explicit_bft_ip() {
+        // Test case 2: Dev mode with explicit BFT IP should preserve it
+        let mut trusted_peers = vec![];
+        let mut trusted_validators = vec![];
+        let mut config = Start::try_parse_from([
+            "snarkos", 
+            "--dev", "2", 
+            "--validator", 
+            "--bft", "127.0.0.1:6000",
+            "--storage", "/custom/path"
+        ].iter()).unwrap();
+        
+        // Before parse_development, BFT should be the explicit value
+        assert_eq!(config.bft.unwrap(), SocketAddr::from_str("127.0.0.1:6000").unwrap());
+        
+        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        
+        // After parse_development, BFT should still be the explicit value (not overridden)
+        assert_eq!(config.bft.unwrap(), SocketAddr::from_str("127.0.0.1:6000").unwrap());
+    }
+
+    #[test]
+    fn test_no_dev_mode_no_bft_ip_set() {
+        // Test case 3: Non-dev mode should not set BFT IP automatically
+        let mut trusted_peers = vec![];
+        let mut trusted_validators = vec![];
+        let mut config = Start::try_parse_from([
+            "snarkos", 
+            "--validator", 
+            "--private-key", "test_key",
+            "--storage", "/custom/path"
+        ].iter()).unwrap();
+        
+        // Before parse_development, BFT should be None
+        assert!(config.bft.is_none());
+        
+        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        
+        // After parse_development, BFT should still be None (no dev mode)
+        assert!(config.bft.is_none());
     }
 }
