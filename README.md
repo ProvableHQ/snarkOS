@@ -482,6 +482,8 @@ By default, the metrics feature is turned on for some internal crates.
   This feature turns on code for detecting deadlocks.
 * **test_targets** -
   This feature allows the lowering of coinbase and proof targets for testing.
+* **flamegraph** -
+  Enables generation of flamegraphs (using the [tracing-flame crate](https://docs.rs/tracing-flame/latest/tracing_flame/index.html)). This feature should only be used for profiling.
 
 ## 7. Contributors
 Thank you for helping make snarkOS better!  

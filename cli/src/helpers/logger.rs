@@ -17,6 +17,7 @@ use crate::helpers::{DynamicFormatter, LogWriter};
 
 use anyhow::{Result, bail};
 
+use anyhow::Context;
 use crossterm::tty::IsTty;
 use std::{
     fs::File,
@@ -31,6 +32,9 @@ use tracing_subscriber::{
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
 };
+
+#[cfg(feature = "flamegraph")]
+use tracing_flame::FlameLayer;
 
 fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
     // First, set default log verbosity.
@@ -103,7 +107,15 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
 }
 
 fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
-    EnvFilter::from_str(filter_str).map_err(|err| err.into())
+    EnvFilter::from_str(filter_str).with_context(|| "Failed to set up log filter")
+}
+
+#[cfg(not(feature = "flamegraph"))]
+pub struct EmptyLogGuard {}
+
+#[cfg(not(feature = "flamegraph"))]
+impl Drop for EmptyLogGuard {
+    fn drop(&mut self) {}
 }
 
 /// Sets the log filter based on the given verbosity level.
@@ -120,15 +132,17 @@ fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
 /// 5 => info, debug, trace, snarkos_node_router=trace
 /// 6 => info, debug, trace, snarkos_node_tcp=trace
 /// ```
+///
+/// Do not drop the returned log guard until shutdown.
 pub fn initialize_logger<P: AsRef<Path>>(
     verbosity: u8,
-    log_filter: &Option<String>,
+    log_filter: Option<String>,
     nodisplay: bool,
     logfile: P,
     shutdown: Arc<AtomicBool>,
-) -> Result<mpsc::Receiver<Vec<u8>>> {
+) -> Result<(mpsc::Receiver<Vec<u8>>, impl Drop)> {
     let [stdout_filter, logfile_filter] = std::array::from_fn(|_| {
-        if let Some(filter) = log_filter { parse_log_filter(filter) } else { parse_log_verbosity(verbosity) }
+        if let Some(filter) = &log_filter { parse_log_filter(filter) } else { parse_log_verbosity(verbosity) }
     });
 
     // Create the directories tree for a logfile if it doesn't exist.
@@ -160,7 +174,7 @@ pub fn initialize_logger<P: AsRef<Path>>(
     let show_target = verbosity > 2 || log_filter.is_some();
 
     // Initialize tracing.
-    let _ = tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(
             // Add layer using LogWriter for stdout / terminal
             tracing_subscriber::fmt::Layer::default()
@@ -177,10 +191,19 @@ pub fn initialize_logger<P: AsRef<Path>>(
                 .with_writer(logfile)
                 .with_target(show_target)
                 .with_filter(logfile_filter?),
-        )
-        .try_init();
+        );
 
-    Ok(log_receiver)
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "flamegraph")] {
+            let (flame_layer, log_guard) = FlameLayer::with_file("./snarkos-trace.folded").with_context(|| "Failed to create flamegraph file")?;
+            let _ = registry.with(flame_layer).try_init();
+
+            Ok((log_receiver, log_guard))
+        } else {
+            let _ = registry.try_init();
+            Ok((log_receiver, EmptyLogGuard{}))
+        }
+    }
 }
 
 /// Set up only terminal logging

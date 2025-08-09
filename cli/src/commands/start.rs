@@ -252,9 +252,9 @@ impl Start {
         let shutdown: Arc<AtomicBool> = Default::default();
 
         // Initialize the logger.
-        let log_receiver = crate::helpers::initialize_logger(
+        let (log_receiver, _log_guard) = crate::helpers::initialize_logger(
             self.verbosity,
-            &self.log_filter,
+            self.log_filter.clone(),
             self.nodisplay,
             self.logfile.clone(),
             shutdown.clone(),

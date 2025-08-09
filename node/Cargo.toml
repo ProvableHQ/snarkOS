@@ -49,6 +49,7 @@ cuda = [
   "snarkos-node-router/cuda",
   "snarkos-node-sync/cuda"
 ]
+tracing = [ "snarkvm/tracing", "snarkos-node-router/tracing" ]
 serial = [ "snarkos-node-bft/serial" ]
 
 [dependencies.aleo-std]

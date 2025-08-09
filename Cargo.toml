@@ -46,7 +46,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 # path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "8c0524f46209db1dd87d840376292f95406f1df7"
+#rev = "8c0524f46209db1dd87d840376292f95406f1df7"
+branch = "feat/tracing-instrument"
 #version = "=4.0.1"
 default-features = false
 
@@ -274,6 +275,12 @@ serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network" ]
+tracing = [
+  "snarkos-node/tracing",
+  "snarkos-node-router/tracing",
+  "snarkos-node-sync/tracing"
+]
+flamegraph = [ "tracing", "snarkos-cli/flamegraph" ]
 
 [dependencies.anyhow]
 workspace = true

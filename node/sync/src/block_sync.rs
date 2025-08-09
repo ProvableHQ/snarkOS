@@ -334,6 +334,7 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Send a batch of block requests.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, communication, sync_peers, requests)))]
     pub async fn send_block_requests<C: CommunicationService>(
         &self,
         communication: &C,
@@ -427,6 +428,7 @@ impl<N: Network> BlockSync<N> {
     /// Note, that this only queues the response. After this, you most likely want to call `Self::try_advancing_block_synchronization`.
     ///
     #[inline]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, blocks)))]
     pub fn insert_block_responses(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
         // Insert the candidate blocks into the sync pool.
         for block in blocks {
@@ -469,6 +471,7 @@ impl<N: Network> BlockSync<N> {
     /// Validators do not call this function, and instead invoke
     /// [`snarkos_node_bft::Sync::try_advancing_block_synchronization`] which also updates the BFT state.
     #[inline]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub async fn try_advancing_block_synchronization(&self) -> Result<bool> {
         // Acquire the lock to ensure this function is called only once at a time.
         // If the lock is already acquired, return early.

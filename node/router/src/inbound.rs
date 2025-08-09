@@ -75,6 +75,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     /// Handles the inbound message from the peer. The returned value indicates whether
     /// the connection is still active, and errors causing a disconnect once they are
     /// propagated to the caller.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, message)))]
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
         let peer_ip = match self.router().resolve_to_listener(&peer_addr) {

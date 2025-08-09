@@ -41,6 +41,7 @@ test_network = [
   "snarkvm/dev-print"
 ]
 serial = [ ]
+flamegraph = [ "dep:tracing-flame" ]
 
 [dependencies.aleo-std]
 workspace = true
@@ -53,6 +54,9 @@ workspace = true
 
 [dependencies.base64]
 workspace = true
+
+[dependencies.cfg-if]
+version = "1"
 
 [dependencies.clap]
 workspace = true
@@ -67,6 +71,10 @@ workspace = true
 [dependencies.indexmap]
 workspace = true
 features = [ "serde", "rayon" ]
+
+[dependencies.tracing-flame]
+version = "0.2"
+optional = true
 
 [dependencies.locktick]
 workspace = true
