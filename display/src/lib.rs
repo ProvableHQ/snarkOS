@@ -40,11 +40,20 @@ use ratatui::{
     widgets::{Block, Borders, Tabs as TabsTui},
 };
 use std::{
+    collections::HashMap,
     io,
+    net::IpAddr,
     thread,
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc::Receiver;
+
+#[derive(Clone, Debug)]
+pub struct PeerStats {
+    timestamp: Instant,
+    received_bytes: u64,
+    sent_bytes: u64,
+}
 
 pub struct Display<N: Network> {
     /// An instance of the node.
@@ -55,6 +64,8 @@ pub struct Display<N: Network> {
     tabs: Tabs,
     /// The logs tab.
     logs: Logs,
+    /// Previous peer statistics for calculating instantaneous speeds.
+    previous_peer_stats: HashMap<IpAddr, PeerStats>,
 }
 
 fn header_style() -> Style {
@@ -81,6 +92,7 @@ impl<N: Network> Display<N> {
             tick_rate: Duration::from_secs(1),
             tabs: Tabs::new(PAGES.to_vec()),
             logs: Logs::new(log_receiver),
+            previous_peer_stats: HashMap::new(),
         };
 
         // Render the display.
@@ -174,7 +186,7 @@ impl<N: Network> Display<N> {
 
         // Initialize the page.
         match self.tabs.index {
-            0 => Overview.draw(f, chunks[1], &self.node),
+            0 => Overview.draw(f, chunks[1], &self.node, &mut self.previous_peer_stats),
             1 => self.logs.draw(f, chunks[1]),
             _ => unreachable!(),
         };
