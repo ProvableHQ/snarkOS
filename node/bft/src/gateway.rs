@@ -168,6 +168,9 @@ impl<N: Network> Gateway<N> {
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway IP.
+        // Note: The dev parameter is not used for IP computation here because
+        // the CLI layer (start.rs) now ensures that an explicit IP is always
+        // provided when using --dev mode.
         let ip = match ip {
             Some(ip) => ip,
             None => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
@@ -1682,12 +1685,17 @@ mod prop_tests {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
+        // In dev mode, the CLI now always provides an explicit BFT IP.
+        // Simulate this by providing the IP that the CLI would compute.
+        let dev_port = dev.port().unwrap();
+        let explicit_ip = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT + dev_port)));
+
         let gateway =
-            Gateway::new(account.clone(), storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port())
+            Gateway::new(account.clone(), storage.clone(), storage.ledger().clone(), explicit_ip, &[], dev.port())
                 .unwrap();
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.listener_ip, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
+        assert_eq!(tcp_config.listener_ip, Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+        assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev_port));
 
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
