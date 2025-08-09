@@ -275,6 +275,11 @@ impl<N: Network> Router<N> {
         self.handles.lock().push(tokio::spawn(future));
     }
 
+    /// Returns a reference to the TCP instance.
+    pub fn tcp(&self) -> &Tcp {
+        &self.tcp
+    }
+
     /// Shuts down the router.
     pub async fn shut_down(&self) {
         info!("Shutting down the router...");

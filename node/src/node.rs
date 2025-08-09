@@ -20,6 +20,7 @@ use crate::{
     Validator,
     network::{NodeType, Peer, PeerPoolHandling},
     router::Outbound,
+    tcp::{P2P, Tcp},
     traits::NodeInterface,
 };
 
@@ -284,6 +285,16 @@ impl<N: Network> Node<N> {
             Self::Prover(node) => node.wait_for_signals(signal_handler).await,
             Self::Client(node) => node.wait_for_signals(signal_handler).await,
             Self::BootstrapClient(node) => node.wait_for_signals(signal_handler).await,
+        }
+    }
+
+    /// Return the low-level TCP layer.
+    pub fn tcp(&self) -> &Tcp {
+        match self {
+            Self::Validator(node) => node.router().tcp(),
+            Self::Prover(node) => node.router().tcp(),
+            Self::Client(node) => node.router().tcp(),
+            Self::BootstrapClient(node) => node.tcp(),
         }
     }
 }

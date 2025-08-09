@@ -24,7 +24,7 @@ use crate::{
 };
 use snarkvm::prelude::Network;
 
-use snarkos_node_tcp::{ConnectError, P2P};
+use snarkos_node_tcp::ConnectError;
 
 use colored::Colorize;
 use futures::future::join_all;
