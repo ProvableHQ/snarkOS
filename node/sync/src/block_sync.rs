@@ -508,18 +508,24 @@ impl<N: Network> BlockSync<N> {
             let ledger = self.ledger.clone();
             let advanced = tokio::task::spawn_blocking(move || {
                 // Try to check the next block and advance to it.
-                match ledger.check_next_block(&block) {
-                    Ok(_) => match ledger.advance_to_next_block(&block) {
-                        Ok(_) => true,
-                        Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
-                                block.height(),
-                                block.hash()
-                            );
-                            false
+                let check_result = ledger.check_next_block(&block);
+
+                match check_result {
+                    Ok(_) => {
+                        let result = ledger.advance_to_next_block(&block);
+
+                        match result {
+                            Ok(_) => true,
+                            Err(err) => {
+                                warn!(
+                                    "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                                    block.height(),
+                                    block.hash()
+                                );
+                                false
+                            }
                         }
-                    },
+                    }
                     Err(err) => {
                         warn!(
                             "The next block (height: {}, hash: '{}') is invalid - {err}",
@@ -587,6 +593,7 @@ impl<N: Network> BlockSync<N> {
     ///
     /// This function does **not** check
     /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
         // Update the locators entry for the given peer IP.
         // We perform this update atomically, and drop the lock as soon as we are done with the update.
@@ -827,6 +834,7 @@ impl<N: Network> BlockSync<N> {
 
     /// Inserts the given block response, after checking that the request exists and the response is well-formed.
     /// On success, this function removes the peer IP from the request sync peers and inserts the response.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, block), fields(height = block.height(), peer_ip = %peer_ip)))]
     fn insert_block_response(&self, peer_ip: SocketAddr, block: Block<N>) -> Result<()> {
         // Retrieve the block height.
         let height = block.height();

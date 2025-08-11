@@ -22,6 +22,7 @@ locktick = [ "dep:locktick", "snarkvm/locktick" ]
 parallel = [ "rayon" ]
 cuda = [ "snarkvm/cuda" ]
 metrics = [ "dep:snarkos-node-metrics" ]
+tracing = [ ]
 
 [dependencies.anyhow]
 workspace = true

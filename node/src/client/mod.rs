@@ -407,6 +407,11 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 let _self = self.clone();
                 // For each solution, spawn a task to verify it.
                 tokio::task::spawn_blocking(move || {
+                    #[cfg(feature = "tracing")]
+                    let _span =
+                        tracing::span!(tracing::Level::INFO, "solution_verification", solution_id = %solution.id())
+                            .entered();
+
                     // Retrieve the latest epoch hash.
                     if let Ok(epoch_hash) = _self.ledger.latest_epoch_hash() {
                         // Check if the prover has reached their solution limit.
@@ -422,7 +427,11 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                         // Retrieve the latest proof target.
                         let proof_target = _self.ledger.latest_block().header().proof_target();
                         // Ensure that the solution is valid for the given epoch.
+                        #[cfg(feature = "tracing")]
+                        let _check_span = tracing::span!(tracing::Level::INFO, "puzzle_check_solution").entered();
                         let is_valid = _self.puzzle.check_solution(&solution, epoch_hash, proof_target);
+                        #[cfg(feature = "tracing")]
+                        drop(_check_span);
 
                         match is_valid {
                             // If the solution is valid, propagate the `UnconfirmedSolution`.
@@ -487,8 +496,19 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 let _self = self.clone();
                 // For each deployment, spawn a task to verify it.
                 tokio::task::spawn_blocking(move || {
+                    #[cfg(feature = "tracing")]
+                    let _span =
+                        tracing::span!(tracing::Level::INFO, "deployment_verification", tx_id = %transaction.id())
+                            .entered();
+
                     // Check the deployment.
-                    match _self.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                    #[cfg(feature = "tracing")]
+                    let _check_span = tracing::span!(tracing::Level::INFO, "ledger_check_transaction_basic").entered();
+                    let result = _self.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng());
+                    #[cfg(feature = "tracing")]
+                    drop(_check_span);
+
+                    match result {
                         Ok(_) => {
                             // Propagate the `UnconfirmedTransaction`.
                             _self.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
@@ -545,8 +565,19 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 let _self = self.clone();
                 // For each execution, spawn a task to verify it.
                 tokio::task::spawn_blocking(move || {
+                    #[cfg(feature = "tracing")]
+                    let _span =
+                        tracing::span!(tracing::Level::INFO, "execution_verification", tx_id = %transaction.id())
+                            .entered();
+
                     // Check the execution.
-                    match _self.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                    #[cfg(feature = "tracing")]
+                    let _check_span = tracing::span!(tracing::Level::INFO, "ledger_check_transaction_basic").entered();
+                    let result = _self.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng());
+                    #[cfg(feature = "tracing")]
+                    drop(_check_span);
+
+                    match result {
                         Ok(_) => {
                             // Propagate the `UnconfirmedTransaction`.
                             _self.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);

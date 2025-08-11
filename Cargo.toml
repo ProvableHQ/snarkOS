@@ -278,7 +278,8 @@ test_network = [ "snarkos-cli/test_network" ]
 tracing = [
   "snarkos-node/tracing",
   "snarkos-node-router/tracing",
-  "snarkos-node-sync/tracing"
+  "snarkos-node-sync/tracing",
+  "snarkos-node-cdn/tracing"
 ]
 flamegraph = [ "tracing", "snarkos-cli/flamegraph" ]
 

@@ -44,6 +44,7 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
+tracing = [ ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
 
 [dependencies.aleo-std]

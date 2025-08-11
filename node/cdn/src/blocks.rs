@@ -284,7 +284,12 @@ pub async fn load_blocks<N: Network>(
                     let block_height = block.height();
 
                     // Insert the block into the ledger.
+                    #[cfg(feature = "tracing")]
+                    let _span =
+                        tracing::span!(tracing::Level::INFO, "cdn_process_block", height = block_height).entered();
                     process_clone(block)?;
+                    #[cfg(feature = "tracing")]
+                    drop(_span);
 
                     // Update the current height.
                     current_height = block_height;

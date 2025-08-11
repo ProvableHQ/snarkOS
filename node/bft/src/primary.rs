@@ -989,6 +989,7 @@ impl<N: Network> Primary<N> {
     /// 3. Store the signature.
     /// 4. Certify the batch if enough signatures have been received.
     /// 5. Broadcast the batch certificate to all validators.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, batch_signature), fields(batch_id = %batch_signature.batch_id)))]
     async fn process_batch_signature_from_peer(
         &self,
         peer_ip: SocketAddr,
@@ -1623,9 +1624,14 @@ impl<N: Network> Primary<N> {
     }
 
     /// Stores the certified batch and broadcasts it to all validators, returning the certificate.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, proposal, committee), fields(round = proposal.round())))]
     async fn store_and_broadcast_certificate(&self, proposal: &Proposal<N>, committee: &Committee<N>) -> Result<()> {
         // Create the batch certificate and transmissions.
+        #[cfg(feature = "tracing")]
+        let _span = tracing::span!(tracing::Level::INFO, "proposal_to_certificate").entered();
         let (certificate, transmissions) = tokio::task::block_in_place(|| proposal.to_certificate(committee))?;
+        #[cfg(feature = "tracing")]
+        drop(_span);
         // Convert the transmissions into a HashMap.
         // Note: Do not change the `Proposal` to use a HashMap. The ordering there is necessary for safety.
         let transmissions = transmissions.into_iter().collect::<HashMap<_, _>>();
