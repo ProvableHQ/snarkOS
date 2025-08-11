@@ -28,6 +28,12 @@ version = "0.29"
 [dependencies.snarkos-node]
 workspace = true
 
+[dependencies.snarkos-node-metrics]
+workspace = true
+
+[dependencies.snarkos-node-router]
+workspace = true
+
 [dependencies.snarkos-node-tcp]
 workspace = true
 

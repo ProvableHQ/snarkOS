@@ -19,4 +19,10 @@ pub(crate) use logs::Logs;
 mod overview;
 pub(crate) use overview::Overview;
 
-pub(crate) const PAGES: [&str; 2] = [" Overview ", " Logs "];
+mod io_metrics;
+pub(crate) use io_metrics::IoMetrics;
+
+mod sync_metrics;
+pub(crate) use sync_metrics::SyncMetrics;
+
+pub(crate) const PAGES: [&str; 4] = [" Overview ", " I/O Metrics ", " Sync Metrics ", " Logs "];
