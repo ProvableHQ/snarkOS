@@ -17,7 +17,7 @@ use crate::{content_style, header_style};
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     widgets::{Block, Borders, Paragraph},
 };
 use std::collections::VecDeque;
@@ -37,12 +37,6 @@ impl Logs {
     }
 
     pub(crate) fn draw(&mut self, f: &mut Frame, area: Rect) {
-        // Initialize the layout of the page.
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(100)].as_ref())
-            .split(area);
-
         let mut new_logs = Vec::new();
         while let Ok(log) = self.log_receiver.try_recv() {
             new_logs.push(String::from_utf8(log).unwrap_or_default());
@@ -70,6 +64,6 @@ impl Logs {
         let combined_logs = Paragraph::new(combined_logs)
             .style(content_style())
             .block(Block::default().borders(Borders::ALL).style(header_style()).title("Logs"));
-        f.render_widget(combined_logs, chunks[0]);
+        f.render_widget(combined_logs, area);
     }
 }

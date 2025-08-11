@@ -17,12 +17,17 @@ use crate::{PeerStats, content_style, header_style};
 
 use snarkos_node::{
     Node,
-    router::{Peer, PeerPoolHandling},
+    router::{Peer, PeerPoolHandling, messages::NodeType},
+    tcp::P2P,
 };
-use snarkos_node_tcp::P2P;
-use snarkvm::prelude::Network;
 
-use std::{collections::HashMap, net::IpAddr, time::Instant};
+use snarkvm::console::network::Network;
+
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    time::{Duration, Instant},
+};
 
 use ratatui::{
     Frame,
@@ -73,22 +78,20 @@ impl Overview {
         f.render_widget(&paragraph, area);
     }
 
-    fn draw_sync_status<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
-        let is_synced = node.is_block_synced();
-        let num_blocks_behind = node.num_blocks_behind();
-
-        let status_text = if is_synced {
-            "Synced".to_string()
-        } else if let Some(behind) = num_blocks_behind {
-            let sync_speed = node.get_sync_speed();
-            format!("Syncing | {behind} blocks behind | Speed: {sync_speed:.2} blocks/sec")
-        } else {
-            "Connecting...".to_string()
+    fn draw_node_info<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
+        let node_type_str = match node.node_type() {
+            NodeType::Validator => "Validator",
+            NodeType::Prover => "Prover",
+            NodeType::Client => "Client",
         };
 
-        let paragraph = Paragraph::new(status_text)
+        let node_address = format!("{}", node.router().address());
+
+        let text = Text::raw(format!("Type: {node_type_str} | Address: {node_address}"));
+
+        let paragraph = Paragraph::new(text)
             .style(content_style())
-            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Sync Status"));
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Node Info"));
         f.render_widget(&paragraph, area);
     }
 
@@ -100,9 +103,20 @@ impl Overview {
         node: &Node<N>,
         previous_peer_stats: &mut HashMap<IpAddr, PeerStats>,
     ) {
-        let header = ["IP", "State", "Node Type", "↓ Speed", "↑ Speed", "↓ Total", "↑ Total", "Last Seen"];
+        let header = [
+            "Network Address",
+            "Aleo Address",
+            "State",
+            "Node Type",
+            "↓ Speed",
+            "↑ Speed",
+            "↓ Total",
+            "↑ Total",
+            "Last Seen",
+        ];
         let constraints = [
-            Constraint::Length(16),
+            Constraint::Length(20),
+            Constraint::Min(30),
             Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(10),
@@ -130,10 +144,12 @@ impl Overview {
                     "unknown".to_string()
                 };
 
-                let last_seen = if let Peer::Connected(p) = &peer {
-                    format!("{:.1}s ago", p.last_seen.elapsed().as_secs_f64())
-                } else {
-                    "N/A".to_string()
+                let (aleo_address, last_seen) = match &peer {
+                    Peer::Connected(p) => (
+                        format!("{}", p.aleo_addr),
+                        format!("{:.1}s ago", p.last_seen.elapsed().as_secs_f64())
+                    ),
+                    _ => ("N/A".to_string(), "N/A".to_string()),
                 };
 
                 // Get traffic statistics from TCP layer
@@ -169,7 +185,8 @@ impl Overview {
                 };
 
                 Row::new([
-                    format!("{:?}", peer.listener_addr()), 
+                    format!("{}", peer.listener_addr()),
+                    aleo_address,
                     state,
                     node_type,
                     download_speed,
@@ -189,6 +206,42 @@ impl Overview {
         f.render_widget(peer_table, area);
     }
 
+    fn draw_sync_info<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
+        let is_synced = node.is_block_synced();
+        let blocks_behind = node.num_blocks_behind();
+        let blocks_behind_str = if let Some(num) = blocks_behind { num.to_string() } else { "?".to_string() };
+        let current_speed = node.get_sync_speed();
+
+        // Estimate time remaining
+        let eta_text = if let Some(blocks_behind) = blocks_behind
+            && blocks_behind > 0
+            && current_speed > 0.0
+        {
+            let seconds_remaining = blocks_behind as f64 / current_speed;
+            let duration = Duration::from_secs_f64(seconds_remaining);
+            let hours = duration.as_secs() / 3600;
+            let minutes = (duration.as_secs() % 3600) / 60;
+            if hours > 0 { format!("| ETA: {hours}h {minutes}m") } else { format!("ETA: {minutes}m") }
+        } else if !is_synced {
+            "| ETA: ?".to_string()
+        } else {
+            "".to_string()
+        };
+
+        let sync_status = if is_synced { "✓ Synced" } else { "⚠  Syncing" };
+
+        let text = Text::raw(format!(
+            "Status: {sync_status} | Blocks Behind: {blocks_behind_str} | \
+             Current Speed: {current_speed:.1} blocks/s {eta_text}",
+        ));
+
+        let paragraph = Paragraph::new(text)
+            .style(content_style())
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Sync Status"));
+
+        f.render_widget(paragraph, area);
+    }
+
     pub(crate) fn draw<N: Network>(
         &self,
         f: &mut Frame,
@@ -199,16 +252,17 @@ impl Overview {
         // Initialize the layout of the page.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)]) // The box border adds a line on both sides.
+            .constraints([
+                Constraint::Length(3), // Node Info
+                Constraint::Length(3), // Latest Block
+                Constraint::Length(3), // Sync Status
+                Constraint::Min(8),    // Peers table
+            ])
             .split(area);
 
-        self.draw_latest_block(f, chunks[0], node);
-        self.draw_sync_status(f, chunks[1], node);
-        self.draw_peer_table(f, chunks[1], node, previous_peer_stats);
-
-        let help = Paragraph::new("Press ESC to quit")
-            .style(content_style())
-            .block(Block::default().borders(Borders::ALL).title("Help").style(header_style()));
-        f.render_widget(help, chunks[3]);
+        self.draw_node_info(f, chunks[0], node);
+        self.draw_latest_block(f, chunks[1], node);
+        self.draw_sync_info(f, chunks[2], node);
+        self.draw_peer_table(f, chunks[3], node, previous_peer_stats);
     }
 }
