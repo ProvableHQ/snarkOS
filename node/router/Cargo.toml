@@ -112,9 +112,6 @@ features = [ "codec" ]
 [dependencies.tokio-stream]
 version = "=0.1"
 
-[dependencies.thiserror]
-workspace = true
-
 [dependencies.tracing]
 workspace = true
 
