@@ -47,7 +47,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "bcded2d"
+branch = "perf/compact_subdag_rebased"
+#rev = "bcded2d"
 #version = "=4.3.0"
 default-features = false
 

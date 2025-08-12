@@ -17,9 +17,10 @@ use crate::{LedgerService, fmt_id, spawn_blocking};
 use snarkvm::{
     ledger::{
         Ledger,
+        SubdagTransmissions,
         block::{Block, Transaction},
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
@@ -41,7 +42,6 @@ use snarkvm::{
 };
 
 use anyhow::ensure;
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
@@ -166,15 +166,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     /// Returns the unconfirmed transaction for the given transaction ID.
     fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
         self.ledger.get_unconfirmed_transaction(&transaction_id)
-    }
-
-    /// Returns the batch certificate for the given batch certificate ID.
-    fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>> {
-        match self.ledger.get_batch_certificate(certificate_id) {
-            Ok(Some(certificate)) => Ok(certificate),
-            Ok(None) => bail!("No batch certificate found for certificate ID {certificate_id} in the ledger"),
-            Err(error) => Err(error),
-        }
     }
 
     /// Returns the current committee.
@@ -365,9 +356,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     fn prepare_advance_to_next_quorum_block(
         &self,
         subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        subdag_transmissions: SubdagTransmissions<N>,
     ) -> Result<Block<N>> {
-        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
+        self.ledger.prepare_advance_to_next_quorum_block(subdag, subdag_transmissions, &mut rand::thread_rng())
     }
 
     /// Adds the given block as the next block in the ledger.

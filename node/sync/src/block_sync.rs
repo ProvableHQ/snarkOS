@@ -26,7 +26,7 @@ use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     prelude::block::Block,
-    utilities::ensure_equals,
+    utilities::{LoggableError, ensure_equals},
 };
 
 use anyhow::{Result, bail, ensure};
@@ -560,20 +560,20 @@ impl<N: Network> BlockSync<N> {
                     Ok(_) => match ledger.advance_to_next_block(&block) {
                         Ok(_) => true,
                         Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                            err.log_warning(format!(
+                                "Failed to advance to next block (height: {}, hash: '{}')",
                                 block.height(),
                                 block.hash()
-                            );
+                            ));
                             false
                         }
                     },
                     Err(err) => {
-                        warn!(
-                            "The next block (height: {}, hash: '{}') is invalid - {err}",
+                        err.log_warning(format!(
+                            "The next block (height: {}, hash: '{}') is invalid",
                             block.height(),
                             block.hash()
-                        );
+                        ));
                         false
                     }
                 }

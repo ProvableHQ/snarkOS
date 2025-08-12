@@ -34,9 +34,10 @@ use snarkos_node_sync::{BlockSync, Ping};
 use snarkvm::{
     console::account::Address,
     ledger::{
+        SubdagTransmissions,
         block::Transaction,
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, Data, NarwhalCertificate, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{Field, Network, Result, bail, ensure},
@@ -636,10 +637,14 @@ impl<N: Network> BFT<N> {
             if !IS_SYNCING {
                 // Initialize a map for the deduped transmissions.
                 let mut transmissions = IndexMap::new();
+                // Initialize a map for the deduped prior transmission ids.
+                let mut prior_included_transmissions = IndexSet::new();
+                // Initialize a map for transmission ids which could not be read from the ledger.
+                let mut aborted_transmissions = IndexSet::new();
                 // Initialize a map for the deduped transaction ids.
-                let mut seen_transaction_ids = IndexSet::new();
+                let mut seen_transaction_ids: IndexSet<N::TransactionID> = IndexSet::new();
                 // Initialize a map for the deduped solution ids.
-                let mut seen_solution_ids = IndexSet::new();
+                let mut seen_solution_ids: IndexSet<SolutionID<N>> = IndexSet::new();
                 // Start from the oldest leader certificate.
                 for certificate in commit_subdag.values().flatten() {
                     // Retrieve the transmissions.
@@ -650,7 +655,7 @@ impl<N: Network> BFT<N> {
                         match transmission_id {
                             TransmissionID::Solution(solution_id, _) => {
                                 // If the solution already exists, skip it.
-                                if seen_solution_ids.contains(&solution_id) {
+                                if seen_solution_ids.contains(solution_id) {
                                     continue;
                                 }
                             }
@@ -670,41 +675,52 @@ impl<N: Network> BFT<N> {
                         }
                         // If the transmission already exists in the ledger, skip it.
                         // Note: On failure to read from the ledger, we skip including this transmission, out of safety.
-                        if self.ledger().contains_transmission(transmission_id).unwrap_or(true) {
-                            continue;
-                        }
-                        // Retrieve the transmission.
-                        let Some(transmission) = self.storage().get_transmission(*transmission_id) else {
-                            bail!(
-                                "BFT failed to retrieve transmission '{}.{}' from round {}",
-                                fmt_id(transmission_id),
-                                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed(),
-                                certificate.round()
-                            );
-                        };
-                        // Insert the transaction ID or solution ID into the map.
-                        match transmission_id {
-                            TransmissionID::Solution(id, _) => {
-                                seen_solution_ids.insert(id);
+                        // Check if the ledger contains the transmission already.
+                        match self.ledger().contains_transmission(transmission_id) {
+                            // On failure to read from the ledger, we skip including this transmission, out of safety.
+                            Err(err) => {
+                                warn!("{}", err);
+                                aborted_transmissions.insert(*transmission_id);
                             }
-                            TransmissionID::Transaction(id, _) => {
-                                seen_transaction_ids.insert(id);
+                            // If the transmission already exists in the ledger, save just the transmission ID.
+                            Ok(true) => {
+                                prior_included_transmissions.insert(*transmission_id);
                             }
-                            TransmissionID::Ratification => {}
+                            // If the transmission does not exist in the ledger, retrieve it from the storage.
+                            Ok(false) => {
+                                // Retrieve the transmission.
+                                let Some(transmission) = self.storage().get_transmission(*transmission_id) else {
+                                    bail!(
+                                        "BFT failed to retrieve transmission '{}' from round {}",
+                                        fmt_id(transmission_id),
+                                        certificate.round()
+                                    );
+                                };
+                                // Insert the transaction ID or solution ID into the map.
+                                match transmission_id {
+                                    TransmissionID::Solution(id, _) => {
+                                        seen_solution_ids.insert(*id);
+                                    }
+                                    TransmissionID::Transaction(id, _) => {
+                                        seen_transaction_ids.insert(*id);
+                                    }
+                                    TransmissionID::Ratification => {}
+                                }
+                                // Add the transmission to the set.
+                                transmissions.insert(*transmission_id, transmission);
+                            }
                         }
-                        // Add the transmission to the set.
-                        transmissions.insert(*transmission_id, transmission);
                     }
                 }
                 // Trigger consensus, as this will build a new block for the ledger.
                 // Construct the subdag.
-                let subdag = Subdag::from(commit_subdag.clone())?;
+                let subdag = Subdag::from_full(commit_subdag.clone())?;
                 // Retrieve the anchor round.
                 let anchor_round = subdag.anchor_round();
                 // Retrieve the number of transmissions.
                 let num_transmissions = transmissions.len();
                 // Retrieve metadata about the subdag.
-                let subdag_metadata = subdag.iter().map(|(round, c)| (*round, c.len())).collect::<Vec<_>>();
+                let subdag_metadata = subdag.num_certificates_rounds();
 
                 // Ensure the subdag anchor round matches the leader round.
                 ensure!(
@@ -714,10 +730,13 @@ impl<N: Network> BFT<N> {
 
                 // Trigger consensus.
                 if let Some(consensus_sender) = self.consensus_sender.get() {
+                    // Construct subdag transmissions.
+                    let subdag_transmissions =
+                        SubdagTransmissions { transmissions, prior_included_transmissions, aborted_transmissions };
                     // Initialize a callback sender and receiver.
                     let (callback_sender, callback_receiver) = oneshot::channel();
                     // Send the subdag and transmissions to consensus.
-                    consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
+                    consensus_sender.tx_consensus_subdag.send((subdag, subdag_transmissions, callback_sender)).await?;
                     // Await the callback to continue.
                     match callback_receiver.await {
                         Ok(Ok(())) => (), // continue
@@ -733,7 +752,7 @@ impl<N: Network> BFT<N> {
                 }
 
                 info!(
-                    "\n\nCommitting a subdag from round {anchor_round} with {num_transmissions} transmissions: {subdag_metadata:?}\n"
+                    "\n\nCommitting a subdag from round {anchor_round} with {num_transmissions} new transmissions: {subdag_metadata:?}\n"
                 );
             }
 
@@ -745,7 +764,7 @@ impl<N: Network> BFT<N> {
 
             // Update the validator telemetry.
             #[cfg(feature = "telemetry")]
-            self.primary().gateway().validator_telemetry().insert_subdag(&Subdag::from(commit_subdag)?);
+            self.primary().gateway().validator_telemetry().insert_subdag(&Subdag::from_full(commit_subdag)?);
         }
 
         // Perform garbage collection based on the latest committed leader round.
@@ -960,7 +979,10 @@ mod tests {
         console::account::{Address, PrivateKey},
         ledger::{
             committee::Committee,
-            narwhal::batch_certificate::test_helpers::{sample_batch_certificate, sample_batch_certificate_for_round},
+            narwhal::{
+                NarwhalCertificate,
+                batch_certificate::test_helpers::{sample_batch_certificate, sample_batch_certificate_for_round},
+            },
         },
         utilities::TestRng,
     };
