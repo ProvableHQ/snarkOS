@@ -15,17 +15,18 @@
 
 use crate::{CoreLedgerService, LedgerService};
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use snarkvm::{
+    console::network::{ConsensusVersion, Network},
     ledger::{
         Ledger,
+        SubdagTransmissions,
         block::{Block, Transaction},
         committee::Committee,
         narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{Address, ConsensusVersion, Field, Network, Result, narwhal::BatchCertificate},
+    prelude::{Address, Field, Result},
 };
 use std::{
     fmt,
@@ -124,11 +125,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         self.inner.get_unconfirmed_transaction(transaction_id)
     }
 
-    /// Returns the batch certificate for the given batch certificate ID.
-    fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>> {
-        self.inner.get_batch_certificate(certificate_id)
-    }
-
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
         self.inner.current_committee()
@@ -186,9 +182,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     fn prepare_advance_to_next_quorum_block(
         &self,
         subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        subdag_transmissions: SubdagTransmissions<N>,
     ) -> Result<Block<N>> {
-        self.inner.prepare_advance_to_next_quorum_block(subdag, transmissions)
+        self.inner.prepare_advance_to_next_quorum_block(subdag, subdag_transmissions)
     }
 
     /// Adds the given block as the next block in the ledger.

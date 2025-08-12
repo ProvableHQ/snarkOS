@@ -16,15 +16,15 @@
 use crate::LedgerService;
 use snarkvm::{
     ledger::{
+        SubdagTransmissions,
         block::{Block, Transaction},
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail},
 };
 
-use indexmap::IndexMap;
 use std::ops::Range;
 
 /// A ledger service for a prover.
@@ -113,11 +113,6 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         bail!("Transaction '{transaction_id}' does not exist in prover")
     }
 
-    /// Returns the batch certificate for the given batch certificate ID.
-    fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>> {
-        bail!("Batch certificate '{certificate_id}' does not exist in prover")
-    }
-
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
         bail!("Committee does not exist in prover")
@@ -176,7 +171,7 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     fn prepare_advance_to_next_quorum_block(
         &self,
         _subdag: Subdag<N>,
-        _transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        _subdag_transmissions: SubdagTransmissions<N>,
     ) -> Result<Block<N>> {
         bail!("Cannot prepare advance to next quorum block in prover")
     }

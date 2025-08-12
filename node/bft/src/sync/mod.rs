@@ -31,8 +31,12 @@ use snarkvm::{
         network::{ConsensusVersion, Network},
         types::Field,
     },
-    ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
-    prelude::{cfg_into_iter, cfg_iter},
+    ledger::{
+        authority::Authority,
+        block::Block,
+        narwhal::{BatchCertificate, NarwhalCertificate},
+    },
+    prelude::cfg_iter,
     utilities::log_error,
 };
 
@@ -424,6 +428,15 @@ impl<N: Network> Sync<N> {
         self.storage.sync_height_with_block(latest_block.height());
         // Sync the round with the block.
         self.storage.sync_round_with_block(latest_block.round());
+        // Compute the number of certificates in quorum blocks.
+        let num_certificates = blocks
+            .iter()
+            .map(|block| if let Authority::Quorum(subdag) = block.authority() { subdag.num_certificates() } else { 0 })
+            .sum::<usize>();
+        // Construct a list of leader certificates.
+        let mut leader_certificates = Vec::with_capacity(blocks.len());
+        // Construct a list of all certificates.
+        let mut certificates = Vec::with_capacity(num_certificates);
         // Perform GC on the latest block round.
         self.storage.garbage_collect_certificates(latest_block.round());
         // Iterate over the blocks.
@@ -432,48 +445,45 @@ impl<N: Network> Sync<N> {
             // Note that the block authority is always a sub-DAG in production;
             // beacon signatures are only used for testing,
             // and as placeholder (irrelevant) block authority in the genesis block.
-            if let Authority::Quorum(subdag) = block.authority() {
+            if block.authority().is_quorum() {
                 // Reconstruct the unconfirmed transactions.
                 let unconfirmed_transactions = cfg_iter!(block.transactions())
                     .filter_map(|tx| {
                         tx.to_unconfirmed_transaction().map(|unconfirmed| (unconfirmed.id(), unconfirmed)).ok()
                     })
                     .collect::<HashMap<_, _>>();
-
-                // Iterate over the certificates.
-                for certificates in subdag.values().cloned() {
-                    cfg_into_iter!(certificates).for_each(|certificate| {
-                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
-                    });
-                }
+                // Obtain the subdag.
+                let subdag = block.to_full_subdag()?;
+                // Retrieve the leader certificate and election certificate IDs.
+                let leader_certificate = subdag.leader_batch_certificate()?.clone();
+                leader_certificates.push(leader_certificate);
 
                 // Update the validator telemetry.
                 #[cfg(feature = "telemetry")]
-                self.gateway.validator_telemetry().insert_subdag(subdag);
+                self.gateway.validator_telemetry().insert_subdag(&subdag);
+
+                // Iterate over the certificates.
+                subdag.clone().into_iter_batch_certificates()?.for_each(|certificate| {
+                    self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
+                });
+
+                for certificate in subdag.into_iter_batch_certificates()? {
+                    // Store the certificates in the list.
+                    certificates.push(certificate);
+                }
             }
         }
 
         /* Sync the BFT DAG */
 
-        // Construct a list of the certificates.
-        let certificates = blocks
-            .iter()
-            .flat_map(|block| {
-                match block.authority() {
-                    // If the block authority is a beacon, then skip the block.
-                    Authority::Beacon(_) => None,
-                    // If the block authority is a subdag, then retrieve the certificates.
-                    Authority::Quorum(subdag) => Some(subdag.values().flatten().cloned().collect::<Vec<_>>()),
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(bft_sender) = self.bft_sender.get() {
-            // Await the callback to continue.
-            if let Err(e) = bft_sender.tx_sync_bft_dag_at_bootup.send(certificates).await {
-                bail!("Failed to update the BFT DAG from sync: {e}");
+            // We need certificates to send.
+            if !certificates.is_empty() && !leader_certificates.is_empty() {
+                // Await the callback to continue.
+                if let Err(e) = bft_sender.tx_sync_bft_dag_at_bootup.send(certificates).await {
+                    bail!("Failed to update the BFT DAG from sync: {e}");
+                }
             }
         }
 
@@ -717,7 +727,7 @@ impl<N: Network> Sync<N> {
         // Note that the block authority is always a sub-DAG in production;
         // beacon signatures are only used for testing,
         // and as placeholder (irrelevant) block authority in the genesis block.
-        if let Authority::Quorum(subdag) = block.authority() {
+        if block.authority().is_quorum() {
             // Reconstruct the unconfirmed transactions.
             let unconfirmed_transactions = cfg_iter!(block.transactions())
                 .filter_map(|tx| {
@@ -725,23 +735,26 @@ impl<N: Network> Sync<N> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            // Iterate over the certificates.
-            for certificates in subdag.values().cloned() {
-                cfg_into_iter!(certificates.clone()).for_each(|certificate| {
-                    // Sync the batch certificate with the block.
-                    self.storage.sync_certificate_with_block(&block, certificate.clone(), &unconfirmed_transactions);
-                });
+            // Sync the batch certificate with the block.
+            let subdag = block.to_full_subdag()?;
+            if !cfg!(feature = "serial") {
+                use rayon::iter::ParallelIterator;
+                subdag.clone().into_par_iter_batch_certificates()?.for_each(|certificate| {
+                    self.storage.sync_certificate_with_block(&block, certificate, &unconfirmed_transactions);
+                })
+            } else {
+                subdag.clone().into_iter_batch_certificates()?.for_each(|certificate| {
+                    self.storage.sync_certificate_with_block(&block, certificate, &unconfirmed_transactions);
+                })
+            };
 
-                // Sync the BFT DAG with the certificates.
-                for certificate in certificates {
-                    // If a BFT sender was provided, send the certificate to the BFT.
-                    // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                    if let Some(bft_sender) = self.bft_sender.get() {
-                        // Await the callback to continue.
-                        if let Err(err) = bft_sender.send_sync_bft(certificate).await {
-                            bail!("Failed to sync certificate - {err}");
-                        };
-                    }
+            for certificate in subdag.into_iter_batch_certificates()? {
+                // If a BFT sender was provided, send the certificate to the BFT.
+                if let Some(bft_sender) = self.bft_sender.get() {
+                    // Await the callback to continue.
+                    if let Err(e) = bft_sender.send_sync_bft(certificate).await {
+                        bail!("Sync - {e}");
+                    };
                 }
             }
         }
@@ -777,7 +790,7 @@ impl<N: Network> Sync<N> {
 
             // Fetch the leader certificate and the relevant rounds.
             let leader_certificate = match next_block.authority() {
-                Authority::Quorum(subdag) => subdag.leader_certificate().clone(),
+                Authority::Quorum(subdag) => subdag.leader_batch_certificate()?.clone(),
                 _ => bail!("Received a block with an unexpected authority type."),
             };
             let commit_round = leader_certificate.round();
@@ -814,7 +827,7 @@ impl<N: Network> Sync<N> {
                     };
                     // Retrieve the previous block's leader certificate.
                     let previous_certificate = match previous_block.authority() {
-                        Authority::Quorum(subdag) => subdag.leader_certificate().clone(),
+                        Authority::Quorum(subdag) => subdag.leader_batch_certificate()?.clone(),
                         _ => bail!("Received a block with an unexpected authority type."),
                     };
                     // Determine if there is a path between the previous certificate and the current certificate.
@@ -1179,7 +1192,7 @@ mod tests {
             }
             subdag_map.insert(commit_round, leader_cert_map.clone());
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
-            let subdag = Subdag::from(subdag_map.clone())?;
+            let subdag = Subdag::from_full(subdag_map.clone())?;
             core_ledger.prepare_advance_to_next_quorum_block(subdag, Default::default())?
         };
         // Insert block 1.
@@ -1206,7 +1219,7 @@ mod tests {
             subdag_map_2.insert(leader_round_2, leader_cert_map_2.clone());
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
             subdag_map_2.insert(leader_round_2 - 2, prev_commit_cert_map_2.clone());
-            let subdag_2 = Subdag::from(subdag_map_2.clone())?;
+            let subdag_2 = Subdag::from_full(subdag_map_2.clone())?;
             core_ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default())?
         };
         // Insert block 2.
@@ -1233,7 +1246,7 @@ mod tests {
             subdag_map_3.insert(leader_round_3, leader_cert_map_3.clone());
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
             subdag_map_3.insert(leader_round_3 - 2, prev_commit_cert_map_3.clone());
-            let subdag_3 = Subdag::from(subdag_map_3.clone())?;
+            let subdag_3 = Subdag::from_full(subdag_map_3.clone())?;
             core_ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default())?
         };
         // Insert block 3.
@@ -1376,7 +1389,7 @@ mod tests {
             }
             subdag_map.insert(commit_round, leader_cert_map.clone());
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
-            let subdag = Subdag::from(subdag_map.clone())?;
+            let subdag = Subdag::from_full(subdag_map.clone())?;
             core_ledger.prepare_advance_to_next_quorum_block(subdag, Default::default())?
         };
         // Insert block 1.
@@ -1396,7 +1409,7 @@ mod tests {
             }
             subdag_map_2.insert(leader_round_2, leader_cert_map_2.clone());
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
-            let subdag_2 = Subdag::from(subdag_map_2.clone())?;
+            let subdag_2 = Subdag::from_full(subdag_map_2.clone())?;
             core_ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default())?
         };
         // Insert block 2.
@@ -1416,7 +1429,7 @@ mod tests {
             }
             subdag_map_3.insert(leader_round_3, leader_cert_map_3.clone());
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
-            let subdag_3 = Subdag::from(subdag_map_3.clone())?;
+            let subdag_3 = Subdag::from_full(subdag_map_3.clone())?;
             core_ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default())?
         };
         // Insert block 3.

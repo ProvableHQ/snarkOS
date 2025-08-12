@@ -16,15 +16,15 @@
 use crate::{LedgerService, fmt_id};
 use snarkvm::{
     ledger::{
+        SubdagTransmissions,
         block::{Block, Transaction},
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail, consensus_config_value, ensure},
 };
 
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
@@ -145,11 +145,6 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         unreachable!("MockLedgerService does not support get_unconfirmed_transaction")
     }
 
-    /// Returns the batch certificate for the given batch certificate ID.
-    fn get_batch_certificate(&self, _certificate_id: &Field<N>) -> Result<BatchCertificate<N>> {
-        unreachable!("MockLedgerService does not support get_batch_certificate")
-    }
-
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
         Ok(self.committee.clone())
@@ -221,7 +216,7 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     fn prepare_advance_to_next_quorum_block(
         &self,
         _subdag: Subdag<N>,
-        _transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        _subdag_transmissions: SubdagTransmissions<N>,
     ) -> Result<Block<N>> {
         unreachable!("MockLedgerService does not support prepare_advance_to_next_quorum_block")
     }

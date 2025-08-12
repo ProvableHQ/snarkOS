@@ -40,10 +40,6 @@ workspace = true
 [dependencies.colored]
 workspace = true
 
-[dependencies.indexmap]
-workspace = true
-features = [ "serde", "rayon" ]
-
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]

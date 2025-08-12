@@ -560,16 +560,16 @@ mod tests {
     use snarkvm::{
         console::{network::Network, types::Field},
         ledger::{
+            SubdagTransmissions,
             block::Block,
             committee::Committee,
-            narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
+            narwhal::{Subdag, Transmission, TransmissionID},
             test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::Address,
     };
 
     use bytes::Bytes;
-    use indexmap::IndexMap;
     use mockall::mock;
     use std::{io, ops::Range};
 
@@ -605,7 +605,6 @@ mod tests {
             fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>>;
             fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>>;
             fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>>;
-            fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
             fn current_committee(&self) -> Result<Committee<N>>;
             fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>>;
             fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>>;
@@ -630,7 +629,7 @@ mod tests {
             fn prepare_advance_to_next_quorum_block(
                 &self,
                 subdag: Subdag<N>,
-                transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+                transmissions: SubdagTransmissions<N>,
             ) -> Result<Block<N>>;
             fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
             fn transaction_spend_in_microcredits(&self, transaction: &Transaction<N>, consensus_version: ConsensusVersion) -> Result<u64>;

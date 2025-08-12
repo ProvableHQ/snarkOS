@@ -53,7 +53,7 @@ use snarkvm::{
     },
     ledger::{
         block::Transaction,
-        narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, BatchHeader, Data, NarwhalCertificate, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{ConsensusVersion, committee::Committee},

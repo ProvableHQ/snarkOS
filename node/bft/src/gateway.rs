@@ -1629,7 +1629,11 @@ mod prop_tests {
                 prop_tests::{CommitteeContext, ValidatorSet},
                 test_helpers::sample_committee_for_round_and_members,
             },
-            narwhal::{BatchHeader, batch_certificate::test_helpers::sample_batch_certificate_for_round},
+            narwhal::{
+                BatchHeader,
+                NarwhalCertificate,
+                batch_certificate::test_helpers::sample_batch_certificate_for_round,
+            },
         },
         prelude::{MainnetV0, PrivateKey},
         utilities::TestRng,
