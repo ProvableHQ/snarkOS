@@ -55,7 +55,7 @@ PIDS[0]=$!
 # Block until node is running.
 wait_for_nodes 0 1
 
-python ./.ci/rest_api_helper.py "get-block" $CORES_PER_NODE 60
-python ./.ci/rest_api_helper.py "block-height" $CORES_PER_NODE 10000
+python3 ./.ci/rest_api_helper.py "get-block" $CORES_PER_NODE 60
+python3 ./.ci/rest_api_helper.py "block-height" $CORES_PER_NODE 10000
 
 exit 0
