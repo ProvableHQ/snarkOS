@@ -233,19 +233,19 @@ pub struct Start {
     pub dev: Option<u16>,
 
     /// If development mode is enabled, specify the number of genesis validator.
-    #[clap(long, group = "dev-flags", default_value_t=DEVELOPMENT_MODE_NUM_GENESIS_COMMITTEE_MEMBERS)]
+    #[clap(long, group = "dev_flags", default_value_t=DEVELOPMENT_MODE_NUM_GENESIS_COMMITTEE_MEMBERS)]
     pub dev_num_validators: u16,
 
     /// If development mode is enabled, specify whether node 0 should generate traffic to drive the network.
-    #[clap(long, group = "dev-flag")]
+    #[clap(long, group = "dev_flags")]
     pub no_dev_txs: bool,
 
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
-    #[clap(long, group = "dev-flags")]
+    #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
 
     /// If development mode is enabled, specify the proposal delay in milliseconds.
-    #[clap(long, group = "dev-flags")]
+    #[clap(long, group = "dev_flags")]
     pub dev_proposal_delay: Option<u64>,
 }
 
