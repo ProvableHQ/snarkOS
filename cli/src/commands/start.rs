@@ -244,9 +244,9 @@ pub struct Start {
     #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
 
-    /// If development mode is enabled, specify the proposal delay in milliseconds.
+    /// If development mode is enabled, specify the maximum proposal delay in milliseconds.
     #[clap(long, group = "dev_flags")]
-    pub dev_proposal_delay: Option<u64>,
+    pub dev_max_batch_delay_ms: Option<u64>,
 }
 
 impl Start {
@@ -726,7 +726,7 @@ impl Start {
 
         // Initialize the node.
         match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, self.dev_proposal_delay, shutdown.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, self.dev_max_batch_delay_ms, shutdown.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, self.dev, shutdown.clone()).await,
             NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await
         }
@@ -1226,28 +1226,28 @@ mod tests {
     }
 
     #[test]
-    fn test_dev_proposal_delay_flag() {
-        // Test that dev-proposal-delay can be set when dev is set
-        let config = Start::try_parse_from(["snarkos", "--dev", "0", "--dev-proposal-delay", "1000"].iter()).unwrap();
+    fn test_dev_max_batch_delay_ms_flag() {
+        // Test that dev-max-batch-delay can be set when dev is set
+        let config = Start::try_parse_from(["snarkos", "--dev", "0", "--dev-max-batch-delay", "1000"].iter()).unwrap();
         assert_eq!(config.dev, Some(0));
-        assert_eq!(config.dev_proposal_delay, Some(1000));
+        assert_eq!(config.dev_max_batch_delay_ms, Some(1000));
 
-        // Test that dev-proposal-delay defaults to None when not set
+        // Test that dev-max-batch-delay defaults to None when not set
         let config = Start::try_parse_from(["snarkos", "--dev", "0"].iter()).unwrap();
         assert_eq!(config.dev, Some(0));
-        assert_eq!(config.dev_proposal_delay, None);
+        assert_eq!(config.dev_max_batch_delay_ms, None);
 
-        // Test that dev-proposal-delay requires dev flag
-        let result = Start::try_parse_from(["snarkos", "--dev-proposal-delay", "1000"].iter());
-        assert!(result.is_err(), "dev-proposal-delay should require --dev flag");
+        // Test that dev-max-batch-delay requires dev flag
+        let result = Start::try_parse_from(["snarkos", "--dev-max-batch-delay", "1000"].iter());
+        assert!(result.is_err(), "dev-max-batch-delay should require --dev flag");
 
-        // Test with validator and dev-proposal-delay
+        // Test with validator and dev-max-batch-delay
         let config = Start::try_parse_from(
-            ["snarkos", "--dev", "0", "--validator", "--private-key", "aleo1xx", "--dev-proposal-delay", "500"].iter(),
+            ["snarkos", "--dev", "0", "--validator", "--private-key", "aleo1xx", "--dev-max-batch-delay", "500"].iter(),
         )
         .unwrap();
         assert_eq!(config.dev, Some(0));
-        assert_eq!(config.dev_proposal_delay, Some(500));
+        assert_eq!(config.dev_max_batch_delay_ms, Some(500));
         assert!(config.validator);
     }
 }

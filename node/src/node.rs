@@ -58,7 +58,7 @@ impl<N: Network> Node<N> {
         allow_external_peers: bool,
         dev_txs: bool,
         dev: Option<u16>,
-        dev_proposal_delay: Option<u64>,
+        dev_max_batch_delay_ms: Option<u64>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
@@ -76,7 +76,7 @@ impl<N: Network> Node<N> {
                 allow_external_peers,
                 dev_txs,
                 dev,
-                dev_proposal_delay,
+                dev_max_batch_delay_ms,
                 shutdown,
             )
             .await?,

@@ -98,7 +98,7 @@ impl<N: Network> BFT<N> {
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
         dev: Option<u16>,
-        dev_proposal_delay: Option<u64>,
+        dev_max_batch_delay_ms: Option<u64>,
     ) -> Result<Self> {
         Ok(Self {
             primary: Primary::new(
@@ -110,7 +110,7 @@ impl<N: Network> BFT<N> {
                 trusted_validators,
                 storage_mode,
                 dev,
-                dev_proposal_delay,
+                dev_max_batch_delay_ms,
             )?,
             dag: Default::default(),
             leader_certificate: Default::default(),
