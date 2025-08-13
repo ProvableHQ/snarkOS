@@ -1228,7 +1228,8 @@ mod tests {
     #[test]
     fn test_dev_max_batch_delay_ms_flag() {
         // Test that dev-max-batch-delay can be set when dev is set
-        let config = Start::try_parse_from(["snarkos", "--dev", "0", "--dev-max-batch-delay", "1000"].iter()).unwrap();
+        let config =
+            Start::try_parse_from(["snarkos", "--dev", "0", "--dev-max-batch-delay-ms", "1000"].iter()).unwrap();
         assert_eq!(config.dev, Some(0));
         assert_eq!(config.dev_max_batch_delay_ms, Some(1000));
 
@@ -1238,12 +1239,13 @@ mod tests {
         assert_eq!(config.dev_max_batch_delay_ms, None);
 
         // Test that dev-max-batch-delay requires dev flag
-        let result = Start::try_parse_from(["snarkos", "--dev-max-batch-delay", "1000"].iter());
+        let result = Start::try_parse_from(["snarkos", "--dev-max-batch-delay-ms", "1000"].iter());
         assert!(result.is_err(), "dev-max-batch-delay should require --dev flag");
 
         // Test with validator and dev-max-batch-delay
         let config = Start::try_parse_from(
-            ["snarkos", "--dev", "0", "--validator", "--private-key", "aleo1xx", "--dev-max-batch-delay", "500"].iter(),
+            ["snarkos", "--dev", "0", "--validator", "--private-key", "aleo1xx", "--dev-max-batch-delay-ms", "500"]
+                .iter(),
         )
         .unwrap();
         assert_eq!(config.dev, Some(0));

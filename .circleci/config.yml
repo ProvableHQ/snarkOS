@@ -150,18 +150,6 @@ commands:
         type: string
       cache_key:
         type: string
-      validators:
-        type: integer
-        default: 4
-      clients:
-        type: integer
-        default: 2
-      network_id:
-        type: integer
-        default: 0
-      min_height:
-        type: integer
-        default: 45
     steps:
       - checkout
       - setup_environment:
@@ -179,7 +167,7 @@ commands:
           name: "Run block advancement test"
           timeout: 20m  # Allow 20 minutes total
           command: |
-            ./.circleci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.circleci/devnet_ci.sh
       - clear_environment:
           cache_key: << parameters.cache_key >>
 

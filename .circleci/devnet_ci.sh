@@ -59,9 +59,9 @@ for ((validator_index = 0; validator_index < $total_validators; validator_index+
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ "$validator_index" -eq 0 ]; then
-    snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --metrics --no-dev-txs --dev-max-batch-delay 100 &
+    snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --metrics --no-dev-txs --dev-max-batch-delay-ms 100 &
   else
-    snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --dev-max-batch-delay 100 &
+    snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --dev-max-batch-delay-ms 100 &
   fi
   PIDS[$validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
