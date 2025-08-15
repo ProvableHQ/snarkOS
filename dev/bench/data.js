@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755280941508,
+  "lastUpdate": 1755285090707,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -108,6 +108,48 @@ window.BENCHMARK_DATA = {
             "value": 1.83,
             "unit": "blocks/s",
             "extra": "total_wait=544s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "distinct": true,
+          "id": "71014b3fe2fa8e9e94415eacb2deb350b474d242",
+          "message": "ci: add sync benchmark",
+          "timestamp": "2025-08-15T11:23:00-07:00",
+          "tree_id": "57e023e79a4599fbfcc4ed4f5cfd1fa4e239223c",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/71014b3fe2fa8e9e94415eacb2deb350b474d242"
+        },
+        "date": 1755285090329,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 4.54,
+            "unit": "blocks/s",
+            "extra": "total_wait=44s"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.16,
+            "unit": "blocks/s",
+            "extra": "total_wait=597s"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.84,
+            "unit": "blocks/s",
+            "extra": "total_wait=543s"
           }
         ]
       }
