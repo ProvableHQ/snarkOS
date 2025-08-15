@@ -55,6 +55,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::runtime::{self, Runtime};
+use tracing::info;
 use ureq::http;
 
 /// The recommended minimum number of 'open files' limit for a validator.
@@ -341,20 +342,27 @@ impl Start {
             false => peers
                 .split(',')
                 .map(|ip_or_hostname| {
-                    let trimmed = ip_or_hostname.trim();
-                    match trimmed.to_socket_addrs() {
+                    let addr_result = if ip_or_hostname.contains(':') {
+                        ip_or_hostname.trim().to_socket_addrs()
+                    } else {
+                        info!("Peer address \"{ip_or_hostname}\" did not contain a port number. Will default to {DEFAULT_NODE_PORT}.");
+                        format!("{}:{DEFAULT_NODE_PORT}", ip_or_hostname.trim()).to_socket_addrs()
+                    };
+
+                    match addr_result {
                         Ok(mut ip_iter) => {
                             // A hostname might resolve to multiple IP addresses. We will use only the first one,
                             // assuming this aligns with the user's expectations.
                             let Some(ip) = ip_iter.next() else {
                                 return Err(anyhow!(
-                                    "The hostname supplied to --peers ('{trimmed}') does not reference any ip."
+                                    "The hostname supplied to --peers ('{ip_or_hostname}') does not resolve to a (known) IP address."
                                 ));
                             };
                             Ok(ip)
                         }
-                        Err(e) => {
-                            Err(anyhow!("The hostname or IP supplied to --peers ('{trimmed}') is malformed: {e}"))
+                        Err(err) => {
+                            let err: anyhow::Error = err.into();
+                            Err(err.context(format!("The hostname or IP supplied to --peers ('{ip_or_hostname}') is malformed")))
                         }
                     }
                 })

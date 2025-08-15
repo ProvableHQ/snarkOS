@@ -18,6 +18,17 @@ use snarkvm::prelude::{Address, Network};
 
 use std::{net::SocketAddr, time::Instant};
 
+/// The class of a peer, indicating its trust level and origin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeClass {
+    /// A peer that was explicitly configured as trusted.
+    Trusted,
+    /// A peer that is a hardcoded bootstrap node for the network.
+    Bootstrap,
+    /// A peer that was discovered through the network protocol.
+    Discovered,
+}
+
 /// A peer of any connection status.
 #[derive(Clone)]
 pub enum Peer<N: Network> {
@@ -34,8 +45,8 @@ pub enum Peer<N: Network> {
 pub struct ConnectingPeer {
     /// The listening address of a connecting peer.
     pub listener_addr: SocketAddr,
-    /// Indicates whether the peer is considered trusted.
-    pub trusted: bool,
+    /// The class of the peer (trusted, bootstrap, or discovered).
+    pub class: NodeClass,
 }
 
 /// A candidate peer.
@@ -43,8 +54,8 @@ pub struct ConnectingPeer {
 pub struct CandidatePeer {
     /// The listening address of a candidate peer.
     pub listener_addr: SocketAddr,
-    /// Indicates whether the peer is considered trusted.
-    pub trusted: bool,
+    /// The class of the peer (trusted, bootstrap, or discovered).
+    pub class: NodeClass,
 }
 
 /// A fully connected peer.
@@ -54,8 +65,8 @@ pub struct ConnectedPeer<N: Network> {
     pub listener_addr: SocketAddr,
     /// The connected address of the peer.
     pub connected_addr: SocketAddr,
-    /// Indicates whether the peer is considered trusted.
-    pub trusted: bool,
+    /// The class of the peer (trusted, bootstrap, or discovered).
+    pub class: NodeClass,
     /// The Aleo address of the peer.
     pub aleo_addr: Address<N>,
     /// The node type of the peer.
@@ -70,15 +81,27 @@ pub struct ConnectedPeer<N: Network> {
     pub router: Router<N>,
 }
 
+impl<N: Network> ConnectedPeer<N> {
+    /// Returns `true` if the peer is considered trusted.
+    pub fn is_trusted(&self) -> bool {
+        matches!(self.class, NodeClass::Trusted)
+    }
+
+    /// Returns `true` if the peer is a bootstrap peer.
+    pub fn is_bootstrap(&self) -> bool {
+        matches!(self.class, NodeClass::Bootstrap)
+    }
+}
+
 impl<N: Network> Peer<N> {
     /// Create a candidate peer.
-    pub const fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Candidate(CandidatePeer { listener_addr, trusted })
+    pub const fn new_candidate(listener_addr: SocketAddr, class: NodeClass) -> Self {
+        Self::Candidate(CandidatePeer { listener_addr, class })
     }
 
     /// Create a connecting peer.
-    pub const fn new_connecting(trusted: bool, listener_addr: SocketAddr) -> Self {
-        Self::Connecting(ConnectingPeer { trusted, listener_addr })
+    pub const fn new_connecting(class: NodeClass, listener_addr: SocketAddr) -> Self {
+        Self::Connecting(ConnectingPeer { class, listener_addr })
     }
 
     /// Promote a connecting peer to a fully connected one.
@@ -97,7 +120,7 @@ impl<N: Network> Peer<N> {
             connected_addr,
             aleo_addr: cr.address,
             node_type: cr.node_type,
-            trusted: self.is_trusted(),
+            class: self.class(),
             version: cr.version,
             first_seen: timestamp,
             last_seen: timestamp,
@@ -113,7 +136,7 @@ impl<N: Network> Peer<N> {
             peer.router.resolver.write().remove_peer(&peer.connected_addr);
         };
 
-        *self = Self::Candidate(CandidatePeer { listener_addr, trusted: self.is_trusted() });
+        *self = Self::Candidate(CandidatePeer { listener_addr, class: self.class() });
     }
 
     /// Returns the type of the node (only applicable to connected peers).
@@ -149,13 +172,23 @@ impl<N: Network> Peer<N> {
         matches!(self, Peer::Connected(_))
     }
 
+    /// Returns the class of the peer (either trusted, bootstrap, or discovered).
+    pub fn class(&self) -> NodeClass {
+        match self {
+            Self::Candidate(peer) => peer.class,
+            Self::Connecting(peer) => peer.class,
+            Self::Connected(peer) => peer.class,
+        }
+    }
+
     /// Returns `true` if the peer is considered trusted.
     pub fn is_trusted(&self) -> bool {
-        match self {
-            Self::Candidate(peer) => peer.trusted,
-            Self::Connecting(peer) => peer.trusted,
-            Self::Connected(peer) => peer.trusted,
-        }
+        matches!(self.class(), NodeClass::Trusted)
+    }
+
+    /// Returns `true` if the peer is a bootstrap peer.
+    pub fn is_bootstrap(&self) -> bool {
+        matches!(self.class(), NodeClass::Bootstrap)
     }
 
     /// Updates the peer's `last_seen` timestamp.

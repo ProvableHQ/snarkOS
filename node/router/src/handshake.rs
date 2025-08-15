@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use crate::{
+    NodeClass,
     NodeType,
     Peer,
     Router,
@@ -152,12 +153,18 @@ impl<N: Network> Router<N> {
         genesis_header: Header<N>,
         restrictions_id: Field<N>,
     ) -> io::Result<ChallengeRequest<N>> {
+        let bootstrap_peers = self.bootstrap_peers();
+        let class = if bootstrap_peers.contains(&peer_addr) { NodeClass::Bootstrap } else { NodeClass::Discovered };
+
         match self.peer_pool.write().entry(peer_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(false, peer_addr));
+                entry.insert(Peer::new_connecting(class, peer_addr));
             }
             Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::new_connecting(entry.get().is_trusted(), peer_addr));
+                let existing_class = entry.get().class();
+                // Preserve trusted status if the peer was already known as trusted
+                let final_class = if matches!(existing_class, NodeClass::Trusted) { NodeClass::Trusted } else { class };
+                entry.insert(Peer::new_connecting(final_class, peer_addr));
             }
             Entry::Occupied(_) => {
                 return Err(error(format!("Duplicate connection attempt with '{peer_addr}'")));
@@ -317,14 +324,19 @@ impl<N: Network> Router<N> {
         if !self.allow_external_peers() && !self.is_trusted(&listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)")
         }
-
         match self.peer_pool.write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(false, listener_addr));
+                let class = if self.bootstrap_peers().contains(&listener_addr) {
+                    NodeClass::Bootstrap
+                } else {
+                    NodeClass::Discovered
+                };
+
+                entry.insert(Peer::new_connecting(class, listener_addr));
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 peer @ Peer::Candidate(_) => {
-                    *peer = Peer::new_connecting(peer.is_trusted(), listener_addr);
+                    *peer = Peer::new_connecting(peer.class(), listener_addr);
                 }
                 Peer::Connecting(_) => {
                     bail!("Dropping connection request from '{listener_addr}' (already connecting)");

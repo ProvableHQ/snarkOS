@@ -142,11 +142,10 @@ impl<N: Network> Router<N> {
     ) -> Result<Self> {
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(node_ip, max_peers));
-
         let trusted_peers = trusted_peers
             .iter()
             .copied()
-            .map(|addr| (addr, Peer::new_candidate(addr, true)))
+            .map(|addr| (addr, Peer::new_candidate(addr, NodeClass::Trusted)))
             .collect::<HashMap<_, _>>();
 
         // Initialize the router.
@@ -415,7 +414,7 @@ impl<N: Network> Router<N> {
             .read()
             .iter()
             .filter_map(
-                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.trusted.then_some(*addr) } else { None },
+                |(addr, peer)| if matches!(peer, Peer::Candidate(_)) && peer.is_trusted() { Some(*addr) } else { None },
             )
             .collect()
     }
@@ -496,7 +495,7 @@ impl<N: Network> Router<N> {
                     !self.is_local_ip(peer_ip) && !peer_pool.contains_key(peer_ip)
                 })
                 .take(max_candidate_peers)
-                .map(|addr| (*addr, Peer::new_candidate(*addr, false)))
+                .map(|addr| (*addr, Peer::new_candidate(*addr, NodeClass::Discovered)))
                 .collect::<Vec<_>>();
 
             // Proceed to insert the eligible candidate peer IPs.

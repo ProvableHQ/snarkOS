@@ -41,6 +41,7 @@ pub(crate) struct SyncMetrics {
     last_block_height: Option<u32>,
     last_peer_height: Option<u32>,
     last_update_time: Option<Instant>,
+    time_scale_seconds: f64,
 }
 
 impl SyncMetrics {
@@ -48,11 +49,22 @@ impl SyncMetrics {
         Self {
             data_points: VecDeque::new(),
             start_time: Instant::now(),
-            max_data_points: 120, // Keep 2 minutes of data at 1 second intervals
+            max_data_points: 900, // Keep 15 minutes of data at 1 second intervals
             last_block_height: None,
             last_update_time: None,
             last_peer_height: None,
+            time_scale_seconds: 60.0, // Default to 60 seconds
         }
+    }
+
+    /// Increase the time scale (zoom out)
+    pub fn scale_up(&mut self) {
+        self.time_scale_seconds = (self.time_scale_seconds * 2.0).min(900.0); // Max 15 minutes
+    }
+
+    /// Decrease the time scale (zoom in)
+    pub fn scale_down(&mut self) {
+        self.time_scale_seconds = (self.time_scale_seconds / 2.0).max(10.0); // Min 10 seconds
     }
 
     pub fn update_data<N: Network>(&mut self, node: &Node<N>) {
@@ -108,14 +120,26 @@ impl SyncMetrics {
             return;
         }
 
-        // Prepare data for chart
-        let data: Vec<(f64, f64)> =
-            self.data_points.iter().map(|point| (point.timestamp, point.blocks_per_second)).collect();
+        // Calculate bounds based on time scale
+        let current_time = self.data_points.back().map(|p| p.timestamp).unwrap_or(0.0);
+        let x_max = current_time;
+        let x_min = current_time - self.time_scale_seconds;
 
-        let x_min = self.data_points.front().map(|p| p.timestamp).unwrap_or(0.0);
-        let x_max = self.data_points.back().map(|p| p.timestamp).unwrap_or(x_min + 20.0).max(x_min + 20.0); // Show at least 20 seconds
+        // Prepare data for chart, filtered by time scale
+        let data: Vec<(f64, f64)> = self
+            .data_points
+            .iter()
+            .filter(|point| point.timestamp >= x_min)
+            .map(|point| (point.timestamp, point.blocks_per_second))
+            .collect();
 
-        let y_max = self.data_points.iter().map(|p| p.blocks_per_second).fold(0.0f64, f64::max).max(1.0); // Minimum scale of 1 blocks/s
+        let y_max = self
+            .data_points
+            .iter()
+            .filter(|p| p.timestamp >= x_min)
+            .map(|p| p.blocks_per_second)
+            .fold(0.0f64, f64::max)
+            .max(1.0); // Minimum scale of 1 blocks/s
 
         let datasets = vec![
             Dataset::default()
@@ -129,8 +153,8 @@ impl SyncMetrics {
         let chart = Chart::new(datasets)
             .block(block)
             .x_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([x_min, x_max]).labels(vec![
-                Line::from(format!("{:.0}s ago", x_max - x_min)),
-                Line::from(format!("{:.0}s ago", (x_max - x_min) / 2.0)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds / 2.0)),
                 Line::from("now"),
             ]))
             .y_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([0.0, y_max]).labels(vec![
@@ -153,19 +177,30 @@ impl SyncMetrics {
             return;
         }
 
-        // Prepare data for chart
-        let local_height_data: Vec<(f64, f64)> =
-            self.data_points.iter().map(|p| (p.timestamp, p.local_block_height as f64)).collect();
+        // Calculate bounds based on time scale
+        let current_time = self.data_points.back().map(|p| p.timestamp).unwrap_or(0.0);
+        let x_max = current_time;
+        let x_min = current_time - self.time_scale_seconds;
 
-        let peer_height_data: Vec<(f64, f64)> =
-            self.data_points.iter().map(|p| (p.timestamp, p.peer_block_height as f64)).collect();
+        // Prepare data for chart, filtered by time scale
+        let local_height_data: Vec<(f64, f64)> = self
+            .data_points
+            .iter()
+            .filter(|p| p.timestamp >= x_min)
+            .map(|p| (p.timestamp, p.local_block_height as f64))
+            .collect();
 
-        // Calculate bounds
-        let x_min = self.data_points.front().map(|p| p.timestamp).unwrap_or(0.0);
-        let x_max = self.data_points.back().map(|p| p.timestamp).unwrap_or(x_min + 20.0).max(x_min + 20.0); // Show at least 20 seconds
+        let peer_height_data: Vec<(f64, f64)> = self
+            .data_points
+            .iter()
+            .filter(|p| p.timestamp >= x_min)
+            .map(|p| (p.timestamp, p.peer_block_height as f64))
+            .collect();
+
         let y_max = self
             .data_points
             .iter()
+            .filter(|p| p.timestamp >= x_min)
             .map(|p| p.local_block_height.max(p.peer_block_height))
             .max()
             .map(|x| x as f64)
@@ -189,8 +224,8 @@ impl SyncMetrics {
         let chart = Chart::new(datasets)
             .block(block)
             .x_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([x_min, x_max]).labels(vec![
-                Line::from(format!("{:.0}s ago", x_max - x_min)),
-                Line::from(format!("{:.0}s ago", (x_max - x_min) / 2.0)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds / 2.0)),
                 Line::from("now"),
             ]))
             .y_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([0.0, y_max]).labels(vec![
