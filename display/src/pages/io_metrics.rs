@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +58,7 @@ pub(crate) struct IoMetrics {
     previous_peer_stats: HashMap<SocketAddr, PeerStats>,
     start_time: Instant,
     max_data_points: usize,
+    time_scale_seconds: f64,
 }
 
 impl IoMetrics {
@@ -66,8 +67,19 @@ impl IoMetrics {
             data_points: VecDeque::new(),
             previous_peer_stats: HashMap::new(),
             start_time: Instant::now(),
-            max_data_points: 300, // Keep 300 data points (5 minute(s) of history)
+            max_data_points: 900,     // Keep 900 data points (15 minute(s) of history)
+            time_scale_seconds: 60.0, // Default to 60 seconds
         }
+    }
+
+    /// Increase the time scale (zoom out)
+    pub fn scale_up(&mut self) {
+        self.time_scale_seconds = (self.time_scale_seconds * 2.0).min(900.0); // Max 15 minutes
+    }
+
+    /// Decrease the time scale (zoom in)
+    pub fn scale_down(&mut self) {
+        self.time_scale_seconds = (self.time_scale_seconds / 2.0).max(10.0); // Min 10 seconds
     }
 
     /// Returns a consistent color index for a given IP address
@@ -128,10 +140,7 @@ impl IoMetrics {
         }
     }
 
-    pub(crate) fn draw<N: Network>(&mut self, f: &mut Frame, area: Rect, node: &Node<N>) {
-        // Update data before drawing
-        self.update_data(node);
-
+    pub(crate) fn draw(&mut self, f: &mut Frame, area: Rect) {
         // Initialize the layout of the page.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -167,6 +176,11 @@ impl IoMetrics {
             return;
         }
 
+        // Calculate bounds based on time scale
+        let current_time = self.data_points.back().map(|p| p.timestamp).unwrap_or(0.0);
+        let x_max = current_time;
+        let x_min = current_time - self.time_scale_seconds;
+
         // Define colors for different peers
         let colors = [
             Color::Green,
@@ -179,13 +193,14 @@ impl IoMetrics {
             Color::LightGreen,
         ];
 
-        // Collect data for all peers first
+        // Collect data for all peers first, filtered by time scale
         let peer_data_map: BTreeMap<_, _> = all_peers
             .iter()
             .map(|listener_addr| {
                 let peer_data: Vec<(f64, f64)> = self
                     .data_points
                     .iter()
+                    .filter(|data_point| data_point.timestamp >= x_min) // Filter by time scale
                     .filter_map(|data_point| {
                         // Find this peer's speed in this data point
                         data_point
@@ -226,13 +241,10 @@ impl IoMetrics {
             return;
         }
 
-        // Calculate bounds
-        let x_min = self.data_points.front().map(|p| p.timestamp).unwrap_or(0.0);
-        let x_max = self.data_points.back().map(|p| p.timestamp).unwrap_or(x_min + 10.0).max(x_min + 10.0); // Minimum time scale of 10 seconds
-
-        // Find max speed across all peers (in KB/s)
+        // Find max speed across all peers (in KB/s) within the time scale
         let y_max = self.data_points
             .iter()
+            .filter(|dp| dp.timestamp >= x_min) // Filter by time scale
             .flat_map(|dp| &dp.peer_speeds)
             .map(|ps| speed_extractor(ps) / 1024.0) // Convert to KB/s
             .fold(0.0, f64::max)
@@ -241,8 +253,8 @@ impl IoMetrics {
         let chart = Chart::new(datasets)
             .block(block)
             .x_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([x_min, x_max]).labels(vec![
-                Line::from(format!("{:.0}s ago", x_max - x_min)),
-                Line::from(format!("{:.0}s ago", (x_max - x_min) / 2.0)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds / 2.0)),
                 Line::from("now"),
             ]))
             .y_axis(Axis::default().bounds([0.0, y_max]).labels(vec![
@@ -251,7 +263,7 @@ impl IoMetrics {
                 Line::from(format!("{y_max:.1}")),
             ]))
             .hidden_legend_constraints((Constraint::Min(0), Constraint::Min(0))) // Ensure the legend is always shown.
-            .legend_position(Some(LegendPosition::TopRight));
+            .legend_position(Some(LegendPosition::TopLeft));
 
         f.render_widget(chart, area);
     }

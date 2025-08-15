@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver};
+use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeClass, NodeType, Peer, Resolver};
 
 #[cfg(test)]
 mod tests {
@@ -80,7 +80,7 @@ mod tests {
             listener_addr,
             connected_addr,
             connection_mode: ConnectionMode::Router,
-            trusted: false,
+            class: NodeClass::Discovered,
             aleo_addr: Address::<CurrentNetwork>::new(rng.random()),
             node_type,
             version: 1,
@@ -104,7 +104,7 @@ mod tests {
         let aleo_addr = Address::<CurrentNetwork>::new(rng.random());
 
         // Step 1: insert as a candidate.
-        pool.peer_pool().write().insert(listener_addr, Peer::new_candidate(listener_addr, false));
+        pool.peer_pool().write().insert(listener_addr, Peer::new_candidate(listener_addr, NodeClass::Discovered));
 
         assert_eq!(pool.number_of_candidate_peers(), 1);
         assert_eq!(pool.number_of_connecting_peers(), Some(0));
@@ -171,7 +171,7 @@ mod tests {
 
         // A candidate peer should not be counted as a validator.
         let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 3003));
-        pool.peer_pool().write().insert(candidate_addr, Peer::new_candidate(candidate_addr, false));
+        pool.peer_pool().write().insert(candidate_addr, Peer::new_candidate(candidate_addr, NodeClass::Discovered));
 
         assert_eq!(pool.number_of_connected_validators(), Some(2));
         assert_eq!(pool.number_of_connected_peers(), 3);
@@ -441,7 +441,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         for (addr, height) in listener_addrs {
             match peer_pool.entry(addr) {
                 Entry::Vacant(entry) => {
-                    entry.insert(Peer::new_candidate(addr, false));
+                    entry.insert(Peer::new_candidate(addr, NodeClass::Discovered));
                 }
                 Entry::Occupied(mut entry) => {
                     if let Peer::Candidate(peer) = entry.get_mut() {
@@ -637,7 +637,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             .values()
             .filter_map(|peer| {
                 if let Peer::Candidate(peer) = peer
-                    && peer.trusted
+                    && peer.is_trusted()
                 {
                     Some(peer.clone())
                 } else {
@@ -727,12 +727,12 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn add_connecting_peer(&self, listener_addr: SocketAddr) -> Result<(), ConnectError> {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
+                entry.insert(Peer::new_connecting(listener_addr, NodeClass::Discovered));
                 Ok(())
             }
             Entry::Occupied(mut entry) => match entry.get() {
                 peer @ Peer::Candidate(_) => {
-                    entry.insert(Peer::new_connecting(listener_addr, peer.is_trusted()));
+                    entry.insert(Peer::new_connecting(listener_addr, peer.class()));
                     Ok(())
                 }
                 Peer::Connecting(_) => Err(ConnectError::AlreadyConnecting { address: listener_addr }),

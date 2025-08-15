@@ -53,6 +53,7 @@ use snarkos_node_network::{
     CandidatePeer,
     ConnectedPeer,
     ConnectionMode,
+    NodeClass,
     NodeType,
     Peer,
     PeerPoolHandling,
@@ -173,13 +174,15 @@ impl<N: Network> Router<N> {
         if !trusted_peers_only {
             let cached_peers = Self::load_cached_peers(&node_data_dir.router_peer_cache_path())?;
             for addr in cached_peers {
-                initial_peers.insert(addr, Peer::new_candidate(addr, false));
+                initial_peers.insert(addr, Peer::new_candidate(addr, NodeClass::Discovered));
             }
         }
 
         // Add the trusted peers to the list of the initial peers; this may promote
         // some of the cached peers to trusted ones.
-        initial_peers.extend(trusted_peers.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
+        for addr in trusted_peers {
+            initial_peers.insert(*addr, Peer::<N>::new_candidate(*addr, NodeClass::Trusted));
+        }
 
         // Initialize the router.
         Ok(Self(Arc::new(InnerRouter {

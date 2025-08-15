@@ -44,6 +44,7 @@ use snarkos_node_bft_events::{
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::{
     ConnectionMode,
+    NodeClass,
     NodeType,
     Peer,
     PeerPoolHandling,
@@ -232,13 +233,15 @@ impl<N: Network> Gateway<N> {
         if !trusted_peers_only {
             let cached_peers = Self::load_cached_peers(&node_data_dir.gateway_peer_cache_path())?;
             for addr in cached_peers {
-                initial_peers.insert(addr, Peer::new_candidate(addr, false));
+                initial_peers.insert(addr, Peer::new_candidate(addr, NodeClass::Discovered));
             }
         }
 
         // Add the trusted peers to the list of the initial peers; this may promote
         // some of the cached validators to trusted ones.
-        initial_peers.extend(trusted_validators.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
+        for addr in trusted_validators {
+            initial_peers.insert(*addr, Peer::new_candidate(*addr, NodeClass::Trusted));
+        }
 
         // Return the gateway.
         Ok(Self(Arc::new(InnerGateway {
@@ -495,7 +498,7 @@ impl<N: Network> Gateway<N> {
         // Adds a bidirectional map between the listener address and (ambiguous) peer address.
         self.resolver.write().insert_peer(peer_ip, peer_addr, Some(address));
         // Add a transmission for this peer in the connected peers.
-        self.peer_pool.write().insert(peer_ip, Peer::new_connecting(peer_ip, false));
+        self.peer_pool.write().insert(peer_ip, Peer::new_connecting(peer_ip, NodeClass::Discovered));
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             peer.upgrade_to_connected(
                 peer_addr,

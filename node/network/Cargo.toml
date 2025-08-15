@@ -58,5 +58,9 @@ workspace = true
 path = "."
 features = [ "test" ]
 
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "utilities" ]
+
 [build-dependencies.built]
 workspace = true

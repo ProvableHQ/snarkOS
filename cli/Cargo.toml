@@ -43,12 +43,12 @@ test_network = [
   "test_consensus_heights",
   "snarkvm/dev-print"
 ]
+tokio_console = [ "dep:console-subscriber", "tokio/tracing" ]
 serial = [
   "snarkvm/serial",
-  "snarkos-node/serial",
-  "snarkos-display/serial",
+  "snarkos-node-metrics/serial",
+  "snarkos-node/serial"
 ]
-tokio_console = [ "dep:console-subscriber", "tokio/tracing" ]
 
 [dependencies.aleo-std]
 workspace = true
