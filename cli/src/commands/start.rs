@@ -893,7 +893,10 @@ fn resolve_potential_hostnames(ip_or_hostname: &str) -> Result<SocketAddr> {
             };
             Ok(ip)
         }
-        Err(e) => Err(anyhow!("The supplied trusted hostname or IP ('{trimmed}') is malformed: {e}")),
+        Err(err) => {
+            let err: anyhow::Error = err.into();
+            Err(err.context(format!("The supplied trusted hostname or IP ('{trimmed}') is malformed")))
+        }
     }
 }
 

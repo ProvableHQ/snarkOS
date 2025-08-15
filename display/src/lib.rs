@@ -21,8 +21,8 @@ use pages::*;
 mod tabs;
 use tabs::Tabs;
 
-use snarkos_node::Node;
-use snarkvm::prelude::Network;
+use snarkos_node::{Node, router::PeerPoolHandling};
+use snarkvm::console::network::Network;
 
 use anyhow::Result;
 use crossterm::{
@@ -62,6 +62,8 @@ pub struct Display<N: Network> {
     tick_rate: Duration,
     /// The state of the tabs.
     tabs: Tabs,
+    /// The overview tab.
+    overview: Overview,
     /// The logs tab.
     logs: Logs,
     /// The metrics tab.
@@ -95,6 +97,7 @@ impl<N: Network> Display<N> {
             node,
             tick_rate: Duration::from_secs(1),
             tabs: Tabs::new(PAGES.to_vec()),
+            overview: Overview::new(),
             logs: Logs::new(log_receiver),
             io_metrics: IoMetrics::new(),
             sync_metrics: SyncMetrics::new(),
@@ -136,6 +139,42 @@ impl<N: Network> Display<N> {
                         }
                         KeyCode::Left => self.tabs.previous(),
                         KeyCode::Right => self.tabs.next(),
+                        KeyCode::Up => {
+                            match self.tabs.index {
+                                0 => {
+                                    // Scroll up in peer table for overview tab
+                                    self.overview.scroll_up();
+                                }
+                                1 => self.io_metrics.scale_up(),
+                                2 => self.sync_metrics.scale_up(),
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Down => {
+                            match self.tabs.index {
+                                0 => {
+                                    // Scroll down in peer table for overview tab
+                                    let peer_count = self.node.router().get_peers().len();
+                                    self.overview.scroll_down(peer_count);
+                                }
+                                1 => self.io_metrics.scale_down(),
+                                2 => self.sync_metrics.scale_down(),
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char('j') => {
+                            // Alternative down scrolling for peer table (overview tab only)
+                            if self.tabs.index == 0 {
+                                let peer_count = self.node.router().get_peers().len();
+                                self.overview.scroll_down(peer_count);
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            // Alternative up scrolling for peer table (overview tab only)
+                            if self.tabs.index == 0 {
+                                self.overview.scroll_up();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -195,14 +234,19 @@ impl<N: Network> Display<N> {
 
         // Initialize the page.
         match self.tabs.index {
-            0 => Overview.draw(f, chunks[1], &self.node, &mut self.previous_peer_stats),
+            0 => self.overview.draw(f, chunks[1], &self.node, &mut self.previous_peer_stats),
             1 => self.io_metrics.draw(f, chunks[1], &self.node),
             2 => self.sync_metrics.draw(f, chunks[1], &self.node),
             3 => self.logs.draw(f, chunks[1]),
             _ => unreachable!(),
         };
 
-        let help = Paragraph::new("Use ← → to switch tabs, ESC to quit").style(content_style());
+        let help_text = if self.tabs.index == 0 {
+            "Use ← → to switch tabs, ↑ ↓ j k to scroll peer table, ESC to quit"
+        } else {
+            "Use ← → to switch tabs, ↑ ↓ to scale metrics, ESC to quit"
+        };
+        let help = Paragraph::new(help_text).style(content_style());
         f.render_widget(help, chunks[2]);
     }
 }

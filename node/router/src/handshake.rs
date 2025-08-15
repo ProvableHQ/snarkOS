@@ -157,7 +157,7 @@ impl<N: Network> Router<N> {
         restrictions_id: Field<N>,
     ) -> io::Result<ChallengeRequest<N>> {
         // Introduce the peer into the peer pool.
-        self.add_peer_on_handshake_init(peer_addr)?;
+        self.add_peer_on_handshake_init(peer_addr, self.is_dev())?;
 
         // Construct the stream.
         let mut framed = Framed::new(stream, MessageCodec::<N>::handshake());
@@ -314,7 +314,7 @@ impl<N: Network> Router<N> {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)")
         }
 
-        self.add_peer_on_handshake_resp(listener_addr)
+        self.add_peer_on_handshake_resp(listener_addr, self.is_dev())
     }
 
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.

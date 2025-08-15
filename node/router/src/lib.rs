@@ -157,7 +157,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         self.filter_connected_peers(|_| true)
     }
 
-    /// Returns all connected peers that satisify the given predicate.
+    /// Returns all connected peers that satisfy the given predicate.
     fn filter_connected_peers<P: FnMut(&ConnectedPeer<N>) -> bool>(&self, mut predicate: P) -> Vec<ConnectedPeer<N>> {
         self.peer_pool()
             .read()
@@ -203,7 +203,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             .read()
             .iter()
             .filter_map(
-                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.trusted.then_some(*addr) } else { None },
+                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.is_trusted().then_some(*addr) } else { None },
             )
             .collect()
     }
@@ -275,13 +275,19 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     // Introduces a new connecting peer into the peer pool if unknown, or promotes
     // a known candidate peer to a connecting one, at the beginning of handshake
     // when initiating it.
-    fn add_peer_on_handshake_init(&self, listener_addr: SocketAddr) -> io::Result<()> {
+    fn add_peer_on_handshake_init(&self, listener_addr: SocketAddr, dev: bool) -> io::Result<()> {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
+                let class = if bootstrap_peers::<N>(dev).contains(&listener_addr) {
+                    NodeClass::Bootstrap
+                } else {
+                    NodeClass::Discovered
+                };
+
+                entry.insert(Peer::new_connecting(listener_addr, class));
             }
             Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::new_connecting(listener_addr, entry.get().is_trusted()));
+                entry.insert(Peer::new_connecting(listener_addr, entry.get().class()));
             }
             Entry::Occupied(_) => {
                 return Err(error(format!("Duplicate connection attempt with '{listener_addr}'")));
@@ -293,14 +299,19 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     // Introduces a new connecting peer into the peer pool if unknown, or promotes
     // a known candidate peer to a connecting one, during the handshake when responding
     // to it, once the peer's listener address is known.
-    fn add_peer_on_handshake_resp(&self, listener_addr: SocketAddr) -> anyhow::Result<()> {
+    fn add_peer_on_handshake_resp(&self, listener_addr: SocketAddr, dev: bool) -> anyhow::Result<()> {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
+                let class = if bootstrap_peers::<N>(dev).contains(&listener_addr) {
+                    NodeClass::Bootstrap
+                } else {
+                    NodeClass::Discovered
+                };
+                entry.insert(Peer::new_connecting(listener_addr, class));
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 peer @ Peer::Candidate(_) => {
-                    *peer = Peer::new_connecting(listener_addr, peer.is_trusted());
+                    *peer = Peer::new_connecting(listener_addr, peer.class());
                 }
                 Peer::Connecting(_) => {
                     bail!("Dropping connection request from '{listener_addr}' (already connecting)");
@@ -399,12 +410,13 @@ impl<N: Network> Router<N> {
         // Load entries from the peer cache (if present).
         let cached_peers = Self::load_cached_peers(&storage_mode, PEER_CACHE_FILENAME)?;
         for addr in cached_peers {
-            initial_peers.insert(addr, Peer::new_candidate(addr, false));
+            initial_peers.insert(addr, Peer::new_candidate(addr, NodeClass::Discovered));
         }
 
         // Add the trusted peers to the list of the initial peers; this may promote
         // some of the cached peers to trusted ones.
-        initial_peers.extend(trusted_peers.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
+        initial_peers
+            .extend(trusted_peers.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, NodeClass::Trusted))));
 
         // Initialize the router.
         Ok(Self(Arc::new(InnerRouter {
@@ -617,7 +629,7 @@ impl<N: Network> Router<N> {
                     !self.is_local_ip(peer_ip) && !peer_pool.contains_key(peer_ip)
                 })
                 .take(max_candidate_peers)
-                .map(|addr| (*addr, Peer::new_candidate(*addr, false)))
+                .map(|addr| (*addr, Peer::new_candidate(*addr, NodeClass::Discovered)))
                 .collect::<Vec<_>>();
 
             // Proceed to insert the eligible candidate peer IPs.
