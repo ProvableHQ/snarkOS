@@ -129,8 +129,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Note, that this gives equal priority to clients and provers, which
         // we might want to change in the future.
         let mut peers = self.router().filter_connected_peers(|peer| {
-            !peer.trusted
-                && peer.node_type != NodeType::BootstrapClient
+            !peer.is_trusted() && !peer.is_bootstrap()
                 && !self.router().cache.contains_inbound_block_request(&peer.listener_addr) // This peer is currently syncing from us.
                 && (is_block_synced || self.router().cache.num_outbound_block_requests(&peer.listener_addr) == 0) // We are currently syncing from this peer.
         });
@@ -212,7 +211,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Determine the provers to disconnect from.
             let provers_to_disconnect = self
                 .router()
-                .filter_connected_peers(|peer| peer.node_type.is_prover() && !peer.trusted)
+                .filter_connected_peers(|peer| peer.node_type.is_prover() && !peer.is_trusted())
                 .into_iter()
                 .choose_multiple(rng, num_surplus_provers);
 

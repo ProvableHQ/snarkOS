@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver};
+use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeClass, NodeType, Peer, Resolver};
 
 use aleo_std::{StorageMode, aleo_ledger_dir};
 use snarkos_node_tcp::{ConnectError, P2P, is_bogon_ip, is_unspecified_or_broadcast_ip};
@@ -279,7 +279,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         for (addr, height) in listener_addrs {
             match peer_pool.entry(addr) {
                 Entry::Vacant(entry) => {
-                    entry.insert(Peer::new_candidate(addr, false));
+                    entry.insert(Peer::new_candidate(addr, NodeClass::Discovered));
                 }
                 Entry::Occupied(mut entry) => {
                     if let Peer::Candidate(peer) = entry.get_mut() {
@@ -461,7 +461,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             .read()
             .iter()
             .filter_map(
-                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.trusted.then_some(*addr) } else { None },
+                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.is_trusted().then_some(*addr) } else { None },
             )
             .collect()
     }
@@ -537,12 +537,12 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn add_connecting_peer(&self, listener_addr: SocketAddr) -> Result<(), AddPeerError> {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
+                entry.insert(Peer::new_connecting(listener_addr, NodeClass::Discovered));
                 Ok(())
             }
             Entry::Occupied(mut entry) => match entry.get() {
                 peer @ Peer::Candidate(_) => {
-                    entry.insert(Peer::new_connecting(listener_addr, peer.is_trusted()));
+                    entry.insert(Peer::new_connecting(listener_addr, peer.class()));
                     Ok(())
                 }
                 Peer::Connecting(_) => Err(AddPeerError::AlreadyConnecting),

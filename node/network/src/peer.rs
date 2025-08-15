@@ -19,6 +19,17 @@ use tracing::*;
 
 use std::{net::SocketAddr, time::Instant};
 
+/// The class of a peer, indicating its trust level and origin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeClass {
+    /// A peer that was explicitly configured as trusted.
+    Trusted,
+    /// A peer that is a hardcoded bootstrap node for the network.
+    Bootstrap,
+    /// A peer that was discovered through the network protocol.
+    Discovered,
+}
+
 /// A peer of any connection status.
 #[derive(Clone, Debug)]
 pub enum Peer<N: Network> {
@@ -35,8 +46,8 @@ pub enum Peer<N: Network> {
 pub struct ConnectingPeer {
     /// The listening address of a connecting peer.
     pub listener_addr: SocketAddr,
-    /// Indicates whether the peer is considered trusted.
-    pub trusted: bool,
+    /// The class of the peer (trusted, bootstrap, or discovered).
+    pub class: NodeClass,
 }
 
 /// A candidate peer.
@@ -44,10 +55,10 @@ pub struct ConnectingPeer {
 pub struct CandidatePeer {
     /// The listening address of a candidate peer.
     pub listener_addr: SocketAddr,
-    /// Indicates whether the peer is considered trusted.
-    pub trusted: bool,
     /// The latest block height known to be associated with the peer.
     pub last_height_seen: Option<u32>,
+    /// The class of the peer (trusted, bootstrap, or discovered).
+    pub class: NodeClass,
 }
 
 /// A fully connected peer.
@@ -59,8 +70,8 @@ pub struct ConnectedPeer<N: Network> {
     pub connected_addr: SocketAddr,
     /// Indicates whether this is a Router or a Gateway connection for the peer.
     pub connection_mode: ConnectionMode,
-    /// Indicates whether the peer is considered trusted.
-    pub trusted: bool,
+    /// The class of the peer (trusted, bootstrap, or discovered).
+    pub class: NodeClass,
     /// The Aleo address of the peer.
     pub aleo_addr: Address<N>,
     /// The node type of the peer.
@@ -78,19 +89,38 @@ pub struct ConnectedPeer<N: Network> {
 /// Indicates whether a peer is connected via the Gateway or the Router.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionMode {
-    Gateway,
     Router,
+    Gateway,
+}
+
+impl CandidatePeer {
+    /// Returns `true` if the peer is considered trusted.
+    pub fn is_trusted(&self) -> bool {
+        self.class == NodeClass::Trusted
+    }
+}
+
+impl<N: Network> ConnectedPeer<N> {
+    /// Returns `true` if the peer is considered trusted.
+    pub fn is_trusted(&self) -> bool {
+        self.class == NodeClass::Trusted
+    }
+
+    /// Returns `true` if the peer is a bootstrap peer.
+    pub fn is_bootstrap(&self) -> bool {
+        self.class == NodeClass::Bootstrap
+    }
 }
 
 impl<N: Network> Peer<N> {
     /// Create a candidate peer.
-    pub const fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Candidate(CandidatePeer { listener_addr, trusted, last_height_seen: None })
+    pub const fn new_candidate(listener_addr: SocketAddr, class: NodeClass) -> Self {
+        Self::Candidate(CandidatePeer { listener_addr, class, last_height_seen: None })
     }
 
     /// Create a connecting peer.
-    pub const fn new_connecting(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Connecting(ConnectingPeer { listener_addr, trusted })
+    pub const fn new_connecting(listener_addr: SocketAddr, class: NodeClass) -> Self {
+        Self::Connecting(ConnectingPeer { class, listener_addr })
     }
 
     /// Promote a connecting peer to a fully connected one.
@@ -116,11 +146,11 @@ impl<N: Network> Peer<N> {
             listener_addr,
             connected_addr,
             connection_mode,
+            last_height_seen: None,
             aleo_addr: aleo_address,
             node_type,
-            trusted: self.is_trusted(),
+            class: self.class(),
             version: node_version,
-            last_height_seen: None,
             first_seen: timestamp,
             last_seen: timestamp,
         });
@@ -130,7 +160,7 @@ impl<N: Network> Peer<N> {
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
         *self = Self::Candidate(CandidatePeer {
             listener_addr,
-            trusted: self.is_trusted(),
+            class: self.class(),
             last_height_seen: self.last_height_seen(),
         });
     }
@@ -177,13 +207,23 @@ impl<N: Network> Peer<N> {
         matches!(self, Peer::Connected(_))
     }
 
+    /// Returns the class of the peer (either trusted, bootstrap, or discovered).
+    pub fn class(&self) -> NodeClass {
+        match self {
+            Self::Candidate(peer) => peer.class,
+            Self::Connecting(peer) => peer.class,
+            Self::Connected(peer) => peer.class,
+        }
+    }
+
     /// Returns `true` if the peer is considered trusted.
     pub fn is_trusted(&self) -> bool {
-        match self {
-            Self::Candidate(peer) => peer.trusted,
-            Self::Connecting(peer) => peer.trusted,
-            Self::Connected(peer) => peer.trusted,
-        }
+        matches!(self.class(), NodeClass::Trusted)
+    }
+
+    /// Returns `true` if the peer is a bootstrap peer.
+    pub fn is_bootstrap(&self) -> bool {
+        matches!(self.class(), NodeClass::Bootstrap)
     }
 
     /// Updates the peer's `last_seen` timestamp.
