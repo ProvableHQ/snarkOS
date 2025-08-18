@@ -40,7 +40,11 @@ test_network = [
   "test_consensus_heights",
   "snarkvm/dev-print"
 ]
-serial = [ ]
+serial = [
+  "snarkvm/serial",
+  "snarkos-node-metrics/serial",
+  "snarkos-node/serial"
+]
 flamegraph = [ "dep:tracing-flame" ]
 
 [dependencies.aleo-std]

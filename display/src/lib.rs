@@ -231,6 +231,8 @@ impl<N: Network> Display<N> {
 
         // Update sync metrics data regardless of which tab is selected
         self.sync_metrics.update_data(&self.node);
+        // Update IO metrics data regardless of which tab is selected
+        self.io_metrics.update_data(&self.node);
 
         // Initialize the page.
         match self.tabs.index {

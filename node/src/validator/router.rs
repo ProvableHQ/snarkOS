@@ -152,6 +152,17 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Validator<N, C> {
     fn get_sync_speed(&self) -> f64 {
         self.sync.get_sync_speed()
     }
+
+    /// Returns the greatest peer block height from any connected peer,
+    /// or `None` if not connected to peers yet.
+    fn greatest_peer_block_height(&self) -> Option<u32> {
+        self.sync.greatest_peer_block_height()
+    }
+
+    /// Returns the number of outstanding block requests.
+    fn num_outstanding_block_requests(&self) -> usize {
+        self.sync.num_outstanding_block_requests()
+    }
 }
 
 #[async_trait]

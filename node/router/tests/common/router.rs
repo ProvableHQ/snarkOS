@@ -163,9 +163,20 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
         None
     }
 
+<<<<<<< HEAD
     /// Returns the current sync speed in blocks per second.
     fn get_sync_speed(&self) -> f64 {
         0.0
+=======
+    /// Returns the greatest peer block height from any connected peer.
+    fn greatest_peer_block_height(&self) -> Option<u32> {
+        None
+    }
+
+    /// Returns the number of outstanding block requests.
+    fn num_outstanding_block_requests(&self) -> usize {
+        0
+>>>>>>> af6aa7bc8 (feat: more tracing::instrument annotations for block sync)
     }
 }
 

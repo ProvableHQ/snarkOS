@@ -191,6 +191,7 @@ impl<N: Network> Node<N> {
 
     /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
     pub fn is_block_synced(&self) -> bool {
+        use snarkos_node_router::Outbound;
         match self {
             Self::Validator(node) => node.is_block_synced(),
             Self::Prover(node) => node.is_block_synced(),
@@ -201,6 +202,7 @@ impl<N: Network> Node<N> {
     /// Returns the number of blocks this node is behind the greatest peer height,
     /// or `None` if not connected to peers yet.
     pub fn num_blocks_behind(&self) -> Option<u32> {
+        use snarkos_node_router::Outbound;
         match self {
             Self::Validator(node) => node.num_blocks_behind(),
             Self::Prover(node) => node.num_blocks_behind(),
@@ -215,6 +217,27 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.get_sync_speed(),
             Self::Prover(node) => node.get_sync_speed(),
             Self::Client(node) => node.get_sync_speed(),
+        }
+    }
+
+    /// Returns the greatest peer block height from any connected peer,
+    /// or `None` if not connected to peers yet.
+    pub fn greatest_peer_block_height(&self) -> Option<u32> {
+        use snarkos_node_router::Outbound;
+        match self {
+            Self::Validator(node) => node.greatest_peer_block_height(),
+            Self::Prover(node) => node.greatest_peer_block_height(),
+            Self::Client(node) => node.greatest_peer_block_height(),
+        }
+    }
+
+    /// Returns the number of outstanding block requests.
+    pub fn num_outstanding_block_requests(&self) -> usize {
+        use snarkos_node_router::Outbound;
+        match self {
+            Self::Validator(node) => node.num_outstanding_block_requests(),
+            Self::Prover(node) => node.num_outstanding_block_requests(),
+            Self::Client(node) => node.num_outstanding_block_requests(),
         }
     }
 
