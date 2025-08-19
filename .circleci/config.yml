@@ -32,7 +32,9 @@ commands:
     steps:
       - checkout
       - restore_cache:
-          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+          keys:
+            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - cargo-cache-{{ arch }}- # fallback to an older version
       - run:
           name: "Install Rust and run cargo check"
           command: |
@@ -44,7 +46,7 @@ commands:
             refreshenv
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.83.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
             # Verify the installation.
             cargo --version --verbose
@@ -59,89 +61,124 @@ commands:
             - C:\Users\circleci\.cargo\registry
             - C:\Users\circleci\.cargo\git
             - target
-          key: cargo-cache-{{ arch }}-{{ checksum "rust-version" }}-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
 
   setup_environment:
     description: "Setup testing environment"
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
-      - run: set -e
       - run:
-          name: Prepare environment and install dependencies
+          name: "Setup GCP"
           command: |
-            export SCCACHE_CACHE_SIZE=200M
-            export WORK_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
-            export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install google-cloud-cli -y
+            echo $GCLOUD_SERVICE_KEY > /home/circleci/gcloud-key.json
+            gcloud auth activate-service-account --key-file=/home/circleci/gcloud-key.json
+            gcloud config set project protocol-development-sandbox
+      - run:
+          name: Set environment variables
+          command: |
+            # CircleCI runs a new shell for every step, so exported variables are lost
+            # This workaround is suggested here: https://circleci.com/docs/env-vars/#parameters-and-bash-environment
+            echo 'set -e' >> "$BASH_ENV"
+            echo 'export SCCACHE_CACHE_SIZE=10G' >> "$BASH_ENV"
+            echo 'export SCCACHE_GCS_KEY_PATH=/home/circleci/gcloud-key.json' >> "$BASH_ENV"
+            echo 'export SCCACHE_GCS_BUCKET=ci_sccache' >> "$BASH_ENV"
+            echo 'export SCCACHE_GCS_RW_MODE=READ_WRITE' >> "$BASH_ENV"
+            echo 'export RUSTC_WRAPPER="$CIRCLE_WORKING_DIRECTORY/.bin/sccache"' >> "$BASH_ENV"
+            # Disable incremental builds so that sccache works as expected
+            echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
+      - run:
+          name: Install sccache
+          command: |
             mkdir -p "$CIRCLE_WORKING_DIRECTORY/.bin"
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            mv $CIRCLE_WORKING_DIRECTORY/.bin/sccache-v0.3.0-x86_64-unknown-linux-musl/sccache $CIRCLE_WORKING_DIRECTORY/.bin/sccache
-            export PATH="$PATH:$CIRCLE_WORKING_DIRECTORY/.bin"
-            export RUSTC_WRAPPER="sccache"
+            export SCCACHE_VERSION=v0.10.0
+            export SCCACHE_PKG="sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+            wget "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/$SCCACHE_PKG.tar.gz"
+            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf "$SCCACHE_PKG.tar.gz"
+            mv "$CIRCLE_WORKING_DIRECTORY/.bin/$SCCACHE_PKG/sccache" "$CIRCLE_WORKING_DIRECTORY/.bin/sccache"
             rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+
+      - run:
+          name: Install Debian packages
+          command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm pkg-config xz-utils make libssl-dev libssl-dev
+      - fetch_cache:
+          cache_key: << parameters.cache_key >>
+
+  fetch_cache:
+    description: "Fetch the cached data"
+    parameters:
+      cache_key:
+        type: string
+    steps:
+      - run:
+          name: Generate daily cache key
+          command: |
+            CACHE_DATE=$(date +%Y-%m-%d)
+            echo "Cache date is $CACHE_DATE"
+            echo "$CACHE_DATE" >> cache-key-suffix
       - restore_cache:
           keys:
-            - << parameters.cache_key >>
+            - << parameters.cache_key >>-{{ checksum "cache-key-suffix" }}
+            - << parameters.cache_key >>-  # fallback to a different day
+
+  store_cache:
+    description: "Store the updated cache (once per day)"
+    parameters:
+      cache_key:
+        type: string
+    steps:
+      - save_cache:
+          key: << parameters.cache_key >>-{{ checksum "cache-key-suffix" }}
+          paths:
+            - .cargo
 
   clear_environment:
     description: "Clear environment"
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v4.0.0-rust-1.88.0-snarkos-stable-cache
     steps:
-      - run: (sccache -s||true)
-      - run: set +e
-      - save_cache:
-          key: << parameters.cache_key >>
-          paths:
-            - .cache/sccache
-            - .cargo
+      - run:
+          name: Show sccache statistics
+          command: $CIRCLE_WORKING_DIRECTORY/.bin/sccache -s
+      - store_cache:
+          cache_key: << parameters.cache_key >>
 
-  run_serial:
+  run_test:
     description: "Build and run tests"
     parameters:
       workspace_member:
         type: string
-      cache_key:
-        type: string
       flags:
+        type: string
+        default: ""
+      extra_build_flags:
         type: string
         default: ""
     steps:
       - checkout
       - setup_environment:
-          cache_key:  v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key:  v4.0.0-rust-1.88.0-<< parameters.workspace_member >>-cache
       - run:
-          no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
-      - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
-
-  run_serial_long:
-    description: "Build and run long running tests"
-    parameters:
-      workspace_member:
-        type: string
-      cache_key:
-        type: string
-      flags:
-        type: string
-        default: ""
-    steps:
-      - checkout
-      - setup_environment:
-          cache_key: << parameters.cache_key >>
+          name: Build Tests
+          timeout: 15m
+          command: cargo test --package=<< parameters.workspace_member >> --locked --no-run << parameters.flags >> << parameters.extra_build_flags >>
       - run:
-          no_output_timeout: 300m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
+          name: Run Tests
+          timeout: 15m
+          command: cargo test --package=<< parameters.workspace_member >> --locked << parameters.flags >>
       - clear_environment:
-          cache_key: << parameters.cache_key >>
+          cache_key: v4.0.0-rust-1.88.0-<< parameters.workspace_member >>-cache
 
   run_devnet:
     description: "Run devnet for integration testing"
@@ -191,139 +228,124 @@ commands:
 jobs:
   snarkos:
     executor: rust-docker
-    resource_class: << pipeline.parameters.xlarge >>
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: .
-          cache_key: stable
+      - run_test:
+          workspace_member: snarkos
 
   account:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: account
-          cache_key: account
+      - run_test:
+          workspace_member: snarkos-account
 
   cli:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: cli
-          cache_key: cli
+      - run_test:
+          workspace_member: snarkos-cli
 
   node:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: node
-          cache_key: node
+      - run_test:
+          workspace_member: snarkos-node
+          extra_build_flags: "-j2"
 
   node-bft:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
-      - run_serial:
-          workspace_member: node/bft
-          cache_key: node-bft
+      - run_test:
+          workspace_member: snarkos-node-bft
+          extra_build_flags: "-j4"
 
   node-bft-events:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/bft/events
-          cache_key: node-bft-events
+      - run_test:
+          workspace_member: snarkos-node-bft-events
 
   node-bft-ledger-service:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/bft/ledger-service
-          cache_key: node-bft-ledger-service
+      - run_test:
+          workspace_member: snarkos-node-bft-ledger-service
 
   node-bft-storage-service:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/bft/storage-service
-          cache_key: node-bft-storage-service
+      - run_test:
+          workspace_member: snarkos-node-bft-storage-service
 
   node-cdn:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/cdn
-          cache_key: node-cdn
+      - run_test:
+          workspace_member: snarkos-node-cdn
 
   node-consensus:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/consensus
-          cache_key: node-consensus
+      - run_test:
+          workspace_member: snarkos-node-consensus
 
   node-rest:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/rest
-          cache_key: node-rest
+      - run_test:
+          workspace_member: snarkos-node-rest
 
   node-router:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/router
-          cache_key: node-router
+      - run_test:
+          workspace_member: snarkos-node-router
 
   node-router-messages:
     executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
-      - run_serial:
-          workspace_member: node/router/messages
-          cache_key: node-router-messages-
+      - run_test:
+          workspace_member: snarkos-node-router-messages
 
   node-sync:
     executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
-      - run_serial:
-          workspace_member: node/sync
-          cache_key: node-sync
+      - run_test:
+          workspace_member: snarkos-node-sync
 
   node-sync-communication-service:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/sync/communication-service
-          cache_key: node-sync-communication-service
+      - run_test:
+          workspace_member: snarkos-node-sync-communication-service
 
   node-sync-locators:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/sync/locators
-          cache_key: node-sync-locators
+      - run_test:
+          workspace_member: snarkos-node-sync-locators
 
   node-tcp:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
-      - run_serial:
-          workspace_member: node/tcp
-          cache_key: node-tcp
+      - run_test:
+          workspace_member: snarkos-node-tcp
 
   devnet-test:
     executor: rust-docker
@@ -331,7 +353,7 @@ jobs:
     steps:
       - run_devnet:
           workspace_member: .
-          cache_key: v3.3.1-rust-1.88.0-devnet-test-cache
+          cache_key: v4.0.0-rust-1.88.0-devnet-test-cache
 
   # Check crates that do not have any tests individually
   check-other-crates:
@@ -359,13 +381,13 @@ jobs:
       - checkout
       - install_rust_nightly
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-fmt-cache
+          cache_key: v4.0.0-rust-1.88.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +nightly fmt --all -- --check
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-fmt-cache
+          cache_key: v4.0.0-rust-1.88.0-fmt-cache
 
   check-unused-dependencies:
     executor: rust-docker
@@ -373,7 +395,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-machete-cache
+          cache_key: v4.0.0-rust-1.88.0-machete-cache
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
@@ -381,7 +403,7 @@ jobs:
             cargo install cargo-machete@0.7.0
             cargo machete
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-machete-cache
+          cache_key: v4.0.0-rust-1.88.0-machete-cache
 
   check-cargo-audit:
     executor: rust-docker
@@ -389,7 +411,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
+          cache_key: v4.0.0-rust-1.88.0-cargo-audit-cache
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
@@ -397,7 +419,7 @@ jobs:
             cargo install cargo-audit@0.21.2 --locked
             cargo audit -D warnings
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
+          cache_key: v4.0.0-rust-1.88.0-cargo-audit-cache
 
   check-clippy:
     executor: rust-docker
@@ -405,7 +427,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.88.0-clippy-cache
+          cache_key: v4.0.O-rust-1.88.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -413,7 +435,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: v3.3.1-rust-1.88.0-clippy-cache
+          cache_key: v4.0.0-rust-1.88.0-clippy-cache
 
   verify-windows:
     executor:
