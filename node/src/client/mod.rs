@@ -42,7 +42,7 @@ use snarkvm::{
         puzzle::{Puzzle, Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{VM, block::Transaction},
+    prelude::block::Transaction,
 };
 
 use aleo_std::StorageMode;
@@ -446,8 +446,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 // Determine if the queue contains txs to verify.
                 let queue_is_empty = node.deploy_queue.lock().is_empty();
                 // Determine if our verification counter has space to verify new txs.
-                let counter_is_full =
-                    node.num_verifying_deploys.load(Acquire) >= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS;
+                let counter_is_full = node.num_verifying_deploys.load(Acquire) >= 5;
 
                 // Sleep to allow the queue to be filled or transactions to be validated.
                 if queue_is_empty || counter_is_full {
@@ -476,7 +475,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                         _node.num_verifying_deploys.fetch_sub(1, Relaxed);
                     });
                     // If we are already at capacity, don't verify more deployments.
-                    if previous_counter + 1 >= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS {
+                    if previous_counter + 1 >= 5 {
                         break;
                     }
                 }
@@ -499,8 +498,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 // Determine if the queue contains txs to verify.
                 let queue_is_empty = node.execute_queue.lock().is_empty();
                 // Determine if our verification counter has space to verify new txs.
-                let counter_is_full =
-                    node.num_verifying_executions.load(Acquire) >= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS;
+                let counter_is_full = node.num_verifying_executions.load(Acquire) >= 1000;
 
                 // Sleep to allow the queue to be filled or transactions to be validated.
                 if queue_is_empty || counter_is_full {
@@ -529,7 +527,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                         _node.num_verifying_executions.fetch_sub(1, Relaxed);
                     });
                     // If we are already at capacity, don't verify more executions.
-                    if previous_counter + 1 >= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS {
+                    if previous_counter + 1 >= 1000 {
                         break;
                     }
                 }
