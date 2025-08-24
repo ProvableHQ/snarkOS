@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1755738326025,
+  "lastUpdate": 1756066615752,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -234,6 +234,42 @@ window.BENCHMARK_DATA = {
             "value": 1.84,
             "unit": "blocks/s",
             "extra": "total_wait=543s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "kai@kaimast.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "distinct": true,
+          "id": "7f1bede427914d7641b45cb315df7d877754f756",
+          "message": "ci: add sync benchmark with 40 validator ledger",
+          "timestamp": "2025-08-24T12:30:06-07:00",
+          "tree_id": "812fe5de08421f1c319f69ccea65c2fa93df4b9a",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7f1bede427914d7641b45cb315df7d877754f756"
+        },
+        "date": 1756066615171,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.28,
+            "unit": "blocks/s",
+            "extra": "total_wait=848s"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.92,
+            "unit": "blocks/s",
+            "extra": "total_wait=269s"
           }
         ]
       }
