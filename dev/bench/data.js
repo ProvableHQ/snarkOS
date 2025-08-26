@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756066615752,
+  "lastUpdate": 1756193687363,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -120,6 +120,42 @@ window.BENCHMARK_DATA = {
             "value": 0.92,
             "unit": "blocks/s",
             "extra": "total_wait=269s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "kai@kaimast.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "distinct": true,
+          "id": "97fffa7d12d7747b4481641632e1fd1e6782ec9a",
+          "message": "ci: add script to generate sync ledger",
+          "timestamp": "2025-08-25T23:43:32-07:00",
+          "tree_id": "1733385a3c8539590822d4eb45273a64f3d4cba8",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/97fffa7d12d7747b4481641632e1fd1e6782ec9a"
+        },
+        "date": 1756193686768,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.24,
+            "unit": "blocks/s",
+            "extra": "total_wait=1018s, target_height=250, "
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.89,
+            "unit": "blocks/s",
+            "extra": "total_wait=279s, target_height=250"
           }
         ]
       }
