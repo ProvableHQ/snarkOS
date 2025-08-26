@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756193687363,
+  "lastUpdate": 1756240753071,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -156,6 +156,42 @@ window.BENCHMARK_DATA = {
             "value": 0.89,
             "unit": "blocks/s",
             "extra": "total_wait=279s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "distinct": true,
+          "id": "b96a6549dab49c1204f42e7461959fa594301779",
+          "message": "ci: add trap handler for nodes quitting early",
+          "timestamp": "2025-08-26T12:50:56-07:00",
+          "tree_id": "7984d9347de176bbaed2678e042b6f81f3cc5333",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/b96a6549dab49c1204f42e7461959fa594301779"
+        },
+        "date": 1756240752448,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.31,
+            "unit": "blocks/s",
+            "extra": "total_wait=782s, target_height=250, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.88,
+            "unit": "blocks/s",
+            "extra": "total_wait=283s, target_height=250"
           }
         ]
       }
