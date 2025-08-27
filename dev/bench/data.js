@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756284502401,
+  "lastUpdate": 1756316290385,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -258,6 +258,48 @@ window.BENCHMARK_DATA = {
             "value": 0.9,
             "unit": "blocks/s",
             "extra": "total_wait=275s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "kai@kaimast.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "distinct": true,
+          "id": "f88eceb445a841f722a3281f73a8d0ada74bb9aa",
+          "message": "ci: measure sync speed variance",
+          "timestamp": "2025-08-27T09:49:48-07:00",
+          "tree_id": "985faf5e02d33f9ff6a08e4bcbefc1a0980c060e",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f88eceb445a841f722a3281f73a8d0ada74bb9aa"
+        },
+        "date": 1756316289414,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.29,
+            "unit": "blocks/s",
+            "extra": "total_wait=843s, target_height=250, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.028021,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=844, mean_bps=0.045023, max_speed=0, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.91,
+            "unit": "blocks/s",
+            "extra": "total_wait=272s, target_height=250"
           }
         ]
       }
