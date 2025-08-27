@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756269719892,
+  "lastUpdate": 1756284502401,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -222,6 +222,42 @@ window.BENCHMARK_DATA = {
             "value": 0.93,
             "unit": "blocks/s",
             "extra": "total_wait=267s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c3e067b6eaef36b9df95e58a00138f4f6bf18ce",
+          "message": "Merge pull request #3783 from ProvableHQ/ci/sync-benchmark\n\n[CI] Sync benchmarks",
+          "timestamp": "2025-08-27T09:53:37+02:00",
+          "tree_id": "3261fcab9d4366231309c6b9e27f570f081b2655",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7c3e067b6eaef36b9df95e58a00138f4f6bf18ce"
+        },
+        "date": 1756284501484,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.28,
+            "unit": "blocks/s",
+            "extra": "total_wait=874s, target_height=250, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.9,
+            "unit": "blocks/s",
+            "extra": "total_wait=275s, target_height=250"
           }
         ]
       }
