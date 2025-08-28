@@ -250,7 +250,7 @@ impl<N: Network> Sync<N> {
         }
 
         // Wait for updates or a timeout.
-        let _ = timeout(Self::SYNC_INTERVAL, self.block_sync.wait_for_update()).await;
+        let _ = timeout(Self::SYNC_INTERVAL, self.block_sync.wait_for_peer_update()).await;
 
         // Do not attempt to sync if there are no blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
