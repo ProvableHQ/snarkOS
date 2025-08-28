@@ -158,8 +158,11 @@ pub struct BlockSync<N: Network> {
     /// The lock used to ensure that [`Self::advance_with_sync_blocks()`] is called by one task at a time.
     advance_with_sync_blocks_lock: TMutex<()>,
 
-    /// Gets notified when there was an update to the locators, a peer disconnected, or we received a new block response.
-    notify: Notify,
+    /// Gets notified when there was an update to the locators or a peer disconnected.
+    peer_notify: Notify,
+
+    /// Gets notified when we received a new block response.
+    response_notify: Notify,
 
     /// Tracks sync speed
     metrics: Arc<BlockSyncMetrics>,
@@ -173,7 +176,8 @@ impl<N: Network> BlockSync<N> {
         Self {
             ledger,
             sync_state: Default::default(),
-            notify: Default::default(),
+            peer_notify: Default::default(),
+            response_notify: Default::default(),
             locators: Default::default(),
             requests: Default::default(),
             common_ancestors: Default::default(),
@@ -191,8 +195,12 @@ impl<N: Network> BlockSync<N> {
         });
     }
 
-    pub async fn wait_for_update(&self) {
-        self.notify.notified().await
+    pub async fn wait_for_peer_update(&self) {
+        self.peer_notify.notified().await
+    }
+
+    pub async fn wait_for_block_responses(&self) {
+        self.response_notify.notified().await
     }
 
     /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
@@ -678,7 +686,7 @@ impl<N: Network> BlockSync<N> {
         }
 
         // Notify the sync loop that something changed.
-        self.notify.notify_one();
+        self.peer_notify.notify_one();
 
         Ok(())
     }
@@ -697,7 +705,7 @@ impl<N: Network> BlockSync<N> {
         self.remove_block_requests_to_peer(peer_ip);
 
         // Notify the sync loop that something changed.
-        self.notify.notify_one();
+        self.peer_notify.notify_one();
     }
 }
 
@@ -854,7 +862,7 @@ impl<N: Network> BlockSync<N> {
         }
 
         // Notify the sync loop that something changed.
-        self.notify.notify_one();
+        self.response_notify.notify_one();
 
         Ok(())
     }
@@ -1330,7 +1338,8 @@ mod tests {
     /// Returns a duplicate (deep copy) of the sync pool with a different ledger height.
     fn duplicate_sync_at_new_height(sync: &BlockSync<CurrentNetwork>, height: u32) -> BlockSync<CurrentNetwork> {
         BlockSync::<CurrentNetwork> {
-            notify: Notify::new(),
+            peer_notify: Notify::new(),
+            response_notify: Default::default(),
             ledger: Arc::new(sample_ledger_service(height)),
             locators: RwLock::new(sync.locators.read().clone()),
             common_ancestors: RwLock::new(sync.common_ancestors.read().clone()),
