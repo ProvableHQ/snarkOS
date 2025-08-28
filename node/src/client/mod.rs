@@ -346,6 +346,27 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             return;
         }
 
+        // First, try to advance the ledger with new responses.
+        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
+            Ok(val) => val,
+            Err(err) => {
+                error!("{err}");
+                return;
+            }
+        };
+
+        if has_new_blocks {
+            match self.sync.get_block_locators() {
+                Ok(locators) => self.ping.update_block_locators(locators),
+                Err(err) => error!("Failed to get block locators: {err}"),
+            }
+
+            // If these were the last blocks to process, do not continue.
+            if !self.sync.can_block_sync() {
+                return;
+            }
+        }
+
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
         let (block_requests, sync_peers) = self.sync.prepare_block_requests();
