@@ -304,30 +304,34 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             return;
         }
 
+        // First, try to advance the ledger with new responses.
+        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
+            Ok(val) => val,
+            Err(err) => {
+                error!("{err}");
+                return;
+            }
+        };
+
+        if has_new_blocks {
+            match self.sync.get_block_locators() {
+                Ok(locators) => self.ping.update_block_locators(locators),
+                Err(err) => error!("Failed to get block locators: {err}"),
+            }
+
+            // If these were the last blocks to process, do not continue.
+            if !self.sync.can_block_sync() {
+                return;
+            }
+        }
+
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
         let (block_requests, sync_peers) = self.sync.prepare_block_requests();
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() && self.sync.has_pending_responses() {
-            // Try to advance the ledger with the sync pool.
-            trace!("No block requests to send. Will process pending responses.");
-            let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
-                Ok(val) => val,
-                Err(err) => {
-                    error!("{err}");
-                    return;
-                }
-            };
-
-            if has_new_blocks {
-                match self.sync.get_block_locators() {
-                    Ok(locators) => self.ping.update_block_locators(locators),
-                    Err(err) => error!("Failed to get block locators: {err}"),
-                }
-            }
-        } else if block_requests.is_empty() {
+        if block_requests.is_empty() {
             let total_requests = self.sync.num_total_block_requests();
             let num_outstanding = self.sync.num_outstanding_block_requests();
             if total_requests > 0 {
