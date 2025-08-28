@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1756316290385,
+  "lastUpdate": 1756341159001,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -300,6 +300,60 @@ window.BENCHMARK_DATA = {
             "value": 0.91,
             "unit": "blocks/s",
             "extra": "total_wait=272s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@kaimast.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "kai@kaimast.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "distinct": true,
+          "id": "666746efb9fb0e2b952c786d70a1f8cdaad6f44b",
+          "message": "ci: enable BFT benchmark",
+          "timestamp": "2025-08-27T16:28:54-07:00",
+          "tree_id": "a927caa760df1eed8ec3bdc450ca255d74a78dfd",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/666746efb9fb0e2b952c786d70a1f8cdaad6f44b"
+        },
+        "date": 1756341158437,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.46,
+            "unit": "blocks/s",
+            "extra": "total_wait=536s, target_height=250, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.451896,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=537, mean_speed=0.291365, max_speed=2, branch=ci/sync-variance-benchmark, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-block",
+            "value": 1.86,
+            "unit": "ops/s",
+            "extra": "num_get_ops=1000, base_url=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=1042s, target_height=250, branch=ci/sync-variance-benchmark, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.94,
+            "unit": "blocks/s",
+            "extra": "total_wait=265s, target_height=250"
           }
         ]
       }
