@@ -256,18 +256,11 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Spawns the tasks that performs the syncing logic for this client.
     fn initialize_sync(&self) {
-        // Start the sync loop.
+        // Start the sync incoming loop.
         let _self = self.clone();
-        let mut last_update = Instant::now();
-
         self.handles.lock().push(tokio::spawn(async move {
-            loop {
-                // If the Ctrl-C handler registered the signal, stop the node.
-                if _self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                    info!("Shutting down block production");
-                    break;
-                }
-
+            let mut last_update = Instant::now();
+            while !_self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 // Make sure we do not sync too often
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(last_update);
@@ -278,33 +271,40 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 }
 
                 // Perform the sync routine.
-                _self.try_block_sync().await;
+                _self.try_advancing_block_synchronization().await;
                 last_update = now;
             }
+
+            debug!("Stopped block response processing");
+        }));
+
+        // Start the sync outgoing loop.
+        let _self = self.clone();
+        self.handles.lock().push(tokio::spawn(async move {
+            let mut last_update = Instant::now();
+            while !_self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // Make sure we do not sync too often
+                let now = Instant::now();
+                let elapsed = now.saturating_duration_since(last_update);
+                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
+
+                if !sleep_time.is_zero() {
+                    sleep(sleep_time).await;
+                }
+
+                // Perform the sync routine.
+                _self.try_issuing_block_requests().await;
+                last_update = now;
+            }
+
+            info!("Stopped block request generation");
         }));
     }
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
-    async fn try_block_sync(&self) {
-        // Sleep briefly to avoid triggering spam detection.
-        let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_update()).await;
+    async fn try_advancing_block_synchronization(&self) {
+        let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_block_responses()).await;
 
-        // For sanity, check that sync height is never below ledger height.
-        // (if the ledger height is lower or equal to the current sync height, this is a noop)
-        self.sync.set_sync_height(self.ledger.latest_height());
-
-        let new_requests = self.sync.handle_block_request_timeouts(self);
-        if let Some((block_requests, sync_peers)) = new_requests {
-            self.send_block_requests(block_requests, sync_peers).await;
-        }
-
-        // Do not attempt to sync if there are not blocks to sync.
-        // This prevents redundant log messages and performing unnecessary computation.
-        if !self.sync.can_block_sync() {
-            return;
-        }
-
-        // First, try to advance the ledger with new responses.
         let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
             Ok(val) => val,
             Err(err) => {
@@ -313,17 +313,34 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             }
         };
 
+        // If there are new blocks, we need to update the block locators.
         if has_new_blocks {
             match self.sync.get_block_locators() {
                 Ok(locators) => self.ping.update_block_locators(locators),
                 Err(err) => error!("Failed to get block locators: {err}"),
             }
-
-            // If these were the last blocks to process, do not continue.
-            if !self.sync.can_block_sync() {
-                return;
-            }
         }
+    }
+
+    /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
+    async fn try_issuing_block_requests(&self) {
+        let new_requests = self.sync.handle_block_request_timeouts(self);
+        if let Some((block_requests, sync_peers)) = new_requests {
+            self.send_block_requests(block_requests, sync_peers).await;
+        }
+
+        // For sanity, check that sync height is never below ledger height.
+        // (if the ledger height is lower or equal to the current sync height, this is a noop)
+        self.sync.set_sync_height(self.ledger.latest_height());
+
+        // Do not attempt to sync if there are not blocks to sync.
+        // This prevents redundant log messages and performing unnecessary computation.
+        if !self.sync.can_block_sync() {
+            return;
+        }
+
+        // Sleep briefly to avoid triggering spam detection.
+        let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
