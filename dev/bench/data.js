@@ -398,12 +398,6 @@ window.BENCHMARK_DATA = {
             "extra": "num_get_ops=1000, base_url=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
-            "name": "bft-sync",
-            "value": 50,
-            "unit": "blocks/s",
-            "extra": "total_wait=5s, target_height=250, connect_time=0, branch=ci/sync-variance-benchmark, num_validators=40, git_commit=44b334d398, snapshot_height=250"
-          },
-          {
             "name": "cdn-sync",
             "value": 0.44,
             "unit": "blocks/s",
@@ -452,7 +446,7 @@ window.BENCHMARK_DATA = {
             "extra": "num_ops=500, total_wait=809, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
-            "name": "rest-get-block",
+            "name": "rest-block-height",
             "value": 185.18,
             "unit": "ops/s",
             "extra": "num_ops=10000, total_wait=54, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=44b334d398, snapshot_height=250"
