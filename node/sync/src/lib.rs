@@ -18,8 +18,14 @@
 #[macro_use]
 extern crate tracing;
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 pub use snarkos_node_sync_communication_service as communication_service;
 pub use snarkos_node_sync_locators as locators;
+
+mod ping;
+pub use ping::Ping;
 
 mod block_sync;
 pub use block_sync::*;

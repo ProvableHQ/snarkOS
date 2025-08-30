@@ -18,13 +18,16 @@
 
 //! **Tcp** is a simple, low-level, and customizable implementation of a TCP stack.
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 mod helpers;
 pub use helpers::*;
 
 pub mod protocols;
 
 mod tcp;
-pub use tcp::Tcp;
+pub use tcp::{ConnectError, Tcp};
 
 use std::net::IpAddr;
 

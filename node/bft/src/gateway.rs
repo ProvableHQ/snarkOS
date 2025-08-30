@@ -72,7 +72,14 @@ use parking_lot::{Mutex, RwLock};
 use rand::seq::{IteratorRandom, SliceRandom};
 #[cfg(not(any(test)))]
 use std::net::IpAddr;
-use std::{collections::HashSet, future::Future, io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    future::Future,
+    io,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     net::TcpStream,
     sync::{OnceCell, oneshot},
@@ -162,12 +169,13 @@ impl<N: Network> Gateway<N> {
     ) -> Result<Self> {
         // Initialize the gateway IP.
         let ip = match (ip, dev) {
-            (None, Some(dev)) => SocketAddr::from_str(&format!("127.0.0.1:{}", MEMORY_POOL_PORT + dev))?,
-            (None, None) => SocketAddr::from_str(&format!("0.0.0.0:{}", MEMORY_POOL_PORT))?,
+            (None, Some(dev)) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MEMORY_POOL_PORT + dev)),
+            (None, None) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+
         // Return the gateway.
         Ok(Self {
             account,
@@ -215,8 +223,10 @@ impl<N: Network> Gateway<N> {
         self.enable_writing().await;
         self.enable_disconnect().await;
         self.enable_on_connect().await;
+
         // Enable the TCP listener. Note: This must be called after the above protocols.
-        let _listening_addr = self.tcp.enable_listener().await.expect("Failed to enable the TCP listener");
+        let listen_addr = self.tcp.enable_listener().await.expect("Failed to enable the TCP listener");
+        debug!("Listening for validator connections at address {listen_addr:?}");
 
         // Initialize the heartbeat.
         self.initialize_heartbeat();
@@ -274,6 +284,17 @@ impl<N: Network> CommunicationService for Gateway<N> {
     /// which can be used to determine when and whether the message has been delivered.
     async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>> {
         Transport::send(self, peer_ip, message).await
+    }
+
+    fn ban_peer(&self, peer_ip: SocketAddr) {
+        trace!("Banning peer {peer_ip} for timing out on block requests");
+
+        let tcp = self.tcp().clone();
+        tcp.banned_peers().update_ip_ban(peer_ip.ip());
+
+        tokio::spawn(async move {
+            tcp.disconnect(peer_ip).await;
+        });
     }
 }
 
@@ -378,13 +399,13 @@ impl<N: Network> Gateway<N> {
         if self
             .ledger
             .get_committee_lookback_for_round(self.storage.current_round())
-            .map_or(false, |committee| committee.is_committee_member(validator_address))
+            .is_ok_and(|committee| committee.is_committee_member(validator_address))
         {
             return true;
         }
 
         // Determine if the validator is in the latest committee on the ledger.
-        if self.ledger.current_committee().map_or(false, |committee| committee.is_committee_member(validator_address)) {
+        if self.ledger.current_committee().is_ok_and(|committee| committee.is_committee_member(validator_address)) {
             return true;
         }
 
@@ -395,7 +416,7 @@ impl<N: Network> Gateway<N> {
             Ok(block_round) => (block_round..self.storage.current_round()).step_by(2).any(|round| {
                 self.ledger
                     .get_committee_lookback_for_round(round)
-                    .map_or(false, |committee| committee.is_committee_member(validator_address))
+                    .is_ok_and(|committee| committee.is_committee_member(validator_address))
             }),
             Err(_) => false,
         }
@@ -1361,7 +1382,7 @@ impl<N: Network> Gateway<N> {
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
-        let our_nonce = rng.gen();
+        let our_nonce = rng.r#gen();
         // Send a challenge request to the peer.
         let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce);
         send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
@@ -1390,7 +1411,7 @@ impl<N: Network> Gateway<N> {
         /* Step 3: Send the challenge response. */
 
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.gen();
+        let response_nonce: u64 = rng.r#gen();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
         let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
             return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
@@ -1447,7 +1468,7 @@ impl<N: Network> Gateway<N> {
         let rng = &mut rand::rngs::OsRng;
 
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.gen();
+        let response_nonce: u64 = rng.r#gen();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
         let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
             return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
@@ -1458,7 +1479,7 @@ impl<N: Network> Gateway<N> {
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
         // Sample a random nonce.
-        let our_nonce = rng.gen();
+        let our_nonce = rng.r#gen();
         // Send the challenge request.
         let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce);
         send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;

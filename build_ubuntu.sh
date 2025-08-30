@@ -14,6 +14,7 @@ sudo apt-get install -y \
 	gcc \
 	libssl-dev \
 	llvm \
+	lld \
 	make \
 	pkg-config \
 	tmux \

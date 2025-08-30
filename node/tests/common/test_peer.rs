@@ -137,7 +137,7 @@ impl Handshake for TestPeer {
         match node_side {
             ConnectionSide::Initiator => {
                 // Send a challenge request to the peer.
-                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.gen());
+                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen());
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Receive the peer's challenge bundle.
@@ -145,7 +145,7 @@ impl Handshake for TestPeer {
                 let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
 
                 // Sign the nonce.
-                let response_nonce: u64 = rng.gen();
+                let response_nonce: u64 = rng.r#gen();
                 let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
                 let signature = self.account().sign_bytes(&data, rng).unwrap();
 
@@ -163,7 +163,7 @@ impl Handshake for TestPeer {
                 let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
 
                 // Sign the nonce.
-                let response_nonce: u64 = rng.gen();
+                let response_nonce: u64 = rng.r#gen();
                 let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
                 let signature = self.account().sign_bytes(&data, rng).unwrap();
 
@@ -175,7 +175,7 @@ impl Handshake for TestPeer {
                     nonce: response_nonce,
                 };
                 framed.send(Message::ChallengeResponse(our_response)).await?;
-                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.gen());
+                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen());
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Listen for the challenge response.

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync-locators"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Locators to synchronize a decentralized operating system"
 homepage = "https://aleo.org"
@@ -14,7 +14,7 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ ]
@@ -28,11 +28,11 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.serde]
-version = "1"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 features = [ "console" ]
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true

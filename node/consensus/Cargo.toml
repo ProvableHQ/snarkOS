@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-consensus"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node consensus for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -14,7 +14,7 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ ]
@@ -25,9 +25,11 @@ locktick = [
   "snarkos-node-bft-storage-service/locktick",
   "snarkvm/locktick"
 ]
-metrics = [ "dep:metrics" ]
+metrics = [ "dep:snarkos-node-metrics" ]
 telemetry = [ "snarkos-node-bft/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
+serial = [ "snarkos-node-bft-ledger-service/serial" ]
+
 
 [dependencies.aleo-std]
 workspace = true
@@ -36,52 +38,43 @@ workspace = true
 workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.indexmap]
 workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
 [dependencies.lru]
-version = "0.12.1"
+workspace = true
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../metrics"
-version = "=3.8.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.snarkos-account]
-path = "../../account"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-bft]
-path = "../bft"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-bft-ledger-service]
-path = "../bft/ledger-service"
-version = "=3.8.0"
-default-features = false
+workspace = true
 features = [ "ledger", "ledger-write" ]
 
 [dependencies.snarkos-node-bft-storage-service]
-path = "../bft/storage-service"
-version = "=3.8.0"
-default-features = false
+workspace = true
 features = [ "persistent" ]
 
 [dependencies.snarkos-node-sync]
-path = "../sync"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
@@ -91,16 +84,20 @@ workspace = true
 features = [ "macros", "rt-multi-thread", "signal" ]
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
 
 [dev-dependencies.indexmap]
 workspace = true
 
 [dev-dependencies.itertools]
-version = "0.12"
+workspace = true
 
 [dev-dependencies.once_cell]
-version = "1.19"
+workspace = true
+
+[dev-dependencies.snarkvm]
+ workspace = true
+ features = [ "test-helpers" ]
 
 [dev-dependencies.tracing-test]
-version = "0.2"
+workspace = true

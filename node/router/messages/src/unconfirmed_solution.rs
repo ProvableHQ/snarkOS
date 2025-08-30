@@ -64,7 +64,7 @@ pub mod prop_tests {
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
     pub fn any_solution_id() -> BoxedStrategy<SolutionID<CurrentNetwork>> {
-        any::<u64>().prop_map(|seed| TestRng::fixed(seed).gen::<u64>().into()).boxed()
+        any::<u64>().prop_map(|seed| TestRng::fixed(seed).r#gen::<u64>().into()).boxed()
     }
 
     pub fn any_solution() -> BoxedStrategy<Solution<CurrentNetwork>> {
@@ -73,8 +73,8 @@ pub mod prop_tests {
                 let mut rng = TestRng::fixed(seed);
                 let private_key = PrivateKey::<CurrentNetwork>::new(&mut rng).unwrap();
                 let address = Address::try_from(private_key).unwrap();
-                let partial_solution = PartialSolution::new(rng.gen(), address, rng.gen()).unwrap();
-                Solution::new(partial_solution, rng.gen())
+                let partial_solution = PartialSolution::new(rng.r#gen(), address, rng.r#gen()).unwrap();
+                Solution::new(partial_solution, rng.r#gen())
             })
             .boxed()
     }

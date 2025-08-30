@@ -138,7 +138,7 @@ impl<N: Network> FromBytes for DataBlocks<N> {
 pub mod prop_tests {
     use crate::{BlockResponse, DataBlocks, block_request::prop_tests::any_block_request};
     use snarkvm::{
-        ledger::ledger_test_helpers::sample_genesis_block,
+        ledger::snarkvm_ledger_test_helpers::sample_genesis_block,
         prelude::{FromBytes, TestRng, ToBytes, block::Block, narwhal::Data},
     };
 

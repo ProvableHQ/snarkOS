@@ -21,7 +21,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{Address, Field, Network, Result, Zero, bail},
+    prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail},
 };
 
 use indexmap::IndexMap;
@@ -192,6 +192,7 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         &self,
         transaction_id: N::TransactionID,
         _transaction: Transaction<N>,
+        _consensus_version: ConsensusVersion,
     ) -> Result<u64> {
         bail!("Transaction '{transaction_id}' doesn't exist in prover")
     }

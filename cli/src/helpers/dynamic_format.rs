@@ -97,7 +97,7 @@ where
             tracing::Level::DEBUG => "DEBUG",
             tracing::Level::TRACE => "TRACE",
         };
-        write!(writer, "{}", fmt_level)?;
+        write!(writer, "{fmt_level}")?;
 
         write!(writer, "{}: ", meta.target())?;
 

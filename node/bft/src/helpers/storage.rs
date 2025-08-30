@@ -31,7 +31,8 @@ use locktick::parking_lot::RwLock;
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+#[cfg(not(feature = "serial"))]
+use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
@@ -265,7 +266,7 @@ impl<N: Network> Storage<N> {
 
     /// Returns `true` if the storage contains a certificate from the specified `author` in the given `round`.
     pub fn contains_certificate_in_round_from(&self, round: u64, author: Address<N>) -> bool {
-        self.rounds.read().get(&round).map_or(false, |set| set.iter().any(|(_, a)| a == &author))
+        self.rounds.read().get(&round).is_some_and(|set| set.iter().any(|(_, a)| a == &author))
     }
 
     /// Returns `true` if the storage contains the specified `certificate ID`.
@@ -536,7 +537,7 @@ impl<N: Network> Storage<N> {
         );
 
         // Ensure that the signers of the certificate are in the committee.
-        cfg_iter!(signers).try_for_each(|signer| {
+        cfg_iter!(&signers).try_for_each(|signer| {
             ensure!(
                 committee_lookback.is_committee_member(*signer),
                 "Signer '{signer}' of certificate '{}' for round {certificate_round} is not in the committee",
@@ -976,11 +977,11 @@ pub(crate) mod tests {
     /// Samples a random transmission.
     fn sample_transmission(rng: &mut TestRng) -> Transmission<CurrentNetwork> {
         // Sample random fake solution bytes.
-        let s = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let s = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
         // Sample random fake transaction bytes.
-        let t = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..2048).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let t = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..2048).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
         // Sample a random transmission.
-        match rng.gen::<bool>() {
+        match rng.r#gen::<bool>() {
             true => Transmission::Solution(s(rng)),
             false => Transmission::Transaction(t(rng)),
         }
@@ -1462,7 +1463,7 @@ pub mod prop_tests {
     }
 
     pub fn any_solution_id() -> BoxedStrategy<SolutionID<CurrentNetwork>> {
-        Just(0).prop_perturb(|_, rng| CryptoTestRng(rng).gen::<u64>().into()).boxed()
+        Just(0).prop_perturb(|_, rng| CryptoTestRng(rng).r#gen::<u64>().into()).boxed()
     }
 
     pub fn any_transaction_id() -> BoxedStrategy<<CurrentNetwork as Network>::TransactionID> {
@@ -1477,11 +1478,11 @@ pub mod prop_tests {
         prop_oneof![
             any_transaction_id().prop_perturb(|id, mut rng| TransmissionID::Transaction(
                 id,
-                rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
+                rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
             )),
             any_solution_id().prop_perturb(|id, mut rng| TransmissionID::Solution(
                 id,
-                rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
+                rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
             )),
         ]
         .boxed()

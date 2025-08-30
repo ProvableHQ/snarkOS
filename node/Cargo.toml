@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -14,7 +14,7 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ "parallel" ]
@@ -49,6 +49,7 @@ cuda = [
   "snarkos-node-router/cuda",
   "snarkos-node-sync/cuda"
 ]
+serial = [ "snarkos-node-bft/serial" ]
 
 [dependencies.aleo-std]
 workspace = true
@@ -57,87 +58,84 @@ workspace = true
 workspace = true
 
 [dependencies.async-trait]
-version = "0.1"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures-util]
-version = "0.3"
+workspace = true
 features = [ "sink" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
 [dependencies.lru]
-version = "0.12.1"
+workspace = true
 
 [dependencies.num_cpus]
-version = "1"
+workspace = true
 
 [dependencies.once_cell]
-version = "1"
+workspace = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.rand]
-version = "0.8"
-default-features = false
+workspace = true
+
+[dependencies.http]
+workspace = true
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
-path = "../account"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-bft]
-path = "./bft"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-cdn]
-path = "./cdn"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-consensus]
-path = "./consensus"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-rest]
-path = "./rest"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-router]
-path = "./router"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-sync]
-path = "./sync"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-tcp]
-path = "./tcp"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
 features = [ "rt", "signal" ]
 
 [dependencies.tokio-util]
-version = "0.7"
+workspace = true
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
+
+[dependencies.indexmap]
+workspace = true
 
 [dev-dependencies.deadline]
 version = "0.2"
@@ -149,15 +147,15 @@ version = "1"
 version = "0.49"
 
 [dev-dependencies.snarkos-node-router]
-path = "./router"
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.tracing-subscriber]
-version = "0.3"
+workspace = true
 features = [ "env-filter", "fmt" ]
 
 [dev-dependencies.rand_chacha]
-version = "0.3.0"
+workspace = true
 
 [package.metadata.cargo-machete]
 ignored = [

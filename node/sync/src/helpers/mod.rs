@@ -28,6 +28,12 @@ pub type SyncRequest<N> = (Option<<N as Network>::BlockHash>, Option<<N as Netwo
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct PeerPair(pub SocketAddr, pub SocketAddr);
 
+impl PeerPair {
+    pub fn contains(&self, peer_ip: &SocketAddr) -> bool {
+        peer_ip == &self.0 || peer_ip == &self.1
+    }
+}
+
 impl Eq for PeerPair {}
 
 impl PartialEq for PeerPair {

@@ -13,11 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// See https://github.com/ProvableHQ/snarkVM/issues/2775
 #![forbid(unsafe_code)]
 #![recursion_limit = "256"]
 
 #[macro_use]
 extern crate thiserror;
+
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
 
 pub mod commands;
 pub use commands::CLI;

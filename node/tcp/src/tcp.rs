@@ -64,6 +64,28 @@ impl Deref for Tcp {
     }
 }
 
+/// Error types for the `Tcp::connect` function.
+#[allow(missing_docs)]
+#[derive(thiserror::Error, Debug)]
+pub enum ConnectError {
+    #[error("already reached the maximum number of {limit} connections")]
+    MaximumConnectionsReached { limit: u16 },
+    #[error("already connecting to node at {address:?}")]
+    AlreadyConnecting { address: SocketAddr },
+    #[error("already connected to node at {address:?}")]
+    AlreadyConnected { address: SocketAddr },
+    #[error("attempt to self-connect (at address {address:?}")]
+    SelfConnect { address: SocketAddr },
+    #[error("I/O error: {0}")]
+    IoError(std::io::Error),
+}
+
+impl From<std::io::Error> for ConnectError {
+    fn from(inner: std::io::Error) -> Self {
+        Self::IoError(inner)
+    }
+}
+
 #[doc(hidden)]
 pub struct InnerTcp {
     /// The tracing span.
@@ -215,28 +237,28 @@ impl Tcp {
 
 impl Tcp {
     /// Connects to the provided `SocketAddr`.
-    pub async fn connect(&self, addr: SocketAddr) -> io::Result<()> {
+    pub async fn connect(&self, addr: SocketAddr) -> Result<(), ConnectError> {
         if let Ok(listening_addr) = self.listening_addr() {
             // TODO(nkls): maybe this first check can be dropped; though it might be best to keep just in case.
             if addr == listening_addr || self.is_self_connect(addr) {
                 error!(parent: self.span(), "Attempted to self-connect ({addr})");
-                return Err(io::ErrorKind::AddrInUse.into());
+                return Err(ConnectError::SelfConnect { address: addr });
             }
         }
 
         if !self.can_add_connection() {
             error!(parent: self.span(), "Too many connections; refusing to connect to {addr}");
-            return Err(io::ErrorKind::ConnectionRefused.into());
+            return Err(ConnectError::MaximumConnectionsReached { limit: self.config.max_connections });
         }
 
         if self.is_connected(addr) {
             warn!(parent: self.span(), "Already connected to {addr}");
-            return Err(io::ErrorKind::AlreadyExists.into());
+            return Err(ConnectError::AlreadyConnected { address: addr });
         }
 
         if !self.connecting.lock().insert(addr) {
             warn!(parent: self.span(), "Already connecting to {addr}");
-            return Err(io::ErrorKind::AlreadyExists.into());
+            return Err(ConnectError::AlreadyConnecting { address: addr });
         }
 
         let timeout_duration = Duration::from_millis(self.config().connection_timeout_ms.into());
@@ -273,10 +295,12 @@ impl Tcp {
             error!(parent: self.span(), "Unable to initiate a connection with {addr}: {e}");
         }
 
-        ret
+        ret.map_err(|err| err.into())
     }
 
     /// Disconnects from the provided `SocketAddr`.
+    ///
+    /// Returns true if the we were connected to the given address.
     pub async fn disconnect(&self, addr: SocketAddr) -> bool {
         if let Some(handler) = self.protocols.disconnect.get() {
             if self.is_connected(addr) {
@@ -520,7 +544,10 @@ impl fmt::Debug for Tcp {
 mod tests {
     use super::*;
 
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        str::FromStr,
+    };
 
     #[tokio::test]
     async fn test_new() {
@@ -544,7 +571,9 @@ mod tests {
         let node_ip = tcp.enable_listener().await.unwrap();
 
         // Ensure self-connecting is not possible.
-        tcp.connect(node_ip).await.unwrap_err();
+        let result = tcp.connect(node_ip).await;
+        assert!(matches!(result, Err(ConnectError::SelfConnect { .. })));
+
         assert_eq!(tcp.num_connected(), 0);
         assert_eq!(tcp.num_connecting(), 0);
         assert!(!tcp.is_connected(node_ip));
@@ -589,14 +618,16 @@ mod tests {
         assert!(!tcp.is_connecting(peer_ip));
 
         // Disconnect from the peer.
-        tcp.disconnect(peer_ip).await;
+        let has_disconnected = tcp.disconnect(peer_ip).await;
+        assert!(has_disconnected);
         assert_eq!(tcp.num_connected(), 0);
         assert_eq!(tcp.num_connecting(), 0);
         assert!(!tcp.is_connected(peer_ip));
         assert!(!tcp.is_connecting(peer_ip));
 
         // Ensure disconnecting from the peer a second time is okay.
-        tcp.disconnect(peer_ip).await;
+        let has_disconnected = tcp.disconnect(peer_ip).await;
+        assert!(!has_disconnected);
         assert_eq!(tcp.num_connected(), 0);
         assert_eq!(tcp.num_connecting(), 0);
         assert!(!tcp.is_connected(peer_ip));
@@ -623,6 +654,12 @@ mod tests {
         tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Initiator));
         assert!(!tcp.can_add_connection());
 
+        // Ensure that we cannot invoke connect() successfully in this case.
+        // Use a non-local IP, to ensure it is never qual to peer IP.
+        let another_ip = SocketAddr::from_str("1.2.3.4:4242").unwrap();
+        let result = tcp.connect(another_ip).await;
+        assert!(matches!(result, Err(ConnectError::MaximumConnectionsReached { .. })));
+
         // Remove the active connection.
         tcp.connections.remove(peer_ip);
         assert!(tcp.can_add_connection());
@@ -630,6 +667,11 @@ mod tests {
         // Simulate a pending connection.
         tcp.connecting.lock().insert(peer_ip);
         assert!(!tcp.can_add_connection());
+
+        // Ensure that we cannot invoke connect() successfully in this case either.
+        let another_ip = SocketAddr::from_str("1.2.3.4:4242").unwrap();
+        let result = tcp.connect(another_ip).await;
+        assert!(matches!(result, Err(ConnectError::MaximumConnectionsReached { .. })));
 
         // Remove the pending connection.
         tcp.connecting.lock().remove(&peer_ip);

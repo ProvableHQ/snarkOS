@@ -18,15 +18,12 @@ use snarkvm::{
     ledger::{
         committee::Committee,
         narwhal::{BatchHeader, Transmission, TransmissionID},
-        store::{
-            cow_to_cloned,
-            helpers::{
-                Map,
-                MapRead,
-                rocksdb::{
-                    DataMap,
-                    internal::{self, BFTMap, Database, MapID},
-                },
+        store::helpers::{
+            Map,
+            MapRead,
+            rocksdb::{
+                DataMap,
+                internal::{self, BFTMap, Database, MapID},
             },
         },
     },
@@ -166,7 +163,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
             let (transmission, certificate_ids) = match self.transmissions.get_confirmed(&transmission_id) {
                 Ok(Some(entry)) => {
                     // The transmission exists in storage; update its certificate IDs.
-                    let (transmission, mut certificate_ids) = cow_to_cloned!(entry);
+                    let (transmission, mut certificate_ids) = (*entry).clone();
                     certificate_ids.insert(certificate_id);
                     (transmission, certificate_ids)
                 }
@@ -204,7 +201,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         for aborted_transmission_id in aborted_transmission_ids {
             let certificate_ids = match self.aborted_transmission_ids.get_confirmed(&aborted_transmission_id) {
                 Ok(Some(entry)) => {
-                    let mut certificate_ids = cow_to_cloned!(entry);
+                    let mut certificate_ids = (*entry).clone();
                     // Insert the certificate ID into the set.
                     certificate_ids.insert(certificate_id);
                     certificate_ids
@@ -235,7 +232,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
             // Retrieve the transmission entry.
             match self.transmissions.get_confirmed(transmission_id) {
                 Ok(Some(entry)) => {
-                    let (transmission, mut certificate_ids) = cow_to_cloned!(entry);
+                    let (transmission, mut certificate_ids) = (*entry).clone();
                     // Insert the certificate ID into the set.
                     certificate_ids.swap_remove(certificate_id);
                     // If there are no more certificate IDs for the transmission ID, remove the transmission.
@@ -263,7 +260,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
             // Retrieve the aborted transmission ID entry.
             match self.aborted_transmission_ids.get_confirmed(transmission_id) {
                 Ok(Some(entry)) => {
-                    let mut certificate_ids = cow_to_cloned!(entry);
+                    let mut certificate_ids = (*entry).clone();
                     // Insert the certificate ID into the set.
                     certificate_ids.swap_remove(certificate_id);
                     // If there are no more certificate IDs for the transmission ID, remove the transmission.
@@ -298,7 +295,6 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
     /// Returns a HashMap over the `(transmission ID, (transmission, certificate IDs))` entries.
     #[cfg(any(test, feature = "test"))]
     fn as_hashmap(&self) -> HashMap<TransmissionID<N>, (Transmission<N>, IndexSet<Field<N>>)> {
-        use snarkvm::ledger::store::cow_to_copied;
-        self.transmissions.iter_confirmed().map(|(k, v)| (cow_to_copied!(k), cow_to_cloned!(v))).collect()
+        self.transmissions.iter_confirmed().map(|(k, v)| (k.into_owned(), (*v).clone())).collect()
     }
 }

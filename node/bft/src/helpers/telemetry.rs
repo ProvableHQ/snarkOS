@@ -26,6 +26,7 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -130,7 +131,7 @@ impl<N: Network> Telemetry<N> {
         let certificate_id = certificate.id();
 
         // If the certificate already exists in the tracker, then return early.
-        if tracked_certificates.get(&certificate_round).map_or(false, |certs| certs.contains(&certificate_id)) {
+        if tracked_certificates.get(&certificate_round).is_some_and(|certs| certs.contains(&certificate_id)) {
             return;
         }
 
@@ -180,7 +181,7 @@ impl<N: Network> Telemetry<N> {
         let total_certificates = validator_certificates.values().map(|rounds| rounds.len()).sum::<usize>();
 
         // Calculate the signature participation scores for each validator.
-        let signature_participation_scores: IndexMap<_, _> = cfg_iter!(validator_signatures)
+        let signature_participation_scores: IndexMap<_, _> = cfg_iter!(&*validator_signatures)
             .map(|(address, signatures)| {
                 let total_signatures = signatures.values().sum::<u32>() as f64;
                 let score = total_signatures / total_certificates as f64 * 100.0;
@@ -191,10 +192,10 @@ impl<N: Network> Telemetry<N> {
         // Calculate the certificate participation scores for each validator.
         // This score is based on how many certificates the validator has included in every two rounds.
         let tracked_rounds: Vec<_> = tracked_certificates.keys().skip_while(|r| *r % 2 == 0).copied().collect();
-        let certificate_participation_scores: IndexMap<_, _> = cfg_iter!(validator_certificates)
+        let certificate_participation_scores: IndexMap<_, _> = cfg_iter!(&*validator_certificates)
             .map(|(address, certificate_rounds)| {
                 // Count the number of round pairs that are included in the certificate rounds.
-                let num_included_round_pairs = cfg_chunks!(tracked_rounds, 2)
+                let num_included_round_pairs = cfg_chunks!(&tracked_rounds, 2)
                     .filter(|chunk| chunk.iter().any(|r| certificate_rounds.contains(r)))
                     .count();
                 // Calculate the number of round pairs.
@@ -337,7 +338,7 @@ mod tests {
             assert!(*participation_scores.get(address).unwrap() > 0.0);
         }
 
-        println!("{:?}", participation_scores);
+        println!("{participation_scores:?}");
     }
 
     #[test]

@@ -33,12 +33,26 @@ if [[ $build_binary == "y" ]]; then
   read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
   enable_telemetry=${enable_telemetry:-y}
 
+  # Ask the user for additional crate features (comma-separated)
+  read -p "Enter crate features to enable (comma separated, default: test_network): " crate_features
+  crate_features=${crate_features:-test_network}
+
   # Build command
   build_cmd="cargo install --locked --path ."
 
   # Add the telemetry feature if requested
   if [[ $enable_telemetry == "y" ]]; then
     build_cmd+=" --features telemetry"
+  fi
+
+  # Add any extra features if provided
+  if [[ -n $crate_features ]]; then
+    # If telemetry was also enabled, append with a comma separator
+    if [[ $enable_telemetry == "y" ]]; then
+      build_cmd+=",${crate_features}"
+    else
+      build_cmd+=" --features ${crate_features}"
+    fi
   fi
 
   # Build command
@@ -100,7 +114,7 @@ for validator_index in "${validator_indices[@]}"; do
   fi
 
   # Send the command to start the validator to the new window and capture output to the log file
-  tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity --metrics --metrics-ip=0.0.0.0:$metrics_port" C-m
+  tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity --metrics --metrics-ip=0.0.0.0:$metrics_port --no-dev-txs" C-m
 done
 
 if [ "$total_clients" -ne 0 ]; then

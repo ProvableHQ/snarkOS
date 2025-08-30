@@ -18,7 +18,6 @@ pub mod router;
 pub use router::*;
 
 use std::{
-    env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
     sync::Arc,
@@ -55,27 +54,7 @@ pub fn sample_genesis_block<N: Network>() -> Block<N> {
     Block::<N>::from_bytes_le(N::genesis_bytes()).unwrap()
 }
 
-/// Enables logging in tests.
-#[allow(dead_code)]
-pub fn initialize_logger(level: u8) {
-    match level {
-        0 => env::set_var("RUST_LOG", "info"),
-        1 => env::set_var("RUST_LOG", "debug"),
-        2 | 3 => env::set_var("RUST_LOG", "trace"),
-        _ => env::set_var("RUST_LOG", "info"),
-    };
-
-    // Filter out undesirable logs.
-    let filter = tracing_subscriber::EnvFilter::from_default_env()
-        .add_directive("tokio_util=off".parse().unwrap())
-        .add_directive("mio=off".parse().unwrap());
-
-    // Initialize tracing.
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(level == 3).try_init();
-}
-
 /// Initializes a client router. Setting the `listening_port = 0` will result in a random port being assigned.
-#[allow(dead_code)]
 pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNetwork> {
     let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
     let ledger_service = Arc::new(MockLedgerService::new(committee));

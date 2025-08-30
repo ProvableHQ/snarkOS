@@ -44,7 +44,7 @@ use crate::{
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP};
+use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
 use snarkvm::{
     console::{
         prelude::*,
@@ -55,7 +55,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::committee::Committee,
+    prelude::{ConsensusVersion, committee::Committee},
 };
 
 use aleo_std::StorageMode;
@@ -69,6 +69,7 @@ use locktick::{
 };
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -119,6 +120,7 @@ impl<N: Network> Primary<N> {
     pub const MAX_TRANSMISSIONS_TOLERANCE: usize = BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH * 2;
 
     /// Initializes a new primary instance.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         account: Account<N>,
         storage: Storage<N>,
@@ -127,10 +129,10 @@ impl<N: Network> Primary<N> {
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
+        dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway.
-        let gateway =
-            Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, storage_mode.dev())?;
+        let gateway = Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, dev)?;
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), ledger.clone(), block_sync);
 
@@ -194,6 +196,7 @@ impl<N: Network> Primary<N> {
     /// Run the primary instance.
     pub async fn run(
         &mut self,
+        ping: Option<Arc<Ping<N>>>,
         bft_sender: Option<BFTSender<N>>,
         primary_sender: PrimarySender<N>,
         primary_receiver: PrimaryReceiver<N>,
@@ -239,7 +242,7 @@ impl<N: Network> Primary<N> {
         // Next, load and process the proposal cache before running the sync module.
         self.load_proposal_cache().await?;
         // Next, run the sync module.
-        self.sync.run(sync_receiver).await?;
+        self.sync.run(ping, sync_receiver).await?;
         // Next, initialize the gateway.
         self.gateway.run(primary_sender, worker_senders, Some(sync_sender)).await;
         // Lastly, start the primary handlers.
@@ -577,6 +580,24 @@ impl<N: Network> Primary<N> {
                             }
                         })?;
 
+                        // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
+                        // ConsensusVersion V8 Migration logic -
+                        // Do not include deployments in a batch proposal.
+                        let current_block_height = self.ledger.latest_block_height();
+                        let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
+                        let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+                        let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
+                        if current_block_height > consensus_version_v7_height
+                            && current_block_height <= consensus_version_v8_height
+                            && transaction.is_deploy()
+                        {
+                            trace!(
+                                "Proposing - Skipping transaction '{}' - Deployment transactions are not allowed until Consensus V8 (block {consensus_version_v8_height})",
+                                fmt_id(transaction_id)
+                            );
+                            continue;
+                        }
+
                         // Check if the transaction is still valid.
                         // TODO: check if clone is cheap, otherwise fix.
                         if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction.clone()).await {
@@ -586,8 +607,11 @@ impl<N: Network> Primary<N> {
 
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                        let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(transaction_id, transaction)
-                        else {
+                        let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
+                            transaction_id,
+                            transaction,
+                            consensus_version,
+                        ) else {
                             debug!(
                                 "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
                                 fmt_id(transaction_id)
@@ -606,11 +630,12 @@ impl<N: Network> Primary<N> {
                         };
 
                         // Check if the next proposal cost exceeds the batch proposal spend limit.
-                        if next_proposal_cost > BatchHeader::<N>::BATCH_SPEND_LIMIT {
+                        let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(current_block_height);
+                        if next_proposal_cost > batch_spend_limit {
                             trace!(
                                 "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {})",
                                 fmt_id(transaction_id),
-                                BatchHeader::<N>::BATCH_SPEND_LIMIT
+                                batch_spend_limit
                             );
 
                             // Reinsert the transmission into the worker.
@@ -804,7 +829,7 @@ impl<N: Network> Primary<N> {
         let mut missing_transmissions = self.sync_with_batch_header_from_peer::<false>(peer_ip, &batch_header).await?;
 
         // Check that the transmission ids match and are not fee transactions.
-        if let Err(err) = cfg_iter_mut!(missing_transmissions).try_for_each(|(transmission_id, transmission)| {
+        if let Err(err) = cfg_iter_mut!(&mut missing_transmissions).try_for_each(|(transmission_id, transmission)| {
             // If the transmission is not well-formed, then return early.
             self.ledger.ensure_transmission_is_well_formed(*transmission_id, transmission)
         }) {
@@ -858,10 +883,28 @@ impl<N: Network> Primary<N> {
                         }
                     })?;
 
+                    // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
+                    // ConsensusVersion V8 Migration logic -
+                    // Do not include deployments in a batch proposal.
+                    let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
+                    let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+                    let consensus_version = N::CONSENSUS_VERSION(block_height)?;
+                    if block_height > consensus_version_v7_height
+                        && block_height <= consensus_version_v8_height
+                        && transaction.is_deploy()
+                    {
+                        bail!(
+                            "Invalid batch proposal - Batch proposals are not allowed to include deployments until Consensus V8 (block {consensus_version_v8_height})",
+                        )
+                    }
+
                     // Compute the transaction spent cost (in microcredits).
                     // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                    let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(*transaction_id, transaction)
-                    else {
+                    let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
+                        *transaction_id,
+                        transaction,
+                        consensus_version,
+                    ) else {
                         bail!(
                             "Invalid batch proposal - Unable to compute transaction spent cost on transaction '{}'",
                             fmt_id(transaction_id)
@@ -878,11 +921,12 @@ impl<N: Network> Primary<N> {
                     };
 
                     // Check if the next proposal cost exceeds the batch proposal spend limit.
-                    if next_proposal_cost > BatchHeader::<N>::BATCH_SPEND_LIMIT {
+                    let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(block_height);
+                    if next_proposal_cost > batch_spend_limit {
                         bail!(
                             "Malicious peer - Batch proposal from '{peer_ip}' exceeds the spend limit on transaction '{}' ({next_proposal_cost} > {})",
                             fmt_id(transaction_id),
-                            BatchHeader::<N>::BATCH_SPEND_LIMIT
+                            batch_spend_limit
                         );
                     }
 
@@ -960,7 +1004,7 @@ impl<N: Network> Primary<N> {
         let signer = signature.to_address();
 
         // Ensure the batch signature is signed by the validator.
-        if self.gateway.resolver().get_address(peer_ip).map_or(true, |address| address != signer) {
+        if self.gateway.resolver().get_address(peer_ip) != Some(signer) {
             // Proceed to disconnect the validator.
             self.gateway.disconnect(peer_ip);
             bail!("Malicious peer - batch signature is from a different validator ({signer})");
@@ -1048,7 +1092,7 @@ impl<N: Network> Primary<N> {
     /// This method performs the following steps:
     /// 1. Stores the given batch certificate, after ensuring it is valid.
     /// 2. If there are enough certificates to reach quorum threshold for the current round,
-    ///     then proceed to advance to the next round.
+    ///    then proceed to advance to the next round.
     async fn process_batch_certificate_from_peer(
         &self,
         peer_ip: SocketAddr,
@@ -1918,11 +1962,11 @@ mod tests {
     use super::*;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
-    use snarkos_node_sync::BlockSync;
+    use snarkos_node_sync::{BlockSync, locators::test_helpers::sample_block_locators};
     use snarkvm::{
         ledger::{
             committee::{Committee, MIN_VALIDATOR_STAKE},
-            ledger_test_helpers::sample_execution_transaction_with_fee,
+            snarkvm_ledger_test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::{Address, Signature},
     };
@@ -1964,7 +2008,7 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None)).unwrap();
+            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None), None).unwrap();
 
         // Construct a worker instance.
         primary.workers = Arc::from([Worker::new(
@@ -1999,7 +2043,7 @@ mod tests {
     // Creates a mock solution.
     fn sample_unconfirmed_solution(rng: &mut TestRng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
         // Sample a random fake solution ID.
-        let solution_id = rng.gen::<u64>().into();
+        let solution_id = rng.r#gen::<u64>().into();
         // Vary the size of the solutions.
         let size = rng.gen_range(1024..10 * 1024);
         // Sample random fake solution bytes.
@@ -2014,7 +2058,7 @@ mod tests {
     fn sample_unconfirmed_transaction(
         rng: &mut TestRng,
     ) -> (<CurrentNetwork as Network>::TransactionID, Data<Transaction<CurrentNetwork>>) {
-        let transaction = sample_execution_transaction_with_fee(false, rng);
+        let transaction = sample_execution_transaction_with_fee(false, rng, 0);
         let id = transaction.id();
 
         (id, Data::Object(transaction))
@@ -2338,7 +2382,7 @@ mod tests {
         // Check the workers are empty.
         primary.workers().iter().for_each(|worker| assert!(worker.transmissions().is_empty()));
 
-        // Generate a solution and a transaction.
+        // Generate a solution and transactions.
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
         primary.workers[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
 
@@ -2383,7 +2427,10 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
-        // The primary must be considered synced.
+
+        // The primary will only consider itself synced if we received
+        // block locators from a peer.
+        primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
         primary.sync.try_block_sync().await;
 
         // Try to process the batch proposal from the peer, should succeed.
@@ -2420,7 +2467,10 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
-        // Try to process the batch proposal from the peer, should fail.
+        // Add a high block locator to indicate we are not synced.
+        primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(20)).unwrap();
+
+        // Try to process the batch proposal from the peer, should fail
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_err()
         );
@@ -2456,7 +2506,10 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
-        // The primary must be considered synced.
+
+        // The primary will only consider itself synced if we received
+        // block locators from a peer.
+        primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
         primary.sync.try_block_sync().await;
 
         // Try to process the batch proposal from the peer, should succeed.
@@ -2640,8 +2693,12 @@ mod tests {
         primary_v4.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         primary_v5.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
-        // The primary must be considered synced.
+        // primary v4 must be considered synced.
+        primary_v4.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
         primary_v4.sync.try_block_sync().await;
+
+        // primary v5 must be ocnsidered synced.
+        primary_v5.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
         primary_v5.sync.try_block_sync().await;
 
         // Check the spend limit is enforced from V5 onwards.
@@ -2907,7 +2964,7 @@ mod tests {
         let mut aborted_transmissions = HashSet::new();
         let mut transmissions_without_aborted = HashMap::new();
         for (transmission_id, transmission) in transmissions.clone() {
-            match rng.gen::<bool>() || aborted_transmissions.is_empty() {
+            match rng.r#gen::<bool>() || aborted_transmissions.is_empty() {
                 true => {
                     // Insert the aborted transmission.
                     aborted_transmissions.insert(transmission_id);

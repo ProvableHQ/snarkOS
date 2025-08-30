@@ -18,7 +18,7 @@ use common::*;
 
 use snarkos_node_tcp::{
     P2P,
-    protocols::{Handshake, OnConnect},
+    protocols::{Disconnect, Handshake, OnConnect},
 };
 
 use core::time::Duration;
@@ -172,6 +172,7 @@ async fn test_validator_connection() {
     assert_eq!(node0.number_of_connected_peers(), 0);
     node0.enable_handshake().await;
     node0.enable_on_connect().await;
+    node0.enable_disconnect().await;
     node0.tcp().enable_listener().await.unwrap();
 
     // Get the local IP address from the first router.
@@ -182,6 +183,7 @@ async fn test_validator_connection() {
     assert_eq!(node1.number_of_connected_peers(), 0);
     node1.enable_handshake().await;
     node1.enable_on_connect().await;
+    node1.enable_disconnect().await;
     node1.tcp().enable_listener().await.unwrap();
 
     {

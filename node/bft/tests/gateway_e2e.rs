@@ -174,7 +174,7 @@ async fn handshake_responder_side_invalid_challenge_request() {
     // Use the address from the second peer in the list, the test peer will use the first.
     let listener_port = test_peer.listening_addr().port();
     let address = accounts.get(1).unwrap().address();
-    let nonce = rng.gen();
+    let nonce = rng.r#gen();
     // Set the wrong version so the challenge request is invalid.
     let challenge_request = ChallengeRequest { version: 0, listener_port, address, nonce };
 
@@ -213,7 +213,7 @@ async fn handshake_responder_side_invalid_challenge_response() {
     // Use the address from the second peer in the list, the test peer will use the first.
     let listener_port = test_peer.listening_addr().port();
     let address = accounts.get(1).unwrap().address();
-    let our_nonce = rng.gen();
+    let our_nonce = rng.r#gen();
     let version = Event::<CurrentNetwork>::VERSION;
     let challenge_request = ChallengeRequest { version, listener_port, address, nonce: our_nonce };
 
@@ -249,7 +249,7 @@ async fn handshake_responder_side_invalid_challenge_response() {
     assert_eq!(challenge_request.address, accounts.first().unwrap().address());
 
     // Send the challenge response with an invalid signature.
-    let response_nonce = rng.gen();
+    let response_nonce = rng.r#gen();
     let _ = test_peer.unicast(
         gateway.local_ip(),
         Event::ChallengeResponse(ChallengeResponse {

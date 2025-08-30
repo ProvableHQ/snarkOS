@@ -176,6 +176,7 @@ impl TestNetwork {
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
                     StorageMode::new_test(None),
+                    None,
                 )
                 .unwrap();
                 (bft.primary().clone(), Some(bft))
@@ -188,6 +189,7 @@ impl TestNetwork {
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
                     StorageMode::new_test(None),
+                    None,
                 )
                 .unwrap();
                 (primary, None)
@@ -221,10 +223,10 @@ impl TestNetwork {
 
             if let Some(bft) = validator.bft.get_mut() {
                 // Setup the channels and start the bft.
-                bft.run(None, primary_sender, primary_receiver).await.unwrap();
+                bft.run(None, None, primary_sender, primary_receiver).await.unwrap();
             } else {
                 // Setup the channels and start the primary.
-                validator.primary.run(None, primary_sender, primary_receiver).await.unwrap();
+                validator.primary.run(None, None, primary_sender, primary_receiver).await.unwrap();
             }
 
             if let Some(interval_ms) = self.config.fire_transmissions {

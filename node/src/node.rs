@@ -15,9 +15,10 @@
 
 use crate::{Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
-use snarkos_node_router::messages::NodeType;
+use snarkos_node_router::{Router, messages::NodeType};
 use snarkvm::prelude::{
     Address,
+    Ledger,
     Network,
     PrivateKey,
     ViewKey,
@@ -52,10 +53,11 @@ impl<N: Network> Node<N> {
         trusted_peers: &[SocketAddr],
         trusted_validators: &[SocketAddr],
         genesis: Block<N>,
-        cdn: Option<String>,
+        cdn: Option<http::Uri>,
         storage_mode: StorageMode,
         allow_external_peers: bool,
         dev_txs: bool,
+        dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
@@ -72,6 +74,7 @@ impl<N: Network> Node<N> {
                 storage_mode,
                 allow_external_peers,
                 dev_txs,
+                dev,
                 shutdown,
             )
             .await?,
@@ -84,10 +87,10 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        storage_mode: StorageMode,
+        dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, shutdown).await?)))
+        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, dev, shutdown).await?)))
     }
 
     /// Initializes a new client node.
@@ -98,9 +101,10 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        cdn: Option<String>,
+        cdn: Option<http::Uri>,
         storage_mode: StorageMode,
         rotate_external_peers: bool,
+        dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
@@ -114,6 +118,7 @@ impl<N: Network> Node<N> {
                 cdn,
                 storage_mode,
                 rotate_external_peers,
+                dev,
                 shutdown,
             )
             .await?,
@@ -162,6 +167,24 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.is_dev(),
             Self::Prover(node) => node.is_dev(),
             Self::Client(node) => node.is_dev(),
+        }
+    }
+
+    /// Get the router for P2P networking
+    pub fn router(&self) -> &Router<N> {
+        match self {
+            Self::Validator(node) => node.router(),
+            Self::Prover(node) => node.router(),
+            Self::Client(node) => node.router(),
+        }
+    }
+
+    /// Get the underlying ledger (if any).
+    pub fn ledger(&self) -> Option<&Ledger<N, ConsensusDB<N>>> {
+        match self {
+            Self::Validator(node) => Some(node.ledger()),
+            Self::Prover(_) => None,
+            Self::Client(node) => Some(node.ledger()),
         }
     }
 }

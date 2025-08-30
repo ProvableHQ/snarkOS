@@ -61,10 +61,8 @@ where
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
         let Some(peer_ip) = self.router.resolve_to_listener(&peer_addr) else { return };
-        // Promote the peer's status from "connecting" to "connected".
-        self.router().insert_connected_peer(peer_ip);
         // Send the first `Ping` message to the peer.
-        self.send_ping(peer_ip, None);
+        self.ping.on_peer_connected(peer_ip);
     }
 }
 
@@ -76,18 +74,6 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Prover<N, C> {
             self.sync.remove_peer(&peer_ip);
             self.router.remove_connected_peer(peer_ip);
         }
-    }
-}
-
-#[async_trait]
-impl<N: Network, C: ConsensusStorage<N>> Writing for Prover<N, C> {
-    type Codec = MessageCodec<N>;
-    type Message = Message<N>;
-
-    /// Creates an [`Encoder`] used to write the outbound messages to the target stream.
-    /// The `side` parameter indicates the connection side **from the node's perspective**.
-    fn codec(&self, _addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        Default::default()
     }
 }
 
@@ -108,7 +94,7 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Prover<N, C> {
         if let Err(error) = self.inbound(peer_addr, message).await {
             if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
                 warn!("Disconnecting from '{peer_addr}' - {error}");
-                Outbound::send(self, peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
+                self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
                 // Disconnect from this peer.
                 self.router().disconnect(peer_ip);
             }
@@ -128,7 +114,7 @@ impl<N: Network, C: ConsensusStorage<N>> Heartbeat<N> for Prover<N, C> {
             // Choose the peer with the highest block height.
             if let Some((peer_ip, _)) = sync_peers.into_iter().max_by_key(|(_, height)| *height) {
                 // Request the puzzle from the peer.
-                Outbound::send(self, peer_ip, Message::PuzzleRequest(PuzzleRequest));
+                self.router().send(peer_ip, Message::PuzzleRequest(PuzzleRequest));
             }
         }
     }
@@ -145,9 +131,11 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Prover<N, C> {
         true
     }
 
-    /// Returns the number of blocks this node is behind the greatest peer height.
-    fn num_blocks_behind(&self) -> u32 {
-        0
+    /// Returns the number of blocks this node is behind the greatest peer height,
+    /// or `None` if not connected to peers yet.
+    fn num_blocks_behind(&self) -> Option<u32> {
+        //TODO(kaimast): should this return None instead?
+        Some(0)
     }
 }
 
@@ -182,23 +170,13 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
         }
 
         // Send a `Pong` message to the peer.
-        Outbound::send(self, peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
+        self.router().send(peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
         true
     }
 
     /// Sleeps for a period and then sends a `Ping` message to the peer.
     fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> bool {
-        // Spawn an asynchronous task for the `Ping` request.
-        let self_clone = self.clone();
-        tokio::spawn(async move {
-            // Sleep for the preset time before sending a `Ping` request.
-            tokio::time::sleep(Duration::from_secs(Self::PING_SLEEP_IN_SECS)).await;
-            // Check that the peer is still connected.
-            if self_clone.router().is_connected(&peer_ip) {
-                // Send a `Ping` message to the peer.
-                self_clone.send_ping(peer_ip, None);
-            }
-        });
+        self.ping.on_pong_received(peer_ip);
         true
     }
 

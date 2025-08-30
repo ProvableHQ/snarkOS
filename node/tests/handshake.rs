@@ -20,13 +20,12 @@ mod common;
 use common::{node::*, test_peer::TestPeer};
 
 use snarkos_node::{Client, Prover, Validator};
-use snarkos_node_router::Outbound;
-use snarkos_node_tcp::P2P;
+use snarkos_node_tcp::{ConnectError, P2P};
 use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 
 use pea2pea::Pea2Pea;
 
-use std::{io, net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 use tokio::time::sleep;
 
 // Trait to unify Pea2Pea and P2P traits.
@@ -34,7 +33,7 @@ use tokio::time::sleep;
 trait Connect {
     fn listening_addr(&self) -> SocketAddr;
 
-    async fn connect(&self, target: SocketAddr) -> io::Result<()>;
+    async fn connect(&self, target: SocketAddr) -> Result<(), ConnectError>;
 }
 
 // Implement the `Connect` trait for each node type.
@@ -47,7 +46,7 @@ macro_rules! impl_connect {
                     self.tcp().listening_addr().expect("node listener should exist")
                 }
 
-                async fn connect(&self, target: SocketAddr) -> io::Result<()>
+                async fn connect(&self, target: SocketAddr) -> Result<(), ConnectError>
                 where
                     Self: P2P,
                 {
@@ -70,8 +69,8 @@ where
         self.node().listening_addr().expect("node listener should exist")
     }
 
-    async fn connect(&self, target: SocketAddr) -> io::Result<()> {
-        self.node().connect(target).await
+    async fn connect(&self, target: SocketAddr) -> Result<(), ConnectError> {
+        self.node().connect(target).await.map_err(|err| err.into())
     }
 }
 

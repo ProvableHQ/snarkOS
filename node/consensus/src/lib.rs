@@ -15,8 +15,14 @@
 
 #![forbid(unsafe_code)]
 
+mod transactions_queue;
+use transactions_queue::TransactionsQueue;
+
 #[macro_use]
 extern crate tracing;
+
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
 
 use snarkos_account::Account;
 use snarkos_node_bft::{
@@ -35,7 +41,8 @@ use snarkos_node_bft::{
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_bft_storage_service::BFTPersistentStorage;
-use snarkos_node_sync::BlockSync;
+use snarkos_node_sync::{BlockSync, Ping};
+
 use snarkvm::{
     ledger::{
         block::Transaction,
@@ -50,10 +57,10 @@ use anyhow::Result;
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::Mutex;
+use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle};
 
@@ -73,21 +80,6 @@ const CAPACITY_FOR_SOLUTIONS: usize = 1 << 10;
 /// Note: This is an inbound queue limit, not a Narwhal-enforced limit.
 const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
 
-/// Helper struct to track incoming transactions.
-struct TransactionsQueue<N: Network> {
-    pub deployments: LruCache<N::TransactionID, Transaction<N>>,
-    pub executions: LruCache<N::TransactionID, Transaction<N>>,
-}
-
-impl<N: Network> Default for TransactionsQueue<N> {
-    fn default() -> Self {
-        Self {
-            deployments: LruCache::new(NonZeroUsize::new(CAPACITY_FOR_DEPLOYMENTS).unwrap()),
-            executions: LruCache::new(NonZeroUsize::new(CAPACITY_FOR_EXECUTIONS).unwrap()),
-        }
-    }
-}
-
 /// Wrapper around `BFT` that adds additional functionality, such as a mempool.
 ///
 /// Consensus acts as a rate limiter to prevents workers in BFT from being overloaded.
@@ -105,7 +97,7 @@ pub struct Consensus<N: Network> {
     /// The unconfirmed solutions queue.
     solutions_queue: Arc<Mutex<LruCache<SolutionID<N>, Solution<N>>>>,
     /// The unconfirmed transactions queue.
-    transactions_queue: Arc<Mutex<TransactionsQueue<N>>>,
+    transactions_queue: Arc<RwLock<TransactionsQueue<N>>>,
     /// The recently-seen unconfirmed solutions.
     seen_solutions: Arc<Mutex<LruCache<SolutionID<N>, ()>>>,
     /// The recently-seen unconfirmed transactions.
@@ -114,10 +106,15 @@ pub struct Consensus<N: Network> {
     transmissions_tracker: Arc<Mutex<HashMap<TransmissionID<N>, i64>>>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// The ping logic.
+    ping: Arc<Ping<N>>,
+    /// The block sync logic.
+    block_sync: Arc<BlockSync<N>>,
 }
 
 impl<N: Network> Consensus<N> {
     /// Initializes a new instance of consensus and spawn its background tasks.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         account: Account<N>,
         ledger: Arc<dyn LedgerService<N>>,
@@ -125,6 +122,8 @@ impl<N: Network> Consensus<N> {
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         storage_mode: StorageMode,
+        ping: Arc<Ping<N>>,
+        dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the primary channels.
         let (primary_sender, primary_receiver) = init_primary_channels::<N>();
@@ -133,11 +132,13 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         // Initialize the BFT.
-        let bft = BFT::new(account, storage, ledger.clone(), block_sync, ip, trusted_validators, storage_mode)?;
+        let bft =
+            BFT::new(account, storage, ledger.clone(), block_sync.clone(), ip, trusted_validators, storage_mode, dev)?;
         // Create a new instance of Consensus.
         let mut _self = Self {
             ledger,
             bft,
+            block_sync,
             primary_sender,
             solutions_queue: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(CAPACITY_FOR_SOLUTIONS).unwrap()))),
             transactions_queue: Default::default(),
@@ -146,6 +147,7 @@ impl<N: Network> Consensus<N> {
             #[cfg(feature = "metrics")]
             transmissions_tracker: Default::default(),
             handles: Default::default(),
+            ping: ping.clone(),
         };
 
         info!("Starting the consensus instance...");
@@ -155,7 +157,7 @@ impl<N: Network> Consensus<N> {
         // Then, start the consensus handlers.
         _self.start_handlers(consensus_receiver);
         // Lastly, also start BFTs handlers.
-        _self.bft.run(Some(consensus_sender), _self.primary_sender.clone(), primary_receiver).await?;
+        _self.bft.run(Some(ping), Some(consensus_sender), _self.primary_sender.clone(), primary_receiver).await?;
 
         Ok(_self)
     }
@@ -163,6 +165,10 @@ impl<N: Network> Consensus<N> {
     /// Returns the underlying `BFT` struct.
     pub const fn bft(&self) -> &BFT<N> {
         &self.bft
+    }
+
+    pub fn contains_transaction(&self, transaction_id: &N::TransactionID) -> bool {
+        self.transactions_queue.read().contains(transaction_id)
     }
 }
 
@@ -263,15 +269,8 @@ impl<N: Network> Consensus<N> {
 
     /// Returns the transactions in the inbound queue.
     pub fn inbound_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
-        // Acquire the lock on the transactions queue.
-        let tx_queue = self.transactions_queue.lock();
         // Return an iterator over the deployment and execution transactions in the inbound queue.
-        tx_queue
-            .deployments
-            .clone()
-            .into_iter()
-            .chain(tx_queue.executions.clone())
-            .map(|(id, tx)| (id, Data::Object(tx)))
+        self.transactions_queue.read().transactions().map(|(id, tx)| (id, Data::Object(tx)))
     }
 }
 
@@ -381,22 +380,21 @@ impl<N: Network> Consensus<N> {
                     .lock()
                     .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
             }
-            // Add the transaction to the memory pool.
-            trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
-            if transaction.is_deploy() {
-                if self.transactions_queue.lock().deployments.put(transaction_id, transaction).is_some() {
-                    bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
-                }
-            } else if self.transactions_queue.lock().executions.put(transaction_id, transaction).is_some() {
+            // Check that the transaction is not in the mempool.
+            if self.contains_transaction(&transaction_id) {
                 bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
             }
+            // Add the transaction to the memory pool.
+            trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
+            let priority_fee = transaction.priority_fee_amount()?;
+            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
         }
 
         // Try to process the unconfirmed transactions in the memory pool.
         self.process_unconfirmed_transactions().await
     }
 
-    /// Processes unconfirmed transctions in the mempool, and passes them to the BFT layer
+    /// Processes unconfirmed transactions in the mempool, and passes them to the BFT layer
     /// (if sufficient space is available).
     async fn process_unconfirmed_transactions(&self) -> Result<()> {
         // If the memory pool of this node is full, return early.
@@ -409,7 +407,7 @@ impl<N: Network> Consensus<N> {
             // Determine the available capacity.
             let capacity = Primary::<N>::MAX_TRANSMISSIONS_TOLERANCE.saturating_sub(num_unconfirmed_transmissions);
             // Acquire the lock on the transactions queue.
-            let mut tx_queue = self.transactions_queue.lock();
+            let mut tx_queue = self.transactions_queue.write();
             // Determine the number of deployments to send.
             let num_deployments = tx_queue.deployments.len().min(capacity).min(MAX_DEPLOYMENTS_PER_INTERVAL);
             // Determine the number of executions to send.
@@ -419,19 +417,24 @@ impl<N: Network> Consensus<N> {
             let selector_iter = (0..num_deployments).map(|_| true).interleave((0..num_executions).map(|_| false));
             // Drain the transactions from the queue, interleaving deployments and executions.
             selector_iter
-                .filter_map(|select_deployment| {
-                    if select_deployment {
-                        tx_queue.deployments.pop_lru().map(|(_, tx)| tx)
-                    } else {
-                        tx_queue.executions.pop_lru().map(|(_, tx)| tx)
-                    }
-                })
+                .filter_map(
+                    |select_deployment| {
+                        if select_deployment { tx_queue.deployments.pop() } else { tx_queue.executions.pop() }
+                    },
+                )
+                .map(|(_, tx)| tx)
                 .collect_vec()
         };
         // Iterate over the transactions.
         for transaction in transactions.into_iter() {
             let transaction_id = transaction.id();
-            trace!("Adding unconfirmed transaction '{}' to the memory pool...", fmt_id(transaction_id));
+            // Determine the type of the transaction. The fee type is technically not possible here.
+            let tx_type_str = match transaction {
+                Transaction::Deploy(..) => "deployment",
+                Transaction::Execute(..) => "execution",
+                Transaction::Fee(..) => "fee",
+            };
+            trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
             // Send the unconfirmed transaction to the primary.
             if let Err(e) =
                 self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await
@@ -439,7 +442,7 @@ impl<N: Network> Consensus<N> {
                 // If the BFT is synced, then log the warning.
                 if self.bft.is_synced() {
                     warn!(
-                        "Failed to add unconfirmed transaction '{}' to the memory pool - {e}",
+                        "Failed to add unconfirmed {tx_type_str} transaction '{}' to the memory pool - {e}",
                         fmt_id(transaction_id)
                     );
                 }
@@ -508,7 +511,7 @@ impl<N: Network> Consensus<N> {
         callback.send(result).ok();
     }
 
-    /// Attempts to advance the ledger to the next block, and upadtes the metrics (if enabled) accordingly.
+    /// Attempts to advance the ledger to the next block, and updates the metrics (if enabled) accordingly.
     fn try_advance_to_next_block(
         &self,
         subdag: Subdag<N>,
@@ -538,6 +541,13 @@ impl<N: Network> Consensus<N> {
             // Clear the worker solutions.
             self.bft.primary().clear_worker_solutions();
         }
+
+        // Notify peers that we have a new block.
+        let locators = self.block_sync.get_block_locators()?;
+        self.ping.update_block_locators(locators);
+
+        // Make block sync aware of the new block.
+        self.block_sync.set_sync_height(next_block.height());
 
         // TODO(kaimast): This should also remove any transmissions/solutions contained in the block from the mempool.
         // Removal currently happens when Consensus eventually passes them to the worker, which then just discards them.

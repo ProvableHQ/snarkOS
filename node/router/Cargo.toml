@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -14,22 +14,23 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 test = [ ]
 locktick = [ "dep:locktick", "snarkos-node-tcp/locktick", "snarkvm/locktick" ]
-metrics = [ "dep:metrics" ]
+metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
+serial = [ "snarkos-node-bft-ledger-service/serial" ]
 
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.async-trait]
-version = "0.1"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures]
 version = "0.3.30"
@@ -39,52 +40,44 @@ features = [ "thread-pool" ]
 version = "0.5"
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../metrics"
-version = "=3.8.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.rand]
-version = "0.8"
+workspace = true
 
 [dependencies.rayon]
-version = "1.10"
+workspace = true
 
 [dependencies.snarkos-account]
-path = "../../account"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-bft-ledger-service]
-path = "../bft/ledger-service"
-version = "=3.8.0"
-default-features = false
+workspace = true
 features = [ "ledger", "prover" ]
 
 [dependencies.snarkos-node-sync-locators]
-path = "../sync/locators"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-router-messages]
-path = "messages"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-tcp]
-path = "../tcp"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
@@ -99,39 +92,39 @@ features = [
 ]
 
 [dependencies.tokio-util]
-version = "0.7"
+workspace = true
 features = [ "codec" ]
 
 [dependencies.tokio-stream]
 version = "=0.1"
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
 
 [dev-dependencies.deadline]
 version = "0.2"
 
 [dev-dependencies.futures-util]
-version = "0.3"
+workspace = true
 features = [ "sink" ]
 
 [dev-dependencies.peak_alloc]
 version = "0.2"
 
 [dev-dependencies.snarkos-node-bft-ledger-service]
-path = "../bft/ledger-service"
+workspace = true
 features = [ "ledger-write", "test" ]
 
 [dev-dependencies.snarkos-node-sync]
-path = "../sync"
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router]
-path = "."
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router-messages]
-path = "messages"
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.snarkvm]
@@ -139,5 +132,5 @@ workspace = true
 features = [ "test-helpers" ]
 
 [dev-dependencies.tracing-subscriber]
-version = "0.3"
+workspace = true
 features = [ "env-filter", "fmt" ]

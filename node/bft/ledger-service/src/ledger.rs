@@ -23,7 +23,18 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{Address, Field, FromBytes, Network, Result, bail, cfg_into_iter, deployment_cost, execution_cost_v2},
+    prelude::{
+        Address,
+        ConsensusVersion,
+        Field,
+        FromBytes,
+        Network,
+        Result,
+        bail,
+        cfg_into_iter,
+        deployment_cost,
+        execution_cost,
+    },
 };
 
 use anyhow::anyhow;
@@ -32,7 +43,9 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+#[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
+
 use std::{
     collections::BTreeMap,
     fmt,
@@ -297,6 +310,16 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             bail!("Invalid solution - expected {solution_id}, found {}", solution.id());
         }
 
+        // Check if the prover has reached their solution limit.
+        // While snarkVM will ultimately abort any excess solutions for safety, performing this check
+        // here prevents the to-be aborted solutions from propagating through the network.
+        let prover_address = solution.address();
+        if self.ledger.is_solution_limit_reached(&prover_address, 0) {
+            bail!(
+                "Invalid Solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch",
+                fmt_id(solution.id())
+            );
+        }
         // Compute the current epoch hash.
         let epoch_hash = self.ledger.latest_epoch_hash()?;
         // Retrieve the current proof target.
@@ -386,18 +409,24 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         &self,
         _transaction_id: N::TransactionID,
         transaction: Transaction<N>,
+        consensus_version: ConsensusVersion,
     ) -> Result<u64> {
         match &transaction {
             // Include the synthesis cost and storage cost for deployments.
             Transaction::Deploy(_, _, _, deployment, _) => {
-                let (_, (storage_cost, synthesis_cost, _)) = deployment_cost(deployment)?;
+                let (_, (storage_cost, synthesis_cost, constructor_cost, _)) =
+                    deployment_cost(&self.ledger.vm().process().read(), deployment, consensus_version)?;
                 storage_cost
                     .checked_add(synthesis_cost)
-                    .ok_or(anyhow!("The storage and synthesis cost computation overflowed for a deployment"))
+                    .and_then(|synthesis_cost| synthesis_cost.checked_add(constructor_cost))
+                    .ok_or(anyhow!(
+                        "The storage, synthesis, and constructor cost computation overflowed for a deployment"
+                    ))
             }
             // Include the finalize cost and storage cost for executions.
             Transaction::Execute(_, _, execution, _) => {
-                let (total_cost, (_, _)) = execution_cost_v2(&self.ledger.vm().process().read(), execution)?;
+                let (total_cost, (_, _)) =
+                    execution_cost(&self.ledger.vm().process().read(), execution, consensus_version)?;
                 Ok(total_cost)
             }
             // Fee transactions are internal to the VM, they do not have a compute cost.

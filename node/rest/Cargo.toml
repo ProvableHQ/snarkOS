@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -14,33 +14,36 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
-default = [ "parallel" ]
-parallel = [ "rayon" ]
-history = [ "snarkvm-synthesizer/history" ]
+default = [ ]
+history = [ "snarkvm/synthesizer", "snarkvm/history" ]
 telemetry = [ "snarkos-node-consensus/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
   "dep:locktick",
   "snarkos-node-consensus/locktick",
   "snarkos-node-router/locktick",
-  "snarkvm-synthesizer/locktick"
+  "snarkvm/locktick"
 ]
+serial = [
+  "snarkos-node-router/serial",
+  "snarkos-node-consensus/serial"
+] 
 
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.axum]
-version = "0.8"
+workspace = true
 
 [dependencies.axum-extra]
-version = "0.10"
+workspace = true
 features = [ "erased-json", "typed-header" ]
 
 [dependencies.http]
-version = "1.0"
+workspace = true
 
 [dependencies.indexmap]
 workspace = true
@@ -50,53 +53,50 @@ features = [ "serde", "rayon" ]
 version = "9.2"
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
 [dependencies.once_cell]
-version = "1.19"
+workspace = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.serde]
-version = "1"
-default-features = false
+workspace = true 
 features = [ "derive" ]
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 features = [ "preserve_order" ]
 
+[dependencies.serde_with]
+version = "3"
+
+[dependencies.snarkos-node-cdn]
+workspace = true
+
 [dependencies.snarkos-node-consensus]
-path = "../consensus"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-router]
-path = "../router"
-version = "=3.8.0"
+workspace = true
 
-[dependencies.snarkvm-synthesizer]
-#path = "../../../snarkVM/synthesizer"
-git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "c194f3e"
-#version = "=3.8.0"
-default-features = false
-optional = true
-
-[dependencies.rand]
-version = "0.8"
-
-[dependencies.rayon]
-version = "1"
-optional = true
+[dependencies.snarkos-node-sync]
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 
+[dependencies.rand]
+workspace = true
+
+[dependencies.rayon]
+workspace = true
+
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
@@ -109,12 +109,14 @@ version = "0.6"
 features = [ "cors", "trace" ]
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
 
 [dev-dependencies.base64]
 workspace = true
 
-[package.metadata.cargo-machete]
-ignored = [
-  "snarkvm-synthesizer", # Needed for locktick feature
-]
+[dev-dependencies.tower]
+version = "0.4"
+features = ["util"]
+
+[build-dependencies.built]
+workspace = true

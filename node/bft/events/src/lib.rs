@@ -118,7 +118,7 @@ impl<N: Network> From<DisconnectReason> for Event<N> {
 
 impl<N: Network> Event<N> {
     /// The version of the event protocol; it can be incremented in order to force users to update.
-    pub const VERSION: u32 = 9;
+    pub const VERSION: u32 = 10;
 
     /// Returns the event name.
     #[inline]
@@ -219,6 +219,8 @@ impl<N: Network> FromBytes for Event<N> {
         };
 
         // Ensure that there are no "dangling" bytes.
+        // `bytes()` is inefficient, but we read at most one byte here.
+        #[allow(clippy::unbuffered_bytes)]
         if reader.bytes().next().is_some() {
             return Err(error("Leftover bytes in an Event"));
         }
@@ -284,7 +286,8 @@ pub mod prop_tests {
     }
 
     pub fn any_solution_id() -> BoxedStrategy<SolutionID<CurrentNetwork>> {
-        Just(0).prop_perturb(|_, mut rng| rng.gen::<u64>().into()).boxed()
+        // TODO(kaimast): remove once we upgrade the rand crate
+        Just(0).prop_perturb(|_, mut rng| rng.r#gen::<u64>().into()).boxed()
     }
 
     pub fn any_transaction_id() -> BoxedStrategy<<CurrentNetwork as Network>::TransactionID> {
@@ -294,7 +297,7 @@ pub mod prop_tests {
     }
 
     pub fn any_transmission_checksum() -> BoxedStrategy<<CurrentNetwork as Network>::TransmissionChecksum> {
-        Just(0).prop_perturb(|_, mut rng| rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>()).boxed()
+        Just(0).prop_perturb(|_, mut rng| rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>()).boxed()
     }
 
     pub fn any_transmission_id() -> BoxedStrategy<TransmissionID<CurrentNetwork>> {

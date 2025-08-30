@@ -37,8 +37,8 @@ pub fn proposal_cache_path(network: u16, storage_mode: &StorageMode) -> PathBuf 
     }
     // Append the proposal store's file name.
     match storage_mode.dev() {
-        Some(id) => path.push(format!(".{PROPOSAL_CACHE_FILE_NAME}-{}-{}", network, id)),
-        None => path.push(format!("{PROPOSAL_CACHE_FILE_NAME}-{}", network)),
+        Some(id) => path.push(format!(".{PROPOSAL_CACHE_FILE_NAME}-{network}-{id}")),
+        None => path.push(format!("{PROPOSAL_CACHE_FILE_NAME}-{network}")),
     }
 
     path

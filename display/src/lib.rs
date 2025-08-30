@@ -57,6 +57,14 @@ pub struct Display<N: Network> {
     logs: Logs,
 }
 
+fn header_style() -> Style {
+    Style::default().fg(Color::Cyan)
+}
+
+fn content_style() -> Style {
+    Style::default().fg(Color::White)
+}
+
 impl<N: Network> Display<N> {
     /// Initializes a new display.
     pub fn start(node: Node<N>, log_receiver: Receiver<Vec<u8>>) -> Result<()> {
@@ -163,7 +171,7 @@ impl<N: Network> Display<N> {
                     .style(Style::default().add_modifier(Modifier::BOLD)),
             )
             .select(self.tabs.index)
-            .style(Style::default().fg(Color::Cyan))
+            .style(header_style())
             .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::White));
         f.render_widget(tabs, chunks[0]);
 

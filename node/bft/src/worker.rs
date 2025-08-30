@@ -169,7 +169,7 @@ impl<N: Network> Worker<N> {
         let transmission_id = transmission_id.into();
         // Check if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
         self.ready.read().contains(transmission_id)
-            || self.proposed_batch.read().as_ref().map_or(false, |p| p.contains_transmission(transmission_id))
+            || self.proposed_batch.read().as_ref().is_some_and(|p| p.contains_transmission(transmission_id))
             || self.storage.contains_transmission(transmission_id)
             || self.ledger.contains_transmission(&transmission_id).unwrap_or(false)
     }
@@ -562,8 +562,8 @@ mod tests {
         ledger::{
             block::Block,
             committee::Committee,
-            ledger_test_helpers::sample_execution_transaction_with_fee,
             narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
+            snarkvm_ledger_test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::Address,
     };
@@ -633,7 +633,7 @@ mod tests {
                 transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
             ) -> Result<Block<N>>;
             fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
-            fn transaction_spent_cost_in_microcredits(&self, transaction_id: N::TransactionID, transaction: Transaction<N>) -> Result<u64>;
+            fn transaction_spent_cost_in_microcredits(&self, transaction_id: N::TransactionID, transaction: Transaction<N>, consensus_version: ConsensusVersion) -> Result<u64>;
         }
     }
 
@@ -677,10 +677,11 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let data = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let data =
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
         let transmission_id = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let peer_ip = SocketAddr::from(([127, 0, 0, 1], 1234));
         let transmission = Transmission::Solution(data(rng));
@@ -718,8 +719,8 @@ mod tests {
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
         let transmission_id = TransmissionID::Solution(
-            rng.gen::<u64>().into(),
-            rng.gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.r#gen::<u64>().into(),
+            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let worker_ = worker.clone();
         let peer_ip = SocketAddr::from(([127, 0, 0, 1], 1234));
@@ -758,8 +759,8 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
-        let solution_id = rng.gen::<u64>().into();
+        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+        let solution_id = rng.r#gen::<u64>().into();
         let solution_checksum = solution.to_checksum::<CurrentNetwork>().unwrap();
         let transmission_id = TransmissionID::Solution(solution_id, solution_checksum);
         let worker_ = worker.clone();
@@ -795,8 +796,8 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let solution_id = rng.gen::<u64>().into();
-        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let solution_id = rng.r#gen::<u64>().into();
+        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
         let checksum = solution.to_checksum::<CurrentNetwork>().unwrap();
         let transmission_id = TransmissionID::Solution(solution_id, checksum);
         let worker_ = worker.clone();
@@ -832,7 +833,7 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let transaction = sample_execution_transaction_with_fee(false, rng);
+        let transaction = sample_execution_transaction_with_fee(false, rng, 0);
         let transaction_id = transaction.id();
         let transaction_data = Data::Object(transaction);
         let checksum = transaction_data.to_checksum::<CurrentNetwork>().unwrap();
@@ -871,7 +872,7 @@ mod tests {
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
         let transaction_id: <CurrentNetwork as Network>::TransactionID = Field::<CurrentNetwork>::rand(&mut rng).into();
-        let transaction = Data::Buffer(Bytes::from((0..512).map(|_| rng.gen::<u8>()).collect::<Vec<_>>()));
+        let transaction = Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
         let checksum = transaction.to_checksum::<CurrentNetwork>().unwrap();
         let transmission_id = TransmissionID::Transaction(transaction_id, checksum);
         let worker_ = worker.clone();
@@ -907,7 +908,7 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let transaction = sample_execution_transaction_with_fee(false, rng);
+        let transaction = sample_execution_transaction_with_fee(false, rng, 0);
         let transaction_id = transaction.id();
         let transaction_data = Data::Object(transaction);
         let checksum = transaction_data.to_checksum::<CurrentNetwork>().unwrap();
@@ -1014,7 +1015,7 @@ mod prop_tests {
         for i in 0..n {
             // Sample the address.
             let rng = &mut TestRng::fixed(i as u64);
-            let address = Address::new(rng.gen());
+            let address = Address::new(rng.r#gen());
             info!("Validator {i}: {address}");
             members.insert(address, (MIN_VALIDATOR_STAKE, false, rng.gen_range(0..100)));
         }
@@ -1045,7 +1046,7 @@ mod prop_tests {
         let worker = Worker::new(id, Arc::new(gateway), storage, ledger, Default::default());
         // TODO once Worker implements Debug, simplify this with `unwrap_err`
         if let Err(error) = worker {
-            assert_eq!(error.to_string(), format!("Invalid worker ID '{}'", id));
+            assert_eq!(error.to_string(), format!("Invalid worker ID '{id}'"));
         }
     }
 }

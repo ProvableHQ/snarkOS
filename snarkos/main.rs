@@ -18,6 +18,8 @@ use snarkos_cli::{commands::CLI, helpers::Updater};
 use clap::Parser;
 #[cfg(feature = "locktick")]
 use locktick::lock_snapshots;
+#[cfg(feature = "locktick")]
+use std::time::Instant;
 use std::{env, process::exit};
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -38,6 +40,7 @@ fn main() -> anyhow::Result<()> {
     std::thread::spawn(|| {
         loop {
             tracing::info!("[locktick] checking for active lock guards");
+            let ts = Instant::now();
             let mut infos = lock_snapshots();
             infos.sort_unstable_by(|l1, l2| l1.location.cmp(&l2.location));
 
@@ -53,21 +56,25 @@ fn main() -> anyhow::Result<()> {
                     let avg_duration = guard.avg_duration();
                     let avg_wait_time = guard.avg_wait_time();
                     tracing::info!(
-                        "{location} ({:?}): {num_uses}; {active_users} active; avg d: {:?}; avg w: {:?}",
+                        "[locktick] {location} ({:?}): {num_uses}; {active_users} active; avg d: {:?}; avg w: {:?}",
                         kind,
                         avg_duration,
                         avg_wait_time
                     );
                 }
             }
+            tracing::debug!("[locktick] finished the check in {:?}", ts.elapsed());
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
     });
 
     // Parse the given arguments.
     let cli = CLI::parse();
-    // Run the updater.
-    println!("{}", Updater::print_cli());
+    if !cli.noupdater {
+        // Run the updater.
+        println!("{}", Updater::print_cli());
+    }
+
     // Run the CLI.
     match cli.command.parse() {
         Ok(output) => println!("{output}\n"),

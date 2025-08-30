@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-metrics"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -14,16 +14,16 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
 default = [ "rayon", "snarkvm/metrics" ]
 locktick = [ "dep:locktick", "snarkvm/locktick" ]
 metrics = [ "snarkvm/metrics" ]
-serial = [ "snarkvm/metrics" ]
+serial = [ ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
@@ -31,15 +31,15 @@ optional = true
 version = "0.13"
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.rayon]
-version = "1"
+workspace = true
 optional = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "metrics" ]
+features = [ "console", "ledger", "metrics" ]
 
 [dependencies.time]
-version = "0.3"
+workspace = true

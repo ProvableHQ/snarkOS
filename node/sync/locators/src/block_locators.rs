@@ -26,6 +26,8 @@ pub const NUM_RECENT_BLOCKS: usize = 100; // 100 blocks
 const RECENT_INTERVAL: u32 = 1; // 1 block intervals
 /// The interval between block checkpoints.
 pub const CHECKPOINT_INTERVAL: u32 = 10_000; // 10,000 block intervals
+// The maximum number of checkpoints that there can be
+const MAX_CHECKPOINTS: usize = (u32::MAX / CHECKPOINT_INTERVAL) as usize;
 
 /// Block locator maps.
 ///
@@ -328,8 +330,14 @@ impl<N: Network> FromBytes for BlockLocators<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
         // Read the number of recent block hashes.
         let num_recents = u32::read_le(&mut reader)?;
+        // Ensure the number of recent blocks is within bounds
+        if num_recents as usize > NUM_RECENT_BLOCKS {
+            return Err(error(format!(
+                "Number of recent blocks ({num_recents}) is greater than the maximum ({NUM_RECENT_BLOCKS})"
+            )));
+        }
         // Read the recent block hashes.
-        let mut recents = IndexMap::new();
+        let mut recents = IndexMap::with_capacity(num_recents as usize);
         for _ in 0..num_recents {
             let height = u32::read_le(&mut reader)?;
             let hash = N::BlockHash::read_le(&mut reader)?;
@@ -338,6 +346,12 @@ impl<N: Network> FromBytes for BlockLocators<N> {
 
         // Read the number of checkpoints.
         let num_checkpoints = u32::read_le(&mut reader)?;
+        // Ensure the number of checkpoints is within bounds
+        if num_checkpoints as usize > MAX_CHECKPOINTS {
+            return Err(error(format!(
+                "Number of checkpoints ({num_checkpoints}) is greater than the maximum ({MAX_CHECKPOINTS})"
+            )));
+        }
         // Read the checkpoints.
         let mut checkpoints = IndexMap::new();
         for _ in 0..num_checkpoints {

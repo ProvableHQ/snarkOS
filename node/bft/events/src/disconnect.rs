@@ -64,7 +64,7 @@ impl FromBytes for Disconnect {
             Ok(1) => DisconnectReason::NoReasonGiven,
             Ok(2) => DisconnectReason::ProtocolViolation,
             Ok(3) => DisconnectReason::OutdatedClientVersion,
-            _ => return Err(io::Error::new(io::ErrorKind::Other, "Invalid 'Disconnect' event")),
+            _ => return Err(io::Error::other("Invalid 'Disconnect' event")),
         };
 
         Ok(Self { reason })

@@ -24,13 +24,13 @@ use snarkvm::prelude::{
     Network,
     Serialize,
     block::Block,
-    store::{ConsensusStorage, cow_to_copied},
+    store::ConsensusStorage,
 };
 
 use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::Mutex;
+use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -42,6 +42,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+#[cfg(not(feature = "locktick"))]
+use tokio::sync::Mutex as TMutex;
+use tokio::task::JoinHandle;
 
 /// The number of blocks per file.
 const BLOCKS_PER_FILE: u32 = 50;
@@ -52,6 +55,9 @@ const MAXIMUM_PENDING_BLOCKS: u32 = BLOCKS_PER_FILE * CONCURRENT_REQUESTS * 2;
 /// Maximum number of attempts for a request to the CDN.
 const MAXIMUM_REQUEST_ATTEMPTS: u8 = 10;
 
+/// The CDN base url.
+pub const CDN_BASE_URL: &str = "https://cdn.provable.com/v0/blocks";
+
 /// Updates the metrics during CDN sync.
 #[cfg(feature = "metrics")]
 fn update_block_metrics(height: u32) {
@@ -59,49 +65,102 @@ fn update_block_metrics(height: u32) {
     crate::metrics::gauge(crate::metrics::bft::HEIGHT, height as f64);
 }
 
-/// Loads blocks from a CDN into the ledger.
+pub type SyncResult = Result<u32, (u32, anyhow::Error)>;
+
+/// Manages the CDN sync task.
 ///
-/// On success, this function returns the completed block height.
-/// On failure, this function returns the last successful block height (if any), along with the error.
-pub async fn sync_ledger_with_cdn<N: Network, C: ConsensusStorage<N>>(
-    base_url: &str,
-    ledger: Ledger<N, C>,
-    shutdown: Arc<AtomicBool>,
-) -> Result<u32, (u32, anyhow::Error)> {
-    // Fetch the node height.
-    let start_height = ledger.latest_height() + 1;
-    // Load the blocks from the CDN into the ledger.
-    let ledger_clone = ledger.clone();
-    let result = load_blocks(base_url, start_height, None, shutdown, move |block: Block<N>| {
-        ledger_clone.advance_to_next_block(&block)
-    })
-    .await;
+/// This is used, for example, in snarkos_node_rest to query how
+/// far along the CDN sync is.
+pub struct CdnBlockSync {
+    base_url: http::Uri,
+    /// The background tasks that performs the sync operation.
+    task: Mutex<Option<JoinHandle<SyncResult>>>,
+    /// This flag will be set to true once the sync task has been successfully awaited.
+    done: AtomicBool,
+}
 
-    // TODO (howardwu): Find a way to resolve integrity failures.
-    // If the sync failed, check the integrity of the ledger.
-    if let Err((completed_height, error)) = &result {
-        warn!("{error}");
+impl CdnBlockSync {
+    /// Spawn a background task that loads blocks from a CDN into the ledger.
+    ///
+    /// On success, this function returns the completed block height.
+    /// On failure, this function returns the last successful block height (if any), along with the error.
+    pub fn new<N: Network, C: ConsensusStorage<N>>(
+        base_url: http::Uri,
+        ledger: Ledger<N, C>,
+        shutdown: Arc<AtomicBool>,
+    ) -> Self {
+        let task = {
+            let base_url = base_url.clone();
+            tokio::spawn(async move { Self::worker(base_url, ledger, shutdown).await })
+        };
 
-        // If the sync made any progress, then check the integrity of the ledger.
-        if *completed_height != start_height {
-            debug!("Synced the ledger up to block {completed_height}");
+        debug!("Started sync from CDN at {base_url}");
+        Self { done: AtomicBool::new(false), base_url, task: Mutex::new(Some(task)) }
+    }
 
-            // Retrieve the latest height, according to the ledger.
-            let node_height = cow_to_copied!(ledger.vm().block_store().heights().max().unwrap_or_default());
-            // Check the integrity of the latest height.
-            if &node_height != completed_height {
-                return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
-            }
+    /// Did the CDN sync finish?
+    ///
+    /// Note: This can only return true if you call wait()
+    pub fn is_done(&self) -> bool {
+        self.done.load(Ordering::SeqCst)
+    }
 
-            // Fetch the latest block from the ledger.
-            if let Err(err) = ledger.get_block(node_height) {
-                return Err((*completed_height, err));
-            }
-        }
+    /// Wait for CDN sync to finish. Can only be called once.
+    pub async fn wait(&self) -> Result<SyncResult> {
+        let Some(hdl) = self.task.lock().take() else {
+            bail!("CDN task was already awaited");
+        };
 
-        Ok(*completed_height)
-    } else {
+        let result = hdl.await.map_err(|err| anyhow!("Failed to wait for CDN task: {err}"));
+        self.done.store(true, Ordering::SeqCst);
         result
+    }
+
+    async fn worker<N: Network, C: ConsensusStorage<N>>(
+        base_url: http::Uri,
+        ledger: Ledger<N, C>,
+        shutdown: Arc<AtomicBool>,
+    ) -> SyncResult {
+        // Fetch the node height.
+        let start_height = ledger.latest_height() + 1;
+        // Load the blocks from the CDN into the ledger.
+        let ledger_clone = ledger.clone();
+        let result = load_blocks(&base_url, start_height, None, shutdown, move |block: Block<N>| {
+            ledger_clone.advance_to_next_block(&block)
+        })
+        .await;
+
+        // TODO (howardwu): Find a way to resolve integrity failures.
+        // If the sync failed, check the integrity of the ledger.
+        if let Err((completed_height, error)) = &result {
+            warn!("{error}");
+
+            // If the sync made any progress, then check the integrity of the ledger.
+            if *completed_height != start_height {
+                debug!("Synced the ledger up to block {completed_height}");
+
+                // Retrieve the latest height, according to the ledger.
+                let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
+                // Check the integrity of the latest height.
+                if &node_height != completed_height {
+                    return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
+                }
+
+                // Fetch the latest block from the ledger.
+                if let Err(err) = ledger.get_block(node_height) {
+                    return Err((*completed_height, err));
+                }
+            }
+
+            Ok(*completed_height)
+        } else {
+            result
+        }
+    }
+
+    pub async fn get_cdn_height(&self) -> anyhow::Result<u32> {
+        let client = Client::builder().use_rustls_tls().build()?;
+        cdn_height::<BLOCKS_PER_FILE>(&client, &self.base_url).await
     }
 }
 
@@ -110,7 +169,7 @@ pub async fn sync_ledger_with_cdn<N: Network, C: ConsensusStorage<N>>(
 /// On success, this function returns the completed block height.
 /// On failure, this function returns the last successful block height (if any), along with the error.
 pub async fn load_blocks<N: Network>(
-    base_url: &str,
+    base_url: &http::Uri,
     start_height: u32,
     end_height: Option<u32>,
     shutdown: Arc<AtomicBool>,
@@ -158,7 +217,7 @@ pub async fn load_blocks<N: Network>(
     }
 
     // A collection of downloaded blocks pending insertion into the ledger.
-    let pending_blocks: Arc<Mutex<Vec<Block<N>>>> = Default::default();
+    let pending_blocks: Arc<TMutex<Vec<Block<N>>>> = Default::default();
 
     // Start a timer.
     let timer = Instant::now();
@@ -168,7 +227,7 @@ pub async fn load_blocks<N: Network>(
     let base_url = base_url.to_owned();
     let shutdown_clone = shutdown.clone();
     tokio::spawn(async move {
-        download_block_bundles(client, base_url, cdn_start, cdn_end, pending_blocks_clone, shutdown_clone).await;
+        download_block_bundles(client, &base_url, cdn_start, cdn_end, pending_blocks_clone, shutdown_clone).await;
     });
 
     // A loop for inserting the pending blocks into the ledger.
@@ -181,7 +240,7 @@ pub async fn load_blocks<N: Network>(
             std::process::exit(0);
         }
 
-        let mut candidate_blocks = pending_blocks.lock();
+        let mut candidate_blocks = pending_blocks.lock().await;
 
         // Obtain the height of the nearest pending block.
         let Some(next_height) = candidate_blocks.first().map(|b| b.height()) else {
@@ -251,10 +310,10 @@ pub async fn load_blocks<N: Network>(
 
 async fn download_block_bundles<N: Network>(
     client: Client,
-    base_url: String,
+    base_url: &http::Uri,
     cdn_start: u32,
     cdn_end: u32,
-    pending_blocks: Arc<Mutex<Vec<Block<N>>>>,
+    pending_blocks: Arc<TMutex<Vec<Block<N>>>>,
     shutdown: Arc<AtomicBool>,
 ) {
     // Keep track of the number of concurrent requests.
@@ -268,7 +327,7 @@ async fn download_block_bundles<N: Network>(
         }
 
         // Avoid collecting too many blocks in order to restrict memory use.
-        let num_pending_blocks = pending_blocks.lock().len();
+        let num_pending_blocks = pending_blocks.lock().await.len();
         if num_pending_blocks >= MAXIMUM_PENDING_BLOCKS as usize {
             debug!("Maximum number of pending blocks reached ({num_pending_blocks}), waiting...");
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -317,7 +376,7 @@ async fn download_block_bundles<N: Network>(
                     match cdn_get(client_clone.clone(), &blocks_url, &ctx).await {
                         Ok::<Vec<Block<N>>, _>(blocks) => {
                             // Keep the collection of pending blocks sorted by the height.
-                            let mut pending_blocks = pending_blocks_clone.lock();
+                            let mut pending_blocks = pending_blocks_clone.lock().await;
                             for block in blocks {
                                 match pending_blocks.binary_search_by_key(&block.height(), |b| b.height()) {
                                     Ok(_idx) => warn!("Found a duplicate pending block at height {}", block.height()),
@@ -361,7 +420,7 @@ async fn download_block_bundles<N: Network>(
 ///
 /// Note: This function decrements the tip by a few blocks, to ensure the
 /// tip is not on a block that is not yet available on the CDN.
-async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &str) -> Result<u32> {
+async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &http::Uri) -> Result<u32> {
     // A representation of the 'latest.json' file object.
     #[derive(Deserialize, Serialize, Debug)]
     struct LatestState {
@@ -409,11 +468,45 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
         Ok(bytes) => bytes,
         Err(error) => bail!("Failed to parse {ctx} - {error}"),
     };
+
     // Parse the objects.
     match tokio::task::spawn_blocking(move || bincode::deserialize::<T>(&bytes)).await {
         Ok(Ok(objects)) => Ok(objects),
         Ok(Err(error)) => bail!("Failed to deserialize {ctx} - {error}"),
         Err(error) => bail!("Failed to join task for {ctx} - {error}"),
+    }
+}
+
+/// Converts a duration into a string that humans can read easily.
+///
+/// # Output
+/// The output remains to be accurate but not too detailed (to reduce noise in the log).
+/// It will give at most two levels of granularity, e.g., days and hours,
+/// and only shows seconds if less than a minute remains.
+fn to_human_readable_duration(duration: Duration) -> String {
+    // TODO: simplify this once the duration_constructors feature is stable
+    // See: https://github.com/rust-lang/rust/issues/140881
+    const SECS_PER_MIN: u64 = 60;
+    const MINS_PER_HOUR: u64 = 60;
+    const SECS_PER_HOUR: u64 = SECS_PER_MIN * MINS_PER_HOUR;
+    const HOURS_PER_DAY: u64 = 24;
+    const SECS_PER_DAY: u64 = SECS_PER_HOUR * HOURS_PER_DAY;
+
+    let duration = duration.as_secs();
+
+    if duration < 1 {
+        "less than one second".to_string()
+    } else if duration < SECS_PER_MIN {
+        format!("{duration} seconds")
+    } else if duration < SECS_PER_HOUR {
+        format!("{} minutes", duration / SECS_PER_MIN)
+    } else if duration < SECS_PER_DAY {
+        let mins = duration / SECS_PER_MIN;
+        format!("{hours} hours and {remainder} minutes", hours = mins / 60, remainder = mins % 60)
+    } else {
+        let days = duration / SECS_PER_DAY;
+        let hours = (duration % SECS_PER_DAY) / SECS_PER_HOUR;
+        format!("{days} days and {hours} hours")
     }
 }
 
@@ -425,10 +518,17 @@ fn log_progress<const OBJECTS_PER_FILE: u32>(
     mut cdn_end: u32,
     object_name: &str,
 ) {
+    debug_assert!(cdn_start <= cdn_end);
+    debug_assert!(current_index <= cdn_end);
+    debug_assert!(cdn_end >= 1);
+
     // Subtract 1, as the end of the range is exclusive.
     cdn_end -= 1;
-    // Compute the percentage completed.
-    let percentage = current_index * 100 / cdn_end;
+
+    // Compute the percentage completed of this particular sync.
+    let sync_percentage =
+        (current_index.saturating_sub(cdn_start) * 100).checked_div(cdn_end.saturating_sub(cdn_start)).unwrap_or(100);
+
     // Compute the number of files processed so far.
     let num_files_done = 1 + (current_index - cdn_start) / OBJECTS_PER_FILE;
     // Compute the number of files remaining.
@@ -438,27 +538,30 @@ fn log_progress<const OBJECTS_PER_FILE: u32>(
     // Compute the heuristic slowdown factor (in millis).
     let slowdown = 100 * num_files_remaining as u128;
     // Compute the time remaining (in millis).
-    let time_remaining = num_files_remaining as u128 * millis_per_file + slowdown;
+    let time_remaining = {
+        let remaining = num_files_remaining as u128 * millis_per_file + slowdown;
+        to_human_readable_duration(Duration::from_secs((remaining / 1000) as u64))
+    };
     // Prepare the estimate message (in secs).
-    let estimate = format!("(est. {} minutes remaining)", time_remaining / (60 * 1000));
+    let estimate = format!("(started at height {cdn_start}, est. {time_remaining} remaining)");
     // Log the progress.
-    info!("Synced up to {object_name} {current_index} of {cdn_end} - {percentage}% complete {}", estimate.dimmed());
+    info!(
+        "Reached {object_name} {current_index} of {cdn_end} - Sync is {sync_percentage}% complete {}",
+        estimate.dimmed()
+    );
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        blocks::{BLOCKS_PER_FILE, cdn_height, log_progress},
-        load_blocks,
-    };
+    use super::{BLOCKS_PER_FILE, CDN_BASE_URL, cdn_height, log_progress};
+    use crate::load_blocks;
     use snarkvm::prelude::{MainnetV0, block::Block};
 
+    use http::Uri;
     use parking_lot::RwLock;
     use std::{sync::Arc, time::Instant};
 
     type CurrentNetwork = MainnetV0;
-
-    const TEST_BASE_URL: &str = "https://cdn.provable.com/v0/blocks/mainnet";
 
     fn check_load_blocks(start: u32, end: Option<u32>, expected: usize) {
         let blocks = Arc::new(RwLock::new(Vec::new()));
@@ -468,9 +571,12 @@ mod tests {
             Ok(())
         };
 
+        let testnet_cdn_url = Uri::try_from(format!("{CDN_BASE_URL}/mainnet")).unwrap();
+
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let completed_height = load_blocks(TEST_BASE_URL, start, end, Default::default(), process).await.unwrap();
+            let completed_height =
+                load_blocks(&testnet_cdn_url, start, end, Default::default(), process).await.unwrap();
             assert_eq!(blocks.read().len(), expected);
             if expected > 0 {
                 assert_eq!(blocks.read().last().unwrap().height(), completed_height);
@@ -514,8 +620,9 @@ mod tests {
     fn test_cdn_height() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let testnet_cdn_url = Uri::try_from(format!("{CDN_BASE_URL}/mainnet")).unwrap();
         rt.block_on(async {
-            let height = cdn_height::<BLOCKS_PER_FILE>(&client, TEST_BASE_URL).await.unwrap();
+            let height = cdn_height::<BLOCKS_PER_FILE>(&client, &testnet_cdn_url).await.unwrap();
             assert!(height > 0);
         });
     }

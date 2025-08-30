@@ -17,6 +17,12 @@ parameters:
 orbs:
   windows: circleci/windows@5.0
 
+executors:
+  # The default docker image used in the main-workflow
+  rust-docker:
+     docker:
+      - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+
 commands:
   check_windows:
     description: "Runs cargo check on Windows"
@@ -60,24 +66,31 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: set -e
       - run:
-          name: Prepare environment and install dependencies
+          name: Install sccache
           command: |
-            export SCCACHE_CACHE_SIZE=200M
             export WORK_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
             export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
+            export SCCACHE_VERSION=v0.10.0
+            export SCCACHE_PKG="sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+
             mkdir -p "$CIRCLE_WORKING_DIRECTORY/.bin"
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            mv $CIRCLE_WORKING_DIRECTORY/.bin/sccache-v0.3.0-x86_64-unknown-linux-musl/sccache $CIRCLE_WORKING_DIRECTORY/.bin/sccache
+            wget "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/$SCCACHE_PKG.tar.gz"
+            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf "$SCCACHE_PKG.tar.gz"
+            chmod +x "$CIRCLE_WORKING_DIRECTORY/.bin/$SCCACHE_PKG/sccache"
+            mv "$CIRCLE_WORKING_DIRECTORY/.bin/$SCCACHE_PKG/sccache" "$CIRCLE_WORKING_DIRECTORY/.bin/sccache"
+            rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+
             export PATH="$PATH:$CIRCLE_WORKING_DIRECTORY/.bin"
             export RUSTC_WRAPPER="sccache"
-            rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+      - run:
+          name: Install Debian packages
+          command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm pkg-config xz-utils make libssl-dev libssl-dev
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -87,7 +100,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: (sccache -s||true)
       - run: set +e
@@ -110,12 +123,12 @@ commands:
     steps:
       - checkout
       - setup_environment:
-          cache_key: << parameters.cache_key >>
+          cache_key:  v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
       - run:
           no_output_timeout: 30m
           command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
       - clear_environment:
-          cache_key: << parameters.cache_key >>
+          cache_key: v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
 
   run_serial_long:
     description: "Build and run long running tests"
@@ -134,33 +147,6 @@ commands:
       - run:
           no_output_timeout: 300m
           command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
-      - clear_environment:
-          cache_key: << parameters.cache_key >>
-
-  run_parallel:
-    description: "Build and run tests (in parallel)"
-    parameters:
-      workspace_member:
-        type: string
-      cache_key:
-        type: string
-      flags:
-        type: string
-        default: ""
-    steps:
-      - checkout
-      - setup_environment:
-          cache_key: << parameters.cache_key >>
-      - run:
-          no_output_timeout: 45m
-          command: |
-            cd << parameters.workspace_member >>
-            cargo test -- --list --format terse | sed 's/: test//' > test_names.txt
-            TEST_NAMES=$(circleci tests split test_names.txt)
-            for i in $(echo $TEST_NAMES | sed "s/ / /g")
-            do
-                RUST_MIN_STACK=67108864 cargo test $i << parameters.flags >>
-            done
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
@@ -190,13 +176,17 @@ commands:
       - run:
           name: "Install snarkos"
           command: |
-            cargo install --locked --path .
+            cargo install --locked --path . --features test_network
       - run:
-          name: "Run devnet test"
-          no_output_timeout: 20m  # Allow 20 minutes total
+          name: "Run DB backup test"
+          timeout: 10m  # Allow 10 minutes total
           command: |
-            chmod +x .circleci/devnet_ci.sh
-            ./.circleci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+      - run:
+          name: "Run block advancement test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./.ci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
@@ -207,200 +197,190 @@ commands:
 
 jobs:
   snarkos:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.large >>
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: .
-          cache_key: v3.3.1-rust-1.83.0-stable-cache
+          cache_key: stable
 
   account:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: account
-          cache_key: v3.3.1-rust-1.83.0-account-cache
+          cache_key: account
 
   cli:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.xlarge >>
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: cli
-          cache_key: v3.3.1-rust-1.83.0-cli-cache
-
-  display:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.medium >>
-    steps:
-      - run_serial:
-          workspace_member: display
-          cache_key: v3.3.1-rust-1.83.0-display-cache
+          cache_key: cli
 
   node:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: node
-          cache_key: v3.3.1-rust-1.83.0-node-cache
+          cache_key: node
 
   node-bft:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: node/bft
-          cache_key: v3.3.1-rust-1.83.0-node-bft-cache
+          cache_key: node-bft
 
   node-bft-events:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.medium >>
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/bft/events
-          cache_key: v3.3.1-rust-1.83.0-node-bft-events-cache
+          cache_key: node-bft-events
 
   node-bft-ledger-service:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/bft/ledger-service
-          cache_key: v3.3.1-rust-1.83.0-node-bft-ledger-service-cache
+          cache_key: node-bft-ledger-service
 
   node-bft-storage-service:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/bft/storage-service
-          cache_key: v3.3.1-rust-1.83.0-node-bft-storage-service-cache
+          cache_key: node-bft-storage-service
 
   node-cdn:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/cdn
-          cache_key: v3.3.1-rust-1.83.0-node-cdn-cache
+          cache_key: node-cdn
 
   node-consensus:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.medium >>
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/consensus
-          cache_key: v3.3.1-rust-1.83.0-node-consensus-cache
+          cache_key: node-consensus
 
   node-rest:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/rest
-          cache_key: v3.3.1-rust-1.83.0-node-rest-cache
+          cache_key: node-rest
 
   node-router:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/router
-          cache_key: v3.3.1-rust-1.83.0-node-router-cache
+          cache_key: node-router
 
   node-router-messages:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
-    resource_class: << pipeline.parameters.medium >>
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/router/messages
-          cache_key: v3.3.1-rust-1.83.0-node-router-messages-cache
+          cache_key: node-router-messages-
 
   node-sync:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
       - run_serial:
           workspace_member: node/sync
-          cache_key: v3.3.1-rust-1.83.0-node-sync-cache
+          cache_key: node-sync
 
   node-sync-communication-service:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/sync/communication-service
-          cache_key: v3.3.1-rust-1.83.0-node-sync-communication-service-cache
+          cache_key: node-sync-communication-service
 
   node-sync-locators:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/sync/locators
-          cache_key: v3.3.1-rust-1.83.0-node-sync-locators-cache
+          cache_key: node-sync-locators
 
   node-tcp:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/tcp
-          cache_key: v3.3.1-rust-1.83.0-node-tcp-cache
+          cache_key: node-tcp
 
   devnet-test:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
       - run_devnet:
           workspace_member: .
-          cache_key: v3.3.1-rust-1.83.0-devnet-test-cache
+          cache_key: v3.3.1-rust-1.88.0-devnet-test-cache
+
+  # Check crates that do not have any tests individually
+  check-other-crates:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v3.3.1-rust-1.88.0-check-other-crates-cache
+      - run:
+          name: Check snarkos-node-metrics crate
+          no_output_timeout: 10m
+          command: cargo check --package=snarkos-node-metrics --all-features
+      - run:
+          name: Check snarkos-display crate
+          no_output_timeout: 10m
+          command: cargo check --package=snarkos-node-metrics --all-features
+      - clear_environment:
+          cache_key: v3.3.1-rust-1.88.0-check-other-crates-cache
 
   check-fmt:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - install_rust_nightly
       - setup_environment:
-          cache_key: v3.3.1-rust-1.83.0-fmt-cache
+          cache_key: v3.3.1-rust-1.88.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +nightly fmt --all -- --check
       - clear_environment:
-          cache_key: v3.3.1-rust-1.83.0-fmt-cache
+          cache_key: v3.3.1-rust-1.88.0-fmt-cache
 
   check-unused-dependencies:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.83.0-machete-cache
+          cache_key: v3.3.1-rust-1.88.0-machete-cache
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
@@ -408,16 +388,15 @@ jobs:
             cargo install cargo-machete@0.7.0
             cargo machete
       - clear_environment:
-          cache_key: v3.3.1-rust-1.83.0-machete-cache
+          cache_key: v3.3.1-rust-1.88.0-machete-cache
 
   check-cargo-audit:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.83.0-cargo-audit-cache
+          cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
@@ -425,16 +404,15 @@ jobs:
             cargo install cargo-audit@0.21.2 --locked
             cargo audit -D warnings
       - clear_environment:
-          cache_key: v3.3.1-rust-1.83.0-cargo-audit-cache
+          cache_key: v3.3.1-rust-1.88.0-cargo-audit-cache
 
   check-clippy:
-    docker:
-      - image: cimg/rust:1.83.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+    executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - setup_environment:
-          cache_key: v3.3.1-rust-1.83.0-clippy-cache
+          cache_key: v3.3.1-rust-1.88.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -442,7 +420,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: v3.3.1-rust-1.83.0-clippy-cache
+          cache_key: v3.3.1-rust-1.88.0-clippy-cache
 
   verify-windows:
     executor:
@@ -465,7 +443,6 @@ workflows:
       - snarkos
       - account
       - cli
-      - display
       - node
       - node-bft
       - node-bft-events
@@ -484,6 +461,7 @@ workflows:
       - check-clippy
       - check-unused-dependencies
       - check-cargo-audit
+      - check-other-crates
       - devnet-test
 
   windows-workflow:
@@ -497,4 +475,3 @@ workflows:
                 display,
                 node
               ]
-      

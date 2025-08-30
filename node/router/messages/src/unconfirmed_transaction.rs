@@ -62,8 +62,8 @@ pub mod prop_tests {
     use crate::{Transaction, UnconfirmedTransaction};
     use snarkvm::{
         ledger::{
-            ledger_test_helpers::{sample_fee_public_transaction, sample_large_execution_transaction},
             narwhal::Data,
+            snarkvm_ledger_test_helpers::{sample_fee_public_transaction, sample_large_execution_transaction},
         },
         prelude::{FromBytes, TestRng, ToBytes},
     };

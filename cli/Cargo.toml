@@ -1,8 +1,8 @@
 [package]
 name = "snarkos-cli"
-version = "3.8.0"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
-description = "A CLI for a decentralized operating system"
+description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
 repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
@@ -14,9 +14,10 @@ keywords = [
 ]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
-edition = "2021"
+edition = "2024"
 
 [features]
+async = []
 locktick = [
   "dep:locktick",
   "snarkos-node/locktick",
@@ -24,7 +25,7 @@ locktick = [
   "snarkos-node-rest/locktick",
   "snarkvm/locktick"
 ]
-metrics = [ "dep:metrics", "snarkos-node/metrics" ]
+metrics = [ "dep:snarkos-node-metrics", "snarkos-node/metrics" ]
 cuda = [
   "snarkvm/cuda",
   "snarkos-account/cuda",
@@ -34,8 +35,10 @@ cuda = [
 ]
 test_network = [ 
   "snarkvm/test_targets", 
-  "snarkvm/test_consensus_heights" 
+  "snarkvm/test_consensus_heights",
+  "snarkvm/dev-print"
 ]
+serial = [ ]
 
 [dependencies.aleo-std]
 workspace = true
@@ -51,10 +54,10 @@ workspace = true
 
 [dependencies.clap]
 workspace = true
-features = [ "derive", "color", "unstable-styles", "help" ]
+features = [ "derive", "color", "unstable-styles", "help", "cargo", "usage", "suggestions" ]
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.crossterm]
 workspace = true
@@ -64,63 +67,54 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../node/metrics"
-version = "=3.8.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.num_cpus]
-version = "1"
+workspace = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.rand]
-version = "0.8"
-default-features = false
+workspace = true
 
 [dependencies.rand_chacha]
-version = "0.3.0"
-default-features = false
+workspace = true
 
 [dependencies.rayon]
-version = "1"
+workspace = true
 
 [dependencies.self_update]
 version = "0.42"
 features = [ "archive-zip", "compression-zip-deflate" ]
 
 [dependencies.serde]
-version = "1"
+workspace = true
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
-path = "../account"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-display]
-path = "../display"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node]
-path = "../node"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-cdn]
-path = "../node/cdn"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkos-node-rest]
-path = "../node/rest"
-version = "=3.8.0"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
@@ -133,40 +127,32 @@ version = "0.9"
 version = "3"
 
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.thiserror]
-version = "2.0.11"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
 features = [ "rt" ]
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
 
 [dependencies.tracing-subscriber]
-version = "0.3"
+workspace = true
 features = [ "env-filter" ]
 
 [dependencies.ureq]
-version = "2.9"
+version = "3"
 features = ["json"]
+default-features = true
 
 [dependencies.zeroize]
 version = "1"
 features = [ "derive" ]
 
-#TODO remove this once we upgrade to Rust 1.85 or above
-[dependencies.base64ct]
-version = "=1.7"
-
 [target."cfg(target_family = \"unix\")".dependencies.nix]
 version = "0.30"
 default-features = false
 features = [ "resource" ]
-
-[package.metadata.cargo-machete]
-ignored = [
-  "base64ct", # needed to force a version compatible with Rust 1.82
-]

@@ -22,6 +22,9 @@ extern crate async_trait;
 #[macro_use]
 extern crate tracing;
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 pub use snarkos_node_bft_events as events;
 pub use snarkos_node_bft_ledger_service as ledger_service;
 pub use snarkos_node_bft_storage_service as storage_service;

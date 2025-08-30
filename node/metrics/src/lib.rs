@@ -117,7 +117,7 @@ pub fn add_transmission_latency_metric<N: Network>(
     let ts_now = OffsetDateTime::now_utc().unix_timestamp();
 
     // Determine which keys to remove.
-    let keys_to_remove = cfg_iter!(transmissions_tracker)
+    let keys_to_remove = cfg_iter!(&*transmissions_tracker)
         .flat_map(|(transmission_id, timestamp)| {
             let elapsed_time = std::time::Duration::from_secs((ts_now - *timestamp) as u64);
 

@@ -16,8 +16,10 @@
 mod router;
 
 use crate::traits::NodeInterface;
+
 use snarkos_account::Account;
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
@@ -28,10 +30,10 @@ use snarkos_node_router::{
     Routing,
     messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::BlockSync;
+use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
     P2P,
-    protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
+    protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
 use snarkvm::prelude::{
     Ledger,
@@ -72,6 +74,8 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The shutdown signal.
     shutdown: Arc<AtomicBool>,
+    /// Keeps track of sending pings.
+    ping: Arc<Ping<N>>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
@@ -85,10 +89,11 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_peers: &[SocketAddr],
         trusted_validators: &[SocketAddr],
         genesis: Block<N>,
-        cdn: Option<String>,
+        cdn: Option<http::Uri>,
         storage_mode: StorageMode,
         allow_external_peers: bool,
         dev_txs: bool,
+        dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         // Initialize the signal handler.
@@ -96,17 +101,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Initialize the ledger.
         let ledger = Ledger::load(genesis, storage_mode.clone())?;
-
-        // Initialize the CDN.
-        if let Some(base_url) = cdn {
-            // Sync the ledger with the CDN.
-            if let Err((_, error)) =
-                snarkos_node_cdn::sync_ledger_with_cdn(&base_url, ledger.clone(), shutdown.clone()).await
-            {
-                crate::log_clean_error(&storage_mode);
-                return Err(error);
-            }
-        }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
@@ -124,12 +118,14 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
-            matches!(storage_mode, StorageMode::Development(_)),
+            dev.is_some(),
         )
         .await?;
 
         // Initialize the block synchronization logic.
         let sync = Arc::new(BlockSync::new(ledger_service.clone()));
+        let locators = sync.get_block_locators()?;
+        let ping = Arc::new(Ping::new(router.clone(), locators));
 
         // Initialize the consensus layer.
         let consensus = Consensus::new(
@@ -139,6 +135,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             bft_ip,
             trusted_validators,
             storage_mode.clone(),
+            ping.clone(),
+            dev,
         )
         .await?;
 
@@ -148,18 +146,43 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             consensus: consensus.clone(),
             router,
             rest: None,
-            sync,
+            sync: sync.clone(),
+            ping,
             handles: Default::default(),
-            shutdown,
+            shutdown: shutdown.clone(),
         };
+
+        // Perform sync with CDN (if enabled).
+        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown)));
+
         // Initialize the transaction pool.
-        node.initialize_transaction_pool(storage_mode, dev_txs)?;
+        node.initialize_transaction_pool(dev, dev_txs)?;
 
         // Initialize the REST server.
         if let Some(rest_ip) = rest_ip {
-            node.rest =
-                Some(Rest::start(rest_ip, rest_rps, Some(consensus), ledger.clone(), Arc::new(node.clone())).await?);
+            node.rest = Some(
+                Rest::start(
+                    rest_ip,
+                    rest_rps,
+                    Some(consensus),
+                    ledger.clone(),
+                    Arc::new(node.clone()),
+                    cdn_sync.clone(),
+                    sync,
+                )
+                .await?,
+            );
         }
+
+        // Set up everything else after CDN sync is done.
+        if let Some(cdn_sync) = cdn_sync {
+            if let Err(error) = cdn_sync.wait().await {
+                crate::log_clean_error(&storage_mode);
+                node.shut_down().await;
+                return Err(error);
+            }
+        }
+
         // Initialize the routing.
         node.initialize_routing().await;
         // Initialize the notification message loop.
@@ -179,9 +202,12 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     pub fn rest(&self) -> &Option<Rest<N, C, Self>> {
         &self.rest
     }
-}
 
-impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
+    /// Returns the router.
+    pub fn router(&self) -> &Router<N> {
+        &self.router
+    }
+
     // /// Initialize the transaction pool.
     // fn initialize_transaction_pool(&self, dev: Option<u16>) -> Result<()> {
     //     use snarkvm::{
@@ -353,7 +379,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     // }
 
     /// Initialize the transaction pool.
-    fn initialize_transaction_pool(&self, storage_mode: StorageMode, dev_txs: bool) -> Result<()> {
+    fn initialize_transaction_pool(&self, dev: Option<u16>, dev_txs: bool) -> Result<()> {
         use snarkvm::console::{
             program::{Identifier, Literal, ProgramID, Value},
             types::U64,
@@ -364,9 +390,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         let locator = (ProgramID::from_str("credits.aleo")?, Identifier::from_str("transfer_public")?);
 
         // Determine whether to start the loop.
-        match storage_mode {
+        match dev {
             // If the node is running in development mode, only generate if you are allowed.
-            StorageMode::Development(id) => {
+            Some(id) => {
                 // If the node is not the first node, or if we should not create dev traffic, do not start the loop.
                 if id != 0 || !dev_txs {
                     return Ok(());
@@ -503,6 +529,7 @@ mod tests {
             storage_mode,
             false,
             dev_txs,
+            None,
             Default::default(),
         )
         .await

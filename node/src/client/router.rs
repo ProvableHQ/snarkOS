@@ -36,7 +36,7 @@ use snarkvm::{
     prelude::{Network, block::Transaction},
 };
 
-use std::{io, net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Client<N, C> {
     /// Returns a reference to the TCP instance.
@@ -62,29 +62,16 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
 }
 
 #[async_trait]
-impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C>
-where
-    Self: Outbound<N>,
-{
+impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
         let Some(peer_ip) = self.router.resolve_to_listener(&peer_addr) else { return };
-        // Promote the peer's status from "connecting" to "connected".
-        self.router().insert_connected_peer(peer_ip);
         // If it's a bootstrap peer, first request its peers.
         if self.router.bootstrap_peers().contains(&peer_ip) {
-            Outbound::send(self, peer_ip, Message::PeerRequest(PeerRequest));
+            self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
         }
-        // Retrieve the block locators.
-        let block_locators = match self.sync.get_block_locators() {
-            Ok(block_locators) => Some(block_locators),
-            Err(e) => {
-                error!("Failed to get block locators: {e}");
-                return;
-            }
-        };
         // Send the first `Ping` message to the peer.
-        self.send_ping(peer_ip, block_locators);
+        self.ping.on_peer_connected(peer_ip);
     }
 }
 
@@ -96,18 +83,6 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Client<N, C> {
             self.sync.remove_peer(&peer_ip);
             self.router.remove_connected_peer(peer_ip);
         }
-    }
-}
-
-#[async_trait]
-impl<N: Network, C: ConsensusStorage<N>> Writing for Client<N, C> {
-    type Codec = MessageCodec<N>;
-    type Message = Message<N>;
-
-    /// Creates an [`Encoder`] used to write the outbound messages to the target stream.
-    /// The `side` parameter indicates the connection side **from the node's perspective**.
-    fn codec(&self, _addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        Default::default()
     }
 }
 
@@ -149,7 +124,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             warn!("Failed to process inbound message from '{peer_addr}' - {error}");
             if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
                 warn!("Disconnecting from '{peer_ip}' for protocol violation");
-                Outbound::send(self, peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
+                self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
                 // Disconnect from this peer.
                 self.router().disconnect(peer_ip);
             }
@@ -178,7 +153,18 @@ impl<N: Network, C: ConsensusStorage<N>> CommunicationService for Client<N, C> {
         peer_ip: SocketAddr,
         message: Self::Message,
     ) -> Option<tokio::sync::oneshot::Receiver<io::Result<()>>> {
-        Outbound::send(self, peer_ip, message)
+        self.router().send(peer_ip, message)
+    }
+
+    fn ban_peer(&self, peer_ip: SocketAddr) {
+        debug!("Banning peer {peer_ip} for timing out on block requests");
+
+        let tcp = self.router.tcp().clone();
+        tcp.banned_peers().update_ip_ban(peer_ip.ip());
+
+        tokio::spawn(async move {
+            tcp.disconnect(peer_ip).await;
+        });
     }
 }
 
@@ -198,8 +184,9 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Client<N, C> {
         self.sync.is_block_synced()
     }
 
-    /// Returns the number of blocks this node is behind the greatest peer height.
-    fn num_blocks_behind(&self) -> u32 {
+    /// Returns the number of blocks this node is behind the greatest peer height,
+    /// or `None` if not connected to peers yet.
+    fn num_blocks_behind(&self) -> Option<u32> {
         self.sync.num_blocks_behind()
     }
 }
@@ -224,21 +211,18 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
             }
         };
         // Send the `BlockResponse` message to the peer.
-        Outbound::send(self, peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
+        self.router().send(peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
         true
     }
 
     /// Handles a `BlockResponse` message.
     fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
-        match self.sync.insert_block_responses(peer_ip, blocks) {
-            Ok(()) => {
-                self.sync.try_advancing_block_synchronization();
-                true
-            }
-            Err(error) => {
-                warn!("{error}");
-                false
-            }
+        // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
+        if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks) {
+            warn!("Failed to insert block response: {err}");
+            false
+        } else {
+            true
         }
     }
 
@@ -254,27 +238,13 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         }
 
         // Send a `Pong` message to the peer.
-        Outbound::send(self, peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
+        self.router().send(peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
         true
     }
 
     /// Sleeps for a period and then sends a `Ping` message to the peer.
     fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> bool {
-        // Spawn an asynchronous task for the `Ping` request.
-        let self_ = self.clone();
-        tokio::spawn(async move {
-            // Sleep for the preset time before sending a `Ping` request.
-            tokio::time::sleep(Duration::from_secs(Self::PING_SLEEP_IN_SECS)).await;
-            // Check that the peer is still connected.
-            if self_.router().is_connected(&peer_ip) {
-                // Retrieve the block locators.
-                match self_.sync.get_block_locators() {
-                    // Send a `Ping` message to the peer.
-                    Ok(block_locators) => self_.send_ping(peer_ip, Some(block_locators)),
-                    Err(e) => error!("Failed to get block locators - {e}"),
-                }
-            }
-        });
+        self.ping.on_pong_received(peer_ip);
         true
     }
 
@@ -291,7 +261,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         // Retrieve the latest block header.
         let block_header = Data::Object(self.ledger.latest_header());
         // Send the `PuzzleResponse` message to the peer.
-        Outbound::send(self, peer_ip, Message::PuzzleResponse(PuzzleResponse { epoch_hash, block_header }));
+        self.router().send(peer_ip, Message::PuzzleResponse(PuzzleResponse { epoch_hash, block_header }));
         true
     }
 

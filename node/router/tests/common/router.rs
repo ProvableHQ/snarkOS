@@ -93,16 +93,7 @@ impl<N: Network> Handshake for TestRouter<N> {
 
 #[async_trait]
 impl<N: Network> OnConnect for TestRouter<N> {
-    async fn on_connect(&self, peer_addr: SocketAddr) {
-        let peer_ip = if let Some(ip) = self.router().resolve_to_listener(&peer_addr) {
-            ip
-        } else {
-            panic!("The peer IP should be known by the time OnConnect is triggered!");
-        };
-
-        // Promote the peer's status from "connecting" to "connected".
-        self.router().insert_connected_peer(peer_ip);
-    }
+    async fn on_connect(&self, _peer_addr: SocketAddr) {}
 }
 
 #[async_trait]
@@ -168,8 +159,8 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
     }
 
     /// Returns the number of blocks this node is behind the greatest peer height.
-    fn num_blocks_behind(&self) -> u32 {
-        0
+    fn num_blocks_behind(&self) -> Option<u32> {
+        None
     }
 }
 

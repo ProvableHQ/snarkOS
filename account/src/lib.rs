@@ -185,7 +185,9 @@ mod tests {
         let mut rng = TestRng::default();
         // Prepare the account and message.
         let account = Account::<CurrentNetwork>::new(&mut rng).unwrap();
-        let message = (0..10).map(|_| rng.gen::<u8>()).collect::<Vec<u8>>();
+
+        // TODO(kaimast): remove once we upgrade the rand crate
+        let message = (0..10).map(|_| rng.r#gen::<u8>()).collect::<Vec<u8>>();
         // Sign and verify.
         let signature = account.sign_bytes(&message, &mut rng).unwrap();
         assert!(account.verify_bytes(&message, &signature));
@@ -197,7 +199,7 @@ mod tests {
         let mut rng = TestRng::default();
         // Prepare the account and message.
         let account = Account::<CurrentNetwork>::new(&mut rng).unwrap();
-        let message = (0..10).map(|_| rng.gen::<bool>()).collect::<Vec<bool>>();
+        let message = (0..10).map(|_| rng.r#gen::<bool>()).collect::<Vec<bool>>();
         // Sign and verify.
         let signature = account.sign_bits(&message, &mut rng).unwrap();
         assert!(account.verify_bits(&message, &signature));

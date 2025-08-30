@@ -16,11 +16,11 @@
 use crate::{Heartbeat, Inbound, Outbound};
 use snarkos_node_tcp::{
     P2P,
-    protocols::{Disconnect, Handshake, OnConnect},
+    protocols::{Disconnect, Handshake, OnConnect, Writing},
 };
 use snarkvm::prelude::Network;
 
-use core::time::Duration;
+use std::time::{Duration, Instant};
 
 #[async_trait]
 pub trait Routing<N: Network>:
@@ -31,7 +31,7 @@ pub trait Routing<N: Network>:
         // Enable the TCP protocols.
         self.enable_handshake().await;
         self.enable_reading().await;
-        self.enable_writing().await;
+        self.router().enable_writing().await;
         self.enable_disconnect().await;
         self.enable_on_connect().await;
         // Enable the TCP listener. Note: This must be called after the above protocols.
@@ -42,18 +42,32 @@ pub trait Routing<N: Network>:
 
     // Start listening for inbound connections.
     async fn enable_listener(&self) {
-        self.tcp().enable_listener().await.expect("Failed to enable the TCP listener");
+        let listen_addr = self.tcp().enable_listener().await.expect("Failed to enable the TCP listener");
+        debug!("Listening for peer connections at address {listen_addr:?}");
     }
 
-    /// Initialize a new instance of the heartbeat.
+    /// Spawns the heartbeat background task for this instance of `Routing`.
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
         self.router().spawn(async move {
+            // Sleep for `HEARTBEAT_IN_SECS` seconds.
+            let min_heartbeat_interval = Duration::from_secs(Self::HEARTBEAT_IN_SECS);
+            let mut last_update = Instant::now();
+
             loop {
                 // Process a heartbeat in the router.
-                self_clone.heartbeat();
-                // Sleep for `HEARTBEAT_IN_SECS` seconds.
-                tokio::time::sleep(Duration::from_secs(Self::HEARTBEAT_IN_SECS)).await;
+                self_clone.heartbeat().await;
+
+                // Figure out how long the heartbeat took
+                let now = Instant::now();
+                let elapsed = now.saturating_duration_since(last_update);
+                last_update = now;
+
+                // (Potentially) sleep to avoid invoking heartbeat too frequently.
+                let sleep_time = min_heartbeat_interval.saturating_sub(elapsed);
+                if !sleep_time.is_zero() {
+                    tokio::time::sleep(sleep_time).await;
+                }
             }
         });
     }
