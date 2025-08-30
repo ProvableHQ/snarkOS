@@ -40,10 +40,17 @@ jobs:
             console.log('Latest snarkVM staging commit:', latestCommit);
             core.setOutput('latest_commit', latestCommit);
             
-            // Get current commit from Cargo.toml
+            // Get current commit from Cargo.toml snarkvm dependency section
             const fs = require('fs');
             const cargoToml = fs.readFileSync('Cargo.toml', 'utf8');
-            const revMatch = cargoToml.match(/^rev = "([^"]+)"/m);
+            
+            // Find the snarkvm workspace dependency section and extract the rev
+            const snarkVmSection = cargoToml.match(/\[workspace\.dependencies\.snarkvm\]([\s\S]*?)(?=\n\[|$)/);
+            if (!snarkVmSection) {
+              throw new Error('Could not find snarkvm dependency section in Cargo.toml');
+            }
+            
+            const revMatch = snarkVmSection[1].match(/rev = "([^"]+)"/);
             const currentCommit = revMatch ? revMatch[1] : '';
             console.log('Current snarkVM commit:', currentCommit);
             core.setOutput('current_commit', currentCommit);
@@ -91,25 +98,29 @@ jobs:
             exit 1
           fi
           
-          # Update the rev in Cargo.toml
+          # First, update the rev in Cargo.toml to point to the new commit
           sed -i 's/rev = "[^"]*"/rev = "'$LATEST_COMMIT'"/' Cargo.toml
           
-          # Verify the change was made
-          echo "Updated Cargo.toml:"
-          grep -A 5 -B 5 "snarkvm" Cargo.toml | grep -A 3 -B 3 "rev = "
+          # Then use cargo update to properly update the lockfile and validate the change
+          echo "Updating snarkvm dependency to $LATEST_COMMIT using cargo update..."
+          cargo update --precise "$LATEST_COMMIT" snarkvm
+          
+          # Verify the change was made in Cargo.toml
+          echo "Updated Cargo.toml snarkvm dependency:"
+          grep -A 5 -B 2 "\[workspace\.dependencies\.snarkvm\]" Cargo.toml
           
           # Verify the new commit hash is correctly set
-          NEW_REV=$(grep -E '^rev = ' Cargo.toml | sed 's/rev = "\(.*\)"/\1/')
+          NEW_REV=$(grep -A 5 "\[workspace\.dependencies\.snarkvm\]" Cargo.toml | grep -E '^\s*rev = ' | sed 's/.*rev = "\(.*\)".*/\1/')
           if [ "$NEW_REV" != "$LATEST_COMMIT" ]; then
             echo "Error: Failed to update rev correctly. Expected: $LATEST_COMMIT, Got: $NEW_REV"
             exit 1
           fi
-          echo "✅ Successfully updated snarkVM rev to $LATEST_COMMIT"
+          echo "✅ Successfully updated snarkVM dependency to $LATEST_COMMIT"
 
       - name: Commit and push changes
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
-          git add Cargo.toml
+          git add Cargo.toml Cargo.lock
           git commit --no-verify -m "Update snarkVM to latest staging commit ${{ steps.snarkvm-commit.outputs.latest_commit }}
 
           Previous commit: ${{ steps.snarkvm-commit.outputs.current_commit }}
