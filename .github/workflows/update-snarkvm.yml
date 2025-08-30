@@ -66,7 +66,7 @@ jobs:
       - name: Create or checkout snarkvm-update branch
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
-          # Check if snarkvm-update branch exists
+          # Check if snarkvm-update branch exists on remote
           if git ls-remote --exit-code --heads origin snarkvm-update; then
             echo "Branch snarkvm-update exists, checking it out"
             git fetch origin snarkvm-update
@@ -76,21 +76,57 @@ jobs:
           else
             echo "Creating new branch snarkvm-update from staging"
             git checkout -b snarkvm-update
+            echo "⚠️ Note: snarkvm-update branch was created locally but needs to be pushed manually first time"
+            echo "Please run: git push origin snarkvm-update"
+            echo "Or follow the instructions in CREATE_SNARKVM_BRANCH.md"
           fi
 
       - name: Update snarkVM dependency
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
+          # Validate the commit hash format (should be 40 chars hex or 7+ chars)
+          LATEST_COMMIT="${{ steps.snarkvm-commit.outputs.latest_commit }}"
+          if [[ ! "$LATEST_COMMIT" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "Error: Invalid commit hash format: $LATEST_COMMIT"
+            exit 1
+          fi
+          
           # Update the rev in Cargo.toml
-          sed -i 's/rev = "[^"]*"/rev = "${{ steps.snarkvm-commit.outputs.latest_commit }}"/' Cargo.toml
+          sed -i 's/rev = "[^"]*"/rev = "'$LATEST_COMMIT'"/' Cargo.toml
           
           # Verify the change was made
           echo "Updated Cargo.toml:"
           grep -A 5 -B 5 "snarkvm" Cargo.toml | grep -A 3 -B 3 "rev = "
+          
+          # Verify the new commit hash is correctly set
+          NEW_REV=$(grep -E '^rev = ' Cargo.toml | sed 's/rev = "\(.*\)"/\1/')
+          if [ "$NEW_REV" != "$LATEST_COMMIT" ]; then
+            echo "Error: Failed to update rev correctly. Expected: $LATEST_COMMIT, Got: $NEW_REV"
+            exit 1
+          fi
+          echo "✅ Successfully updated snarkVM rev to $LATEST_COMMIT"
 
       - name: Commit and push changes
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
           git add Cargo.toml
-          git commit --no-verify -m "Update snarkVM to latest staging commit ${{ steps.snarkvm-commit.outputs.latest_commit }}"
+          git commit --no-verify -m "Update snarkVM to latest staging commit ${{ steps.snarkvm-commit.outputs.latest_commit }}
+
+          Previous commit: ${{ steps.snarkvm-commit.outputs.current_commit }}
+          Latest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}
+          
+          This update was performed automatically by the snarkVM update workflow."
           git push origin snarkvm-update
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Current snarkVM commit: ${{ steps.snarkvm-commit.outputs.current_commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest snarkVM commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Update needed: ${{ steps.snarkvm-commit.outputs.update_needed }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.snarkvm-commit.outputs.update_needed }}" = "true" ]; then
+            echo "- ✅ snarkVM dependency updated successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ℹ️ No update required" >> $GITHUB_STEP_SUMMARY
+          fi
