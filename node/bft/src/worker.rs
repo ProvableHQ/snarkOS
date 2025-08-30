@@ -633,7 +633,7 @@ mod tests {
                 transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
             ) -> Result<Block<N>>;
             fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
-            fn transaction_spent_cost_in_microcredits(&self, transaction_id: N::TransactionID, transaction: Transaction<N>) -> Result<u64>;
+            fn transaction_spent_cost_in_microcredits(&self, transaction_id: N::TransactionID, transaction: Transaction<N>, consensus_version: ConsensusVersion) -> Result<u64>;
         }
     }
 

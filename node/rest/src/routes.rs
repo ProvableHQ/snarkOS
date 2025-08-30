@@ -20,6 +20,9 @@ use snarkvm::{
     prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
 };
 
+use axum::{Json, extract::rejection::JsonRejection};
+
+use anyhow::{Context, anyhow};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -30,6 +33,15 @@ use std::{collections::HashMap, sync::atomic::Ordering};
 use rayon::prelude::*;
 
 use version::VersionInfo;
+
+/// Deserialize a CSV string into a vector of strings.
+fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(de)?;
+    Ok(if s.trim().is_empty() { Vec::new() } else { s.split(',').map(|x| x.trim().to_string()).collect() })
+}
 
 /// The `get_blocks` query object.
 #[derive(Deserialize, Serialize)]
@@ -56,6 +68,13 @@ pub(crate) struct Metadata {
 #[derive(Copy, Clone, Deserialize, Serialize)]
 pub(crate) struct CheckTransaction {
     check_transaction: Option<bool>,
+}
+
+/// The query object for `get_state_paths_for_commitments`.
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct Commitments {
+    #[serde(deserialize_with = "de_csv")]
+    commitments: Vec<String>,
 }
 
 /// The return value for a `sync_status` query.
@@ -112,13 +131,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Manually parse the height or the height of the hash, axum doesn't support different types
         // for the same path param.
         let block = if let Ok(height) = height_or_hash.parse::<u32>() {
-            rest.ledger.get_block(height)?
+            rest.ledger.get_block(height).with_context(|| "Failed to get block by height")?
+        } else if let Ok(hash) = height_or_hash.parse::<N::BlockHash>() {
+            rest.ledger.get_block_by_hash(&hash).with_context(|| "Failed to get block by hash")?
         } else {
-            let hash = height_or_hash
-                .parse::<N::BlockHash>()
-                .map_err(|_| RestError("invalid input, it is neither a block height nor a block hash".to_string()))?;
-
-            rest.ledger.get_block_by_hash(&hash)?
+            return Err(RestError::bad_request(anyhow!(
+                "invalid input, it is neither a block height nor a block hash"
+            )));
         };
 
         Ok(ErasedJson::pretty(block))
@@ -136,12 +155,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         // Ensure the end height is greater than the start height.
         if start_height > end_height {
-            return Err(RestError("Invalid block range".to_string()));
+            return Err(RestError::bad_request(anyhow!("Invalid block range")));
         }
 
         // Ensure the block range is bounded.
         if end_height - start_height > MAX_BLOCK_RANGE {
-            return Err(RestError(format!(
+            return Err(RestError::bad_request(anyhow!(
                 "Cannot request more than {MAX_BLOCK_RANGE} blocks per call (requested {})",
                 end_height - start_height
             )));
@@ -159,7 +178,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Fetch the blocks from ledger and serialize to json.
         match tokio::task::spawn_blocking(get_json_blocks).await {
             Ok(json) => json,
-            Err(err) => Err(RestError(format!("Failed to get blocks '{start_height}..{end_height}' - {err}"))),
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+
+                Err(RestError::internal_server_error(
+                    err.context(format!("Failed to get blocks '{start_height}..{end_height}'")),
+                ))
+            }
         }
     }
 
@@ -239,7 +264,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id)?))
+        // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
+        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+            if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
+        })?))
     }
 
     // GET /<network>/transaction/confirmed/{transactionID}
@@ -247,7 +275,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_confirmed_transaction(tx_id)?))
+        // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
+        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+            if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
+        })?))
     }
 
     // GET /<network>/transaction/unconfirmed/{transactionID}
@@ -255,7 +286,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_unconfirmed_transaction(&tx_id)?))
+        // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
+        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+            if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
+        })?))
     }
 
     // GET /<network>/memoryPool/transmissions
@@ -264,7 +298,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Some(consensus) => {
                 Ok(ErasedJson::pretty(consensus.unconfirmed_transmissions().collect::<IndexMap<_, _>>()))
             }
-            None => Err(RestError("Route isn't available for this node type".to_string())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
 
@@ -272,7 +306,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub(crate) async fn get_memory_pool_solutions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
         match rest.consensus {
             Some(consensus) => Ok(ErasedJson::pretty(consensus.unconfirmed_solutions().collect::<IndexMap<_, _>>())),
-            None => Err(RestError("Route isn't available for this node type".to_string())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
 
@@ -280,7 +314,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub(crate) async fn get_memory_pool_transactions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
         match rest.consensus {
             Some(consensus) => Ok(ErasedJson::pretty(consensus.unconfirmed_transactions().collect::<IndexMap<_, _>>())),
-            None => Err(RestError("Route isn't available for this node type".to_string())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
 
@@ -392,7 +426,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         // Return an error if the `all` query parameter is not set to `true`.
         if metadata.all != Some(true) {
-            return Err(RestError("Invalid query parameter. At this time, 'all=true' must be included".to_string()));
+            return Err(RestError::bad_request(anyhow!(
+                "Invalid query parameter. At this time, 'all=true' must be included"
+            )));
         }
 
         // Retrieve the latest height.
@@ -414,8 +450,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 // Return the full mapping without metadata.
                 Ok(ErasedJson::pretty(mapping_values))
             }
-            Ok(Err(err)) => Err(RestError(format!("Unable to read mapping - {err}"))),
-            Err(err) => Err(RestError(format!("Unable to read mapping - {err}"))),
+            Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to read mapping"))),
+            Err(err) => Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
         }
     }
 
@@ -425,6 +461,39 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Path(commitment): Path<Field<N>>,
     ) -> Result<ErasedJson, RestError> {
         Ok(ErasedJson::pretty(rest.ledger.get_state_path_for_commitment(&commitment)?))
+    }
+
+    // GET /<network>/statePaths?commitments=cm1,cm2,...
+    pub(crate) async fn get_state_paths_for_commitments(
+        State(rest): State<Self>,
+        Query(commitments): Query<Commitments>,
+    ) -> Result<ErasedJson, RestError> {
+        // Retrieve the number of commitments.
+        let num_commitments = commitments.commitments.len();
+        // Return an error if no commitments are provided.
+        if num_commitments == 0 {
+            return Err(RestError::unprocessable_entity(anyhow!("No commitments provided")));
+        }
+        // Return an error if the number of commitments exceeds the maximum allowed.
+        if num_commitments > N::MAX_INPUTS {
+            return Err(RestError::unprocessable_entity(anyhow!(
+                "Too many commitments provided (max: {}, got: {})",
+                N::MAX_INPUTS,
+                num_commitments
+            )));
+        }
+
+        // Deserialize the commitments from the query.
+        let commitments = commitments
+            .commitments
+            .iter()
+            .map(|s| {
+                s.parse::<Field<N>>()
+                    .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
     }
 
     // GET /<network>/stateRoot/latest
@@ -460,14 +529,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         // Do not process the request if the node is too far behind to avoid sending outdated data.
         if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError("Unable to  request delegators (node is syncing)".to_string()));
+            return Err(RestError::service_unavailable(anyhow!("Unable to request delegators (node is syncing)")));
         }
 
         // Return the delegators for the given validator.
         match tokio::task::spawn_blocking(move || rest.ledger.get_delegators_for_validator(&validator)).await {
             Ok(Ok(delegators)) => Ok(ErasedJson::pretty(delegators)),
-            Ok(Err(err)) => Err(RestError(format!("Unable to request delegators - {err}"))),
-            Err(err) => Err(RestError(format!("Unable to request delegators - {err}"))),
+            Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to request delegators"))),
+            Err(err) => Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
         }
     }
 
@@ -544,11 +613,22 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub(crate) async fn transaction_broadcast(
         State(rest): State<Self>,
         check_transaction: Query<CheckTransaction>,
-        Json(tx): Json<Transaction<N>>,
+        json_result: Result<Json<Transaction<N>>, JsonRejection>,
     ) -> Result<ErasedJson, RestError> {
+        let Json(tx) = match json_result {
+            Ok(json) => json,
+            Err(JsonRejection::JsonDataError(err)) => {
+                // For JsonDataError, return 422 to let transaction validation handle it
+                return Err(RestError::unprocessable_entity(anyhow!("Invalid transaction data: {}", err)));
+            }
+            Err(other_rejection) => return Err(other_rejection.into()),
+        };
         // Do not process the transaction if the node is too far behind.
         if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError(format!("Unable to broadcast transaction '{}' (node is syncing)", fmt_id(tx.id()))));
+            return Err(RestError::service_unavailable(anyhow!(
+                "Unable to broadcast transaction '{}' (node is syncing)",
+                fmt_id(tx.id())
+            )));
         }
 
         // If the transaction exceeds the transaction size limit, return an error.
@@ -557,7 +637,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // TODO: Should this be a blocking task?
         let buffer = Vec::with_capacity(3000);
         if tx.write_le(LimitedWriter::new(buffer, N::MAX_TRANSACTION_SIZE)).is_err() {
-            return Err(RestError("Transaction size exceeds the byte limit".to_string()));
+            return Err(RestError::bad_request(anyhow!("Transaction size exceeds the byte limit")));
         }
 
         if check_transaction.check_transaction.unwrap_or(false) {
@@ -577,17 +657,26 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                     "Too many deploy verifications in progress",
                 )
             };
+
             // Try to acquire a slot.
-            let prev = counter.fetch_add(1, Ordering::Relaxed);
-            if prev >= limit {
-                counter.fetch_sub(1, Ordering::Relaxed);
-                return Err(RestError(err_msg.to_string()));
+            if counter
+                .fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |val| {
+                        if val < limit { Some(val + 1) } else { None }
+                    },
+                )
+                .is_err()
+            {
+                return Err(RestError::too_many_requests(anyhow!("{}", err_msg)));
             }
+
             // Perform the check.
             let res = rest
                 .ledger
                 .check_transaction_basic(&tx, None, &mut rand::thread_rng())
-                .map_err(|e| RestError(format!("Invalid transaction: {e}")));
+                .map_err(|err| RestError::unprocessable_entity(err.context("Invalid transaction")));
             // Release the slot.
             counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
@@ -620,7 +709,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         // Do not process the solution if the node is too far behind.
         if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError(format!(
+            return Err(RestError::service_unavailable(anyhow!(
                 "Unable to broadcast solution '{}' (node is syncing)",
                 fmt_id(solution.id())
             )));
@@ -644,7 +733,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 // here prevents the to-be aborted solutions from propagating through the network.
                 let prover_address = solution.address();
                 if rest.ledger.is_solution_limit_reached(&prover_address, 0) {
-                    return Err(RestError(format!(
+                    return Err(RestError::unprocessable_entity(anyhow!(
                         "Invalid solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch",
                         fmt_id(solution.id())
                     )));
@@ -655,9 +744,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
-                        return Err(RestError(format!("Invalid solution '{}' - {err}", fmt_id(solution.id()))));
+                        return Err(RestError::unprocessable_entity(
+                            err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
+                        ));
                     }
-                    Err(err) => return Err(RestError(format!("Invalid solution '{}' - {err}", fmt_id(solution.id())))),
+                    Err(err) => {
+                        return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
+                    }
                 }
             }
         }
@@ -678,7 +771,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         backup_path: Query<BackupPath>,
     ) -> Result<ErasedJson, RestError> {
-        rest.ledger.backup_database(&backup_path.path).map_err(RestError::from)?;
+        rest.ledger.backup_database(&backup_path.path)?;
 
         Ok(ErasedJson::pretty(()))
     }
@@ -691,9 +784,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         // Retrieve the history for the given block height and variant.
         let history = snarkvm::synthesizer::History::new(N::ID, rest.ledger.vm().finalize_store().storage_mode());
-        let result = history
-            .load_mapping(height, mapping)
-            .map_err(|_| RestError(format!("Could not load mapping '{mapping}' from block '{height}'")))?;
+        let result = history.load_mapping(height, mapping).map_err(|err| {
+            RestError::not_found(err.context(format!("Could not load mapping '{mapping}' from block '{height}'")))
+        })?;
 
         Ok((StatusCode::OK, [(CONTENT_TYPE, "application/json")], result))
     }
@@ -727,7 +820,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
                 Ok(ErasedJson::pretty(participation_scores))
             }
-            None => Err(RestError("Route isn't available for this node type".to_string())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
 }

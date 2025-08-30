@@ -136,7 +136,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        cdn: Option<String>,
+        cdn: Option<http::Uri>,
         storage_mode: StorageMode,
         rotate_external_peers: bool,
         dev: Option<u16>,

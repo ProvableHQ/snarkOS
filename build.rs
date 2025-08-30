@@ -200,7 +200,7 @@ fn check_locktick_profile() {
         let profile = env::var("PROFILE").unwrap_or_else(|_| "".to_string());
         let manifest = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("Cargo.toml");
         let contents = fs::read_to_string(&manifest).expect("failed to read Cargo.toml");
-        let doc = contents.parse::<Value>().expect("invalid TOML in Cargo.toml");
+        let doc: Value = toml::from_str(&contents).expect("invalid TOML in Cargo.toml");
 
         let profile_table = doc.get("profile").and_then(|p| p.get(profile));
         if let Some(Value::Table(profile_settings)) = profile_table {

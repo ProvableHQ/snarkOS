@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -57,7 +57,7 @@ workspace = true
 features = [ "derive", "color", "unstable-styles", "help", "cargo", "usage", "suggestions" ]
 
 [dependencies.colored]
-version = "3"
+workspace = true
 
 [dependencies.crossterm]
 workspace = true
@@ -76,7 +76,7 @@ workspace = true
 optional = true
 
 [dependencies.num_cpus]
-version = "1"
+workspace = true
 
 [dependencies.parking_lot]
 workspace = true
@@ -130,7 +130,7 @@ version = "3"
 workspace = true
 
 [dependencies.thiserror]
-version = "2.0.11"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
@@ -144,7 +144,7 @@ workspace = true
 features = [ "env-filter" ]
 
 [dependencies.ureq]
-version = "2.9"
+version = "3"
 features = ["json"]
 default-features = true
 
@@ -152,16 +152,7 @@ default-features = true
 version = "1"
 features = [ "derive" ]
 
-#TODO remove this once we upgrade to Rust 1.85 or above
-[dependencies.base64ct]
-version = "=1.7"
-
 [target."cfg(target_family = \"unix\")".dependencies.nix]
 version = "0.30"
 default-features = false
 features = [ "resource" ]
-
-[package.metadata.cargo-machete]
-ignored = [
-  "base64ct", # needed to force a version compatible with Rust 1.82
-]

@@ -23,7 +23,18 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{Address, Field, FromBytes, Network, Result, bail, cfg_into_iter, deployment_cost, execution_cost_v2},
+    prelude::{
+        Address,
+        ConsensusVersion,
+        Field,
+        FromBytes,
+        Network,
+        Result,
+        bail,
+        cfg_into_iter,
+        deployment_cost,
+        execution_cost,
+    },
 };
 
 use anyhow::anyhow;
@@ -398,12 +409,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         &self,
         _transaction_id: N::TransactionID,
         transaction: Transaction<N>,
+        consensus_version: ConsensusVersion,
     ) -> Result<u64> {
         match &transaction {
             // Include the synthesis cost and storage cost for deployments.
             Transaction::Deploy(_, _, _, deployment, _) => {
                 let (_, (storage_cost, synthesis_cost, constructor_cost, _)) =
-                    deployment_cost(&self.ledger.vm().process().read(), deployment)?;
+                    deployment_cost(&self.ledger.vm().process().read(), deployment, consensus_version)?;
                 storage_cost
                     .checked_add(synthesis_cost)
                     .and_then(|synthesis_cost| synthesis_cost.checked_add(constructor_cost))
@@ -413,7 +425,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             }
             // Include the finalize cost and storage cost for executions.
             Transaction::Execute(_, _, execution, _) => {
-                let (total_cost, (_, _)) = execution_cost_v2(&self.ledger.vm().process().read(), execution)?;
+                let (total_cost, (_, _)) =
+                    execution_cost(&self.ledger.vm().process().read(), execution, consensus_version)?;
                 Ok(total_cost)
             }
             // Fee transactions are internal to the VM, they do not have a compute cost.

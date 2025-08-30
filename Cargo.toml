@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -46,7 +46,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "13229cae2"
+rev = "b2e05284e"
 #version = "=4.0.1"
 default-features = false
 #features = [ "circuit", "console", "rocks" ]
@@ -63,6 +63,12 @@ version = "0.8"
 [workspace.dependencies.axum-extra]
 version = "0.10"
 
+[workspace.dependencies.base64]
+version = "0.22"
+
+[workspace.dependencies.bincode]
+version = "1"
+
 [workspace.dependencies.built]
 version = "0.8"
 features = ["git2"]
@@ -70,13 +76,13 @@ features = ["git2"]
 [workspace.dependencies.bytes]
 version = "1"
 
-[workspace.dependencies.base64]
-version = "0.22"
-
 [workspace.dependencies.clap]
 version = "4.4"
 default-features = false
 features = [ "std" ]
+
+[workspace.dependencies.colored]
+version = "3"
 
 [workspace.dependencies.crossterm]
 version = "0.29"
@@ -93,6 +99,9 @@ version = "0.3"
 [workspace.dependencies.lru]
 version = "0.16"
 
+[workspace.dependencies.num_cpus]
+version = "1"
+
 [workspace.dependencies.once_cell]
 version = "1"
 
@@ -102,6 +111,9 @@ version = "=1.6.0" # Remove this once we upgrade to rand 0.9
 [workspace.dependencies.rayon]
 version = "1"
 
+[workspace.dependencies.thiserror]
+version = "2"
+
 [workspace.dependencies.time]
 version = "0.3"
 
@@ -110,6 +122,9 @@ version = "1.28"
 
 [workspace.dependencies.tokio-util]
 version = "0.7"
+
+[workspace.dependencies.http]
+version = "1"
 
 [workspace.dependencies.itertools]
 version = "0.14"
@@ -154,76 +169,76 @@ version = "0.4"
 
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.0.1"
+version = "=4.1.0"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.0.1"
+version = "=4.1.0"
 
 [[bin]]
 name = "snarkos"
@@ -319,7 +334,7 @@ version = "0.8"
 features = [ "git2" ]
 
 [build-dependencies.toml]
-version = "0.8"
+version = "0.9"
 
 [build-dependencies.walkdir]
 version = "2"

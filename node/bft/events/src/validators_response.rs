@@ -45,6 +45,17 @@ impl<N: Network> FromBytes for ValidatorsResponse<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
         // Read the number of validators.
         let num_validators = u16::read_le(&mut reader)?;
+
+        let max_certificates = N::LATEST_MAX_CERTIFICATES()
+            .map_err(|e| error(format!("Failed to extract the maximum number of certificates: {e}")))?;
+
+        // Ensure the number of validators is within bounds
+        if num_validators > max_certificates {
+            return Err(error(format!(
+                "Number of validators exceeds the maximum number of validators ({num_validators} > {max_certificates})",
+            )));
+        }
+
         // Read the validators.
         let mut validators = IndexMap::with_capacity(num_validators as usize);
         for _ in 0..num_validators {
@@ -67,10 +78,13 @@ pub mod prop_tests {
         prelude::{BoxedStrategy, Strategy, any},
     };
     use snarkvm::{
-        prelude::Address,
+        prelude::{Address, Network, TestRng, Uniform},
         utilities::{FromBytes, ToBytes},
     };
-    use std::net::{IpAddr, SocketAddr};
+    use std::{
+        cmp::min,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+    };
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -80,7 +94,9 @@ pub mod prop_tests {
     }
 
     pub fn any_index_map() -> BoxedStrategy<IndexMap<SocketAddr, Address<CurrentNetwork>>> {
-        hash_map(any_valid_socket_addr(), any_valid_address(), 0..50)
+        let max_certificates = min(CurrentNetwork::LATEST_MAX_CERTIFICATES().unwrap() + 1, 50);
+
+        hash_map(any_valid_socket_addr(), any_valid_address(), 0..(max_certificates as usize))
             .prop_map(|map| map.iter().map(|(k, v)| (*k, *v)).collect())
             .boxed()
     }
@@ -97,5 +113,27 @@ pub mod prop_tests {
         validators_response.write_le(&mut bytes).unwrap();
         let decoded = ValidatorsResponse::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap();
         assert_eq![decoded, validators_response];
+    }
+
+    #[test]
+    fn oversized_validators_response_roundtrip() {
+        let mut rng = TestRng::default();
+
+        let num_too_many_certificates = (CurrentNetwork::LATEST_MAX_CERTIFICATES().unwrap() + 1) as usize;
+
+        let mut too_many_certificates = IndexMap::with_capacity(num_too_many_certificates);
+        for i in 0..num_too_many_certificates {
+            let socket_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4130 + i as u16);
+            let address = Address::<CurrentNetwork>::rand(&mut rng);
+            too_many_certificates.insert(socket_addr, address);
+        }
+
+        let oversized_validators_response = ValidatorsResponse { validators: too_many_certificates };
+
+        let mut bytes = BytesMut::default().writer();
+        oversized_validators_response.write_le(&mut bytes).unwrap();
+
+        let error = ValidatorsResponse::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap_err();
+        assert!(error.to_string().contains("Number of validators exceeds the maximum number of validators"));
     }
 }

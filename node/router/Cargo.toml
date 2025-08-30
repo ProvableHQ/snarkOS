@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -27,10 +27,10 @@ serial = [ "snarkos-node-bft-ledger-service/serial" ]
 workspace = true
 
 [dependencies.async-trait]
-version = "0.1"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures]
 version = "0.3.30"
@@ -40,7 +40,7 @@ features = [ "thread-pool" ]
 version = "0.5"
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
@@ -105,7 +105,7 @@ workspace = true
 version = "0.2"
 
 [dev-dependencies.futures-util]
-version = "0.3"
+workspace = true
 features = [ "sink" ]
 
 [dev-dependencies.peak_alloc]

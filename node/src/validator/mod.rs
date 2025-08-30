@@ -89,7 +89,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_peers: &[SocketAddr],
         trusted_validators: &[SocketAddr],
         genesis: Block<N>,
-        cdn: Option<String>,
+        cdn: Option<http::Uri>,
         storage_mode: StorageMode,
         allow_external_peers: bool,
         dev_txs: bool,

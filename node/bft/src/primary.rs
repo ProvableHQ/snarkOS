@@ -593,6 +593,7 @@ impl<N: Network> Primary<N> {
                         let current_block_height = self.ledger.latest_block_height();
                         let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
                         let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+                        let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
                         if current_block_height > consensus_version_v7_height
                             && current_block_height <= consensus_version_v8_height
                             && transaction.is_deploy()
@@ -613,8 +614,11 @@ impl<N: Network> Primary<N> {
 
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                        let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(transaction_id, transaction)
-                        else {
+                        let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
+                            transaction_id,
+                            transaction,
+                            consensus_version,
+                        ) else {
                             debug!(
                                 "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
                                 fmt_id(transaction_id)
@@ -633,11 +637,12 @@ impl<N: Network> Primary<N> {
                         };
 
                         // Check if the next proposal cost exceeds the batch proposal spend limit.
-                        if next_proposal_cost > BatchHeader::<N>::BATCH_SPEND_LIMIT {
+                        let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(current_block_height);
+                        if next_proposal_cost > batch_spend_limit {
                             trace!(
                                 "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {})",
                                 fmt_id(transaction_id),
-                                BatchHeader::<N>::BATCH_SPEND_LIMIT
+                                batch_spend_limit
                             );
 
                             // Reinsert the transmission into the worker.
@@ -890,6 +895,7 @@ impl<N: Network> Primary<N> {
                     // Do not include deployments in a batch proposal.
                     let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
                     let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+                    let consensus_version = N::CONSENSUS_VERSION(block_height)?;
                     if block_height > consensus_version_v7_height
                         && block_height <= consensus_version_v8_height
                         && transaction.is_deploy()
@@ -901,8 +907,11 @@ impl<N: Network> Primary<N> {
 
                     // Compute the transaction spent cost (in microcredits).
                     // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                    let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(*transaction_id, transaction)
-                    else {
+                    let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
+                        *transaction_id,
+                        transaction,
+                        consensus_version,
+                    ) else {
                         bail!(
                             "Invalid batch proposal - Unable to compute transaction spent cost on transaction '{}'",
                             fmt_id(transaction_id)
@@ -919,11 +928,12 @@ impl<N: Network> Primary<N> {
                     };
 
                     // Check if the next proposal cost exceeds the batch proposal spend limit.
-                    if next_proposal_cost > BatchHeader::<N>::BATCH_SPEND_LIMIT {
+                    let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(block_height);
+                    if next_proposal_cost > batch_spend_limit {
                         bail!(
                             "Malicious peer - Batch proposal from '{peer_ip}' exceeds the spend limit on transaction '{}' ({next_proposal_cost} > {})",
                             fmt_id(transaction_id),
-                            BatchHeader::<N>::BATCH_SPEND_LIMIT
+                            batch_spend_limit
                         );
                     }
 
@@ -2379,7 +2389,7 @@ mod tests {
         // Check the workers are empty.
         primary.workers().iter().for_each(|worker| assert!(worker.transmissions().is_empty()));
 
-        // Generate a solution and a transaction.
+        // Generate a solution and transactions.
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
         primary.workers[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
 

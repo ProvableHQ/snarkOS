@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A memory pool for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -62,7 +62,7 @@ workspace = true
 workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures]
 workspace = true

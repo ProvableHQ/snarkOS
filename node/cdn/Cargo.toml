@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-cdn"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CDN client for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -27,10 +27,10 @@ metrics = [ "dep:snarkos-node-metrics" ]
 workspace = true
 
 [dependencies.bincode]
-version = "1.0"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.locktick]
 workspace = true
@@ -38,7 +38,7 @@ features = [ "parking_lot" ]
 optional = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.snarkos-node-metrics]
 workspace = true
@@ -57,12 +57,15 @@ features = [ "rustls-tls" ]
 workspace = true
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 features = [ "preserve_order" ]
 
 [dependencies.snarkvm]
 workspace = true
 features = [ "console", "ledger" ]
+
+[dependencies.http]
+workspace = true
 
 [dependencies.tokio]
 workspace = true

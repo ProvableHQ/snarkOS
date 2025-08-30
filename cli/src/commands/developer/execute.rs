@@ -13,16 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Developer;
-use crate::commands::StoreFormat;
+use super::{DEFAULT_ENDPOINT, Developer};
+use crate::{
+    commands::StoreFormat,
+    helpers::args::{parse_private_key, prepare_endpoint},
+};
+
 use snarkvm::{
-    console::network::{CanaryV0, MainnetV0, Network, TestnetV0},
-    ledger::store::helpers::memory::BlockMemory,
+    console::network::Network,
+    ledger::{query::QueryTrait, store::helpers::memory::BlockMemory},
     prelude::{
         Address,
         Identifier,
         Locator,
-        PrivateKey,
         Process,
         ProgramID,
         VM,
@@ -33,56 +36,76 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Result, anyhow, bail};
-use clap::Parser;
+use anyhow::{Context, Result, bail};
+use clap::{Parser, builder::NonEmptyStringValueParser};
 use colored::Colorize;
 use std::{path::PathBuf, str::FromStr};
+use tracing::debug;
+use ureq::http::Uri;
 use zeroize::Zeroize;
 
 /// Executes an Aleo program function.
 #[derive(Debug, Parser)]
+#[command(
+    group(clap::ArgGroup::new("mode").required(true).multiple(false)),
+    group(clap::ArgGroup::new("key").required(true).multiple(false))
+)]
 pub struct Execute {
     /// The program identifier.
+    #[clap(value_parser=NonEmptyStringValueParser::default())]
     program_id: String,
     /// The function name.
+    #[clap(value_parser=NonEmptyStringValueParser::default())]
     function: String,
     /// The function inputs.
     inputs: Vec<String>,
-    /// Specify the network to create an execution for.
-    #[clap(default_value = "0", long = "network")]
-    pub network: u16,
     /// The private key used to generate the execution.
-    #[clap(short, long)]
+    #[clap(short = 'p', long, group = "key", value_parser=NonEmptyStringValueParser::default())]
     private_key: Option<String>,
     /// Specify the path to a file containing the account private key of the node
-    #[clap(long)]
+    #[clap(long, group = "key", value_parser=NonEmptyStringValueParser::default())]
     private_key_file: Option<String>,
-    /// The endpoint to query node state from.
-    #[clap(short, long)]
-    query: String,
+    /// Use a developer validator key to generate the execution
+    #[clap(long, group = "key")]
+    dev_key: Option<u16>,
+    /// The endpoint to query node state from and broadcast to (if set to broadcast).
+    ///
+    /// The given value is expected to be the base URL, e.g., "https://mynode.com", and will be extended automatically
+    /// to fit the network type and query.
+    /// For example, the base URL may extend to "http://mynode.com/testnet/transaction/unconfirmed/ID" to retrieve
+    /// an unconfirmed transaction on the test network.
+    #[clap(short, long, alias="query", default_value=DEFAULT_ENDPOINT, verbatim_doc_comment)]
+    endpoint: Uri,
     /// The priority fee in microcredits.
-    #[clap(long)]
-    priority_fee: Option<u64>,
+    #[clap(long, default_value_t = 0)]
+    priority_fee: u64,
     /// The record to spend the fee from.
     #[clap(short, long)]
     record: Option<String>,
-    /// The endpoint used to broadcast the generated transaction.
-    #[clap(short, long, conflicts_with = "dry_run")]
-    broadcast: Option<String>,
+    /// Set the URL used to broadcast the transaction (if no value is given, the query endpoint is used).
+    ///
+    /// The given value is expected the full URL of the endpoint, not just the base URL, e.g., "http://mynode.com/testnet/transaction/broadcast".
+    #[clap(short, long, group = "mode", verbatim_doc_comment)]
+    broadcast: Option<Option<Uri>>,
     /// Performs a dry-run of transaction generation.
-    #[clap(short, long, conflicts_with = "broadcast")]
+    #[clap(short, long, group = "mode")]
     dry_run: bool,
     /// Store generated deployment transaction to a local file.
-    #[clap(long)]
+    #[clap(long, group = "mode")]
     store: Option<String>,
     /// If --store is specified, the format in which the transaction should be stored : string or
     /// bytes, by default : bytes.
-    #[clap(long, value_enum, default_value_t = StoreFormat::Bytes)]
+    #[clap(long, value_enum, default_value_t = StoreFormat::Bytes, requires="store")]
     store_format: StoreFormat,
-    /// Specify the path to a directory containing the ledger. Overrides the default path (also for
-    /// dev).
+    /// Wait for the transaction to be accepted by the network. Requires --broadcast.
+    #[clap(long, requires = "broadcast")]
+    wait: bool,
+    /// Timeout in seconds when waiting for transaction confirmation. Default is 60 seconds.
+    #[clap(long, default_value_t = 60, requires = "wait")]
+    timeout: u64,
+    /// Specify the path to a directory containing the ledger. Overrides the default path.
     #[clap(long = "storage_path")]
-    pub storage_path: Option<PathBuf>,
+    storage_path: Option<PathBuf>,
 }
 
 impl Drop for Execute {
@@ -96,47 +119,23 @@ impl Drop for Execute {
 
 impl Execute {
     /// Executes an Aleo program function with the provided inputs.
-    #[allow(clippy::format_in_format_args)]
-    pub fn parse(self) -> Result<String> {
-        // Ensure that the user has specified an action.
-        if !self.dry_run && self.broadcast.is_none() && self.store.is_none() {
-            bail!("❌ Please specify one of the following actions: --broadcast, --dry-run, --store");
-        }
+    pub fn parse<N: Network>(self) -> Result<String> {
+        let endpoint = prepare_endpoint(self.endpoint.clone())?;
 
-        // Construct the execution for the specified network.
-        match self.network {
-            MainnetV0::ID => self.construct_execution::<MainnetV0>(),
-            TestnetV0::ID => self.construct_execution::<TestnetV0>(),
-            CanaryV0::ID => self.construct_execution::<CanaryV0>(),
-            unknown_id => bail!("Unknown network ID ({unknown_id})"),
-        }
-    }
-
-    /// Construct and process the execution transaction.
-    fn construct_execution<N: Network>(&self) -> Result<String> {
         // Specify the query
-        let query = Query::<N, BlockMemory<N>>::from(&self.query);
+        let query = Query::<N, BlockMemory<N>>::from(endpoint.clone());
+
+        // TODO (kaimast): can this ever be true?
         let is_static_query = matches!(query, Query::STATIC(_));
 
         // Retrieve the private key.
-        let key_str = match (self.private_key.as_ref(), self.private_key_file.as_ref()) {
-            (Some(private_key), None) => private_key.to_owned(),
-            (None, Some(private_key_file)) => {
-                let path = private_key_file.parse::<PathBuf>().map_err(|e| anyhow!("Invalid path - {e}"))?;
-                std::fs::read_to_string(path)?.trim().to_string()
-            }
-            (None, None) => bail!("Missing the '--private-key' or '--private-key-file' argument"),
-            (Some(_), Some(_)) => {
-                bail!("Cannot specify both the '--private-key' and '--private-key-file' flags")
-            }
-        };
-        let private_key = PrivateKey::from_str(&key_str)?;
+        let private_key = parse_private_key(self.private_key.clone(), self.private_key_file.clone(), self.dev_key)?;
 
         // Retrieve the program ID.
-        let program_id = ProgramID::from_str(&self.program_id)?;
+        let program_id = ProgramID::from_str(&self.program_id).with_context(|| "Failed to parse program ID")?;
 
         // Retrieve the function.
-        let function = Identifier::from_str(&self.function)?;
+        let function = Identifier::from_str(&self.function).with_context(|| "Failed to parse function ID")?;
 
         // Retrieve the inputs.
         let inputs = self.inputs.iter().map(|input| Value::from_str(input)).collect::<Result<Vec<Value<N>>>>()?;
@@ -159,17 +158,24 @@ impl Execute {
             // Initialize the VM.
             let vm = VM::from(store)?;
 
-            if !is_static_query {
+            if !is_static_query && program_id != ProgramID::from_str("credits.aleo")? {
+                let height = query.current_block_height()?;
+                let version = N::CONSENSUS_VERSION(height)?;
+                debug!("At block height {height} and consensus {version:?}");
+                let edition = Developer::get_latest_edition(&endpoint, &program_id)
+                    .with_context(|| format!("Failed to get latest edition for program {program_id}"))?;
+
                 // Load the program and it's imports into the process.
-                load_program(&self.query, &mut vm.process().write(), &program_id)?;
+                load_program(&query, &mut vm.process().write(), &program_id, edition)?;
             }
 
             // Prepare the fee.
             let fee_record = match &self.record {
-                Some(record_string) => Some(Developer::parse_record(&private_key, record_string)?),
+                Some(record_string) => Some(
+                    Developer::parse_record(&private_key, record_string).with_context(|| "Failed to parse record")?,
+                ),
                 None => None,
             };
-            let priority_fee = self.priority_fee.unwrap_or(0);
 
             // Create a new transaction.
             vm.execute(
@@ -177,33 +183,35 @@ impl Execute {
                 (program_id, function),
                 inputs.iter(),
                 fee_record,
-                priority_fee,
+                self.priority_fee,
                 Some(&query),
                 rng,
-            )?
+            )
+            .with_context(|| "VM failed to execute transaction locally")?
         };
 
         // Check if the public balance is sufficient.
         if self.record.is_none() && !is_static_query {
             // Fetch the public balance.
             let address = Address::try_from(&private_key)?;
-            let public_balance = Developer::get_public_balance(&address, &self.query)?;
+            let public_balance = Developer::get_public_balance(&endpoint, &address)
+                .with_context(|| "Failed to check for sufficient funds to send transaction")?;
 
             // Check if the public balance is sufficient.
             let storage_cost = transaction
                 .execution()
-                .ok_or_else(|| anyhow!("The transaction does not contain an execution"))?
+                .with_context(|| "Failed to get execution cost of transaction")?
                 .size_in_bytes()?;
 
             // Calculate the base fee.
             // This fee is the minimum fee required to pay for the transaction,
             // excluding any finalize fees that the execution may incur.
-            let base_fee = storage_cost.saturating_add(self.priority_fee.unwrap_or(0));
+            let base_fee = storage_cost.saturating_add(self.priority_fee);
 
             // If the public balance is insufficient, return an error.
             if public_balance < base_fee {
                 bail!(
-                    "❌ The public balance of {} is insufficient to pay the base fee for `{}`",
+                    "The public balance of {} is insufficient to pay the base fee for `{}`",
                     public_balance,
                     locator.to_string().bold()
                 );
@@ -214,10 +222,13 @@ impl Execute {
 
         // Determine if the transaction should be broadcast, stored, or displayed to the user.
         Developer::handle_transaction(
+            &endpoint,
             &self.broadcast,
             self.dry_run,
             &self.store,
             self.store_format,
+            self.wait,
+            self.timeout,
             transaction,
             locator.to_string(),
         )
@@ -225,9 +236,14 @@ impl Execute {
 }
 
 /// A helper function to recursively load the program and all of its imports into the process.
-fn load_program<N: Network>(endpoint: &str, process: &mut Process<N>, program_id: &ProgramID<N>) -> Result<()> {
+fn load_program<N: Network>(
+    query: &Query<N, BlockMemory<N>>,
+    process: &mut Process<N>,
+    program_id: &ProgramID<N>,
+    edition: u16,
+) -> Result<()> {
     // Fetch the program.
-    let program = Developer::fetch_program(program_id, endpoint)?;
+    let program = query.get_program(program_id).with_context(|| "Failed to fetch program")?;
 
     // Return early if the program is already loaded.
     if process.contains_program(program.id()) {
@@ -239,13 +255,16 @@ fn load_program<N: Network>(endpoint: &str, process: &mut Process<N>, program_id
         // Add the imports to the process if does not exist yet.
         if !process.contains_program(import_program_id) {
             // Recursively load the program and its imports.
-            load_program(endpoint, process, import_program_id)?;
+            load_program(query, process, import_program_id, edition)
+                .with_context(|| format!("Failed to load imported program {import_program_id}"))?;
         }
     }
 
     // Add the program to the process if it does not already exist.
     if !process.contains_program(program.id()) {
-        process.add_program(&program)?;
+        process
+            .add_programs_with_editions(&[(program, edition)])
+            .with_context(|| format!("Failed to add program {program_id}"))?;
     }
 
     Ok(())
@@ -254,75 +273,131 @@ fn load_program<N: Network>(endpoint: &str, process: &mut Process<N>, program_id
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{CLI, Command};
+    use crate::commands::{CLI, Command, DeveloperCommand};
 
     #[test]
-    fn clap_snarkos_execute() {
-        let arg_vec = vec![
+    fn clap_snarkos_execute() -> Result<()> {
+        let arg_vec = &[
             "snarkos",
             "developer",
             "execute",
             "--private-key",
             "PRIVATE_KEY",
-            "--query",
-            "QUERY",
+            "--endpoint=ENDPOINT",
             "--priority-fee",
             "77",
             "--record",
             "RECORD",
+            "--dry-run",
             "hello.aleo",
             "hello",
             "1u32",
             "2u32",
         ];
-        let cli = CLI::parse_from(arg_vec);
+        let cli = CLI::try_parse_from(arg_vec)?;
 
-        if let Command::Developer(Developer::Execute(execute)) = cli.command {
-            assert_eq!(execute.network, 0);
-            assert_eq!(execute.private_key, Some("PRIVATE_KEY".to_string()));
-            assert_eq!(execute.query, "QUERY");
-            assert_eq!(execute.priority_fee, Some(77));
-            assert_eq!(execute.record, Some("RECORD".into()));
-            assert_eq!(execute.program_id, "hello.aleo".to_string());
-            assert_eq!(execute.function, "hello".to_string());
-            assert_eq!(execute.inputs, vec!["1u32".to_string(), "2u32".to_string()]);
-        } else {
-            panic!("Unexpected result of clap parsing!");
-        }
+        let Command::Developer(developer) = cli.command else {
+            bail!("Unexpected result of clap parsing!");
+        };
+        let DeveloperCommand::Execute(execute) = developer.command else {
+            bail!("Unexpected result of clap parsing!");
+        };
+
+        assert_eq!(developer.network, 0);
+        assert_eq!(execute.private_key, Some("PRIVATE_KEY".to_string()));
+        assert_eq!(execute.endpoint, "ENDPOINT");
+        assert_eq!(execute.priority_fee, 77);
+        assert_eq!(execute.record, Some("RECORD".into()));
+        assert_eq!(execute.program_id, "hello.aleo".to_string());
+        assert_eq!(execute.function, "hello".to_string());
+        assert_eq!(execute.inputs, vec!["1u32".to_string(), "2u32".to_string()]);
+
+        Ok(())
     }
 
     #[test]
-    fn clap_snarkos_execute_pk_file() {
-        let arg_vec = vec![
+    fn clap_snarkos_execute_pk_file() -> Result<()> {
+        let arg_vec = &[
             "snarkos",
             "developer",
             "execute",
             "--private-key-file",
             "PRIVATE_KEY_FILE",
-            "--query",
-            "QUERY",
-            "--priority-fee",
-            "77",
+            "--endpoint=ENDPOINT",
             "--record",
             "RECORD",
+            "--dry-run",
             "hello.aleo",
             "hello",
             "1u32",
             "2u32",
         ];
-        let cli = CLI::parse_from(arg_vec);
+        let cli = CLI::try_parse_from(arg_vec)?;
 
-        if let Command::Developer(Developer::Execute(execute)) = cli.command {
-            assert_eq!(execute.network, 0);
-            assert_eq!(execute.private_key_file, Some("PRIVATE_KEY_FILE".to_string()));
-            assert_eq!(execute.query, "QUERY");
-            assert_eq!(execute.priority_fee, Some(77));
-            assert_eq!(execute.record, Some("RECORD".into()));
-            assert_eq!(execute.program_id, "hello.aleo".to_string());
-            assert_eq!(execute.function, "hello".to_string());
-            assert_eq!(execute.inputs, vec!["1u32".to_string(), "2u32".to_string()]);
-        } else {
-            panic!("Unexpected result of clap parsing!");
-        }
+        let Command::Developer(developer) = cli.command else {
+            bail!("Unexpected result of clap parsing!");
+        };
+        let DeveloperCommand::Execute(execute) = developer.command else {
+            bail!("Unexpected result of clap parsing!");
+        };
+
+        assert_eq!(developer.network, 0);
+        assert_eq!(execute.private_key_file, Some("PRIVATE_KEY_FILE".to_string()));
+        assert_eq!(execute.endpoint, "ENDPOINT");
+        assert_eq!(execute.priority_fee, 0); // Default value.
+        assert_eq!(execute.record, Some("RECORD".into()));
+        assert_eq!(execute.program_id, "hello.aleo".to_string());
+        assert_eq!(execute.function, "hello".to_string());
+        assert_eq!(execute.inputs, vec!["1u32".to_string(), "2u32".to_string()]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn clap_snarkos_execute_two_private_keys() {
+        let arg_vec = &[
+            "snarkos",
+            "developer",
+            "execute",
+            "--private-key",
+            "PRIVATE_KEY",
+            "--private-key-file",
+            "PRIVATE_KEY_FILE",
+            "--endpoint=ENDPOINT",
+            "--priority-fee",
+            "77",
+            "--record",
+            "RECORD",
+            "--dry-run",
+            "hello.aleo",
+            "hello",
+            "1u32",
+            "2u32",
+        ];
+
+        let err = CLI::try_parse_from(arg_vec).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn clap_snarkos_execute_no_private_keys() {
+        let arg_vec = &[
+            "snarkos",
+            "developer",
+            "execute",
+            "--endpoint=ENDPOINT",
+            "--priority-fee",
+            "77",
+            "--record",
+            "RECORD",
+            "--dry-run",
+            "hello.aleo",
+            "hello",
+            "1u32",
+            "2u32",
+        ];
+
+        let err = CLI::try_parse_from(arg_vec).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 }

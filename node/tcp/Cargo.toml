@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-tcp"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A TCP stack for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -59,7 +59,7 @@ features = [ "codec" ]
 workspace = true
 
 [dependencies.thiserror]
-version = "2"
+workspace = true
 
 [dev-dependencies.tokio]
 workspace = true

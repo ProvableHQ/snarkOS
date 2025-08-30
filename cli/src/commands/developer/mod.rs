@@ -28,31 +28,23 @@ pub use scan::*;
 mod transfer_private;
 pub use transfer_private::*;
 
-use snarkvm::{
-    console::network::Network,
-    package::Package,
-    prelude::{
-        Address,
-        Ciphertext,
-        Identifier,
-        Literal,
-        Plaintext,
-        PrivateKey,
-        Program,
-        ProgramID,
-        Record,
-        ToBytes,
-        Value,
-        ViewKey,
-        block::Transaction,
-    },
-};
+use crate::helpers::{args::network_id_parser, logger::initialize_terminal_logger};
 
-use anyhow::{Result, bail, ensure};
+use snarkvm::{package::Package, prelude::*};
+
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Parser, ValueEnum};
 use colored::Colorize;
-use std::{path::PathBuf, str::FromStr};
+use serde::{Serialize, de::DeserializeOwned};
+use std::{
+    path::PathBuf,
+    str::FromStr,
+    thread,
+    time::{Duration, Instant},
+};
+use ureq::http::{self, Uri};
 
+/// The format to store a generated transaction as.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum StoreFormat {
     String,
@@ -61,7 +53,7 @@ pub enum StoreFormat {
 
 /// Commands to deploy and execute transactions
 #[derive(Debug, Parser)]
-pub enum Developer {
+pub enum DeveloperCommand {
     /// Decrypt a ciphertext.
     Decrypt(Decrypt),
     /// Deploy a program.
@@ -74,14 +66,76 @@ pub enum Developer {
     TransferPrivate(TransferPrivate),
 }
 
+const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com/v1";
+
+#[derive(Debug, Parser)]
+pub struct Developer {
+    /// The specific developer command to run.
+    #[clap(subcommand)]
+    command: DeveloperCommand,
+    /// Specify the network to create an execution for.
+    /// [options: 0 = mainnet, 1 = testnet, 2 = canary]
+    #[clap(long, default_value_t=MainnetV0::ID, long, global=true, value_parser = network_id_parser())]
+    network: u16,
+    /// Sets verbosity of log output. By default, no logs are shown.
+    #[clap(long, global = true)]
+    verbosity: Option<u8>,
+}
+
+/// The serialized REST error sent over the network.
+#[derive(Debug, Deserialize)]
+struct RestError {
+    /// The type of error (corresponding to the HTTP status code).
+    error_type: String,
+    /// The top-level error message.
+    message: String,
+    /// The chain of errors that led to the top-level error.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    chain: Vec<String>,
+}
+
+impl RestError {
+    /// Converts a `RestError` into an `anyhow::Error`.
+    pub fn parse(self) -> anyhow::Error {
+        let mut error: Option<anyhow::Error> = None;
+        for next in self.chain.into_iter() {
+            if let Some(previous) = error {
+                error = Some(previous.context(next));
+            } else {
+                error = Some(anyhow!(next));
+            }
+        }
+
+        let toplevel = format!("{}: {}", self.error_type, self.message);
+        if let Some(error) = error { error.context(toplevel) } else { anyhow!(toplevel) }
+    }
+}
+
 impl Developer {
+    /// Runs the developer subcommand chosen by the user.
     pub fn parse(self) -> Result<String> {
-        match self {
-            Self::Decrypt(decrypt) => decrypt.parse(),
-            Self::Deploy(deploy) => deploy.parse(),
-            Self::Execute(execute) => execute.parse(),
-            Self::Scan(scan) => scan.parse(),
-            Self::TransferPrivate(transfer_private) => transfer_private.parse(),
+        if let Some(verbosity) = self.verbosity {
+            initialize_terminal_logger(verbosity).with_context(|| "Failed to initialize terminal logger")?
+        }
+
+        match self.network {
+            MainnetV0::ID => self.parse_inner::<MainnetV0>(),
+            TestnetV0::ID => self.parse_inner::<TestnetV0>(),
+            CanaryV0::ID => self.parse_inner::<CanaryV0>(),
+            unknown_id => bail!("Unknown network ID ({unknown_id})"),
+        }
+    }
+
+    /// Internal logic of [`Self::parse`] for each of the different networks.
+    fn parse_inner<N: Network>(self) -> Result<String> {
+        use DeveloperCommand::*;
+
+        match self.command {
+            Decrypt(decrypt) => decrypt.parse::<N>(),
+            Deploy(deploy) => deploy.parse::<N>(),
+            Execute(execute) => execute.parse::<N>(),
+            Scan(scan) => scan.parse::<N>(),
+            TransferPrivate(transfer_private) => transfer_private.parse::<N>(),
         }
     }
 
@@ -120,76 +174,128 @@ impl Developer {
         }
     }
 
-    /// Fetch the program from the given endpoint.
-    fn fetch_program<N: Network>(program_id: &ProgramID<N>, endpoint: &str) -> Result<Program<N>> {
-        // Get the network being used.
-        let network = match N::ID {
-            snarkvm::console::network::MainnetV0::ID => "mainnet",
-            snarkvm::console::network::TestnetV0::ID => "testnet",
-            snarkvm::console::network::CanaryV0::ID => "canary",
-            unknown_id => bail!("Unknown network ID ({unknown_id})"),
-        };
+    /// Converts the returned JSON error (if any) into an anyhow Error chain.
+    /// If the error was 404, this simply returns `Ok(None)`.
+    fn handle_ureq_result(result: Result<http::Response<ureq::Body>>) -> Result<Option<ureq::Body>> {
+        let response = result?;
 
-        // Send a request to the query node.
-        let response = ureq::get(&format!("{endpoint}/{network}/program/{program_id}")).call();
+        if response.status() == http::StatusCode::OK {
+            Ok(Some(response.into_body()))
+        } else if response.status() == http::StatusCode::NOT_FOUND {
+            Ok(None)
+        } else {
+            let rest_error: RestError =
+                response.into_body().read_json().with_context(|| "Failed to parse error JSON")?;
 
-        // Deserialize the program.
-        match response {
-            Ok(response) => response.into_json().map_err(|err| err.into()),
-            Err(err) => match err {
-                ureq::Error::Status(_status, response) => {
-                    // Debug formatting displays more useful info, especially if the response body is empty.
-                    bail!("Failed to fetch program {program_id}: {response:?}")
-                }
-                err => bail!(err),
-            },
+            Err(rest_error.parse())
         }
     }
 
-    /// Fetch the public balance in microcredits associated with the address from the given endpoint.
-    fn get_public_balance<N: Network>(address: &Address<N>, endpoint: &str) -> Result<u64> {
-        // Initialize the program id and account identifier.
-        let credits = ProgramID::<N>::from_str("credits.aleo")?;
-        let account_mapping = Identifier::<N>::from_str("account")?;
+    /// Helper function to send a POST request with a JSON body to an endpoint and await a JSON response.
+    fn http_post_json<I: Serialize, O: DeserializeOwned>(path: &str, arg: &I) -> Result<Option<O>> {
+        let result =
+            ureq::post(path).config().http_status_as_error(false).build().send_json(arg).map_err(|err| err.into());
 
-        // Get the network being used.
-        let network = match N::ID {
-            snarkvm::console::network::MainnetV0::ID => "mainnet",
-            snarkvm::console::network::TestnetV0::ID => "testnet",
-            snarkvm::console::network::CanaryV0::ID => "canary",
-            unknown_id => bail!("Unknown network ID ({unknown_id})"),
-        };
+        match Self::handle_ureq_result(result).with_context(|| "HTTP POST request failed")? {
+            Some(mut body) => {
+                let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
+                Ok(Some(json))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Helper function to send a GET request to an endpoint and await a JSON response.
+    fn http_get_json<O: DeserializeOwned>(path: &str) -> Result<Option<O>> {
+        let result = ureq::get(path).config().http_status_as_error(false).build().call().map_err(|err| err.into());
+
+        match Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")? {
+            Some(mut body) => {
+                let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
+                Ok(Some(json))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Helper function to send a GET request to an endpoint and await the response.
+    fn http_get(path: &str) -> Result<Option<ureq::Body>> {
+        let result = ureq::get(path).config().http_status_as_error(false).build().call().map_err(|err| err.into());
+
+        Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")
+    }
+
+    /// Wait for a transaction to be confirmed by the network.
+    fn wait_for_transaction_confirmation<N: Network>(
+        endpoint: &Uri,
+        transaction_id: &N::TransactionID,
+        timeout_seconds: u64,
+    ) -> Result<()> {
+        let start_time = Instant::now();
+        let timeout_duration = Duration::from_secs(timeout_seconds);
+        let poll_interval = Duration::from_secs(1); // Poll every second
+
+        while start_time.elapsed() < timeout_duration {
+            // Check if transaction exists in a confirmed block
+            let tx_endpoint = format!("{endpoint}v2/{}/transaction/{transaction_id}", N::SHORT_NAME);
+            let result = Self::http_get(&tx_endpoint).with_context(|| "Failed to check transaction status")?;
+
+            match result {
+                Some(_) => return Ok(()),
+                None => {
+                    // Transaction not found yet, continue polling.
+                    thread::sleep(poll_interval);
+                }
+            }
+        }
+
+        // Timeout reached
+        bail!("❌ Transaction {} was not confirmed within {} seconds", transaction_id, timeout_seconds);
+    }
+
+    /// Gets the latest eidtion of an Aleo program.
+    fn get_latest_edition<N: Network>(endpoint: &Uri, program_id: &ProgramID<N>) -> Result<u16> {
+        match Self::http_get_json(&format!("{endpoint}v2/{}/program/{program_id}/latest_edition", N::SHORT_NAME,))? {
+            Some(edition) => Ok(edition),
+            None => bail!("Got unexpected 404 response"),
+        }
+    }
+
+    /// Gets the public account balance of an Aleo Address (in microcredits).
+    fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<u64> {
+        // Initialize the program id and account identifier.
+        let account_mapping = Identifier::<N>::from_str("account")?;
+        let credits = ProgramID::<N>::from_str("credits.aleo")?;
 
         // Send a request to the query node.
-        let response =
-            ureq::get(&format!("{endpoint}/{network}/program/{credits}/mapping/{account_mapping}/{address}")).call();
-
-        // Deserialize the balance.
-        let balance: Result<Option<Value<N>>> = match response {
-            Ok(response) => response.into_json().map_err(|err| err.into()),
-            Err(err) => match err {
-                ureq::Error::Status(_status, response) => {
-                    bail!(response.into_string().unwrap_or("Response too large!".to_owned()))
-                }
-                err => bail!(err),
-            },
-        };
+        let result: Option<Value<N>> = Self::http_get_json(&format!(
+            "{endpoint}v2/{}/program/{credits}/mapping/{account_mapping}/{address}",
+            N::SHORT_NAME,
+        ))?;
 
         // Return the balance in microcredits.
-        match balance {
-            Ok(Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _)))) => Ok(*amount),
-            Ok(None) => Ok(0),
-            Ok(Some(..)) => bail!("Failed to deserialize balance for {address}"),
-            Err(err) => bail!("Failed to fetch balance for {address}: {err}"),
+        match result {
+            Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(*amount),
+            Some(..) => bail!("Failed to deserialize balance for {address}"),
+            None => Ok(0),
         }
     }
 
     /// Determine if the transaction should be broadcast or displayed to user.
+    ///
+    /// This function expects that exactly one of `dry_run`, `store`, and `broadcast` are `true` (or `Some`).
+    /// `broadcast` can be set to `Some(None)` to broadcast using the default endpoint.
+    /// Alternatively, it can be set to `Some(Some(url))` to providifferent
+    /// endpoint than that used for querying.
+    #[allow(clippy::too_many_arguments)]
     fn handle_transaction<N: Network>(
-        broadcast: &Option<String>,
+        endpoint: &Uri,
+        broadcast: &Option<Option<Uri>>,
         dry_run: bool,
         store: &Option<String>,
         store_format: StoreFormat,
+        wait: bool,
+        timeout: u64,
         transaction: Transaction<N>,
         operation: String,
     ) -> Result<String> {
@@ -227,12 +333,21 @@ impl Developer {
         };
 
         // Determine if the transaction should be broadcast to the network.
-        if let Some(endpoint) = broadcast {
-            // Send the deployment request to the local development node.
-            match ureq::post(endpoint).send_json(&transaction) {
-                Ok(id) => {
-                    // Remove the quotes from the response.
-                    let response_string = id.into_string()?.trim_matches('\"').to_string();
+        if let Some(broadcast_value) = broadcast {
+            let broadcast_endpoint = if let Some(url) = broadcast_value {
+                url.to_string()
+            } else {
+                format!("{endpoint}v2/{}/transaction/broadcast", N::SHORT_NAME)
+            };
+
+            let result: Result<String> = match Self::http_post_json(&broadcast_endpoint, &transaction) {
+                Ok(Some(s)) => Ok(s),
+                Ok(None) => Err(anyhow!("Got unexpected 404 error")),
+                Err(err) => Err(err),
+            };
+
+            match result {
+                Ok(response_string) => {
                     ensure!(
                         response_string == transaction_id.to_string(),
                         "The response does not match the transaction id. ({response_string} != {transaction_id})"
@@ -243,51 +358,50 @@ impl Developer {
                             println!(
                                 "⌛ Deployment {transaction_id} ('{}') has been broadcast to {}.",
                                 operation.bold(),
-                                endpoint
+                                broadcast_endpoint
                             )
                         }
                         Transaction::Execute(..) => {
                             println!(
                                 "⌛ Execution {transaction_id} ('{}') has been broadcast to {}.",
                                 operation.bold(),
-                                endpoint
+                                broadcast_endpoint
                             )
                         }
-                        Transaction::Fee(..) => {
-                            println!("❌ Failed to broadcast fee '{}' to the {}.", operation.bold(), endpoint)
-                        }
+                        _ => unreachable!(),
                     }
-                }
-                Err(error) => {
-                    let error_message = match error {
-                        ureq::Error::Status(code, response) => {
-                            format!("(status code {code}: {:?})", response.into_string()?)
-                        }
-                        ureq::Error::Transport(err) => format!("({err})"),
-                    };
 
-                    match transaction {
-                        Transaction::Deploy(..) => {
-                            bail!("❌ Failed to deploy '{}' to {}: {}", operation.bold(), &endpoint, error_message)
-                        }
-                        Transaction::Execute(..) => {
-                            bail!(
-                                "❌ Failed to broadcast execution '{}' to {}: {}",
-                                operation.bold(),
-                                &endpoint,
-                                error_message
-                            )
-                        }
-                        Transaction::Fee(..) => {
-                            bail!(
-                                "❌ Failed to broadcast fee '{}' to {}: {}",
-                                operation.bold(),
-                                &endpoint,
-                                error_message
-                            )
+                    // If wait is enabled, wait for transaction confirmation
+                    if wait {
+                        println!("⏳ Waiting for transaction confirmation (timeout: {timeout}s)...");
+                        Self::wait_for_transaction_confirmation::<N>(endpoint, &transaction_id, timeout)?;
+
+                        match transaction {
+                            Transaction::Deploy(..) => {
+                                println!("✅ Deployment {transaction_id} ('{}') confirmed!", operation.bold())
+                            }
+                            Transaction::Execute(..) => {
+                                println!("✅ Execution {transaction_id} ('{}') confirmed!", operation.bold())
+                            }
+                            Transaction::Fee(..) => unreachable!(),
                         }
                     }
                 }
+                Err(error) => match transaction {
+                    Transaction::Deploy(..) => {
+                        return Err(error.context(anyhow!(
+                            "Failed to deploy '{op}' to {broadcast_endpoint}",
+                            op = operation.bold()
+                        )));
+                    }
+                    Transaction::Execute(..) => {
+                        return Err(error.context(anyhow!(
+                            "Failed to broadcast execution '{op}' to {broadcast_endpoint}",
+                            op = operation.bold()
+                        )));
+                    }
+                    Transaction::Fee(..) => unreachable!(),
+                },
             };
 
             // Output the transaction id.

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -58,10 +58,10 @@ workspace = true
 workspace = true
 
 [dependencies.async-trait]
-version = "0.1"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures-util]
 workspace = true
@@ -76,7 +76,7 @@ optional = true
 workspace = true
 
 [dependencies.num_cpus]
-version = "1"
+workspace = true
 
 [dependencies.once_cell]
 workspace = true
@@ -85,6 +85,9 @@ workspace = true
 workspace = true
 
 [dependencies.rand]
+workspace = true
+
+[dependencies.http]
 workspace = true
 
 [dependencies.serde_json]

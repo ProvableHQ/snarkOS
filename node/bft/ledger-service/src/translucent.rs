@@ -25,7 +25,7 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{Address, Field, Network, Result, narwhal::BatchCertificate},
+    prelude::{Address, ConsensusVersion, Field, Network, Result, narwhal::BatchCertificate},
 };
 use std::{
     fmt,
@@ -201,7 +201,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         &self,
         transaction_id: N::TransactionID,
         transaction: Transaction<N>,
+        consensus_version: ConsensusVersion,
     ) -> Result<u64> {
-        self.inner.transaction_spent_cost_in_microcredits(transaction_id, transaction)
+        self.inner.transaction_spent_cost_in_microcredits(transaction_id, transaction, consensus_version)
     }
 }

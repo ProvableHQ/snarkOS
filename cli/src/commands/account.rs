@@ -13,6 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::helpers::args::{network_id_parser, parse_private_key};
+
+mod sign;
+use sign::Sign;
+
 use snarkvm::console::{
     account::{Address, PrivateKey, Signature},
     network::{CanaryV0, MainnetV0, Network, TestnetV0},
@@ -32,18 +37,23 @@ use rayon::prelude::*;
 use std::{
     fs::File,
     io::{Read, Write},
-    path::PathBuf,
 };
 
 use zeroize::Zeroize;
 
 /// Commands to manage Aleo accounts.
 #[derive(Debug, Parser, Zeroize)]
+#[command(
+    // Use kebab-case for all arguments (e.g., use the `private-key` flag for the `private_key` field).
+    // This is already the default, but we specify it in case clap's default changes in the future.
+    rename_all = "kebab-case",
+)]
 pub enum Account {
     /// Generates a new Aleo account
     New {
-        /// Specify the network of the account
-        #[clap(default_value = "0", long = "network")]
+        /// Specify the network to create an execution for.
+        /// [options: 0 = mainnet, 1 = testnet, 2 = canary]
+        #[clap(long, default_value_t=MainnetV0::ID, long, value_parser = network_id_parser())]
         network: u16,
         /// Seed the RNG with a numeric value
         #[clap(short = 's', long)]
@@ -55,29 +65,14 @@ pub enum Account {
         #[clap(long)]
         discreet: bool,
         /// Specify the path to a file where to save the account in addition to printing it
-        #[clap(long = "save-to-file")]
+        #[clap(long)]
         save_to_file: Option<String>,
     },
-    Sign {
-        /// Specify the network of the private key to sign with
-        #[clap(default_value = "0", long = "network")]
-        network: u16,
-        /// Specify the account private key of the node
-        #[clap(long = "private-key")]
-        private_key: Option<String>,
-        /// Specify the path to a file containing the account private key of the node
-        #[clap(long = "private-key-file")]
-        private_key_file: Option<String>,
-        /// Message (Aleo value) to sign
-        #[clap(short = 'm', long)]
-        message: String,
-        /// When enabled, parses the message as bytes instead of Aleo literals
-        #[clap(short = 'r', long)]
-        raw: bool,
-    },
+    Sign(Sign),
     Verify {
-        /// Specify the network of the signature to verify
-        #[clap(default_value = "0", long = "network")]
+        /// Specify the network to create an execution for.
+        /// [options: 0 = mainnet, 1 = testnet, 2 = canary]
+        #[clap(long, default_value_t=MainnetV0::ID, long, value_parser = network_id_parser())]
         network: u16,
         /// Address to use for verification
         #[clap(short = 'a', long)]
@@ -100,6 +95,7 @@ fn aleo_literal_to_fields<N: Network>(input: &str) -> Result<Vec<Field<N>>> {
 }
 
 impl Account {
+    /// Run a account command
     pub fn parse(self) -> Result<String> {
         match self {
             Self::New { network, seed, vanity, discreet, save_to_file } => {
@@ -133,27 +129,8 @@ impl Account {
                     },
                 }
             }
-            Self::Sign { network, message, raw, private_key, private_key_file } => {
-                let key = match (private_key, private_key_file) {
-                    (Some(private_key), None) => private_key,
-                    (None, Some(private_key_file)) => {
-                        let path = private_key_file.parse::<PathBuf>().map_err(|e| anyhow!("Invalid path - {e}"))?;
-                        std::fs::read_to_string(path)?.trim().to_string()
-                    }
-                    (None, None) => bail!("Missing the '--private-key' or '--private-key-file' argument"),
-                    (Some(_), Some(_)) => {
-                        bail!("Cannot specify both the '--private-key' and '--private-key-file' flags")
-                    }
-                };
+            Self::Sign(sign) => sign.execute(),
 
-                // Sign the message for the specified network.
-                match network {
-                    MainnetV0::ID => Self::sign::<MainnetV0>(key, message, raw),
-                    TestnetV0::ID => Self::sign::<TestnetV0>(key, message, raw),
-                    CanaryV0::ID => Self::sign::<CanaryV0>(key, message, raw),
-                    unknown_id => bail!("Unknown network ID ({unknown_id})"),
-                }
-            }
             Self::Verify { network, address, signature, message, raw } => {
                 // Verify the signature for the specified network.
                 match network {
@@ -281,28 +258,6 @@ impl Account {
         Ok(account_info)
     }
 
-    // Sign a message with an Aleo private key
-    fn sign<N: Network>(key: String, message: String, raw: bool) -> Result<String> {
-        // Sample a random field element.
-        let mut rng = ChaChaRng::from_entropy();
-
-        // Parse the private key
-        let private_key =
-            PrivateKey::<N>::from_str(&key).map_err(|_| anyhow!("Failed to parse a valid private key"))?;
-        // Sign the message
-        let signature = if raw {
-            private_key.sign_bytes(message.as_bytes(), &mut rng)
-        } else {
-            let fields =
-                aleo_literal_to_fields::<N>(&message).map_err(|_| anyhow!("Failed to parse a valid Aleo literal"))?;
-            private_key.sign(&fields, &mut rng)
-        }
-        .map_err(|_| anyhow!("Failed to sign the message"))?
-        .to_string();
-        // Return the signature as a string
-        Ok(signature)
-    }
-
     // Verify a signature with an Aleo address
     fn verify<N: Network>(address: String, signature: String, message: String, raw: bool) -> Result<String> {
         // Parse the address
@@ -350,22 +305,26 @@ fn wait_for_keypress() {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::Account;
+    use super::{Account, Sign};
+
     use std::{fs, fs::Permissions, io::Write};
     use tempfile::{NamedTempFile, TempDir};
 
+    use anyhow::{Context, Result};
     use colored::Colorize;
 
     #[test]
-    fn test_new() {
+    fn test_new() -> Result<()> {
         for _ in 0..3 {
             let account = Account::New { network: 0, seed: None, vanity: None, discreet: false, save_to_file: None };
-            assert!(account.parse().is_ok());
+            account.parse().with_context(|| "Account creation failed")?;
         }
+
+        Ok(())
     }
 
     #[test]
-    fn test_new_seeded() {
+    fn test_new_seeded() -> Result<()> {
         let seed = Some(1231275789u64.to_string());
 
         let mut expected = format!(
@@ -386,12 +345,14 @@ mod tests {
 
         let vanity = None;
         let account = Account::New { network: 0, seed, vanity, discreet: false, save_to_file: None };
-        let actual = account.parse().unwrap();
+        let actual = account.parse().with_context(|| "Command execution failed")?;
         assert_eq!(expected, actual);
+
+        Ok(())
     }
 
     #[test]
-    fn test_new_seeded_with_256bits_input() {
+    fn test_new_seeded_with_256bits_input() -> anyhow::Result<()> {
         let seed = Some("38868010450269069756484274649022187108349082664538872491798902858296683054657".to_string());
 
         let mut expected = format!(
@@ -412,13 +373,16 @@ mod tests {
 
         let vanity = None;
         let account = Account::New { network: 0, seed, vanity, discreet: false, save_to_file: None };
-        let actual = account.parse().unwrap();
+
+        let actual = account.parse().with_context(|| "Command execution failed")?;
         assert_eq!(expected, actual);
+
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_new_save_to_file() {
+    fn test_new_save_to_file() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = TempDir::new().expect("Failed to create temp folder");
@@ -434,7 +398,8 @@ mod tests {
         let discreet = false;
         let save_to_file = Some(file.clone());
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file };
-        let actual = account.parse().unwrap();
+
+        let actual = account.parse().with_context(|| "Command execution failed")?;
 
         let expected = "APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X";
         assert!(actual.contains(expected));
@@ -446,6 +411,8 @@ mod tests {
         let metadata = fs::metadata(file).unwrap();
         let permissions = metadata.permissions();
         assert_eq!(permissions.mode() & 0o777, 0o400, "File permissions are not 0o400");
+
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -466,6 +433,7 @@ mod tests {
         let discreet = false;
         let save_to_file = Some(file);
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file };
+
         let res = account.parse();
         assert!(res.is_err());
     }
@@ -484,6 +452,7 @@ mod tests {
         let discreet = false;
         let save_to_file = Some(file);
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file };
+
         let res = account.parse();
         assert!(res.is_err());
     }
@@ -498,6 +467,7 @@ mod tests {
         let discreet = false;
         let path = file.path().display().to_string();
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file: Some(path) };
+
         let res = account.parse();
         assert!(res.is_err());
 
@@ -513,6 +483,7 @@ mod tests {
         let discreet = true;
         let save_to_file = Some("/tmp/not-important".to_string());
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file };
+
         let res = account.parse();
         assert!(res.is_err());
     }
@@ -524,20 +495,30 @@ mod tests {
         let discreet = false;
         let save_to_file = Some("/tmp/not-important".to_string());
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file };
+
         let res = account.parse();
         assert!(res.is_err());
     }
 
     #[test]
-    fn test_signature_raw() {
+    fn test_signature_raw() -> Result<()> {
         let key = "APrivateKey1zkp61PAYmrYEKLtRWeWhUoDpFnGLNuHrCciSqN49T86dw3p".to_string();
         let message = "Hello, world!".to_string();
-        let account = Account::Sign { network: 0, private_key: Some(key), private_key_file: None, message, raw: true };
-        assert!(account.parse().is_ok());
+        let account = Account::Sign(Sign {
+            network: 0,
+            private_key: Some(key),
+            private_key_file: None,
+            message,
+            raw: true,
+            dev_key: None,
+        });
+
+        account.parse().with_context(|| "Command execution failed")?;
+        Ok(())
     }
 
     #[test]
-    fn test_signature_raw_using_private_key_file() {
+    fn test_signature_raw_using_private_key_file() -> Result<()> {
         let key = "APrivateKey1zkp61PAYmrYEKLtRWeWhUoDpFnGLNuHrCciSqN49T86dw3p".to_string();
         let message = "Hello, world!".to_string();
 
@@ -545,13 +526,22 @@ mod tests {
         writeln!(file, "{key}").expect("Failed to write key to temp file");
 
         let path = file.path().display().to_string();
-        let account = Account::Sign { network: 0, private_key: None, private_key_file: Some(path), message, raw: true };
-        assert!(account.parse().is_ok());
+        let account = Account::Sign(Sign {
+            network: 0,
+            private_key: None,
+            private_key_file: Some(path),
+            message,
+            raw: true,
+            dev_key: None,
+        });
+
+        account.parse().with_context(|| "Command execution failed")?;
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_signature_raw_using_private_key_file_from_account_new() {
+    fn test_signature_raw_using_private_key_file_from_account_new() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let message = "Hello, world!".to_string();
@@ -568,37 +558,62 @@ mod tests {
         let vanity = None;
         let discreet = false;
         let account = Account::New { network: 0, seed, vanity, discreet, save_to_file: Some(file.clone()) };
-        assert!(account.parse().is_ok());
+        account.parse().with_context(|| "Command execution failed")?;
 
-        let account = Account::Sign { network: 0, private_key: None, private_key_file: Some(file), message, raw: true };
-        assert!(account.parse().is_ok());
+        let account = Account::Sign(Sign {
+            network: 0,
+            private_key: None,
+            private_key_file: Some(file),
+            message,
+            raw: true,
+            dev_key: None,
+        });
+
+        account.parse().with_context(|| "Command execution failed")?;
+        Ok(())
     }
 
     #[test]
-    fn test_signature() {
+    fn test_signature() -> Result<()> {
         let key = "APrivateKey1zkp61PAYmrYEKLtRWeWhUoDpFnGLNuHrCciSqN49T86dw3p".to_string();
         let message = "5field".to_string();
-        let account = Account::Sign { network: 0, private_key: Some(key), private_key_file: None, message, raw: false };
-        assert!(account.parse().is_ok());
+        let account = Account::Sign(Sign {
+            network: 0,
+            private_key: Some(key),
+            private_key_file: None,
+            message,
+            raw: false,
+            dev_key: None,
+        });
+
+        account.parse().with_context(|| "Command execution failed")?;
+        Ok(())
     }
 
     #[test]
     fn test_signature_fail() {
         let key = "APrivateKey1zkp61PAYmrYEKLtRWeWhUoDpFnGLNuHrCciSqN49T86dw3p".to_string();
         let message = "not a literal value".to_string();
-        let account = Account::Sign { network: 0, private_key: Some(key), private_key_file: None, message, raw: false };
+        let account = Account::Sign(Sign {
+            network: 0,
+            private_key: Some(key),
+            private_key_file: None,
+            message,
+            raw: false,
+            dev_key: None,
+        });
         assert!(account.parse().is_err());
     }
 
     #[test]
-    fn test_verify_raw() {
+    fn test_verify_raw() -> Result<()> {
         // test signature of "Hello, world!"
         let address = "aleo1zecnqchckrzw7dlsyf65g6z5le2rmys403ecwmcafrag0e030yxqrnlg8j";
         let signature = "sign1nnvrjlksrkxdpwsrw8kztjukzhmuhe5zf3srk38h7g32u4kqtqpxn3j5a6k8zrqcfx580a96956nsjvluzt64cqf54pdka9mgksfqp8esm5elrqqunzqzmac7kzutl6zk7mqht3c0m9kg4hklv7h2js0qmxavwnpuwyl4lzldl6prs4qeqy9wxyp8y44nnydg3h8sg6ue99qkwsnaqq".to_string();
         let message = "Hello, world!".to_string();
         let account = Account::Verify { network: 0, address: address.to_string(), signature, message, raw: true };
-        let actual = account.parse();
-        assert!(actual.is_ok());
+
+        account.parse().with_context(|| "Command execution failed")?;
 
         // test signature of "Hello, world!" against the message "Different Message"
         let signature = "sign1nnvrjlksrkxdpwsrw8kztjukzhmuhe5zf3srk38h7g32u4kqtqpxn3j5a6k8zrqcfx580a96956nsjvluzt64cqf54pdka9mgksfqp8esm5elrqqunzqzmac7kzutl6zk7mqht3c0m9kg4hklv7h2js0qmxavwnpuwyl4lzldl6prs4qeqy9wxyp8y44nnydg3h8sg6ue99qkwsnaqq".to_string();
@@ -619,19 +634,19 @@ mod tests {
         let signature = "sign1424ztyt9hcm77nq450gvdszrvtg9kvhc4qadg4nzy9y0ah7wdqq7t36cxal42p9jj8e8pjpmc06lfev9nvffcpqv0cxwyr0a2j2tjqlesm5elrqqunzqzmac7kzutl6zk7mqht3c0m9kg4hklv7h2js0qmxavwnpuwyl4lzldl6prs4qeqy9wxyp8y44nnydg3h8sg6ue99qk3yrr50".to_string();
         let message = "Different Message".to_string();
         let account = Account::Verify { network: 0, address: address.to_string(), signature, message, raw: true };
-        let actual = account.parse();
-        assert!(actual.is_ok());
+        account.parse().with_context(|| "Command execution failed")?;
+
+        Ok(())
     }
 
     #[test]
-    fn test_verify() {
+    fn test_verify() -> Result<()> {
         // test signature of 5u8
         let address = "aleo1zecnqchckrzw7dlsyf65g6z5le2rmys403ecwmcafrag0e030yxqrnlg8j";
         let signature = "sign1j7swjfnyujt2vme3ulu88wdyh2ddj85arh64qh6c6khvrx8wvsp8z9wtzde0sahqj2qwz8rgzt803c0ceega53l4hks2mf5sfsv36qhesm5elrqqunzqzmac7kzutl6zk7mqht3c0m9kg4hklv7h2js0qmxavwnpuwyl4lzldl6prs4qeqy9wxyp8y44nnydg3h8sg6ue99qkdetews".to_string();
         let message = "5field".to_string();
         let account = Account::Verify { network: 0, address: address.to_string(), signature, message, raw: false };
-        let actual = account.parse();
-        assert!(actual.is_ok());
+        account.parse().with_context(|| "Command execution failed")?;
 
         // test signature of 5u8 against the message 10u8
         let signature = "sign1j7swjfnyujt2vme3ulu88wdyh2ddj85arh64qh6c6khvrx8wvsp8z9wtzde0sahqj2qwz8rgzt803c0ceega53l4hks2mf5sfsv36qhesm5elrqqunzqzmac7kzutl6zk7mqht3c0m9kg4hklv7h2js0qmxavwnpuwyl4lzldl6prs4qeqy9wxyp8y44nnydg3h8sg6ue99qkdetews".to_string();
@@ -652,7 +667,9 @@ mod tests {
         let signature = "sign1t9v2t5tljk8pr5t6vkcqgkus0a3v69vryxmfrtwrwg0xtj7yv5qj2nz59e5zcyl50w23lhntxvt6vzeqfyu6dt56698zvfj2l6lz6q0esm5elrqqunzqzmac7kzutl6zk7mqht3c0m9kg4hklv7h2js0qmxavwnpuwyl4lzldl6prs4qeqy9wxyp8y44nnydg3h8sg6ue99qk8rh9kt".to_string();
         let message = "10field".to_string();
         let account = Account::Verify { network: 0, address: address.to_string(), signature, message, raw: false };
-        let actual = account.parse();
-        assert!(actual.is_ok());
+
+        account.parse().with_context(|| "Command execution failed")?;
+
+        Ok(())
     }
 }

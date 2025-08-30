@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.0.1"
+version = "4.1.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -43,7 +43,7 @@ workspace = true
 features = [ "erased-json", "typed-header" ]
 
 [dependencies.http]
-version = "1.0"
+workspace = true
 
 [dependencies.indexmap]
 workspace = true
@@ -113,6 +113,10 @@ workspace = true
 
 [dev-dependencies.base64]
 workspace = true
+
+[dev-dependencies.tower]
+version = "0.4"
+features = ["util"]
 
 [build-dependencies.built]
 workspace = true
