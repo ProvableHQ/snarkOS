@@ -500,13 +500,13 @@ window.BENCHMARK_DATA = {
             "extra": "samples=724, mean_speed=0.177716, max_speed=2.466667, branch=ci/sync-variance-benchmark, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
-            "name": "rest-",
+            "name": "rest-get-block",
             "value": 0.65,
             "unit": "ops/s",
             "extra": "num_ops=500, total_wait=768, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
-            "name": "rest-",
+            "name": "rest-block-height",
             "value": 185.18,
             "unit": "ops/s",
             "extra": "num_ops=10000, total_wait=54, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=44b334d398, snapshot_height=250"
@@ -560,13 +560,13 @@ window.BENCHMARK_DATA = {
             "extra": "samples=1123, mean_speed=0.143425, max_speed=2.066667, branch=ci/sync-variance-benchmark, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
-            "name": "rest-",
+            "name": "rest-get-block",
             "value": 0.64,
             "unit": "ops/s",
             "extra": "num_ops=500, total_wait=779, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
-            "name": "rest-",
+            "name": "rest-block-height",
             "value": 181.81,
             "unit": "ops/s",
             "extra": "num_ops=10000, total_wait=55, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=44b334d398, snapshot_height=250"
