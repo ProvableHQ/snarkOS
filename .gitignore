@@ -12,7 +12,3 @@ validator-*
 **proptest-regressions/
 **package-lock.json
 **node_modules/
-
-# Backup files
-*.backup
-Cargo.toml.backup
