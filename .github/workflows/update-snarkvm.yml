@@ -73,23 +73,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create or checkout snarkvm-update branch
+      - name: Create new snarkvm-update branch from staging
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
-          # Check if snarkvm-update branch exists on remote
-          if git ls-remote --exit-code --heads origin snarkvm-update; then
-            echo "Branch snarkvm-update exists, checking it out"
-            git fetch origin snarkvm-update
-            git checkout snarkvm-update
-            # Reset to latest staging to ensure we're up to date
-            git reset --hard origin/staging
-          else
-            echo "Creating new branch snarkvm-update from staging"
-            git checkout -b snarkvm-update
-            echo "⚠️ Note: snarkvm-update branch was created locally but needs to be pushed manually first time"
-            echo "Please run: git push origin snarkvm-update"
-            echo "Or follow the instructions in CREATE_SNARKVM_BRANCH.md"
-          fi
+          # Always create a fresh branch from staging
+          echo "Creating new snarkvm-update branch from staging"
+          git checkout -B snarkvm-update staging
+          echo "Created fresh snarkvm-update branch from staging"
 
       - name: Update snarkVM dependency
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
@@ -130,7 +120,7 @@ jobs:
           Latest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}
           
           This update was performed automatically by the snarkVM update workflow."
-          git push origin snarkvm-update
+          git push --force-with-lease origin snarkvm-update
 
       - name: Summary
         if: always()
