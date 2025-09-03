@@ -163,6 +163,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
+            storage_mode.clone(),
             dev.is_some(),
         )
         .await?;

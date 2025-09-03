@@ -23,6 +23,7 @@ use std::{
     sync::Arc,
 };
 
+use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::MockLedgerService;
 use snarkos_node_router::{Router, messages::NodeType};
@@ -67,6 +68,7 @@ pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNe
         max_peers,
         false,
         true,
+        StorageMode::Test(None),
         true,
     )
     .await
@@ -88,6 +90,7 @@ pub async fn prover(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNe
         max_peers,
         false,
         true,
+        StorageMode::Test(None),
         true,
     )
     .await
@@ -114,6 +117,7 @@ pub async fn validator(
         max_peers,
         false,
         allow_external_peers,
+        StorageMode::Test(None),
         true,
     )
     .await

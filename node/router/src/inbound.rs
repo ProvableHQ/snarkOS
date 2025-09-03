@@ -40,7 +40,7 @@ use std::net::SocketAddr;
 use tokio::task::spawn_blocking;
 
 /// The max number of peers to send in a `PeerResponse` message.
-const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
+pub(crate) const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
 
 #[async_trait]
 pub trait Inbound<N: Network>: Reading + Outbound<N> {
