@@ -18,7 +18,8 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     Transport,
     events::DataBlocks,
-    helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
+    gateway::SyncCallback as GatewaySyncCallback,
+    helpers::{BFTSender, Pending, Storage, fmt_id, max_redundant_requests},
     spawn_blocking,
 };
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
@@ -58,12 +59,15 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::sync::{OnceCell, oneshot};
+use tokio::{
+    sync::{OnceCell, oneshot},
+    time::{sleep, timeout},
+};
 
 /// Block synchronization logic for validators.
 ///
 /// Synchronization works differently for nodes that act as validators in AleoBFT;
-/// In the common case, validators generate blocks after receiving an anchor block that has been accepted
+/// In the common case, validators generate blocks after receiving an anchor certificate that has been accepted
 /// by a supermajority of the committee instead of fetching entire blocks from other nodes.
 /// However, if a validator does not have an up-to-date DAG, it might still fetch entire blocks from other nodes.
 ///
@@ -175,7 +179,7 @@ impl<N: Network> Sync<N> {
     ///
     /// When this function returns successfully, the sync module will have spawned background tasks
     /// that fetch blocks from other validators.
-    pub async fn run(&self, ping: Option<Arc<Ping<N>>>, sync_receiver: SyncReceiver<N>) -> Result<()> {
+    pub async fn run(&self, ping: Option<Arc<Ping<N>>>) -> Result<()> {
         info!("Starting the sync module...");
 
         // Start the block request generation loop (outgoing).
@@ -223,7 +227,7 @@ impl<N: Network> Sync<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+                sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
 
                 // Remove the expired pending transmission requests.
                 let self__ = self_.clone();
@@ -231,86 +235,6 @@ impl<N: Network> Sync<N> {
                     self__.pending.clear_expired_callbacks();
                     Ok(())
                 });
-            }
-        });
-
-        /* Set up callbacks for events from the Gateway */
-
-        // Retrieve the sync receiver.
-        let SyncReceiver {
-            mut rx_block_sync_insert_block_response,
-            mut rx_block_sync_remove_peer,
-            mut rx_block_sync_update_peer_locators,
-            mut rx_certificate_request,
-            mut rx_certificate_response,
-        } = sync_receiver;
-
-        // Process the block sync request to advance with sync blocks.
-        // Each iteration of this loop is triggered by an incoming [`BlockResponse`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`SyncSender::advance_with_sync_blocks()`],
-        // which calls [`tx_block_sync_advance_with_sync_blocks.send()`],
-        // which causes the `rx_block_sync_advance_with_sync_blocks.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, blocks, latest_consensus_version, callback)) =
-                rx_block_sync_insert_block_response.recv().await
-            {
-                let result = self_.insert_block_response(peer_ip, blocks, latest_consensus_version).await;
-                //TODO remove this once channels are gone
-                if let Err(err) = &result {
-                    warn!("Failed to insret block response: {err:?}");
-                }
-
-                callback.send(result).ok();
-            }
-        });
-
-        // Process the block sync request to remove the peer.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some(peer_ip) = rx_block_sync_remove_peer.recv().await {
-                self_.remove_peer(peer_ip);
-            }
-        });
-
-        // Process each block sync request to update peer locators.
-        // Each iteration of this loop is triggered by an incoming [`PrimaryPing`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`SyncSender::update_peer_locators()`],
-        // which calls [`tx_block_sync_update_peer_locators.send()`],
-        // which causes the `rx_block_sync_update_peer_locators.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, locators, callback)) = rx_block_sync_update_peer_locators.recv().await {
-                let self_clone = self_.clone();
-                tokio::spawn(async move {
-                    callback.send(self_clone.update_peer_locators(peer_ip, locators)).ok();
-                });
-            }
-        });
-
-        // Process each certificate request.
-        // Each iteration of this loop is triggered by an incoming [`CertificateRequest`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`tx_certificate_request.send()`],
-        // which causes the `rx_certificate_request.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, certificate_request)) = rx_certificate_request.recv().await {
-                self_.send_certificate_response(peer_ip, certificate_request);
-            }
-        });
-
-        // Process each certificate response.
-        // Each iteration of this loop is triggered by an incoming [`CertificateResponse`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`tx_certificate_response.send()`],
-        // which causes the `rx_certificate_response.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, certificate_response)) = rx_certificate_response.recv().await {
-                self_.finish_certificate_request(peer_ip, certificate_response);
             }
         });
 
@@ -343,6 +267,9 @@ impl<N: Network> Sync<N> {
             }
         }
 
+        // Wait for updates or a timeout.
+        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.block_sync.wait_for_peer_update()).await;
+
         // Do not attempt to sync if there are no blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
         if !self.block_sync.can_block_sync() {
@@ -372,12 +299,18 @@ impl<N: Network> Sync<N> {
         // Then try advancing with any available responses
         self.try_advancing_block_synchronization(&None).await;
     }
+
+    /// Test-only. Manually add peer locators.
+    #[cfg(test)]
+    pub fn test_update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
+        self.update_peer_locators(peer_ip, locators)
+    }
 }
 
 // Callbacks used when receiving messages from the Gateway
-impl<N: Network> Sync<N> {
+impl<N: Network> GatewaySyncCallback<N> for Sync<N> {
     /// We received a block response and can (possibly) advance synchronization.
-    async fn insert_block_response(
+    fn insert_block_response(
         &self,
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
@@ -400,13 +333,30 @@ impl<N: Network> Sync<N> {
         self.block_sync.remove_peer(&peer_ip);
     }
 
-    #[cfg(test)]
-    pub fn testing_only_update_peer_locators_testing_only(
-        &self,
-        peer_ip: SocketAddr,
-        locators: BlockLocators<N>,
-    ) -> Result<()> {
-        self.update_peer_locators(peer_ip, locators)
+    /// Handles the incoming certificate request.
+    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>) {
+        // Attempt to retrieve the certificate.
+        if let Some(certificate) = self.storage.get_certificate(request.certificate_id) {
+            // Send the certificate response to the peer.
+            let self_ = self.clone();
+            tokio::spawn(async move {
+                let _ = self_.gateway.send(peer_ip, Event::CertificateResponse(certificate.into())).await;
+            });
+        }
+    }
+
+    /// Handles the incoming certificate response.
+    /// This method ensures the certificate response is well-formed and matches the certificate ID.
+    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>) {
+        let certificate = response.certificate;
+        // Check if the peer IP exists in the pending queue for the given certificate ID.
+        let exists = self.pending.get_peers(certificate.id()).unwrap_or_default().contains(&peer_ip);
+        // If the peer IP exists, finish the pending request.
+        if exists {
+            // TODO: Validate the certificate.
+            // Remove the certificate ID from the pending queue.
+            self.pending.remove(certificate.id(), Some(certificate));
+        }
     }
 }
 
@@ -1015,30 +965,13 @@ impl<N: Network> Sync<N> {
             .with_context(|| format!("Unable to fetch batch certificate {}", fmt_id(certificate_id)))
     }
 
-    /// Handles the incoming certificate request.
-    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>) {
-        // Attempt to retrieve the certificate.
-        if let Some(certificate) = self.storage.get_certificate(request.certificate_id) {
-            // Send the certificate response to the peer.
-            let self_ = self.clone();
-            tokio::spawn(async move {
-                let _ = self_.gateway.send(peer_ip, Event::CertificateResponse(certificate.into())).await;
-            });
-        }
-    }
-
-    /// Handles the incoming certificate response.
-    /// This method ensures the certificate response is well-formed and matches the certificate ID.
-    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>) {
-        let certificate = response.certificate;
-        // Check if the peer IP exists in the pending queue for the given certificate ID.
-        let exists = self.pending.get_peers(certificate.id()).unwrap_or_default().contains(&peer_ip);
-        // If the peer IP exists, finish the pending request.
-        if exists {
-            // TODO: Validate the certificate.
-            // Remove the certificate ID from the pending queue.
-            self.pending.remove(certificate.id(), Some(certificate));
-        }
+    #[cfg(test)]
+    pub fn testing_only_update_peer_locators_testing_only(
+        &self,
+        peer_ip: SocketAddr,
+        locators: BlockLocators<N>,
+    ) -> Result<()> {
+        self.update_peer_locators(peer_ip, locators)
     }
 }
 
