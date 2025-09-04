@@ -723,8 +723,8 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(e) = sync_sender.advance_with_sync_blocks(peer_ip, blocks.0).await {
-                        warn!("Unable to process block response from '{peer_ip}' - {e}");
+                    if let Err(err) = sync_sender.insert_block_response(peer_ip, blocks.0).await {
+                        warn!("Unable to process block response from '{peer_ip}' - {err}");
                     }
                 }
                 Ok(true)
