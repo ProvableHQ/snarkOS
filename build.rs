@@ -101,8 +101,14 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
                 if line.contains("Mutex") {
                     lock_balance += 1;
                 }
-                if line.contains("RwLock") {
-                    lock_balance += 1;
+
+                // Only count the import of RwLock itself.
+                lock_balance += line.matches("RwLock").count() as i8;
+                if line.contains("RwLockReadGuard") {
+                    lock_balance -= 1;
+                }
+                if line.contains("RwLockWriteGuard") {
+                    lock_balance -= 1;
                 }
             } else if ioi == ImportOfInterest::Locktick {
                 // Use `matches` instead of just `contains` here, as more than a single

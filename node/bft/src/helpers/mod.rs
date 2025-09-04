@@ -51,6 +51,14 @@ pub use telemetry::*;
 pub mod timestamp;
 pub use timestamp::*;
 
+#[cfg(feature = "locktick")]
+use locktick::{LockGuard, parking_lot::RwLock};
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
+
+use anyhow::{Result, bail};
+use parking_lot::RwLockReadGuard;
+
 /// Formats an ID into a truncated identifier (for logging purposes).
 pub fn fmt_id(id: impl ToString) -> String {
     let id = id.to_string();
@@ -59,4 +67,58 @@ pub fn fmt_id(id: impl ToString) -> String {
         formatted_id.push_str("..");
     }
     formatted_id
+}
+
+/// Helper struct to hold a reference to a callback struct.
+pub struct CallbackHandle<C: Clone + Send + Sync> {
+    callback: RwLock<Option<C>>,
+}
+
+impl<C: Send + Sync + Clone> Default for CallbackHandle<C> {
+    /// By default, the handle holds no callback.
+    fn default() -> Self {
+        Self { callback: RwLock::new(None) }
+    }
+}
+
+impl<C: Send + Sync + Clone> CallbackHandle<C> {
+    /// Set a callback. Returns an error if a callback was already set.
+    pub fn set(&self, callback: C) -> Result<()> {
+        let prev = self.callback.write().replace(callback);
+
+        if prev.is_some() {
+            bail!("Callback was already set");
+        }
+
+        Ok(())
+    }
+
+    /// Get a cloned copy of the callback.
+    /// Useful when the callback will be used across await-boundaries.
+    #[inline]
+    pub fn get(&self) -> Option<C> {
+        self.callback.read().clone()
+    }
+
+    /// Get reference to the callback.
+    /// Cannot be shared across await-boundaries.
+    #[cfg(feature = "locktick")]
+    #[inline]
+    pub fn get_ref(&self) -> LockGuard<RwLockReadGuard<'_, Option<C>>> {
+        self.callback.read()
+    }
+
+    /// Get reference to the callback.
+    /// Cannot be shared across await-boundaries.
+    #[cfg(not(feature = "locktick"))]
+    #[inline]
+    pub fn get_ref(&self) -> RwLockReadGuard<'_, Option<C>> {
+        self.callback.read()
+    }
+
+    /// Remove the callback.
+    /// Used during shutdown to resolve circular dependencies between types.
+    pub fn clear(&self) {
+        let _ = self.callback.write().take();
+    }
 }

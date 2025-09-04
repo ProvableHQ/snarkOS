@@ -21,7 +21,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{Disconnect as DisconnectEvent, DisconnectReason, EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{Cache, CallbackHandle, PrimarySender, Storage, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use aleo_std::StorageMode;
@@ -52,7 +52,7 @@ use snarkos_node_network::{
     get_repo_commit_hash,
     log_repo_sha_comparison,
 };
-use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService, locators::BlockLocators};
 use snarkos_node_tcp::{
     Config,
     Connection,
@@ -64,6 +64,7 @@ use snarkos_node_tcp::{
 use snarkvm::{
     console::prelude::*,
     ledger::{
+        Block,
         committee::Committee,
         narwhal::{BatchHeader, Data},
     },
@@ -127,6 +128,27 @@ pub trait Transport<N: Network>: Send + Sync {
     fn broadcast(&self, event: Event<N>);
 }
 
+pub trait SyncCallback<N: Network>: Send + Sync {
+    /// We received a block response and can (possibly) advance synchronization.
+    fn insert_block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> Result<()>;
+
+    /// We received new peer locators during a Ping.
+    fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()>;
+
+    /// A peer disconnected.
+    fn remove_peer(&self, peer_ip: SocketAddr);
+
+    /// Handles the incoming certificate request.
+    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>);
+
+    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>);
+}
+
 /// The gateway maintains connections to other validators.
 /// For connections with clients and provers, the Router logic is used.
 #[derive(Clone)]
@@ -160,9 +182,9 @@ pub struct InnerGateway<N: Network> {
     /// The primary sender.
     primary_sender: OnceCell<PrimarySender<N>>,
     /// The worker senders.
-    worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
-    /// The sync sender.
-    sync_sender: OnceCell<SyncSender<N>>,
+    worker_senders: Arc<OnceCell<IndexMap<u8, WorkerSender<N>>>>,
+    /// The callback for sync messages.
+    sync_callback: Arc<CallbackHandle<Arc<dyn SyncCallback<N>>>>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
@@ -249,7 +271,7 @@ impl<N: Network> Gateway<N> {
             validator_telemetry: Default::default(),
             primary_sender: Default::default(),
             worker_senders: Default::default(),
-            sync_sender: Default::default(),
+            sync_callback: Default::default(),
             handles: Default::default(),
             storage_mode,
             trusted_peers_only,
@@ -262,7 +284,7 @@ impl<N: Network> Gateway<N> {
         &self,
         primary_sender: PrimarySender<N>,
         worker_senders: IndexMap<u8, WorkerSender<N>>,
-        sync_sender: Option<SyncSender<N>>,
+        sync_callback: Option<Arc<dyn SyncCallback<N>>>,
     ) {
         debug!("Starting the gateway for the memory pool...");
 
@@ -272,9 +294,8 @@ impl<N: Network> Gateway<N> {
         // Set the worker senders.
         self.worker_senders.set(worker_senders).expect("The worker senders are already set");
 
-        // If the sync sender was provided, set the sync sender.
-        if let Some(sync_sender) = sync_sender {
-            self.sync_sender.set(sync_sender).expect("Sync sender already set in gateway");
+        if let Some(sync_callback) = sync_callback {
+            self.sync_callback.set(sync_callback).unwrap();
         }
 
         // Enable the TCP protocols.
@@ -629,7 +650,7 @@ impl<N: Network> Gateway<N> {
             }
             Event::BlockResponse(BlockResponse { request, latest_consensus_version, blocks, .. }) => {
                 // Process the block response. Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = self.sync_callback.get() {
                     // Check the response corresponds to a request.
                     if !self.cache.remove_outbound_block_request(peer_ip, &request) {
                         bail!("Unsolicited block response from '{peer_ip}'")
@@ -652,10 +673,8 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(err) =
-                        sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await
-                    {
-                        warn!("Unable to process block response from '{peer_ip}' - {err}");
+                    if let Err(err) = cb.insert_block_response(peer_ip, blocks.0, latest_consensus_version) {
+                        warn!("Unable to process block response from '{peer_ip}': {err}");
                     }
                 }
                 Ok(true)
@@ -663,18 +682,18 @@ impl<N: Network> Gateway<N> {
             Event::CertificateRequest(certificate_request) => {
                 // Send the certificate request to the sync module.
                 // Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.get_ref() {
                     // Send the certificate request to the sync module.
-                    let _ = sync_sender.tx_certificate_request.send((peer_ip, certificate_request)).await;
+                    cb.send_certificate_response(peer_ip, certificate_request);
                 }
                 Ok(true)
             }
             Event::CertificateResponse(certificate_response) => {
                 // Send the certificate response to the sync module.
                 // Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.get_ref() {
                     // Send the certificate response to the sync module.
-                    let _ = sync_sender.tx_certificate_response.send((peer_ip, certificate_response)).await;
+                    cb.finish_certificate_request(peer_ip, certificate_response);
                 }
                 Ok(true)
             }
@@ -700,9 +719,9 @@ impl<N: Network> Gateway<N> {
                 debug!("Validator '{peer_ip}' is at height {}", block_locators.latest_locator_height());
 
                 // Update the peer locators. Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.get_ref() {
                     // Check the block locators are valid, and update the validators in the sync module.
-                    if let Err(error) = sync_sender.update_peer_locators(peer_ip, block_locators).await {
+                    if let Err(error) = cb.update_peer_locators(peer_ip, block_locators) {
                         bail!("Validator '{peer_ip}' sent invalid block locators - {error}");
                     }
                 }
@@ -849,9 +868,11 @@ impl<N: Network> Gateway<N> {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
         // Close the listener.
         self.tcp.shut_down().await;
+        // Remove the sync callback (so it can be dropped).
+        self.sync_callback.clear();
     }
 }
 
@@ -1245,13 +1266,8 @@ impl<N: Network> Disconnect for Gateway<N> {
         if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
             self.downgrade_peer_to_candidate(peer_ip);
             // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-            if let Some(sync_sender) = self.sync_sender.get() {
-                let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                        warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
-                    }
-                });
+            if let Some(callback) = self.sync_callback.get() {
+                callback.remove_peer(peer_ip);
             }
             // We don't clear this map based on time but only on peer disconnect.
             // This is sufficient to avoid infinite growth as the committee has a fixed number

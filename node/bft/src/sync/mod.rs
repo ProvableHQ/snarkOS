@@ -18,8 +18,8 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     Transport,
     events::DataBlocks,
-    helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
-    spawn_blocking,
+    gateway::SyncCallback as GatewaySyncCallback,
+    helpers::{BFTSender, Pending, Storage, fmt_id, max_redundant_requests},
 };
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -58,12 +58,15 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::sync::{OnceCell, oneshot};
+use tokio::{
+    sync::{OnceCell, oneshot},
+    time::{sleep, timeout},
+};
 
 /// Block synchronization logic for validators.
 ///
 /// Synchronization works differently for nodes that act as validators in AleoBFT;
-/// In the common case, validators generate blocks after receiving an anchor block that has been accepted
+/// In the common case, validators generate blocks after receiving an anchor certificate that has been accepted
 /// by a supermajority of the committee instead of fetching entire blocks from other nodes.
 /// However, if a validator does not have an up-to-date DAG, it might still fetch entire blocks from other nodes.
 ///
@@ -175,7 +178,7 @@ impl<N: Network> Sync<N> {
     ///
     /// When this function returns successfully, the sync module will have spawned background tasks
     /// that fetch blocks from other validators.
-    pub async fn run(&self, ping: Option<Arc<Ping<N>>>, sync_receiver: SyncReceiver<N>) -> Result<()> {
+    pub async fn run(&self, ping: Option<Arc<Ping<N>>>) -> Result<()> {
         info!("Starting the sync module...");
 
         // Start the block request generation loop (outgoing).
@@ -223,94 +226,14 @@ impl<N: Network> Sync<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+                sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
 
                 // Remove the expired pending transmission requests.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
+                let _ = task::spawn_blocking(move || {
                     self__.pending.clear_expired_callbacks();
-                    Ok(())
-                });
-            }
-        });
-
-        /* Set up callbacks for events from the Gateway */
-
-        // Retrieve the sync receiver.
-        let SyncReceiver {
-            mut rx_block_sync_insert_block_response,
-            mut rx_block_sync_remove_peer,
-            mut rx_block_sync_update_peer_locators,
-            mut rx_certificate_request,
-            mut rx_certificate_response,
-        } = sync_receiver;
-
-        // Process the block sync request to advance with sync blocks.
-        // Each iteration of this loop is triggered by an incoming [`BlockResponse`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`SyncSender::advance_with_sync_blocks()`],
-        // which calls [`tx_block_sync_advance_with_sync_blocks.send()`],
-        // which causes the `rx_block_sync_advance_with_sync_blocks.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, blocks, latest_consensus_version, callback)) =
-                rx_block_sync_insert_block_response.recv().await
-            {
-                let result = self_.insert_block_response(peer_ip, blocks, latest_consensus_version).await;
-                //TODO remove this once channels are gone
-                if let Err(err) = &result {
-                    warn!("Failed to insret block response: {err:?}");
-                }
-
-                callback.send(result).ok();
-            }
-        });
-
-        // Process the block sync request to remove the peer.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some(peer_ip) = rx_block_sync_remove_peer.recv().await {
-                self_.remove_peer(peer_ip);
-            }
-        });
-
-        // Process each block sync request to update peer locators.
-        // Each iteration of this loop is triggered by an incoming [`PrimaryPing`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`SyncSender::update_peer_locators()`],
-        // which calls [`tx_block_sync_update_peer_locators.send()`],
-        // which causes the `rx_block_sync_update_peer_locators.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, locators, callback)) = rx_block_sync_update_peer_locators.recv().await {
-                let self_clone = self_.clone();
-                tokio::spawn(async move {
-                    callback.send(self_clone.update_peer_locators(peer_ip, locators)).ok();
-                });
-            }
-        });
-
-        // Process each certificate request.
-        // Each iteration of this loop is triggered by an incoming [`CertificateRequest`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`tx_certificate_request.send()`],
-        // which causes the `rx_certificate_request.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, certificate_request)) = rx_certificate_request.recv().await {
-                self_.send_certificate_response(peer_ip, certificate_request);
-            }
-        });
-
-        // Process each certificate response.
-        // Each iteration of this loop is triggered by an incoming [`CertificateResponse`],
-        // which is initially handled by [`Gateway::inbound()`],
-        // which calls [`tx_certificate_response.send()`],
-        // which causes the `rx_certificate_response.recv()` call below to return.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, certificate_response)) = rx_certificate_response.recv().await {
-                self_.finish_certificate_request(peer_ip, certificate_response);
+                })
+                .await;
             }
         });
 
@@ -343,6 +266,9 @@ impl<N: Network> Sync<N> {
             }
         }
 
+        // Wait for updates or a timeout.
+        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.block_sync.wait_for_peer_update()).await;
+
         // Do not attempt to sync if there are no blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
         if !self.block_sync.can_block_sync() {
@@ -372,22 +298,33 @@ impl<N: Network> Sync<N> {
         // Then try advancing with any available responses
         self.try_advancing_block_synchronization(&None).await;
     }
+
+    /// Test-only. Manually add peer locators.
+    #[cfg(test)]
+    pub fn test_update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
+        self.update_peer_locators(peer_ip, locators)
+    }
+
+    #[cfg(test)]
+    pub fn testing_only_update_peer_locators_testing_only(
+        &self,
+        peer_ip: SocketAddr,
+        locators: BlockLocators<N>,
+    ) -> Result<()> {
+        self.update_peer_locators(peer_ip, locators)
+    }
 }
 
 // Callbacks used when receiving messages from the Gateway
-impl<N: Network> Sync<N> {
+impl<N: Network> GatewaySyncCallback<N> for Sync<N> {
     /// We received a block response and can (possibly) advance synchronization.
-    async fn insert_block_response(
+    fn insert_block_response(
         &self,
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<()> {
-        // Verify that the response is valid and add it to block sync.
         self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)
-
-        // No need to advance block sync here, as the new response will
-        // notify the incoming task.
     }
 
     /// We received new peer locators during a Ping.
@@ -400,13 +337,30 @@ impl<N: Network> Sync<N> {
         self.block_sync.remove_peer(&peer_ip);
     }
 
-    #[cfg(test)]
-    pub fn testing_only_update_peer_locators_testing_only(
-        &self,
-        peer_ip: SocketAddr,
-        locators: BlockLocators<N>,
-    ) -> Result<()> {
-        self.update_peer_locators(peer_ip, locators)
+    /// Handles the incoming certificate request.
+    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>) {
+        // Attempt to retrieve the certificate.
+        if let Some(certificate) = self.storage.get_certificate(request.certificate_id) {
+            // Send the certificate response to the peer.
+            let self_ = self.clone();
+            tokio::spawn(async move {
+                let _ = self_.gateway.send(peer_ip, Event::CertificateResponse(certificate.into())).await;
+            });
+        }
+    }
+
+    /// Handles the incoming certificate response.
+    /// This method ensures the certificate response is well-formed and matches the certificate ID.
+    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>) {
+        let certificate = response.certificate;
+        // Check if the peer IP exists in the pending queue for the given certificate ID.
+        let exists = self.pending.get_peers(certificate.id()).unwrap_or_default().contains(&peer_ip);
+        // If the peer IP exists, finish the pending request.
+        if exists {
+            // TODO: Validate the certificate.
+            // Remove the certificate ID from the pending queue.
+            self.pending.remove(certificate.id(), Some(certificate));
+        }
     }
 }
 
@@ -688,7 +642,7 @@ impl<N: Network> Sync<N> {
         let _lock = self.sync_lock.lock().await;
 
         let self_ = self.clone();
-        spawn_blocking!({
+        task::spawn_blocking(move || {
             // Check the next block.
             self_.ledger.check_next_block(&block)?;
             // Attempt to advance to the next block.
@@ -703,6 +657,7 @@ impl<N: Network> Sync<N> {
 
             Ok(())
         })
+        .await
     }
 
     /// Helper function for [`Self::sync_storage_with_block`].
@@ -925,10 +880,11 @@ impl<N: Network> Sync<N> {
                 let ledger = self.ledger.clone();
                 let storage = self.storage.clone();
 
-                spawn_blocking!({
-                    let block = ledger.check_block_content(pending_block).with_context(|| {
-                        format!("Failed to check contents of pending block {hash} at height {height}")
-                    })?;
+                task::spawn_blocking(move || {
+                    let block =
+                        ledger.check_block_content(pending_block).map_err(|e| e.into_anyhow()).with_context(|| {
+                            format!("Failed to check contents of pending block {hash} at height {height}")
+                        })?;
 
                     trace!("Adding pending block {hash} at height {height} to the ledger");
                     ledger.advance_to_next_block(&block)?;
@@ -937,8 +893,9 @@ impl<N: Network> Sync<N> {
                     // Sync the round with the block.
                     storage.sync_round_with_block(block.round());
 
-                    Ok(())
-                })?
+                    Result::<(), anyhow::Error>::Ok(())
+                })
+                .await?;
             }
         } else {
             trace!("No pending block are ready to be committed ({} block(s) are pending)", pending_blocks.len());
@@ -1013,32 +970,6 @@ impl<N: Network> Sync<N> {
             .await
             .with_context(|| format!("Unable to fetch batch certificate {} (timeout)", fmt_id(certificate_id)))?
             .with_context(|| format!("Unable to fetch batch certificate {}", fmt_id(certificate_id)))
-    }
-
-    /// Handles the incoming certificate request.
-    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>) {
-        // Attempt to retrieve the certificate.
-        if let Some(certificate) = self.storage.get_certificate(request.certificate_id) {
-            // Send the certificate response to the peer.
-            let self_ = self.clone();
-            tokio::spawn(async move {
-                let _ = self_.gateway.send(peer_ip, Event::CertificateResponse(certificate.into())).await;
-            });
-        }
-    }
-
-    /// Handles the incoming certificate response.
-    /// This method ensures the certificate response is well-formed and matches the certificate ID.
-    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>) {
-        let certificate = response.certificate;
-        // Check if the peer IP exists in the pending queue for the given certificate ID.
-        let exists = self.pending.get_peers(certificate.id()).unwrap_or_default().contains(&peer_ip);
-        // If the peer IP exists, finish the pending request.
-        if exists {
-            // TODO: Validate the certificate.
-            // Remove the certificate ID from the pending queue.
-            self.pending.remove(certificate.id(), Some(certificate));
-        }
     }
 }
 
@@ -1118,7 +1049,8 @@ mod tests {
         let seed: u64 = rng.r#gen();
         let vm = VM::from(store).unwrap();
         let genesis_pk = *account.private_key();
-        let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
+        let genesis =
+            task::spawn_blocking(move || vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).await.unwrap();
 
         // Extract the private keys from the genesis committee by using the same RNG to sample private keys.
         let genesis_rng = &mut TestRng::from_seed(seed);
@@ -1131,7 +1063,9 @@ mod tests {
 
         // Initialize the ledger with the genesis block.
         let genesis_clone = genesis.clone();
-        let ledger = spawn_blocking!(CurrentLedger::load(genesis_clone, StorageMode::new_test(None))).unwrap();
+        let ledger = task::spawn_blocking(move || CurrentLedger::load(genesis_clone, StorageMode::new_test(None)))
+            .await
+            .unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), SimpleStoppable::new()));
 
@@ -1257,32 +1191,24 @@ mod tests {
             }
 
             let subdag = Subdag::from(subdag_map.clone())?;
+            let ledger = core_ledger.clone();
+            let block =
+                task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))
+                    .await
+                    .unwrap();
+
             previous_leader_cert = Some(leader_certificate);
-
-            let core_ledger = core_ledger.clone();
-            let block = spawn_blocking!({
-                let block = core_ledger.clone().prepare_advance_to_next_quorum_block(subdag, Default::default())?;
-                core_ledger.advance_to_next_block(&block)?;
-                Ok(block)
-            })?;
-
             blocks.push(block);
         }
 
-        // ### Test that sync works as expected ###
+        // Initialize the syncing ledger.
         let storage_mode = StorageMode::new_test(None);
-
-        // Create a new ledger to test with, but use the existing storage
-        // so that the certificates exist.
         let syncing_ledger = {
-            let storage_mode = storage_mode.clone();
-            Arc::new(CoreLedgerService::new(
-                spawn_blocking!(CurrentLedger::load(genesis, storage_mode)).unwrap(),
-                SimpleStoppable::new(),
-            ))
+            let ledger =
+                task::spawn_blocking(move || CurrentLedger::load(genesis, storage_mode.clone())).await.unwrap();
+            Arc::new(CoreLedgerService::new(ledger, SimpleStoppable::new()))
         };
-
-        // Set up sync and its dependencies.
+        // Initialize the gateway.
         let gateway = Gateway::new(
             account.clone(),
             storage.clone(),
@@ -1335,7 +1261,8 @@ mod tests {
         let seed: u64 = rng.r#gen();
         let vm = VM::from(store).unwrap();
         let genesis_pk = *account.private_key();
-        let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
+        let genesis =
+            task::spawn_blocking(move || vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).await.unwrap();
 
         // Extract the private keys from the genesis committee by using the same RNG to sample private keys.
         let genesis_rng = &mut TestRng::from_seed(seed);
@@ -1346,7 +1273,8 @@ mod tests {
             PrivateKey::new(genesis_rng)?,
         ];
         // Initialize the ledger with the genesis block.
-        let ledger = spawn_blocking!(CurrentLedger::load(genesis, StorageMode::new_test(None))).unwrap();
+        let ledger =
+            task::spawn_blocking(move || CurrentLedger::load(genesis, StorageMode::new_test(None))).await.unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), SimpleStoppable::new()));
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.
@@ -1422,12 +1350,13 @@ mod tests {
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
             let subdag = Subdag::from(subdag_map.clone())?;
             let ledger = core_ledger.clone();
-            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))?
+            task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))
+                .await?
         };
         // Insert block 1.
         let ledger = core_ledger.clone();
         let block = block_1.clone();
-        spawn_blocking!(ledger.advance_to_next_block(&block))?;
+        task::spawn_blocking(move || ledger.advance_to_next_block(&block)).await?;
 
         // Create block 2.
         let leader_round_2 = commit_round + 2;
@@ -1445,12 +1374,13 @@ mod tests {
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
             let subdag_2 = Subdag::from(subdag_map_2.clone())?;
             let ledger = core_ledger.clone();
-            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default()))?
+            task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default()))
+                .await?
         };
         // Insert block 2.
         let ledger = core_ledger.clone();
         let block = block_2.clone();
-        spawn_blocking!(ledger.advance_to_next_block(&block))?;
+        task::spawn_blocking(move || ledger.advance_to_next_block(&block)).await?;
 
         // Create block 3
         let leader_round_3 = commit_round + 4;
@@ -1468,12 +1398,15 @@ mod tests {
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
             let subdag_3 = Subdag::from(subdag_map_3.clone())?;
             let ledger = core_ledger.clone();
-            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default()))?
+            task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default()))
+                .await?
         };
         // Insert block 3.
-        let ledger = core_ledger.clone();
-        let block = block_3.clone();
-        spawn_blocking!(ledger.advance_to_next_block(&block))?;
+        {
+            let core_ledger = core_ledger.clone();
+            let block_3 = block_3.clone();
+            task::spawn_blocking(move || core_ledger.advance_to_next_block(&block_3)).await?;
+        }
 
         /*
             Check that the pending certificates are computed correctly.
