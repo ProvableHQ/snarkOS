@@ -65,7 +65,10 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data},
     },
     prelude::{Address, Field},
-    utilities::task::{self, JoinHandle},
+    utilities::{
+        LoggableError,
+        task::{self, JoinHandle},
+    },
 };
 
 use colored::Colorize;
@@ -665,7 +668,7 @@ impl<N: Network> Gateway<N> {
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
                     if let Err(err) = cb.insert_block_response(peer_ip, blocks.0) {
-                        warn!("Unable to process block response from '{peer_ip}': {err}");
+                        err.log_warning("Unable to process block response from '{peer_ip}'");
                     }
                 }
                 Ok(true)

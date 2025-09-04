@@ -111,6 +111,7 @@ pub struct Sync<N: Network> {
 }
 
 impl<N: Network> Sync<N> {
+    /// The rate at which the node tries to advance block sync.
     const SYNC_INTERVAL: Duration = Duration::from_millis(PRIMARY_PING_IN_MS);
 
     /// Initializes a new sync instance.
@@ -182,35 +183,48 @@ impl<N: Network> Sync<N> {
     pub async fn run(&self, ping: Option<Arc<Ping<N>>>) -> Result<()> {
         info!("Starting the sync module...");
 
-        // Start the block sync loop.
+        // Start the block request generation loop (outgoing).
         let self_ = self.clone();
         self.spawn(async move {
-            // Sleep briefly to allow an initial primary ping to come in prior to entering the loop.
-            // Ideally, a node does not consider itself synced when it has not received
-            // any block locators from peers. However, in the initial bootup of validators,
-            // this needs to happen, so we use this additional sleep as a grace period.
-            sleep(Duration::from_millis(PRIMARY_PING_IN_MS)).await;
-
             let mut last_update = Instant::now();
             loop {
-                // Make sure we do not sync too often
+                // Rate limit to avoid spam detection
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(last_update);
                 let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
 
                 if !sleep_time.is_zero() {
-                    sleep(sleep_time).await;
+                    tokio::time::sleep(sleep_time).await;
                 }
 
-                let new_blocks = self_.try_block_sync().await;
-                if new_blocks {
-                    if let Some(ping) = &ping {
-                        match self_.get_block_locators() {
-                            Ok(locators) => ping.update_block_locators(locators),
-                            Err(err) => err.log_error("Failed to update block locators"),
-                        }
-                    }
+                // Wait for peer updates or timeout
+                let _ = timeout(Self::SYNC_INTERVAL, self_.block_sync.wait_for_peer_update()).await;
+
+                // Issue block requests to peers.
+                self_.try_issuing_block_requests().await;
+                last_update = now;
+            }
+        });
+
+        // Start the block response processing loop (incoming).
+        let self_ = self.clone();
+        let ping = ping.clone();
+        self.spawn(async move {
+            let mut last_update = Instant::now();
+            loop {
+                // Rate limit to avoid excessive processing
+                let now = Instant::now();
+                let elapsed = now.saturating_duration_since(last_update);
+                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
+
+                if !sleep_time.is_zero() {
+                    tokio::time::sleep(sleep_time).await;
                 }
+
+                // Wait until there is something to do or until the timeout.
+                let _ = timeout(Self::SYNC_INTERVAL, self_.block_sync.wait_for_block_responses()).await;
+
+                self_.try_advancing_block_synchronization(&ping).await;
                 last_update = now;
             }
         });
@@ -234,44 +248,52 @@ impl<N: Network> Sync<N> {
         Ok(())
     }
 
-    /// Execute one iteration of block synchronization.
+    /// BFT-specific version of `Client::try_issuing_block_requests()`.
     ///
-    /// Returns true if we made progress. Returning true does *not* imply being fully synced.
-    ///
-    /// This is called periodically by a tokio background task spawned in `Self::run`.
-    /// Some unit tests also call this function directly to manually trigger block synchronization.
-    pub(crate) async fn try_block_sync(&self) -> bool {
+    /// This method handles timeout removal, checks if block sync is possible,
+    /// and issues block requests to peers.
+    async fn try_issuing_block_requests(&self) {
         // Check if any existing requests can be removed.
         // We should do this even if we cannot block sync, to ensure
         // there are no dangling block requests.
-        let new_requests = self.block_sync.handle_block_request_timeouts(&self.gateway);
-        if let Some((sync_peers, requests)) = new_requests {
-            self.send_block_requests(sync_peers, requests).await;
+        let timeout_requests = self.block_sync.handle_block_request_timeouts(&self.gateway);
+        if let Some((requests, sync_peers)) = timeout_requests {
+            self.send_block_requests(requests, sync_peers).await;
+            return;
         }
 
-        // Wait for updates or a timeout.
-        let _ = timeout(Self::SYNC_INTERVAL, self.block_sync.wait_for_peer_update()).await;
+        // Update the sync height to the latest ledger height.
+        // (if the ledger height is lower or equal to the current sync height, this is a noop)
+        self.block_sync.set_sync_height(self.ledger.latest_block_height());
 
         // Do not attempt to sync if there are no blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
         if !self.block_sync.can_block_sync() {
-            trace!("No blocks to sync");
-            return false;
+            return;
         }
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (sync_peers, requests) = self.block_sync.prepare_block_requests();
-        self.send_block_requests(sync_peers, requests).await;
+        let (requests, sync_peers) = self.block_sync.prepare_block_requests();
 
-        // Sync the storage with the blocks
-        match self.try_advancing_block_synchronization().await {
-            Ok(new_blocks) => new_blocks,
-            Err(err) => {
-                err.log_error("Block synchronization failed");
-                false
-            }
+        // If there are no block requests, return early.
+        if requests.is_empty() {
+            return;
         }
+
+        // Send the block requests to peers.
+        self.send_block_requests(requests, sync_peers).await;
+    }
+
+    /// Test-only method to manually trigger block synchronization.
+    /// This combines both request generation and response processing for testing purposes.
+    #[cfg(test)]
+    pub(crate) async fn try_block_sync(&self) {
+        // First try issuing block requests
+        self.try_issuing_block_requests().await;
+
+        // Then try advancing with any available responses
+        self.try_advancing_block_synchronization(&None).await;
     }
 
     /// Test-only. Manually add peer locators.
@@ -285,7 +307,11 @@ impl<N: Network> Sync<N> {
 impl<N: Network> GatewaySyncCallback<N> for Sync<N> {
     /// We received a block response and can (possibly) advance synchronization.
     fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+        // Verify that the response is valid and add it to block sync.
         self.block_sync.insert_block_responses(peer_ip, blocks)
+
+        // No need to advance block sync here, as the new response will
+        // notify the incoming task.
     }
 
     /// We received new peer locators during a Ping.
@@ -427,6 +453,27 @@ impl<N: Network> Sync<N> {
         responses.last_key_value().map(|(height, _)| *height).unwrap_or(0).max(ledger_height)
     }
 
+    /// BFT-version of [`snarkos_node_client::Client::try_advancing_block_synchronization`].
+    async fn try_advancing_block_synchronization(&self, ping: &Option<Arc<Ping<N>>>) {
+        // Process block responses and advance the ledger.
+        let new_blocks = match self.try_advancing_block_synchronization_inner().await {
+            Ok(new_blocks) => new_blocks,
+            Err(err) => {
+                err.log_error("Block synchronization failed");
+                false
+            }
+        };
+
+        if let Some(ping) = &ping
+            && new_blocks
+        {
+            match self.get_block_locators() {
+                Ok(locators) => ping.update_block_locators(locators),
+                Err(err) => err.log_error("Failed to update block locators"),
+            }
+        }
+    }
+
     /// Aims to advance synchronization using any recent block responses received from peers.
     ///
     /// This is the validator's version of `BlockSync::try_advancing_block_synchronization`
@@ -441,7 +488,7 @@ impl<N: Network> Sync<N> {
     ///
     /// If the node falls behind more than GC rounds, this function calls [`Self::sync_storage_without_bft`] instead,
     /// which syncs without updating the BFT state.
-    async fn try_advancing_block_synchronization(&self) -> Result<bool> {
+    async fn try_advancing_block_synchronization_inner(&self) -> Result<bool> {
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
 
@@ -451,7 +498,11 @@ impl<N: Network> Sync<N> {
         self.block_sync.set_sync_height(ledger_height);
 
         // Retrieve the maximum block height of the peers.
-        let tip = self.block_sync.find_sync_peers().map(|(x, _)| x.into_values().max().unwrap_or(0)).unwrap_or(0);
+        let tip = self
+            .block_sync
+            .find_sync_peers()
+            .map(|(sync_peers, _)| *sync_peers.values().max().unwrap_or(&0))
+            .unwrap_or(0);
 
         // Determine the maximum number of blocks corresponding to rounds
         // that would not have been garbage collected, i.e. that would be kept in storage.
