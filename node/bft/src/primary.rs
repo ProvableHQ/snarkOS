@@ -291,6 +291,21 @@ impl<N: Network> Primary<N> {
     pub fn proposed_batch(&self) -> &Arc<ProposedBatch<N>> {
         &self.proposed_batch
     }
+
+    /// Checks if a transaction is valid for the current consensus.
+    pub fn check_transaction_for_consensus(&self, transaction: &Transaction<N>, block_height: u32) -> Result<()> {
+        // ConsensusVersion V8 Migration logic -
+        // Do not include deployments in a batch proposal.
+        let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
+        let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+        if block_height > consensus_version_v7_height
+            && block_height <= consensus_version_v8_height
+            && transaction.is_deploy()
+        {
+            bail!("Deployment transactions are not allowed until Consensus V8 (block {consensus_version_v8_height})");
+        }
+        Ok(())
+    }
 }
 
 impl<N: Network> Primary<N> {
@@ -580,20 +595,10 @@ impl<N: Network> Primary<N> {
                             }
                         })?;
 
-                        // ConsensusVersion V8 Migration logic -
-                        // Do not include deployments in a batch proposal.
+                        // Check if the transaction is valid for the current consensus.
                         let current_block_height = self.ledger.latest_block_height();
-                        let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
-                        let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
-                        let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
-                        if current_block_height > consensus_version_v7_height
-                            && current_block_height <= consensus_version_v8_height
-                            && transaction.is_deploy()
-                        {
-                            trace!(
-                                "Proposing - Skipping transaction '{}' - Deployment transactions are not allowed until Consensus V8 (block {consensus_version_v8_height})",
-                                fmt_id(transaction_id)
-                            );
+                        if let Err(e) = self.check_transaction_for_consensus(&transaction, current_block_height) {
+                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
                             continue;
                         }
 
@@ -606,6 +611,7 @@ impl<N: Network> Primary<N> {
 
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
+                        let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
                         let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
                             transaction_id,
                             transaction,
@@ -882,22 +888,14 @@ impl<N: Network> Primary<N> {
                         }
                     })?;
 
-                    // ConsensusVersion V8 Migration logic -
-                    // Do not include deployments in a batch proposal.
-                    let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
-                    let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
-                    let consensus_version = N::CONSENSUS_VERSION(block_height)?;
-                    if block_height > consensus_version_v7_height
-                        && block_height <= consensus_version_v8_height
-                        && transaction.is_deploy()
-                    {
-                        bail!(
-                            "Invalid batch proposal - Batch proposals are not allowed to include deployments until Consensus V8 (block {consensus_version_v8_height})",
-                        )
+                    // Check if the transaction is valid for the current consensus.
+                    if let Err(e) = self.check_transaction_for_consensus(&transaction, block_height) {
+                        bail!("Invalid batch proposal - {e}")
                     }
 
                     // Compute the transaction spent cost (in microcredits).
                     // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
+                    let consensus_version = N::CONSENSUS_VERSION(block_height)?;
                     let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
                         *transaction_id,
                         transaction,
