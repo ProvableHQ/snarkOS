@@ -68,7 +68,7 @@ pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNe
         max_peers,
         false,
         true,
-        StorageMode::Test(None),
+        StorageMode::new_test(None),
         true,
     )
     .await
@@ -90,7 +90,7 @@ pub async fn prover(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNe
         max_peers,
         false,
         true,
-        StorageMode::Test(None),
+        StorageMode::new_test(None),
         true,
     )
     .await
@@ -117,7 +117,7 @@ pub async fn validator(
         max_peers,
         false,
         allow_external_peers,
-        StorageMode::Test(None),
+        StorageMode::new_test(None),
         true,
     )
     .await
