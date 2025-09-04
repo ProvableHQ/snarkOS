@@ -21,7 +21,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{Cache, PrimarySender, Resolver, Storage, WorkerSender, assign_to_worker},
 };
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
@@ -41,7 +41,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService, locators::BlockLocators};
 use snarkos_node_tcp::{
     Config,
     Connection,
@@ -55,11 +55,15 @@ use snarkos_node_tcp::{
 use snarkvm::{
     console::prelude::*,
     ledger::{
+        Block,
         committee::Committee,
         narwhal::{BatchHeader, Data},
     },
     prelude::{Address, Field},
-    utilities::task::{self, JoinHandle},
+    utilities::{
+        LoggableError,
+        task::{self, JoinHandle},
+    },
 };
 
 use colored::Colorize;
@@ -116,6 +120,22 @@ pub trait Transport<N: Network>: Send + Sync {
     fn broadcast(&self, event: Event<N>);
 }
 
+pub trait SyncCallback<N: Network>: Send + Sync {
+    /// We received a block response and can (possibly) advance synchronization.
+    fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()>;
+
+    /// We received new peer locators during a Ping.
+    fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()>;
+
+    /// A peer disconnected.
+    fn remove_peer(&self, peer_ip: SocketAddr);
+
+    /// Handles the incoming certificate request.
+    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>);
+
+    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>);
+}
+
 /// The gateway maintains connections to other validators.
 /// For connections with clients and provers, the Router logic is used.
 #[derive(Clone)]
@@ -148,8 +168,8 @@ pub struct Gateway<N: Network> {
     primary_sender: Arc<OnceCell<PrimarySender<N>>>,
     /// The worker senders.
     worker_senders: Arc<OnceCell<IndexMap<u8, WorkerSender<N>>>>,
-    /// The sync sender.
-    sync_sender: Arc<OnceCell<SyncSender<N>>>,
+    /// The callback for sync messages.
+    sync_callback: Arc<RwLock<Option<Arc<dyn SyncCallback<N>>>>>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The development mode.
@@ -190,7 +210,7 @@ impl<N: Network> Gateway<N> {
             validator_telemetry: Default::default(),
             primary_sender: Default::default(),
             worker_senders: Default::default(),
-            sync_sender: Default::default(),
+            sync_callback: Arc::new(RwLock::new(None)),
             handles: Default::default(),
             dev,
         })
@@ -201,7 +221,7 @@ impl<N: Network> Gateway<N> {
         &self,
         primary_sender: PrimarySender<N>,
         worker_senders: IndexMap<u8, WorkerSender<N>>,
-        sync_sender: Option<SyncSender<N>>,
+        sync_callback: Option<Arc<dyn SyncCallback<N>>>,
     ) {
         debug!("Starting the gateway for the memory pool...");
 
@@ -211,9 +231,10 @@ impl<N: Network> Gateway<N> {
         // Set the worker senders.
         self.worker_senders.set(worker_senders).expect("The worker senders are already set");
 
-        // If the sync sender was provided, set the sync sender.
-        if let Some(sync_sender) = sync_sender {
-            self.sync_sender.set(sync_sender).expect("Sync sender already set in gateway");
+        if let Some(sync_callback) = sync_callback {
+            if self.sync_callback.write().replace(sync_callback).is_some() {
+                error!("Sync callback already set in gateway");
+            }
         }
 
         // Enable the TCP protocols.
@@ -548,13 +569,8 @@ impl<N: Network> Gateway<N> {
     /// Removes the connected peer and adds them to the candidate peers.
     fn remove_connected_peer(&self, peer_ip: SocketAddr) {
         // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-        if let Some(sync_sender) = self.sync_sender.get() {
-            let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-            task::spawn(async move {
-                if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                    warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
-                }
-            });
+        if let Some(cb) = &*self.sync_callback.read() {
+            cb.remove_peer(peer_ip);
         }
         // Removes the bidirectional map between the listener address and (ambiguous) peer address.
         self.resolver.remove_peer(peer_ip);
@@ -687,7 +703,8 @@ impl<N: Network> Gateway<N> {
             }
             Event::BlockResponse(block_response) => {
                 // Process the block response. Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                let sync_callback = (*self.sync_callback.read()).clone();
+                if let Some(cb) = sync_callback {
                     // Retrieve the block response.
                     let BlockResponse { request, blocks } = block_response;
 
@@ -713,8 +730,8 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(e) = sync_sender.advance_with_sync_blocks(peer_ip, blocks.0).await {
-                        warn!("Unable to process block response from '{peer_ip}' - {e}");
+                    if let Err(err) = cb.insert_block_response(peer_ip, blocks.0) {
+                        err.log_warning(format!("Unable to process block response from '{peer_ip}'"));
                     }
                 }
                 Ok(())
@@ -722,18 +739,18 @@ impl<N: Network> Gateway<N> {
             Event::CertificateRequest(certificate_request) => {
                 // Send the certificate request to the sync module.
                 // Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.read() {
                     // Send the certificate request to the sync module.
-                    let _ = sync_sender.tx_certificate_request.send((peer_ip, certificate_request)).await;
+                    cb.send_certificate_response(peer_ip, certificate_request);
                 }
                 Ok(())
             }
             Event::CertificateResponse(certificate_response) => {
                 // Send the certificate response to the sync module.
                 // Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.read() {
                     // Send the certificate response to the sync module.
-                    let _ = sync_sender.tx_certificate_response.send((peer_ip, certificate_response)).await;
+                    cb.finish_certificate_request(peer_ip, certificate_response);
                 }
                 Ok(())
             }
@@ -753,9 +770,9 @@ impl<N: Network> Gateway<N> {
                 }
 
                 // Update the peer locators. Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.read() {
                     // Check the block locators are valid, and update the validators in the sync module.
-                    if let Err(error) = sync_sender.update_peer_locators(peer_ip, block_locators).await {
+                    if let Err(error) = cb.update_peer_locators(peer_ip, block_locators) {
                         bail!("Validator '{peer_ip}' sent invalid block locators - {error}");
                     }
                 }
@@ -937,9 +954,11 @@ impl<N: Network> Gateway<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
         // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
         // Close the listener.
         self.tcp.shut_down().await;
+        // Remove the sync callback (so it can be dropped).
+        self.sync_callback.write().take();
     }
 }
 
