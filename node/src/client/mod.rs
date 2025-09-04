@@ -269,7 +269,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     break;
                 }
 
-                // Make sure we do not sync too often
+                // Make sure we do not sync too often.
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(last_update);
                 let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
@@ -285,9 +285,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         }));
     }
 
-    /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
+    /// Client-side version of `snarkos_node_bft::Sync::try_block_sync()`.
     async fn try_block_sync(&self) {
-        // Sleep briefly to avoid triggering spam detection.
+        // Wait for updates or a timeout.
         let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_update()).await;
 
         // For sanity, check that sync height is never below ledger height.
