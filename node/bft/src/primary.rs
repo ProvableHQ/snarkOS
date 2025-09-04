@@ -580,7 +580,6 @@ impl<N: Network> Primary<N> {
                             }
                         })?;
 
-                        // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                         // ConsensusVersion V8 Migration logic -
                         // Do not include deployments in a batch proposal.
                         let current_block_height = self.ledger.latest_block_height();
@@ -883,7 +882,6 @@ impl<N: Network> Primary<N> {
                         }
                     })?;
 
-                    // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                     // ConsensusVersion V8 Migration logic -
                     // Do not include deployments in a batch proposal.
                     let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
