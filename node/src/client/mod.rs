@@ -253,15 +253,16 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
 /// Sync-specific code.
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
+    /// The rate at which the node tries to advance block sync.
     const SYNC_INTERVAL: Duration = std::time::Duration::from_secs(5);
 
     /// Spawns the tasks that performs the syncing logic for this client.
     fn initialize_sync(&self) {
-        // Start the sync incoming loop.
-        let _self = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        // Start the block request generation loop (outgoing).
+        let self_ = self.clone();
+        self.spawn(async move {
             let mut last_update = Instant::now();
-            while !_self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 // Make sure we do not sync too often
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(last_update);
@@ -272,44 +273,45 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 }
 
                 // Perform the sync routine.
-                _self.try_advancing_block_synchronization().await;
-                last_update = now;
-            }
-
-            debug!("Stopped block response processing");
-        }));
-
-        // Start the sync outgoing loop.
-        let _self = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
-            let mut last_update = Instant::now();
-            while !_self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                // Make sure we do not sync too often
-                let now = Instant::now();
-                let elapsed = now.saturating_duration_since(last_update);
-                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
-
-                if !sleep_time.is_zero() {
-                    sleep(sleep_time).await;
-                }
-
-                // Perform the sync routine.
-                _self.try_issuing_block_requests().await;
+                self_.try_issuing_block_requests().await;
                 last_update = now;
             }
 
             info!("Stopped block request generation");
-        }));
+        });
+
+        // Start the block response processing loop (incoming).
+        let self_ = self.clone();
+        self.spawn(async move {
+            let mut last_update = Instant::now();
+            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // Make sure we do not sync too often (rate-limiting).
+                let now = Instant::now();
+                let elapsed = now.saturating_duration_since(last_update);
+                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
+
+                if !sleep_time.is_zero() {
+                    sleep(sleep_time).await;
+                }
+
+                // Wait until there is something to do or until the timeout.
+                let _ = timeout(Self::SYNC_INTERVAL, self_.sync.wait_for_block_responses()).await;
+
+                // Perform the sync routine.
+                self_.try_advancing_block_synchronization().await;
+                last_update = now;
+            }
+
+            debug!("Stopped block response processing");
+        });
     }
 
-    /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
+    /// Client-side version of [`snarkvm_node_bft::Sync::try_advancing_block_synchronization`].
     async fn try_advancing_block_synchronization(&self) {
-        let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_block_responses()).await;
-
         let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
             Ok(val) => val,
             Err(err) => {
-                error!("{err}");
+                error!("Block synchronization failed - {err}");
                 return;
             }
         };
@@ -340,7 +342,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             return;
         }
 
-        // Sleep briefly to avoid triggering spam detection.
+        // Wait for peer updates or timeout
         let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
 
         // Prepare the block requests, if any.
@@ -389,7 +391,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     fn initialize_solution_verification(&self) {
         // Start the solution verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -456,14 +458,14 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Initializes deploy verification.
     fn initialize_deploy_verification(&self) {
         // Start the deploy verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -509,14 +511,14 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Initializes execute verification.
     fn initialize_execute_verification(&self) {
         // Start the execute verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -562,7 +564,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
