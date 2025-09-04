@@ -35,7 +35,6 @@ use crate::{
         assign_to_worker,
         assign_to_workers,
         fmt_id,
-        init_sync_channels,
         init_worker_channels,
         now,
     },
@@ -238,16 +237,14 @@ impl<N: Network> Primary<N> {
         // Set the workers.
         self.workers = Arc::from(workers);
 
-        // First, initialize the sync channels.
-        let (sync_sender, sync_receiver) = init_sync_channels();
         // Next, initialize the sync module and sync the storage from ledger.
         self.sync.initialize(bft_sender).await?;
         // Next, load and process the proposal cache before running the sync module.
         self.load_proposal_cache().await?;
         // Next, run the sync module.
-        self.sync.run(ping, sync_receiver).await?;
+        self.sync.run(ping).await?;
         // Next, initialize the gateway.
-        self.gateway.run(primary_sender, worker_senders, Some(sync_sender)).await;
+        self.gateway.run(primary_sender, worker_senders, Some(Arc::new(self.sync.clone()))).await;
         // Lastly, start the primary handlers.
         // Note: This ensures the primary does not start communicating before syncing is complete.
         self.start_handlers(primary_receiver);
