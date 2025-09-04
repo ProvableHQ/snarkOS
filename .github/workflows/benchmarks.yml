@@ -116,7 +116,9 @@ jobs:
           fail-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Use generic JSON format
-          tool: 'customSmallerIsBetter'
+          # Note: there is no way to set smallerIsBetter for individual benchmarks right now,
+          # but for all, except the sync variance, bigger is indeed better.
+          tool: 'customBiggerIsBetter'
           output-file-path: results.json
           alert-comment-cc-users: '@kaimast'
           # Only push the results on staging (see below)
