@@ -573,6 +573,14 @@ impl<N: Network> Router<N> {
                 false
             }
         });
+        // Prioritize peers with the lowest failure count.
+        peers.sort_unstable_by_key(|peer| {
+            if let Some(peer_stats) = known_peers.get(&peer.listener_addr().ip()) {
+                peer_stats.failures()
+            } else {
+                0 // A dummy value - this is unreachable.
+            }
+        });
         peers.truncate(MAX_PEERS_TO_SEND);
 
         // Dump the connected peers to a file.
