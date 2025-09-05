@@ -76,7 +76,7 @@ features = ["git2"]
 version = "1"
 
 [workspace.dependencies.clap]
-version = "4.4"
+version = "4.5"
 default-features = false
 features = [ "std" ]
 
@@ -321,7 +321,7 @@ workspace = true
 workspace = true
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-tikv-jemallocator = "0.5"
+tikv-jemallocator = "0.6"
 
 [dependencies.tracing]
 workspace = true
