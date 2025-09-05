@@ -629,13 +629,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
             Err(other_rejection) => return Err(other_rejection.into()),
         };
-        // Do not process the transaction if the node is too far behind.
-        if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError::service_unavailable(anyhow!(
-                "Unable to broadcast transaction '{}' (node is syncing)",
-                fmt_id(tx.id())
-            )));
-        }
+
+        // Determine transaction type.
+        let is_exec = tx.is_execute();
 
         // If the transaction exceeds the transaction size limit, return an error.
         // The buffer is initially roughly sized to hold a `transfer_public`,
@@ -646,9 +642,25 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             return Err(RestError::bad_request(anyhow!("Transaction size exceeds the byte limit")));
         }
 
+        // Prepare the unconfirmed transaction message.
+        let tx_id = tx.id();
+        let message = Message::UnconfirmedTransaction(UnconfirmedTransaction {
+            transaction_id: tx_id,
+            transaction: Data::Object(tx.clone()),
+        });
+
+        // Broadcast the transaction.
+        rest.routing.propagate(message, &[]);
+
+        // Do not process the transaction if the node is too far behind.
+        if !rest.routing.is_within_sync_leniency() {
+            return Err(RestError::service_unavailable(anyhow!(
+                "Broadcasted transaction '{}', but will not process it (node is syncing)",
+                fmt_id(tx_id)
+            )));
+        }
+
         if check_transaction.check_transaction.unwrap_or(false) {
-            // Determine transaction type and appropriate limits.
-            let is_exec = tx.is_execute();
             // Select counter and limit based on transaction type.
             let (counter, limit, err_msg) = if is_exec {
                 (
@@ -694,16 +706,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // Add the unconfirmed transaction to the memory pool.
             consensus.add_unconfirmed_transaction(tx.clone()).await?;
         }
-
-        // Prepare the unconfirmed transaction message.
-        let tx_id = tx.id();
-        let message = Message::UnconfirmedTransaction(UnconfirmedTransaction {
-            transaction_id: tx_id,
-            transaction: Data::Object(tx),
-        });
-
-        // Broadcast the transaction.
-        rest.routing.propagate(message, &[]);
 
         Ok(ErasedJson::pretty(tx_id))
     }
