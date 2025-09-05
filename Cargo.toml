@@ -261,7 +261,6 @@ cuda = [
 ]
 locktick = [
   "dep:locktick",
-  "dep:tracing",
   "snarkos-node/locktick",
   "snarkos-node-bft/locktick",
   "snarkos-node-consensus/locktick",
@@ -319,12 +318,14 @@ workspace = true
 [dependencies.snarkos-node-tcp]
 workspace = true
 
+[dependencies.snarkvm]
+workspace = true
+
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.5"
 
 [dependencies.tracing]
 workspace = true
-optional = true
 
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
