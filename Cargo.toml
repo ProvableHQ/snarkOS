@@ -44,9 +44,10 @@ version = "1.0.1"
 default-features = false
 
 [workspace.dependencies.snarkvm]
-# path = "../snarkVM"
+#path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "8c0524f46209db1dd87d840376292f95406f1df7"
+branch = "feat/better-errors"
+#rev = "8c0524f46209db1dd87d840376292f95406f1df7"
 #version = "=4.0.1"
 default-features = false
 
@@ -260,7 +261,6 @@ cuda = [
 ]
 locktick = [
   "dep:locktick",
-  "dep:tracing",
   "snarkos-node/locktick",
   "snarkos-node-bft/locktick",
   "snarkos-node-consensus/locktick",
@@ -320,12 +320,14 @@ workspace = true
 [dependencies.snarkos-node-tcp]
 workspace = true
 
+[dependencies.snarkvm]
+workspace = true
+
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.6"
 
 [dependencies.tracing]
 workspace = true
-optional = true
 
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
