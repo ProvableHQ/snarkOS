@@ -46,8 +46,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-branch = "feat/better-errors"
-#rev = "8c0524f46209db1dd87d840376292f95406f1df7"
+rev = "595af97169519"
 #version = "=4.0.1"
 default-features = false
 
@@ -274,9 +273,6 @@ serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network" ]
-
-[dependencies.anyhow]
-workspace = true
 
 [dependencies.clap]
 workspace = true
