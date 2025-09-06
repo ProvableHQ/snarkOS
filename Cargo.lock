@@ -3713,7 +3713,6 @@ dependencies = [
 name = "snarkos"
 version = "4.2.0"
 dependencies = [
- "anyhow",
  "built",
  "clap",
  "locktick",

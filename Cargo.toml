@@ -46,8 +46,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-#rev = "8c0524f46209db1dd87d840376292f95406f1df7"
 branch = "feat/faster-get-block-tracing"
+#rev = "595af97169519"
 #version = "=4.0.1"
 default-features = false
 
@@ -281,9 +281,6 @@ tracing = [
   "snarkos-node-cdn/tracing"
 ]
 flamegraph = [ "tracing", "snarkos-cli/flamegraph" ]
-
-[dependencies.anyhow]
-workspace = true
 
 [dependencies.clap]
 workspace = true
