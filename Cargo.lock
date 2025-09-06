@@ -3739,7 +3739,7 @@ dependencies = [
 name = "snarkos-account"
 version = "4.1.0"
 dependencies = [
- "colored 2.2.0",
+ "colored 3.0.0",
  "snarkvm",
 ]
 
