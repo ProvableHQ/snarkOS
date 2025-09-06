@@ -683,8 +683,8 @@ impl Start {
             );
 
             // If the node is running a REST server, print the REST IP and JWT.
-            if node_type.is_validator() || node_type.is_client() {
-                if let Some(rest_ip) = rest_ip {
+            if (node_type.is_validator() || node_type.is_client())
+                && let Some(rest_ip) = rest_ip {
                     println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
 
                     let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
@@ -704,7 +704,6 @@ impl Start {
                         println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
                     }
                 }
-            }
         }
 
         // If the node is a validator, check if the open files limit is lower than recommended.

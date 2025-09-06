@@ -131,8 +131,8 @@ impl<N: Network> Display<N> {
             // Set the timeout duration.
             let timeout = self.tick_rate.checked_sub(last_tick.elapsed()).unwrap_or_else(|| Duration::from_secs(0));
 
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()? {
                     match key.code {
                         KeyCode::Esc => {
                             return Ok(());
@@ -178,7 +178,6 @@ impl<N: Network> Display<N> {
                         _ => {}
                     }
                 }
-            }
 
             if last_tick.elapsed() >= self.tick_rate {
                 thread::sleep(Duration::from_millis(50));

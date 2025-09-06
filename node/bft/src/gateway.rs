@@ -1084,8 +1084,8 @@ impl<N: Network> Gateway<N> {
     /// Processes a message received from the network.
     async fn process_message_inner(&self, peer_addr: SocketAddr, message: Event<N>) {
         // Process the message. Disconnect if the peer violated the protocol.
-        if let Err(error) = self.inbound(peer_addr, message).await {
-            if let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
+        if let Err(error) = self.inbound(peer_addr, message).await
+            && let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
                 warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
                 let self_ = self.clone();
                 tokio::spawn(async move {
@@ -1094,7 +1094,6 @@ impl<N: Network> Gateway<N> {
                     self_.disconnect(peer_ip);
                 });
             }
-        }
     }
 
     // Remove addresses whose ban time has expired.

@@ -1589,11 +1589,10 @@ impl<N: Network> Primary<N> {
             bail!("Primary is on round {current_round}, and no longer signing for round {batch_round}")
         }
         // Check if the primary is still signing for the batch round.
-        if let Some(signing_round) = self.proposed_batch.read().as_ref().map(|proposal| proposal.round()) {
-            if signing_round > batch_round {
+        if let Some(signing_round) = self.proposed_batch.read().as_ref().map(|proposal| proposal.round())
+            && signing_round > batch_round {
                 bail!("Our primary at round {signing_round} is no longer signing for round {batch_round}")
             }
-        }
         Ok(())
     }
 

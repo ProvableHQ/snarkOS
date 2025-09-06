@@ -148,11 +148,10 @@ pub fn initialize_logger<P: AsRef<Path>>(
     // Create the directories tree for a logfile if it doesn't exist.
     let Some(logfile_dir) = logfile.as_ref().parent() else { bail!("Root directory passed as a logfile") };
 
-    if !logfile_dir.exists() {
-        if let Err(err) = std::fs::create_dir_all(logfile_dir) {
+    if !logfile_dir.exists()
+        && let Err(err) = std::fs::create_dir_all(logfile_dir) {
             bail!("Failed to create a directory: '{}' ({err})", logfile_dir.display());
         }
-    }
     // Create a file to write logs to.
     let logfile = match File::options().append(true).create(true).open(logfile) {
         Ok(logfile) => logfile,

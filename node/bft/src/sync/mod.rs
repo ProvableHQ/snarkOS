@@ -178,14 +178,13 @@ impl<N: Network> Sync<N> {
                 tokio::time::sleep(Duration::from_millis(PRIMARY_PING_IN_MS)).await;
 
                 let new_blocks = self_.try_block_sync().await;
-                if new_blocks {
-                    if let Some(ping) = &ping {
+                if new_blocks
+                    && let Some(ping) = &ping {
                         match self_.get_block_locators() {
                             Ok(locators) => ping.update_block_locators(locators),
                             Err(err) => error!("Failed to update block locators: {err}"),
                         }
                     }
-                }
             }
         });
 

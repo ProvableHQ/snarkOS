@@ -360,11 +360,10 @@ impl<N: Network> BFT<N> {
             return false;
         }
         // If the leader certificate is set for the current even round, return 'true'.
-        if let Some(leader_certificate) = self.leader_certificate.read().as_ref() {
-            if leader_certificate.round() == current_round {
+        if let Some(leader_certificate) = self.leader_certificate.read().as_ref()
+            && leader_certificate.round() == current_round {
                 return true;
             }
-        }
         // If the timer has expired, and we can achieve quorum threshold (N - f) without the leader, return 'true'.
         if self.is_timer_expired() {
             debug!("BFT (timer expired) - Advancing from round {current_round} to the next round (without the leader)");

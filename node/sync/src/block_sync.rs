@@ -850,17 +850,15 @@ impl<N: Network> BlockSync<N> {
         let (expected_hash, expected_previous_hash, sync_ips) = &entry.request;
 
         // Ensure the candidate block hash matches the expected hash.
-        if let Some(expected_hash) = expected_hash {
-            if block.hash() != *expected_hash {
+        if let Some(expected_hash) = expected_hash
+            && block.hash() != *expected_hash {
                 bail!("The block hash for candidate block {height} from '{peer_ip}' is incorrect")
             }
-        }
         // Ensure the previous block hash matches if it exists.
-        if let Some(expected_previous_hash) = expected_previous_hash {
-            if block.previous_hash() != *expected_previous_hash {
+        if let Some(expected_previous_hash) = expected_previous_hash
+            && block.previous_hash() != *expected_previous_hash {
                 bail!("The previous block hash in candidate block {height} from '{peer_ip}' is incorrect")
             }
-        }
         // Ensure the sync pool requested this block from the given peer.
         if !sync_ips.contains(&peer_ip) {
             bail!("The sync pool did not request block {height} from '{peer_ip}'")

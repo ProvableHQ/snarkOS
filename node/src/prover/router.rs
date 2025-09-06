@@ -91,14 +91,13 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Prover<N, C> {
     /// Processes a message received from the network.
     async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) -> io::Result<()> {
         // Process the message. Disconnect if the peer violated the protocol.
-        if let Err(error) = self.inbound(peer_addr, message).await {
-            if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
+        if let Err(error) = self.inbound(peer_addr, message).await
+            && let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
                 warn!("Disconnecting from '{peer_addr}' - {error}");
                 self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
                 // Disconnect from this peer.
                 self.router().disconnect(peer_ip);
             }
-        }
         Ok(())
     }
 }
@@ -252,11 +251,10 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
                 }
                 // If error occurs after the first 10 blocks of the epoch, log it as a warning, otherwise ignore.
                 Err(error) => {
-                    if let Some(height) = self.latest_block_header.read().as_ref().map(|header| header.height()) {
-                        if height % N::NUM_BLOCKS_PER_EPOCH > 10 {
+                    if let Some(height) = self.latest_block_header.read().as_ref().map(|header| header.height())
+                        && height % N::NUM_BLOCKS_PER_EPOCH > 10 {
                             warn!("Failed to verify the solution - {error}")
                         }
-                    }
                 }
             }
         }

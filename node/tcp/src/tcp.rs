@@ -302,13 +302,12 @@ impl Tcp {
     ///
     /// Returns true if the we were connected to the given address.
     pub async fn disconnect(&self, addr: SocketAddr) -> bool {
-        if let Some(handler) = self.protocols.disconnect.get() {
-            if self.is_connected(addr) {
+        if let Some(handler) = self.protocols.disconnect.get()
+            && self.is_connected(addr) {
                 let (sender, receiver) = oneshot::channel();
                 handler.trigger((addr, sender));
                 let _ = receiver.await; // can't really fail
             }
-        }
 
         let conn = self.connections.remove(addr);
 
