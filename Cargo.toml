@@ -46,8 +46,9 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "35c82646eeb2e9561be"
+#rev = "35c82646eeb2e9561be"
 #version = "=4.2.1"
+branch = "feat/faster-get-block"
 default-features = false
 #features = [ "circuit", "console", "rocks" ]
 
