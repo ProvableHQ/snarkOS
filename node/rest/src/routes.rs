@@ -616,7 +616,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     //
     // Transaction Broadcast Flow
     //
-    // ```text
     // /transaction/broadcast
     //         |
     //    +----+---------------------------+
