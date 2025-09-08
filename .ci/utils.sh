@@ -13,7 +13,7 @@ node_stopped=false
 # How many cores should each node use?
 # (Should be half of the number of (v)CPUs)
 # NOTE: when you update this, update TASKSET1/2 as well.
-CORES_PER_NODE=2
+CORES_PER_NODE=8
 
 # Tasksets to pin processes to specfic CPUs.
 # This is a no-op on MacOS.
@@ -21,8 +21,8 @@ if [[ "$(uname)" == "Darwin" ]]; then
   TASKSET1=""
   TASKSET2=""
 else
-  TASKSET1="taskset -c 0,1"
-  TASKSET2="taskset -c 2,3"
+  TASKSET1="taskset -c 0-7"
+  TASKSET2="taskset -c 8-15"
 fi
 
 # Handler for a child process exiting
