@@ -733,19 +733,23 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Json(solution): Json<Solution<N>>,
     ) -> Result<ErasedJson, RestError> {
-        // Do not process the solution if the node is too far behind.
-        if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError::service_unavailable(anyhow!(
-                "Unable to broadcast solution '{}' (node is syncing)",
-                fmt_id(solution.id())
-            )));
-        }
+        // Check if the node is within sync leniency.
+        let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
 
         // If the consensus module is enabled, add the unconfirmed solution to the memory pool.
         // Otherwise, verify it prior to broadcasting.
         match rest.consensus {
             // Add the unconfirmed solution to the memory pool.
-            Some(consensus) => consensus.add_unconfirmed_solution(solution).await?,
+            Some(consensus) => {
+                // Do not process the solution if the node is too far behind.
+                if !is_within_sync_leniency {
+                    return Err(RestError::service_unavailable(anyhow!(
+                        "Unable to broadcast solution '{}' (node is syncing)",
+                        fmt_id(solution.id())
+                    )));
+                }
+                consensus.add_unconfirmed_solution(solution).await?
+            }
             // Verify the solution.
             None => {
                 // Compute the current epoch hash.
@@ -770,9 +774,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
-                        return Err(RestError::unprocessable_entity(
-                            err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
-                        ));
+                        return match is_within_sync_leniency {
+                            // The solution failed to verify.
+                            true => Err(RestError::unprocessable_entity(
+                                err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
+                            )),
+                            // The node is out of sync and may not be able to properly validate the solution.
+                            false => Err(RestError::service_unavailable(anyhow!(
+                                "Unable to validate solution '{}' (node is syncing)",
+                                fmt_id(solution.id())
+                            ))),
+                        };
                     }
                     Err(err) => {
                         return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
