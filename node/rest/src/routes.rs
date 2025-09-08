@@ -613,6 +613,29 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     // POST /<network>/transaction/broadcast
     // POST /<network>/transaction/broadcast?check_transaction={true}
+    //
+    // Transaction Broadcast Flow
+    //
+    // ```text
+    // /transaction/broadcast
+    //         |
+    //    +----+---------------------------+
+    //    |                               |
+    //    v                               v
+    // Without Query Params        With Query Param
+    //                                check_transaction=true
+    //    |                               |
+    //    +---------+                     +---------+
+    //    |         |                     |         |
+    //    v         v                     v         v
+    // Synced   Not Synced            Synced   Not Synced
+    //    |         |                     |         |
+    //    v         v                     v         v
+    //   200       200        check_transaction  check_transaction
+    //                           +---------+        +---------+
+    //                           |         |        |         |
+    //                           v         v        v         v
+    //                          200       422      200       503
     pub(crate) async fn transaction_broadcast(
         State(rest): State<Self>,
         check_transaction: Query<CheckTransaction>,
@@ -626,9 +649,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
             Err(other_rejection) => return Err(other_rejection.into()),
         };
-
-        // Determine transaction type.
-        let is_exec = tx.is_execute();
 
         // If the transaction exceeds the transaction size limit, return an error.
         // The buffer is initially roughly sized to hold a `transfer_public`,
@@ -646,20 +666,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             transaction: Data::Object(tx.clone()),
         });
 
-        // Broadcast the transaction.
-        rest.routing.propagate(message, &[]);
-
-        // Do not process the transaction if the node is too far behind.
-        if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError::service_unavailable(anyhow!(
-                "Broadcasted transaction '{}', but will not process it (node is syncing)",
-                fmt_id(tx_id)
-            )));
-        }
+        // Check if the node is within sync leniency.
+        let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
 
         if check_transaction.check_transaction.unwrap_or(false) {
             // Select counter and limit based on transaction type.
-            let (counter, limit, err_msg) = if is_exec {
+            let (counter, limit, err_msg) = if tx.is_execute() {
                 (
                     &rest.num_verifying_executions,
                     VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
@@ -688,10 +700,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
 
             // Perform the check.
-            let res = rest
-                .ledger
-                .check_transaction_basic(&tx, None, &mut rand::thread_rng())
-                .map_err(|err| RestError::unprocessable_entity(err.context("Invalid transaction")));
+            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::thread_rng()).map_err(|err| {
+                match is_within_sync_leniency {
+                    // The transaction failed to verify.
+                    true => RestError::unprocessable_entity(err.context("Invalid transaction")),
+                    // The node is out of sync and may not be able to properly validate the transaction.
+                    false => {
+                        RestError::service_unavailable(err.context("Unable to validate transaction (node is syncing)"))
+                    }
+                }
+            });
             // Release the slot.
             counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
@@ -703,6 +721,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // Add the unconfirmed transaction to the memory pool.
             consensus.add_unconfirmed_transaction(tx.clone()).await?;
         }
+
+        // Broadcast the transaction.
+        rest.routing.propagate(message, &[]);
 
         Ok(ErasedJson::pretty(tx_id))
     }
