@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - 'staging'
-      - 'ci/sync-variance-benchmark'
   workflow_dispatch:
 
 jobs:
@@ -128,7 +127,7 @@ jobs:
       - name: Push benchmark result
         # Avoid pushing results on pull requests or experimental branches, to reduce noise in the data.
         # The results for all other runs are still accessible through the workflow summary.
-        if: github.ref_name == 'staging' || github.ref_name == 'ci/sync-variance-benchmark'
+        if: github.ref_name == 'staging'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: git push origin gh-pages
