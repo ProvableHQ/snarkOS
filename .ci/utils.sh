@@ -10,6 +10,11 @@ declare -a PIDS
 # Flag is set true once a node process stopped
 node_stopped=false
 
+# How many cores should each node use?
+# (Should be half of the number of (v)CPUs)
+# NOTE: when you update this, update TASKSET1/2 as well.
+CORES_PER_NODE=2
+
 # Tasksets to pin processes to specfic CPUs.
 # This is a no-op on MacOS.
 if [[ "$(uname)" == "Darwin" ]]; then
