@@ -22,32 +22,41 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.88 # Update this when the MSRV changes.
 
-      - name: Install required Debian pacakges
-        run: sudo apt install -y lld
+      - name: Install required Debian packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lld python3-pip
 
-      - name: Set up Rust build chaching
+      - name: Set up Python virtual environment
+        run: |
+          pip install --upgrade pip
+          python -m venv pyenv
+          source pyenv/bin/activate
+          pip install aiohttp
+
+      - name: Set up Rust build caching
         uses: Swatinem/rust-cache@v2
 
-      - name: "Setup GCP"
+      - name: Set up Google Cloud Integration
         env:
           GCLOUD_SERVICE_KEY: ${{ secrets.GCLOUD_SERVICE_KEY }}
         run: |
-            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-            sudo apt-get update
-            sudo apt-get install google-cloud-cli -y
-            echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
-            gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          sudo apt-get update
+          sudo apt-get install google-cloud-cli -y
+          echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
+          gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
 
-      - name: "Fetch Ledger Data"
+      - name: Fetch Ledger Data
         run: |
-            gcloud config set project protocol-development-sandbox
-            # Created with `.ci/generate_ledger.sh 40 250 1`
-            gcloud storage cp gs://ci_testdata/sync-ledger-val40-250.zip ledger.zip
-            unzip ledger.zip
+          gcloud config set project protocol-development-sandbox
+          # Created with `.ci/generate_ledger.sh 40 250 1`
+          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250.zip ledger.zip
+          unzip ledger.zip
  
       - name: Install snarkOS (test_network)
-        run:
+        run: |
           # use `test_network` flag without snarkVM `dev_println`
           cargo install --path=. --locked --features=test_consensus_heights,test_targets
 
@@ -65,6 +74,12 @@ jobs:
 
           echo "Generated results file:"
           cat results.json
+
+      - name: Run REST API benchmark
+        timeout-minutes: 20
+        run: |
+          source pyenv/bin/activate
+          ./.ci/bench_rest_api.sh
 
       - name: Run P2P sync benchmark
         timeout-minutes: 60
@@ -86,7 +101,11 @@ jobs:
           ./.ci/bench_cdn_sync.sh
 
       - name: Finish results file
-        run: printf "]\n" | tee -a results.json
+        run: |
+          printf "]\n" | tee -a results.json
+          echo "\n\nFile Contents:"
+          cat results.json
+
 
       - name: Generate benchmark results
         uses: benchmark-action/github-action-benchmark@v1

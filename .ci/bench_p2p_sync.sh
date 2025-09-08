@@ -68,63 +68,6 @@ function sample_sync_speeds() {
   done
 }
 
-function write_rest_results() {
-  local name=$1
-  local num_ops=$2
-  local total_wait=$3
-  local endpoint=$4
-
-  local throughput=$(compute_throughput "$num_ops" "$total_wait")
-
-  echo "🎉 REST benchmark \"$name\" done! It took $total_wait seconds for $num_ops ops. Throughput was $throughput ops/s."
-
-  printf "{ \"name\": \"rest-$name\", \"unit\": \"ops/s\", \"value\": %.6f, \"extra\": \"num_ops=%i, total_wait=%i, endpoint=%s, %s\" },\n" \
-       "$throughput" "$num_ops" "$total_wait" "$endpoint" "$snapshot_info" | tee -a results.json
-}
-
-# Measure how long it takes to get the node's current block height.
-# This should not create much work on the snarkVM-side of things and is a good baseline# for how fast the REST API can be.
-function measure_rest_block_height() {
-  local num_warmup_ops=100
-  local num_ops=10000
-
-  url="http://localhost:3030/v2/$network_name/block/height/latest"
-
-  for _ in $(seq "$num_warmup_ops"); do
-    curl -f "$url" -s -o /dev/null
-  done
-
-  SECONDS=0
-  for _ in $(seq $num_ops); do
-    curl -f "$url" -s -o /dev/null
-  done
-
-  local total_wait=$SECONDS
-  write_rest_results "block-height" "$num_ops" "$total_wait" "$url" 
-}
-
-# Measure how long it takes to get a random block.
-function measure_rest_get_block() {
-  local num_warmup_ops=10
-  local num_get_ops=500
-
-  base_url="http://localhost:3030/v2/$network_name/block"
-
-  for _ in $(seq "$num_warmup_ops"); do
-    height=$((RANDOM % min_height)) 
-    curl -f "$base_url/$height" -s -o /dev/null
-  done
-
-  SECONDS=0
-  for _ in $(seq $num_get_ops); do
-    height=$((RANDOM % min_height))
-    curl -f "$base_url/$height" -s -o /dev/null
-  done
-
-  local total_wait=$SECONDS
-  write_rest_results "get-block" "$num_get_ops" "$total_wait" "$base_url"
-}
-
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 echo "On branch: ${branch_name}"
 
@@ -152,7 +95,6 @@ common_flags=(
   "--network=$network_id"
   --nocdn # don't sync from CDN, so we only benchmark p2p sync
   --dev-num-validators=40 --no-dev-txs
-  --rest-rps=1000000 # ensure benchmarks don't fail due to rate limiting
 )
 
 # The client that has the ledger
@@ -219,9 +161,6 @@ while (( SECONDS < max_wait )); do
        "$throughput" "$total_wait" "$min_height" "$connect_time" "$snapshot_info" | tee -a results.json
     printf "{ \"name\": \"p2p-sync-speed-variance\", \"unit\": \"blocks^2/s^2\", \"value\": %.6f, \"extra\": \"samples=%d, mean_speed=%.6f, max_speed=%.6f, branch=%s, %s\" },\n" \
        "$variance" "$samples" "$mean_speed" "$max_speed" "$branch_name" "$snapshot_info" | tee -a results.json
-
-    measure_rest_get_block
-    measure_rest_block_height
 
     exit 0
   fi
