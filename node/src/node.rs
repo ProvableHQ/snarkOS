@@ -88,10 +88,13 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
+        storage_mode: StorageMode,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, dev, shutdown).await?)))
+        Ok(Self::Prover(Arc::new(
+            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, shutdown).await?,
+        )))
     }
 
     /// Initializes a new client node.

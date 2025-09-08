@@ -4023,6 +4023,7 @@ dependencies = [
 name = "snarkos-node-router"
 version = "4.1.0"
 dependencies = [
+ "aleo-std",
  "anyhow",
  "async-trait",
  "colored 3.0.0",
