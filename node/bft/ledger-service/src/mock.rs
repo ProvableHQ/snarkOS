@@ -250,10 +250,9 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     }
 
     /// Returns the spent cost for a transaction in microcredits.
-    fn transaction_spent_cost_in_microcredits(
+    fn transaction_spend_in_microcredits(
         &self,
-        _transaction_id: N::TransactionID,
-        _transaction: Transaction<N>,
+        _transaction: &Transaction<N>,
         consensus_version: ConsensusVersion,
     ) -> Result<u64> {
         let height = N::CONSENSUS_HEIGHT(consensus_version).unwrap();

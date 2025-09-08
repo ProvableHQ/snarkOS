@@ -198,12 +198,11 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     }
 
     /// Returns the spent cost for a transaction in microcredits.
-    fn transaction_spent_cost_in_microcredits(
+    fn transaction_spend_in_microcredits(
         &self,
-        transaction_id: N::TransactionID,
-        _transaction: Transaction<N>,
+        _transaction: &Transaction<N>,
         _consensus_version: ConsensusVersion,
     ) -> Result<u64> {
-        bail!("Transaction '{transaction_id}' doesn't exist in prover")
+        bail!("Cannot compute spent_cost in prover")
     }
 }

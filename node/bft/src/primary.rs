@@ -598,26 +598,22 @@ impl<N: Network> Primary<N> {
                             continue;
                         }
 
-                        // Check if the transaction is still valid.
-                        // TODO: check if clone is cheap, otherwise fix.
-                        if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction.clone()).await {
-                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
-                            continue;
-                        }
-
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                        let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
-                            transaction_id,
-                            transaction,
-                            consensus_version,
-                        ) else {
+                        let Ok(cost) = self.ledger.transaction_spend_in_microcredits(&transaction, consensus_version)
+                        else {
                             debug!(
                                 "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
                                 fmt_id(transaction_id)
                             );
                             continue;
                         };
+
+                        // Check if the transaction is still valid.
+                        if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction).await {
+                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
+                            continue;
+                        }
 
                         // Compute the next proposal cost.
                         // Note: We purposefully discard this transaction if the proposal cost overflows.
@@ -900,11 +896,8 @@ impl<N: Network> Primary<N> {
 
                     // Compute the transaction spent cost (in microcredits).
                     // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                    let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
-                        *transaction_id,
-                        transaction,
-                        consensus_version,
-                    ) else {
+                    let Ok(cost) = self.ledger.transaction_spend_in_microcredits(&transaction, consensus_version)
+                    else {
                         bail!(
                             "Invalid batch proposal - Unable to compute transaction spent cost on transaction '{}'",
                             fmt_id(transaction_id)

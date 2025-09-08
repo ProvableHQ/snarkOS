@@ -34,12 +34,15 @@ use snarkvm::{
         Result,
         bail,
         cfg_into_iter,
+        consensus_config_value_by_version,
+        deploy_compute_cost_in_microcredits,
         deployment_cost,
+        execute_compute_cost_in_microcredits,
         execution_cost,
     },
 };
 
-use anyhow::anyhow;
+use anyhow::ensure;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -412,53 +415,44 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         Ok(())
     }
 
-    /// Returns the spent cost for a transaction in microcredits.
+    /// Returns the spend for a transaction in microcredits.
     /// This is used to limit the amount of compute in the block generation hot
     /// path. This does NOT represent the full costs which a user has to pay.
-    fn transaction_spent_cost_in_microcredits(
+    fn transaction_spend_in_microcredits(
         &self,
-        _transaction_id: N::TransactionID,
-        transaction: Transaction<N>,
+        transaction: &Transaction<N>,
         consensus_version: ConsensusVersion,
     ) -> Result<u64> {
-        match &transaction {
-            // Include the synthesis cost and storage cost for deployments.
+        let transaction_spend_limit =
+            consensus_config_value_by_version!(N, TRANSACTION_SPEND_LIMIT, consensus_version).unwrap();
+        let id = transaction.id();
+        match transaction {
             Transaction::Deploy(_, _, _, deployment, _) => {
-                let (_, (storage_cost, synthesis_cost, constructor_cost, _)) =
+                let (_, cost_details) =
                     deployment_cost(&self.ledger.vm().process().read(), deployment, consensus_version)?;
-                let cost_to_check = if consensus_version >= ConsensusVersion::V10 {
-                    // From V10, only include the constructor compute cost for
-                    // deployments.
-                    //
-                    // If any individual function's finalize compute costs are
-                    // above the tranasction spend limit, the deployment will be
-                    // aborted in the block via Stack::initialize_and_check.
-                    constructor_cost
-                } else {
-                    // Include the storage, synthesis, and constructor cost for deployments.
-                    storage_cost
-                        .checked_add(synthesis_cost)
-                        .and_then(|synthesis_cost| synthesis_cost.checked_add(constructor_cost))
-                        .ok_or(anyhow!(
-                            "The storage, synthesis, and constructor cost computation overflowed for a deployment"
-                        ))?
-                };
-                Ok(cost_to_check)
+                let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version)?;
+                ensure!(
+                    compute_spend <= transaction_spend_limit,
+                    "Transaction '{id}' exceeds the transaction spend limit with compute_spend: '{compute_spend}'"
+                );
+                Ok(compute_spend)
             }
             Transaction::Execute(_, _, execution, _) => {
-                let (total_cost, (_, finalize_cost)) =
+                let (_, cost_details) =
                     execution_cost(&self.ledger.vm().process().read(), execution, consensus_version)?;
-                let cost_to_check = if consensus_version >= ConsensusVersion::V10 {
-                    // From V10, only include the finalize compute cost for executions.
-                    finalize_cost
-                } else {
-                    // Include the finalize cost and storage cost for executions.
-                    total_cost
-                };
-                Ok(cost_to_check)
+                let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version)?;
+                if consensus_version >= ConsensusVersion::V11 {
+                    // From V11, add this check for consistency with our deployment checks.
+                    ensure!(
+                        compute_spend <= transaction_spend_limit,
+                        "Transaction '{id}' exceeds the transaction spend limit with compute_spend: '{compute_spend}'"
+                    );
+                }
+                Ok(compute_spend)
             }
-            // Fee transactions are internal to the VM, they do not have a compute cost.
-            Transaction::Fee(..) => Ok(0),
+            Transaction::Fee(..) => {
+                bail!("Fee transactions are internal to the VM, transaction {id} is invalid.")
+            }
         }
     }
 }
