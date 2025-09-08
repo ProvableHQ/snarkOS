@@ -151,8 +151,7 @@ impl Deploy {
         let process = package.get_process()?;
 
         // Generate the deployment
-        let mut deployment =
-            package.deploy::<A>(&process, None).with_context(|| "Failed to generate the deployment")?;
+        let mut deployment = package.deploy::<A>(None).with_context(|| "Failed to generate the deployment")?;
 
         // Get the consensus version.
         let consensus_version =
