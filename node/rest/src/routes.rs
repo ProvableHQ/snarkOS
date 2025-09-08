@@ -634,12 +634,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     //                           +---------+        +---------+
     //                           |         |        |         |
     //                           v         v        v         v
-    //                          200       422      200       503
+    //                          200       422      203       503
     pub(crate) async fn transaction_broadcast(
         State(rest): State<Self>,
         check_transaction: Query<CheckTransaction>,
         json_result: Result<Json<Transaction<N>>, JsonRejection>,
-    ) -> Result<ErasedJson, RestError> {
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
         let Json(tx) = match json_result {
             Ok(json) => json,
             Err(JsonRejection::JsonDataError(err)) => {
@@ -668,7 +668,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Check if the node is within sync leniency.
         let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
 
-        if check_transaction.check_transaction.unwrap_or(false) {
+        // Determine if we need to check the transaction.
+        let check_transaction = check_transaction.check_transaction.unwrap_or(false);
+
+        if check_transaction {
             // Select counter and limit based on transaction type.
             let (counter, limit, err_msg) = if tx.is_execute() {
                 (
@@ -724,7 +727,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Broadcast the transaction.
         rest.routing.propagate(message, &[]);
 
-        Ok(ErasedJson::pretty(tx_id))
+        // Determine if the node is synced and if the transaction was checked.
+        match !is_within_sync_leniency && check_transaction {
+            // If the node is not synced and we validated the transaction, return a 203.
+            true => Ok((StatusCode::NON_AUTHORITATIVE_INFORMATION, ErasedJson::pretty(tx_id))),
+            // Otherwise, return a 200.
+            false => Ok((StatusCode::OK, ErasedJson::pretty(tx_id))),
+        }
     }
 
     // POST /<network>/solution/broadcast
