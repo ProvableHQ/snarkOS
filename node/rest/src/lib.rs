@@ -67,6 +67,10 @@ use tower_http::{
 /// The default port used for the REST API
 pub const DEFAULT_REST_PORT: u16 = 3030;
 
+/// The API version prefixes.
+pub const API_VERSION_V1: &str = "v1";
+pub const API_VERSION_V2: &str = "v2";
+
 /// A REST API server for the ledger.
 #[derive(Clone)]
 pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
@@ -265,12 +269,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             self.build_routes(rest_rps).layer(middleware::map_response(v1_error_middleware)),
         );
         let v1_router = axum::Router::new().nest(
-            &format!("/v1/{}", N::SHORT_NAME),
+            &format!("/{API_VERSION_V1}/{}", N::SHORT_NAME),
             self.build_routes(rest_rps).layer(middleware::map_response(v1_error_middleware)),
         );
 
         // Add the v2 API under "/v2".
-        let v2_router = axum::Router::new().nest(&format!("/v2/{}", N::SHORT_NAME), self.build_routes(rest_rps));
+        let v2_router =
+            axum::Router::new().nest(&format!("/{API_VERSION_V2}/{}", N::SHORT_NAME), self.build_routes(rest_rps));
 
         // Combine all routes.
         let router = default_router.merge(v1_router).merge(v2_router);
@@ -367,7 +372,7 @@ mod tests {
                 )
         };
         let router_v1 = build_routes().route_layer(middleware::map_response(v1_error_middleware));
-        let router_v2 = Router::new().nest("/v2", build_routes());
+        let router_v2 = Router::new().nest(&format!("/{API_VERSION_V2}"), build_routes());
         router_v1.merge(router_v2)
     }
 
