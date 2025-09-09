@@ -318,9 +318,6 @@ workspace = true
 [dependencies.snarkos-node-tcp]
 workspace = true
 
-[dependencies.snarkvm]
-workspace = true
-
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.5"
 

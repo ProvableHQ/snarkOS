@@ -3719,7 +3719,6 @@ dependencies = [
  "snarkos-node-router",
  "snarkos-node-sync",
  "snarkos-node-tcp",
- "snarkvm",
  "tikv-jemallocator",
  "toml 0.9.5",
  "tracing",
