@@ -16,6 +16,7 @@
 use crate::{NodeType, Router, messages::ChallengeRequest};
 use snarkvm::prelude::{Address, Network};
 
+use anyhow::{Result, ensure};
 use std::{net::SocketAddr, time::Instant};
 
 /// A peer of any connection status.
@@ -82,9 +83,14 @@ impl<N: Network> Peer<N> {
     }
 
     /// Promote a connecting peer to a fully connected one.
-    pub fn upgrade_to_connected(&mut self, connected_addr: SocketAddr, cr: &ChallengeRequest<N>, router: Router<N>) {
+    pub fn upgrade_to_connected(
+        &mut self,
+        connected_addr: SocketAddr,
+        cr: &ChallengeRequest<N>,
+        router: Router<N>,
+    ) -> Result<()> {
         // Logic check: this can only happen during the handshake.
-        assert!(matches!(self, Self::Connecting(_)));
+        ensure!(matches!(self, Self::Connecting(_)), "Peer is not in `connecting` state");
 
         let timestamp = Instant::now();
         let listener_addr = SocketAddr::from((connected_addr.ip(), cr.listener_port));
@@ -103,6 +109,8 @@ impl<N: Network> Peer<N> {
             last_seen: timestamp,
             router,
         });
+
+        Ok(())
     }
 
     /// Demote a peer to candidate status, marking it as disconnected.
