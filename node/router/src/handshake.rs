@@ -131,7 +131,9 @@ impl<N: Network> Router<N> {
         if let Some(addr) = listener_addr {
             if let Ok(ref challenge_request) = handshake_result {
                 if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                    peer.upgrade_to_connected(peer_addr, challenge_request, self.clone());
+                    if let Err(err) = peer.upgrade_to_connected(peer_addr, challenge_request, self.clone()) {
+                        warn!("Failed to upgrade peer to `connected`: {err}");
+                    }
                 }
                 #[cfg(feature = "metrics")]
                 self.update_metrics();
