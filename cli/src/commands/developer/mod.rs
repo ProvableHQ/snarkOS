@@ -214,7 +214,7 @@ impl Developer {
     fn handle_ureq_result(result: Result<http::Response<ureq::Body>>) -> Result<Option<ureq::Body>> {
         let response = result?;
 
-        if response.status() == http::StatusCode::OK {
+        if response.status().is_success() {
             Ok(Some(response.into_body()))
         } else if response.status() == http::StatusCode::NOT_FOUND {
             Ok(None)
