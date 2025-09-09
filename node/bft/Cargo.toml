@@ -177,7 +177,7 @@ workspace = true
 workspace = true
 
 [dev-dependencies.snarkos-node-bft]
-workspace = true
+path = "."
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-sync]

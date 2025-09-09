@@ -116,11 +116,11 @@ workspace = true
 features = [ "ledger-write", "test" ]
 
 [dev-dependencies.snarkos-node-sync]
-workspace = true
+path = "../sync"
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router]
-workspace = true
+path = "."
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router-messages]
