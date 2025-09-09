@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.1.0"
+version = "4.2.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -36,14 +36,14 @@ serial = [
 workspace = true
 
 [dependencies.axum]
-version = "0.8"
+workspace = true
 
 [dependencies.axum-extra]
-version = "0.10"
+workspace = true
 features = [ "erased-json", "typed-header" ]
 
 [dependencies.http]
-version = "1.0"
+workspace = true
 
 [dependencies.indexmap]
 workspace = true
@@ -53,22 +53,22 @@ features = [ "serde", "rayon" ]
 version = "9.2"
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
 [dependencies.once_cell]
-version = "1.19"
+workspace = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.serde]
 workspace = true 
 features = [ "derive" ]
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
 features = [ "preserve_order" ]
 
 [dependencies.serde_with]
@@ -90,13 +90,13 @@ workspace = true
 workspace = true
 
 [dependencies.rand]
-version = "0.8"
+workspace = true
 
 [dependencies.rayon]
-version = "1"
+workspace = true
 
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
@@ -113,6 +113,10 @@ workspace = true
 
 [dev-dependencies.base64]
 workspace = true
+
+[dev-dependencies.tower]
+version = "0.4"
+features = ["util"]
 
 [build-dependencies.built]
 workspace = true

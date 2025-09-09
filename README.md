@@ -83,7 +83,6 @@ git clone --branch mainnet --single-branch https://github.com/ProvableHQ/snarkOS
 Next, move into the `snarkOS` directory:
 ```
 cd snarkOS
-git checkout tags/testnet-beta
 ```
 
 **[For Ubuntu users]** A helper script to install dependencies is available. From the `snarkOS` directory, run:

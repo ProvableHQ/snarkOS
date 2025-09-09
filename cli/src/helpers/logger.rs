@@ -70,6 +70,7 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("h2=warn".parse().unwrap())
             .add_directive("tower=warn".parse().unwrap())
             .add_directive("axum=warn".parse().unwrap())
+            .add_directive("ureq=warn".parse().unwrap())
     } else {
         let filter = filter.add_directive("snarkos_node_bft::gateway=debug".parse().unwrap());
 
@@ -83,6 +84,7 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("h2=off".parse().unwrap())
             .add_directive("tower=off".parse().unwrap())
             .add_directive("axum=off".parse().unwrap())
+            .add_directive("ureq=off".parse().unwrap())
     };
 
     let filter = if verbosity >= 5 {
@@ -177,6 +179,29 @@ pub fn initialize_logger<P: AsRef<Path>>(
         .try_init();
 
     Ok(log_receiver)
+}
+
+/// Set up only terminal logging
+pub fn initialize_terminal_logger(verbosity: u8) -> Result<()> {
+    let stdout_filter = parse_log_verbosity(verbosity)?;
+
+    // At high verbosity or when there is a custom log filter we show the target
+    // of the log event, i.e., the file/module where the log message was created.
+    let show_target = verbosity > 2;
+
+    // Initialize tracing.
+    let _ = tracing_subscriber::registry()
+        .with(
+            // Add layer using LogWriter for stdout / terminal
+            tracing_subscriber::fmt::Layer::default()
+                .with_ansi(io::stdout().is_tty())
+                .with_target(show_target)
+                .event_format(DynamicFormatter::new(Arc::new(AtomicBool::new(false))))
+                .with_filter(stdout_filter),
+        )
+        .try_init();
+
+    Ok(())
 }
 
 /// Returns the welcome message as a string.

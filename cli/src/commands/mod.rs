@@ -54,6 +54,10 @@ pub struct CLI {
     /// Specify a subcommand.
     #[clap(subcommand)]
     pub command: Command,
+
+    /// Disable checking for new versions at startup.
+    #[clap(long, global = true)]
+    pub noupdater: bool,
 }
 
 /// The subcommand passed after `snarkos`, e.g. `Start` corresponds to `snarkos start`.
@@ -63,8 +67,8 @@ pub enum Command {
     Account(Account),
     #[clap(name = "clean")]
     Clean(Clean),
-    #[clap(subcommand)]
-    Developer(Developer),
+    #[clap(name = "developer", alias = "dev")]
+    Developer(Box<Developer>),
     #[clap(name = "start")]
     Start(Box<Start>),
     #[clap(name = "update")]
@@ -72,7 +76,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// Parses the command.
+    /// Runs the given command.
     pub fn parse(self) -> Result<String> {
         match self {
             Self::Account(command) => command.parse(),

@@ -28,7 +28,7 @@ use snarkvm::{
 use anyhow::{Result, bail};
 use futures::SinkExt;
 use rand::{Rng, rngs::OsRng};
-use std::{collections::hash_map::Entry, io, mem, net::SocketAddr};
+use std::{collections::hash_map::Entry, io, net::SocketAddr};
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -137,7 +137,7 @@ impl<N: Network> Router<N> {
                 self.update_metrics();
                 debug!("Completed the handshake with '{peer_addr}'");
             } else if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                peer.downgrade_to_candidate(addr, false);
+                peer.downgrade_to_candidate(addr);
             }
         }
 
@@ -154,10 +154,10 @@ impl<N: Network> Router<N> {
     ) -> io::Result<ChallengeRequest<N>> {
         match self.peer_pool.write().entry(peer_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::Connecting);
+                entry.insert(Peer::new_connecting(false, peer_addr));
             }
             Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::Connecting);
+                entry.insert(Peer::new_connecting(entry.get().is_trusted(), peer_addr));
             }
             Entry::Occupied(_) => {
                 return Err(error(format!("Duplicate connection attempt with '{peer_addr}'")));
@@ -309,32 +309,24 @@ impl<N: Network> Router<N> {
 
     /// Ensure the peer is allowed to connect.
     fn ensure_peer_is_allowed(&self, listener_addr: SocketAddr) -> Result<()> {
-        // Ensure the peer IP is not this node.
+        // Ensure that it's not a self-connect attempt.
         if self.is_local_ip(&listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)")
         }
-        // Ensure either the peer is trusted or `allow_external_peers` is true.
+        // Unknown peers are untrusted, so check if `allow_external_peers` is true.
         if !self.allow_external_peers() && !self.is_trusted(&listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)")
         }
-        // Ensure the node is not already connecting to this peer.
+
         match self.peer_pool.write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::Connecting);
+                entry.insert(Peer::new_connecting(false, listener_addr));
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
-                Peer::Candidate(peer)
-                    if peer
-                        .restricted
-                        .map(|ts| ts.elapsed().as_secs() < Self::RADIO_SILENCE_IN_SECS)
-                        .unwrap_or(false) =>
-                {
-                    bail!("Dropping connection request from '{listener_addr}' (restricted)");
-                }
                 peer @ Peer::Candidate(_) => {
-                    let _ = mem::replace(peer, Peer::Connecting);
+                    *peer = Peer::new_connecting(peer.is_trusted(), listener_addr);
                 }
-                Peer::Connecting => {
+                Peer::Connecting(_) => {
                     bail!("Dropping connection request from '{listener_addr}' (already connecting)");
                 }
                 Peer::Connected(_) => {

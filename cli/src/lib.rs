@@ -20,6 +20,9 @@
 #[macro_use]
 extern crate thiserror;
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 pub mod commands;
 pub use commands::CLI;
 

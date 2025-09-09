@@ -13,16 +13,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(clippy::type_complexity)]
+use super::DEFAULT_ENDPOINT;
+use crate::helpers::{args::prepare_endpoint, dev::get_development_key};
 
 use snarkos_node_cdn::CDN_BASE_URL;
 use snarkvm::{
-    console::network::{CanaryV0, MainnetV0, Network, TestnetV0},
+    console::network::Network,
     prelude::{Ciphertext, Field, FromBytes, Plaintext, PrivateKey, Record, ViewKey, block::Block},
 };
 
-use anyhow::{Result, bail, ensure};
-use clap::Parser;
+use anyhow::{Context, Result, bail, ensure};
+use clap::{Parser, builder::NonEmptyStringValueParser};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
@@ -32,30 +33,39 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use ureq::http::Uri;
 use zeroize::Zeroize;
 
 const MAX_BLOCK_RANGE: u32 = 50;
 
 /// Scan the snarkOS node for records.
-#[derive(Debug, Parser, Zeroize)]
+#[derive(Debug, Parser)]
+#[clap(
+    // The user needs to set view_key, private_key, or dev_key,
+    // but they cannot set private_key and dev_key.
+    group(clap::ArgGroup::new("key").required(true).multiple(false))
+)]
 pub struct Scan {
-    /// Specify the network to scan.
-    #[clap(default_value = "0", long = "network")]
-    pub network: u16,
-
-    /// An optional private key scan for unspent records.
-    #[clap(short, long)]
+    /// The private key used for unspent records.
+    #[clap(short, long, group = "key", value_parser=NonEmptyStringValueParser::default())]
     private_key: Option<String>,
 
     /// The view key used to scan for records.
-    #[clap(short, long)]
+    /// (if a private key is given, the view key is automatically derived and should not be set)
+    #[clap(short, long, group = "key", value_parser=NonEmptyStringValueParser::default())]
     view_key: Option<String>,
 
+    /// Use a development private key to scan for records.
+    #[clap(long, group = "key")]
+    dev_key: Option<u16>,
+
     /// The block height to start scanning from.
+    /// Will scan until the most recent block or the height specified with `--end`.
     #[clap(long, conflicts_with = "last")]
     start: Option<u32>,
 
-    /// The block height to stop scanning.
+    /// The block height to stop scanning at.
+    /// Will start scanning at the geneiss block or the height specified with `--start`.
     #[clap(long, conflicts_with = "last")]
     end: Option<u32>,
 
@@ -64,31 +74,36 @@ pub struct Scan {
     last: Option<u32>,
 
     /// The endpoint to scan blocks from.
-    #[clap(long, default_value = "https://api.explorer.provable.com/v1")]
-    endpoint: String,
+    #[clap(long, default_value = DEFAULT_ENDPOINT)]
+    endpoint: Uri,
+
+    /// Sets verbosity of log output. By default, no logs are shown.
+    #[clap(long)]
+    verbosity: Option<u8>,
+}
+
+impl Drop for Scan {
+    /// Zeroize the private key when the `Execute` struct goes out of scope.
+    fn drop(&mut self) {
+        if let Some(mut pk) = self.private_key.take() {
+            pk.zeroize()
+        }
+    }
 }
 
 impl Scan {
-    pub fn parse(self) -> Result<String> {
-        // Scan for records on the given network.
-        match self.network {
-            MainnetV0::ID => self.scan_records::<MainnetV0>(),
-            TestnetV0::ID => self.scan_records::<TestnetV0>(),
-            CanaryV0::ID => self.scan_records::<CanaryV0>(),
-            unknown_id => bail!("Unknown network ID ({unknown_id})"),
-        }
-    }
-
     /// Scan the network for records.
-    fn scan_records<N: Network>(&self) -> Result<String> {
+    pub fn parse<N: Network>(self) -> Result<String> {
+        let endpoint = prepare_endpoint(self.endpoint.clone())?;
+
         // Derive the view key and optional private key.
         let (private_key, view_key) = self.parse_account::<N>()?;
 
         // Find the start and end height to scan.
-        let (start_height, end_height) = self.parse_block_range()?;
+        let (start_height, end_height) = self.parse_block_range::<N>(&endpoint)?;
 
         // Fetch the records from the network.
-        let records = Self::fetch_records::<N>(private_key, &view_key, &self.endpoint, start_height, end_height)?;
+        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)?;
 
         // Output the decrypted records associated with the view key.
         if records.is_empty() {
@@ -104,45 +119,24 @@ impl Scan {
 
     /// Returns the view key and optional private key, from the given configurations.
     fn parse_account<N: Network>(&self) -> Result<(Option<PrivateKey<N>>, ViewKey<N>)> {
-        match (&self.private_key, &self.view_key) {
-            (Some(private_key), Some(view_key)) => {
-                // Derive the private key.
-                let private_key = PrivateKey::<N>::from_str(private_key)?;
-                // Derive the expected view key.
-                let expected_view_key = ViewKey::<N>::try_from(private_key)?;
-                // Derive the view key.
-                let view_key = ViewKey::<N>::from_str(view_key)?;
-
-                ensure!(
-                    expected_view_key == view_key,
-                    "The provided private key does not correspond to the provided view key."
-                );
-
-                Ok((Some(private_key), view_key))
-            }
-            (Some(private_key), _) => {
-                // Derive the private key.
-                let private_key = PrivateKey::<N>::from_str(private_key)?;
-                // Derive the view key.
-                let view_key = ViewKey::<N>::try_from(private_key)?;
-
-                Ok((Some(private_key), view_key))
-            }
-            (None, Some(view_key)) => Ok((None, ViewKey::<N>::from_str(view_key)?)),
-            (None, None) => bail!("Missing private key or view key."),
+        if let Some(private_key) = &self.private_key {
+            let private_key = PrivateKey::<N>::from_str(private_key)?;
+            let view_key = ViewKey::<N>::try_from(private_key)?;
+            Ok((Some(private_key), view_key))
+        } else if let Some(index) = &self.dev_key {
+            let private_key = get_development_key(*index)?;
+            let view_key = ViewKey::<N>::try_from(private_key)?;
+            Ok((Some(private_key), view_key))
+        } else if let Some(view_key) = &self.view_key {
+            Ok((None, ViewKey::<N>::from_str(view_key)?))
+        } else {
+            // This will be caught by clap
+            unreachable!();
         }
     }
 
     /// Returns the `start` and `end` blocks to scan.
-    fn parse_block_range(&self) -> Result<(u32, u32)> {
-        // Get the network name.
-        let network = match self.network {
-            MainnetV0::ID => "mainnet",
-            TestnetV0::ID => "testnet",
-            CanaryV0::ID => "canary",
-            unknown_id => bail!("Unknown network ID ({unknown_id})"),
-        };
-
+    fn parse_block_range<N: Network>(&self, endpoint: &Uri) -> Result<(u32, u32)> {
         match (self.start, self.end, self.last) {
             (Some(start), Some(end), None) => {
                 ensure!(end > start, "The given scan range is invalid (start = {start}, end = {end})");
@@ -151,8 +145,8 @@ impl Scan {
             }
             (Some(start), None, None) => {
                 // Request the latest block height from the endpoint.
-                let endpoint = format!("{}/{network}/block/height/latest", self.endpoint);
-                let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_string()?)?;
+                let endpoint = format!("{endpoint}{}/block/height/latest", N::SHORT_NAME);
+                let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_body().read_to_string()?)?;
 
                 // Print a warning message if the user is attempting to scan the whole chain.
                 if start == 0 {
@@ -164,8 +158,8 @@ impl Scan {
             (None, Some(end), None) => Ok((0, end)),
             (None, None, Some(last)) => {
                 // Request the latest block height from the endpoint.
-                let endpoint = format!("{}/{network}/block/height/latest", self.endpoint);
-                let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_string()?)?;
+                let endpoint = format!("{endpoint}{}/block/height/latest", N::SHORT_NAME);
+                let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_body().read_to_string()?)?;
 
                 Ok((latest_height.saturating_sub(last), latest_height))
             }
@@ -175,20 +169,16 @@ impl Scan {
     }
 
     /// Returns the CDN to prefetch initial blocks from, from the given configurations.
-    fn parse_cdn<N: Network>() -> Result<String> {
-        match N::ID {
-            MainnetV0::ID => Ok(format!("{CDN_BASE_URL}/mainnet")),
-            TestnetV0::ID => Ok(format!("{CDN_BASE_URL}/testnet")),
-            CanaryV0::ID => Ok(format!("{CDN_BASE_URL}/canary")),
-            _ => bail!("Unknown network ID ({})", N::ID),
-        }
+    fn parse_cdn<N: Network>() -> Result<Uri> {
+        // This should always succeed as the base URL is hardcoded.
+        Uri::try_from(format!("{CDN_BASE_URL}/{}", N::SHORT_NAME)).with_context(|| "Unexpected error")
     }
 
     /// Fetch owned ciphertext records from the endpoint.
     fn fetch_records<N: Network>(
         private_key: Option<PrivateKey<N>>,
         view_key: &ViewKey<N>,
-        endpoint: &str,
+        endpoint: &Uri,
         start_height: u32,
         end_height: u32,
     ) -> Result<Vec<Record<N, Plaintext<N>>>> {
@@ -196,14 +186,6 @@ impl Scan {
         if start_height > end_height {
             bail!("Invalid block range");
         }
-
-        // Get the network name.
-        let network = match N::ID {
-            MainnetV0::ID => "mainnet",
-            TestnetV0::ID => "testnet",
-            CanaryV0::ID => "canary",
-            unknown_id => bail!("Unknown network ID ({unknown_id})"),
-        };
 
         // Derive the x-coordinate of the address corresponding to the given view key.
         let address_x_coordinate = view_key.to_address().to_x_coordinate();
@@ -219,7 +201,8 @@ impl Scan {
         stdout().flush()?;
 
         // Fetch the genesis block from the endpoint.
-        let genesis_block: Block<N> = ureq::get(&format!("{endpoint}/{network}/block/0")).call()?.into_json()?;
+        let genesis_block: Block<N> =
+            ureq::get(&format!("{endpoint}{}/block/0", N::SHORT_NAME)).call()?.into_body().read_json()?;
         // Determine if the endpoint is on a development network.
         let is_development_network = genesis_block != Block::from_bytes_le(N::genesis_bytes())?;
 
@@ -233,8 +216,8 @@ impl Scan {
                 Self::scan_from_cdn(
                     start_height,
                     end_height,
-                    cdn_endpoint,
-                    endpoint.to_string(),
+                    &cdn_endpoint,
+                    endpoint,
                     private_key,
                     *view_key,
                     address_x_coordinate,
@@ -258,13 +241,14 @@ impl Scan {
             let request_end = request_start.saturating_add(num_blocks_to_request);
 
             // Establish the endpoint.
-            let blocks_endpoint = format!("{endpoint}/{network}/blocks?start={request_start}&end={request_end}");
+            let blocks_endpoint = format!("{endpoint}{}/blocks?start={request_start}&end={request_end}", N::SHORT_NAME);
             // Fetch blocks
-            let blocks: Vec<Block<N>> = ureq::get(&blocks_endpoint).call()?.into_json()?;
+            let blocks: Vec<Block<N>> = ureq::get(&blocks_endpoint).call()?.into_body().read_json()?;
 
             // Scan the blocks for owned records.
             for block in &blocks {
-                Self::scan_block(block, endpoint, private_key, view_key, &address_x_coordinate, records.clone())?;
+                Self::scan_block(block, endpoint, private_key, view_key, &address_x_coordinate, records.clone())
+                    .with_context(|| format!("Failed to parse block {}", block.hash()))?;
             }
 
             request_start = request_start.saturating_add(num_blocks_to_request);
@@ -279,12 +263,12 @@ impl Scan {
     }
 
     /// Scan the blocks from the CDN.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn scan_from_cdn<N: Network>(
         start_height: u32,
         end_height: u32,
-        cdn: String,
-        endpoint: String,
+        cdn: &Uri,
+        endpoint: &Uri,
         private_key: Option<PrivateKey<N>>,
         view_key: ViewKey<N>,
         address_x_coordinate: Field<N>,
@@ -303,14 +287,13 @@ impl Scan {
         // Create a placeholder shutdown flag.
         let _shutdown = Default::default();
 
+        // Copy endpoint for background task.
+        let endpoint = endpoint.clone();
+
         // Scan the blocks via the CDN.
         rt.block_on(async move {
-            let result = snarkos_node_cdn::load_blocks(
-                &cdn,
-                cdn_request_start,
-                Some(cdn_request_end),
-                _shutdown,
-                move |block| {
+            let result =
+                snarkos_node_cdn::load_blocks(cdn, cdn_request_start, Some(cdn_request_end), _shutdown, move |block| {
                     // Check if the block is within the requested range.
                     if block.height() < start_height || block.height() > end_height {
                         return Ok(());
@@ -333,9 +316,8 @@ impl Scan {
                     )?;
 
                     Ok(())
-                },
-            )
-            .await;
+                })
+                .await;
             if let Err(error) = result {
                 eprintln!("Error loading blocks from CDN - (height, error):{error:?}");
             }
@@ -345,9 +327,10 @@ impl Scan {
     }
 
     /// Scan a block for owned records.
+    #[allow(clippy::type_complexity)]
     fn scan_block<N: Network>(
         block: &Block<N>,
-        endpoint: &str,
+        endpoint: &Uri,
         private_key: Option<PrivateKey<N>>,
         view_key: &ViewKey<N>,
         address_x_coordinate: &Field<N>,
@@ -358,7 +341,8 @@ impl Scan {
             if ciphertext_record.is_owner_with_address_x_coordinate(view_key, address_x_coordinate) {
                 // Decrypt and optionally filter the records.
                 if let Some(record) =
-                    Self::decrypt_record(private_key, view_key, endpoint, *commitment, ciphertext_record)?
+                    Self::decrypt_record(private_key, view_key, endpoint, *commitment, ciphertext_record)
+                        .with_context(|| "Failed to decrypt record")?
                 {
                     records.write().push(record);
                 }
@@ -372,7 +356,7 @@ impl Scan {
     fn decrypt_record<N: Network>(
         private_key: Option<PrivateKey<N>>,
         view_key: &ViewKey<N>,
-        endpoint: &str,
+        endpoint: &Uri,
         commitment: Field<N>,
         ciphertext_record: &Record<N, Ciphertext<N>>,
     ) -> Result<Option<Record<N, Plaintext<N>>>> {
@@ -381,16 +365,8 @@ impl Scan {
             // Compute the serial number.
             let serial_number = Record::<N, Plaintext<N>>::serial_number(private_key, commitment)?;
 
-            // Get the network name.
-            let network = match N::ID {
-                MainnetV0::ID => "mainnet",
-                TestnetV0::ID => "testnet",
-                CanaryV0::ID => "canary",
-                unknown_id => bail!("Unknown network ID ({unknown_id})"),
-            };
-
             // Establish the endpoint.
-            let endpoint = format!("{endpoint}/{network}/find/transitionID/{serial_number}");
+            let endpoint = format!("{endpoint}{}/find/transitionID/{serial_number}", N::SHORT_NAME);
 
             // Check if the record is spent.
             match ureq::get(&endpoint).call() {
@@ -427,11 +403,35 @@ mod tests {
         let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
         let view_key = ViewKey::try_from(private_key).unwrap();
 
-        // Generate unassociated private key and view key.
-        let unassociated_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
-        let unassociated_view_key = ViewKey::try_from(unassociated_private_key).unwrap();
-
+        // Test passing the private key only
         let config = Scan::try_parse_from(
+            ["snarkos", "--private-key", &format!("{private_key}"), "--last", "10", "--endpoint", "localhost"].iter(),
+        )
+        .unwrap();
+        assert!(config.parse_account::<CurrentNetwork>().is_ok());
+
+        let (result_pkey, result_vkey) = config.parse_account::<CurrentNetwork>().unwrap();
+        assert_eq!(result_pkey, Some(private_key));
+        assert_eq!(result_vkey, view_key);
+
+        // Passing an invalid view key should fail.
+        // Note: the current validation only rejects empty strings.
+        let err = Scan::try_parse_from(["snarkos", "--view-key", "", "--last", "10", "--endpoint", "localhost"].iter())
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+
+        // Test passing the view key only
+        let config = Scan::try_parse_from(
+            ["snarkos", "--view-key", &format!("{view_key}"), "--last", "10", "--endpoint", "localhost"].iter(),
+        )
+        .unwrap();
+
+        let (result_pkey, result_vkey) = config.parse_account::<CurrentNetwork>().unwrap();
+        assert_eq!(result_pkey, None);
+        assert_eq!(result_vkey, view_key);
+
+        // Passing both will generate an error.
+        let err = Scan::try_parse_from(
             [
                 "snarkos",
                 "--private-key",
@@ -441,64 +441,72 @@ mod tests {
                 "--last",
                 "10",
                 "--endpoint",
-                "",
+                "localhost",
             ]
             .iter(),
         )
-        .unwrap();
-        assert!(config.parse_account::<CurrentNetwork>().is_ok());
+        .unwrap_err();
 
-        let config = Scan::try_parse_from(
-            [
-                "snarkos",
-                "--private-key",
-                &format!("{private_key}"),
-                "--view-key",
-                &format!("{unassociated_view_key}"),
-                "--last",
-                "10",
-                "--endpoint",
-                "",
-            ]
-            .iter(),
-        )
-        .unwrap();
-        assert!(config.parse_account::<CurrentNetwork>().is_err());
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
-    fn test_parse_block_range() {
-        let config =
-            Scan::try_parse_from(["snarkos", "--view-key", "", "--start", "0", "--end", "10", "--endpoint", ""].iter())
-                .unwrap();
-        assert!(config.parse_block_range().is_ok());
+    fn test_parse_block_range() -> Result<()> {
+        // Hardcoded viewkey to ensure view key validation succeeds
+        const TEST_VIEW_KEY: &str = "AViewKey1qQVfici7WarfXgmq9iuH8tzRcrWtb8qYq1pEyRRE4kS7";
+
+        let config = Scan::try_parse_from(
+            ["snarkos", "--view-key", TEST_VIEW_KEY, "--start", "0", "--end", "10", "--endpoint", "localhost"].iter(),
+        )?;
+
+        let endpoint = Uri::default();
+        config.parse_block_range::<CurrentNetwork>(&endpoint).with_context(|| "Failed to parse block range")?;
 
         // `start` height can't be greater than `end` height.
-        let config =
-            Scan::try_parse_from(["snarkos", "--view-key", "", "--start", "10", "--end", "5", "--endpoint", ""].iter())
-                .unwrap();
-        assert!(config.parse_block_range().is_err());
+        let config = Scan::try_parse_from(
+            ["snarkos", "--view-key", TEST_VIEW_KEY, "--start", "10", "--end", "5", "--endpoint", "localhost"].iter(),
+        )?;
+
+        let endpoint = Uri::default();
+        assert!(config.parse_block_range::<CurrentNetwork>(&endpoint).is_err());
 
         // `last` conflicts with `start`
-        assert!(
-            Scan::try_parse_from(
-                ["snarkos", "--view-key", "", "--start", "0", "--last", "10", "--endpoint", ""].iter(),
-            )
-            .is_err()
-        );
+        let err = Scan::try_parse_from(
+            ["snarkos", "--view-key", TEST_VIEW_KEY, "--start", "0", "--last", "10", "--endpoint=localhost"].iter(),
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 
         // `last` conflicts with `end`
-        assert!(
-            Scan::try_parse_from(["snarkos", "--view-key", "", "--end", "10", "--last", "10", "--endpoint", ""].iter())
-                .is_err()
-        );
+        let err = Scan::try_parse_from(
+            ["snarkos", "--view-key", TEST_VIEW_KEY, "--end", "10", "--last", "10", "--endpoint", "localhost"].iter(),
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 
         // `last` conflicts with `start` and `end`
-        assert!(
-            Scan::try_parse_from(
-                ["snarkos", "--view-key", "", "--start", "0", "--end", "01", "--last", "10", "--endpoint", ""].iter(),
-            )
-            .is_err()
-        );
+        let err = Scan::try_parse_from(
+            [
+                "snarkos",
+                "--view-key",
+                TEST_VIEW_KEY,
+                "--start",
+                "0",
+                "--end",
+                "01",
+                "--last",
+                "10",
+                "--endpoint",
+                "localhost",
+            ]
+            .iter(),
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        Ok(())
     }
 }

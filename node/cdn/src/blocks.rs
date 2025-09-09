@@ -72,7 +72,7 @@ pub type SyncResult = Result<u32, (u32, anyhow::Error)>;
 /// This is used, for example, in snarkos_node_rest to query how
 /// far along the CDN sync is.
 pub struct CdnBlockSync {
-    base_url: String,
+    base_url: http::Uri,
     /// The background tasks that performs the sync operation.
     task: Mutex<Option<JoinHandle<SyncResult>>>,
     /// This flag will be set to true once the sync task has been successfully awaited.
@@ -85,7 +85,7 @@ impl CdnBlockSync {
     /// On success, this function returns the completed block height.
     /// On failure, this function returns the last successful block height (if any), along with the error.
     pub fn new<N: Network, C: ConsensusStorage<N>>(
-        base_url: String,
+        base_url: http::Uri,
         ledger: Ledger<N, C>,
         shutdown: Arc<AtomicBool>,
     ) -> Self {
@@ -117,7 +117,7 @@ impl CdnBlockSync {
     }
 
     async fn worker<N: Network, C: ConsensusStorage<N>>(
-        base_url: String,
+        base_url: http::Uri,
         ledger: Ledger<N, C>,
         shutdown: Arc<AtomicBool>,
     ) -> SyncResult {
@@ -169,7 +169,7 @@ impl CdnBlockSync {
 /// On success, this function returns the completed block height.
 /// On failure, this function returns the last successful block height (if any), along with the error.
 pub async fn load_blocks<N: Network>(
-    base_url: &str,
+    base_url: &http::Uri,
     start_height: u32,
     end_height: Option<u32>,
     shutdown: Arc<AtomicBool>,
@@ -227,7 +227,7 @@ pub async fn load_blocks<N: Network>(
     let base_url = base_url.to_owned();
     let shutdown_clone = shutdown.clone();
     tokio::spawn(async move {
-        download_block_bundles(client, base_url, cdn_start, cdn_end, pending_blocks_clone, shutdown_clone).await;
+        download_block_bundles(client, &base_url, cdn_start, cdn_end, pending_blocks_clone, shutdown_clone).await;
     });
 
     // A loop for inserting the pending blocks into the ledger.
@@ -310,7 +310,7 @@ pub async fn load_blocks<N: Network>(
 
 async fn download_block_bundles<N: Network>(
     client: Client,
-    base_url: String,
+    base_url: &http::Uri,
     cdn_start: u32,
     cdn_end: u32,
     pending_blocks: Arc<TMutex<Vec<Block<N>>>>,
@@ -420,7 +420,7 @@ async fn download_block_bundles<N: Network>(
 ///
 /// Note: This function decrements the tip by a few blocks, to ensure the
 /// tip is not on a block that is not yet available on the CDN.
-async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &str) -> Result<u32> {
+async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &http::Uri) -> Result<u32> {
     // A representation of the 'latest.json' file object.
     #[derive(Deserialize, Serialize, Debug)]
     struct LatestState {
@@ -557,6 +557,7 @@ mod tests {
     use crate::load_blocks;
     use snarkvm::prelude::{MainnetV0, block::Block};
 
+    use http::Uri;
     use parking_lot::RwLock;
     use std::{sync::Arc, time::Instant};
 
@@ -570,7 +571,7 @@ mod tests {
             Ok(())
         };
 
-        let testnet_cdn_url = format!("{CDN_BASE_URL}/mainnet");
+        let testnet_cdn_url = Uri::try_from(format!("{CDN_BASE_URL}/mainnet")).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -619,7 +620,7 @@ mod tests {
     fn test_cdn_height() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
-        let testnet_cdn_url = format!("{CDN_BASE_URL}/mainnet");
+        let testnet_cdn_url = Uri::try_from(format!("{CDN_BASE_URL}/mainnet")).unwrap();
         rt.block_on(async {
             let height = cdn_height::<BLOCKS_PER_FILE>(&client, &testnet_cdn_url).await.unwrap();
             assert!(height > 0);

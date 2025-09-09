@@ -19,6 +19,9 @@
 #[macro_use]
 extern crate async_trait;
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 #[cfg(feature = "ledger")]
 pub mod ledger;
 #[cfg(feature = "ledger")]

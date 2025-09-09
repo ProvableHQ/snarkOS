@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-tcp"
-version = "4.1.0"
+version = "4.2.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A TCP stack for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -19,30 +19,32 @@ edition = "2024"
 [features]
 default = [ ]
 locktick = [ "dep:locktick" ]
-metrics = [ "dep:metrics" ]
+metrics = [ "dep:snarkos-node-metrics" ]
 
-[dependencies]
-async-trait = "0.1"
-bytes = "1"
-parking_lot = "0.12"
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.bytes]
+workspace = true
+
+[dependencies.parking_lot]
+workspace = true
 
 [dependencies.futures-util]
-version = "0.3"
+workspace = true
 features = [ "sink" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../metrics"
-version = "=4.1.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.once_cell]
-version = "1"
+workspace = true
 features = [ "parking_lot" ]
 
 [dependencies.tokio]
@@ -57,7 +59,7 @@ features = [ "codec" ]
 workspace = true
 
 [dependencies.thiserror]
-version = "2"
+workspace = true
 
 [dev-dependencies.tokio]
 workspace = true

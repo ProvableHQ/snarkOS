@@ -99,9 +99,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Check if any connected peer is stale.
         for peer in self.router().get_connected_peers() {
             // Disconnect if the peer has not communicated back within the predefined time.
-            let elapsed = peer.last_seen.elapsed().as_secs();
-            if elapsed > Router::<N>::RADIO_SILENCE_IN_SECS {
-                warn!("Peer {} has not communicated in {elapsed} seconds", peer.listener_addr);
+            let elapsed = peer.last_seen.elapsed();
+            if elapsed > Router::<N>::MAX_RADIO_SILENCE {
+                warn!("Peer {} has not communicated in {elapsed:?}", peer.listener_addr);
                 // Disconnect from this peer.
                 self.router().disconnect(peer.listener_addr);
             }
@@ -117,8 +117,6 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     ///     - Validators are considered higher priority than provers or clients.
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
-        // The trusted peers (specified at runtime).
-        let trusted = self.router().trusted_peers();
         // The hardcoded bootstrap nodes.
         let bootstrap = self.router().bootstrap_peers();
         // Are we synced already? (cache this here, so it does not need to be recomputed)
@@ -128,34 +126,28 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // of the vector.
         // Note, that this gives equal priority to clients and provers, which
         // we might want to change in the future.
-        let mut peers = self.router().get_connected_peers();
+        let mut peers = self.router().filter_connected_peers(|peer| {
+            !peer.trusted
+                && !bootstrap.contains(&peer.listener_addr)
+                && !self.router().cache.contains_inbound_block_request(&peer.listener_addr) // This peer is currently syncing from us.
+                && (is_block_synced || self.router().cache.num_outbound_block_requests(&peer.listener_addr) == 0) // We are currently syncing from this peer.
+        });
         peers.sort_by_key(|peer| (peer.node_type.is_validator(), peer.last_seen));
 
-        // Determine which of the peers can be removed.
         peers
-            .into_iter()
-            .filter(|peer| {
-                let addr = peer.listener_addr;
-
-                !trusted.contains(&addr) // Always keep trusted nodes.
-                  && !bootstrap.contains(&addr) // Always keep bootstrap nodes.
-                  && !self.router().cache.contains_inbound_block_request(&addr) // This peer is currently syncing from us.
-                  && (is_block_synced || self.router().cache.num_outbound_block_requests(&addr) == 0) // We are currently syncing from this peer.
-            })
-            .collect()
     }
 
     /// This function removes the peer that we have not heard from the longest,
     /// to keep the connections fresh.
     /// It only triggers if the router is above the minimum number of connected peers.
     fn remove_oldest_connected_peer(&self) {
-        // Skip if the router is at or below the minimum number of connected peers.
-        if self.router().number_of_connected_peers() <= Self::MINIMUM_NUMBER_OF_PEERS {
+        // Skip if the node is not requesting peers.
+        if !self.router().allow_external_peers() {
             return;
         }
 
-        // Skip if the node is not requesting peers.
-        if !self.router().allow_external_peers() {
+        // Skip if the router is at or below the minimum number of connected peers.
+        if self.router().number_of_connected_peers() <= Self::MINIMUM_NUMBER_OF_PEERS {
             return;
         }
 
@@ -177,7 +169,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Obtain the number of connected peers.
         let num_connected = self.router().number_of_connected_peers();
         // Obtain the number of connected provers.
-        let num_connected_provers = self.router().number_of_connected_provers();
+        let num_connected_provers = self.router().filter_connected_peers(|peer| peer.node_type.is_prover()).len();
 
         // Consider rotating more external peers every ~10 heartbeats.
         let reduce_peers = self.router().rotate_external_peers() && rng.gen_range(0..10) == 0;
@@ -202,17 +194,16 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 "Exceeded maximum number of connected peers, disconnecting from ({num_surplus_provers} + {num_surplus_clients_validators}) peers"
             );
 
-            // Retrieve the trusted peers.
-            let trusted = self.router().trusted_peers();
             // Retrieve the bootstrap peers.
             let bootstrap = self.router().bootstrap_peers();
 
             // Determine the provers to disconnect from.
             let provers_to_disconnect = self
                 .router()
-                .connected_provers()
+                .filter_connected_peers(|peer| {
+                    peer.node_type.is_prover() && !peer.trusted && !bootstrap.contains(&peer.listener_addr)
+                })
                 .into_iter()
-                .filter(|peer_ip| !trusted.contains(peer_ip) && !bootstrap.contains(peer_ip))
                 .choose_multiple(rng, num_surplus_provers);
 
             // Determine the clients and validators to disconnect from.
@@ -220,24 +211,20 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 .get_removable_peers()
                 .into_iter()
                 .filter(|peer| !peer.node_type.is_prover()) // remove provers as those are handled separately
-                .map(|peer| peer.listener_addr)
                 .take(num_surplus_clients_validators);
 
             // Proceed to send disconnect requests to these peers.
-            for peer_ip in peers_to_disconnect.chain(provers_to_disconnect) {
+            for peer in peers_to_disconnect.chain(provers_to_disconnect) {
                 // TODO (howardwu): Remove this after specializing this function.
-                if self.router().node_type().is_prover() {
-                    if let Some(peer) = self.router().get_connected_peer(&peer_ip) {
-                        if peer.node_type.is_validator() {
-                            continue;
-                        }
-                    }
+                if self.router().node_type().is_prover() && peer.node_type.is_validator() {
+                    continue;
                 }
 
-                info!("Disconnecting from '{peer_ip}' (exceeded maximum connections)");
-                self.router().send(peer_ip, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
+                let peer_addr = peer.listener_addr;
+                info!("Disconnecting from '{peer_addr}' (exceeded maximum connections)");
+                self.router().send(peer_addr, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
                 // Disconnect from this peer.
-                self.router().disconnect(peer_ip);
+                self.router().disconnect(peer_addr);
             }
         }
 
@@ -269,8 +256,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Split the bootstrap peers into connected and candidate lists.
         let mut connected_bootstrap = Vec::new();
         let mut candidate_bootstrap = Vec::new();
+        let connected_peers = self.router().connected_peers();
         for bootstrap_ip in self.router().bootstrap_peers() {
-            match self.router().is_connected(&bootstrap_ip) {
+            match connected_peers.contains(&bootstrap_ip) {
                 true => connected_bootstrap.push(bootstrap_ip),
                 false => candidate_bootstrap.push(bootstrap_ip),
             }
@@ -312,20 +300,15 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Ensure that the trusted nodes are connected.
         let handles: Vec<_> = self
             .router()
-            .trusted_peers()
+            .unconnected_trusted_peers()
             .iter()
-            .filter_map(|peer_ip| {
-                // If the peer is not already connecting or connected, attempt to connect to it.
-                if self.router().is_connecting(peer_ip) || self.router().is_connected(peer_ip) {
-                    None
-                } else {
-                    debug!("Attempting to (re-)connect to trusted peer `{peer_ip}`");
-                    let hdl = self.router().connect(*peer_ip);
-                    if hdl.is_none() {
-                        warn!("Could not initiate connection to trusted peer at `{peer_ip}`");
-                    }
-                    hdl
+            .filter_map(|listener_addr| {
+                debug!("Attempting to (re-)connect to trusted peer `{listener_addr}`");
+                let hdl = self.router().connect(*listener_addr);
+                if hdl.is_none() {
+                    warn!("Could not initiate connection to trusted peer at `{listener_addr}`");
                 }
+                hdl
             })
             .collect();
 

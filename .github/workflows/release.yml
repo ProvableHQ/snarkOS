@@ -15,16 +15,14 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
+        uses: dtolnay/rust-toolchain@stable
 
+      - name: Install required Debian pacakges
+        run: sudo apt install -y lld
+ 
       - name: Build snarkOS
         run: |
           cargo build --all --release && strip target/release/snarkos
@@ -57,15 +55,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build snarkOS
         run: |
@@ -100,15 +93,10 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2

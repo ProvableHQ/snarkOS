@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft"
-version = "4.1.0"
+version = "4.2.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A memory pool for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -28,7 +28,7 @@ locktick = [
   "snarkvm/locktick"
 ]
 metrics = [
-  "dep:metrics",
+  "dep:snarkos-node-metrics",
   "snarkos-node-bft-events/metrics",
   "snarkos-node-bft-ledger-service/metrics"
 ]
@@ -56,13 +56,13 @@ workspace = true
 version = "1.0"
 
 [dependencies.async-trait]
-version = "0.1"
+workspace = true
 
 [dependencies.bytes]
-version = "1"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures]
 workspace = true
@@ -73,39 +73,35 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot", "tokio" ]
 optional = true
 
 [dependencies.lru]
-version = "0.12.1"
+workspace = true
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../metrics"
-version = "=4.1.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.parking_lot]
 workspace = true
 
 [dependencies.rand]
-version = "0.8"
+workspace = true
 
 [dependencies.rayon]
-version = "1"
+workspace = true
 
 [dependencies.sha2]
 version = "0.10"
 default-features = false
 
 [dependencies.snarkos-account]
-path = "../../account"
-version = "=4.1.0"
+workspace = true
 
 [dependencies.snarkos-node-bft-events]
-path = "./events"
-version = "=4.1.0"
+workspace = true
 
 [dependencies.snarkos-node-bft-ledger-service]
 workspace = true
@@ -119,15 +115,14 @@ features = [ "memory" ]
 workspace = true
 
 [dependencies.snarkos-node-tcp]
-path = "../tcp"
-version = "=4.1.0"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 features = [ "utilities" ]
 
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
 workspace = true
@@ -144,11 +139,10 @@ features = [ "codec" ]
 workspace = true
 
 [dev-dependencies.axum]
-version = "0.8"
+workspace = true
 
 [dev-dependencies.axum-extra]
-version = "0.10"
-default-features = false
+workspace = true
 features = [ "erased-json" ]
 
 [dev-dependencies.clap]
@@ -174,20 +168,20 @@ version = "0.49"
 workspace = true
 
 [dev-dependencies.rand_chacha]
-version = "0.3"
+workspace = true
 
 [dev-dependencies.rand_distr]
-version = "0.4"
+workspace = true
 
 [dev-dependencies.rayon]
-version = "1"
+workspace = true
 
 [dev-dependencies.snarkos-node-bft]
 path = "."
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-sync]
-path = "../sync"
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.test-strategy]

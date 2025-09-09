@@ -15,8 +15,14 @@
 
 #![forbid(unsafe_code)]
 
+mod transactions_queue;
+use transactions_queue::TransactionsQueue;
+
 #[macro_use]
 extern crate tracing;
+
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
 
 use snarkos_account::Account;
 use snarkos_node_bft::{
@@ -51,10 +57,10 @@ use anyhow::Result;
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::Mutex;
+use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle};
 
@@ -74,21 +80,6 @@ const CAPACITY_FOR_SOLUTIONS: usize = 1 << 10;
 /// Note: This is an inbound queue limit, not a Narwhal-enforced limit.
 const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
 
-/// Helper struct to track incoming transactions.
-struct TransactionsQueue<N: Network> {
-    pub deployments: LruCache<N::TransactionID, Transaction<N>>,
-    pub executions: LruCache<N::TransactionID, Transaction<N>>,
-}
-
-impl<N: Network> Default for TransactionsQueue<N> {
-    fn default() -> Self {
-        Self {
-            deployments: LruCache::new(NonZeroUsize::new(CAPACITY_FOR_DEPLOYMENTS).unwrap()),
-            executions: LruCache::new(NonZeroUsize::new(CAPACITY_FOR_EXECUTIONS).unwrap()),
-        }
-    }
-}
-
 /// Wrapper around `BFT` that adds additional functionality, such as a mempool.
 ///
 /// Consensus acts as a rate limiter to prevents workers in BFT from being overloaded.
@@ -106,7 +97,7 @@ pub struct Consensus<N: Network> {
     /// The unconfirmed solutions queue.
     solutions_queue: Arc<Mutex<LruCache<SolutionID<N>, Solution<N>>>>,
     /// The unconfirmed transactions queue.
-    transactions_queue: Arc<Mutex<TransactionsQueue<N>>>,
+    transactions_queue: Arc<RwLock<TransactionsQueue<N>>>,
     /// The recently-seen unconfirmed solutions.
     seen_solutions: Arc<Mutex<LruCache<SolutionID<N>, ()>>>,
     /// The recently-seen unconfirmed transactions.
@@ -174,6 +165,10 @@ impl<N: Network> Consensus<N> {
     /// Returns the underlying `BFT` struct.
     pub const fn bft(&self) -> &BFT<N> {
         &self.bft
+    }
+
+    pub fn contains_transaction(&self, transaction_id: &N::TransactionID) -> bool {
+        self.transactions_queue.read().contains(transaction_id)
     }
 }
 
@@ -274,15 +269,8 @@ impl<N: Network> Consensus<N> {
 
     /// Returns the transactions in the inbound queue.
     pub fn inbound_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
-        // Acquire the lock on the transactions queue.
-        let tx_queue = self.transactions_queue.lock();
         // Return an iterator over the deployment and execution transactions in the inbound queue.
-        tx_queue
-            .deployments
-            .clone()
-            .into_iter()
-            .chain(tx_queue.executions.clone())
-            .map(|(id, tx)| (id, Data::Object(tx)))
+        self.transactions_queue.read().transactions().map(|(id, tx)| (id, Data::Object(tx)))
     }
 }
 
@@ -392,15 +380,14 @@ impl<N: Network> Consensus<N> {
                     .lock()
                     .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
             }
-            // Add the transaction to the memory pool.
-            trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
-            if transaction.is_deploy() {
-                if self.transactions_queue.lock().deployments.put(transaction_id, transaction).is_some() {
-                    bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
-                }
-            } else if self.transactions_queue.lock().executions.put(transaction_id, transaction).is_some() {
+            // Check that the transaction is not in the mempool.
+            if self.contains_transaction(&transaction_id) {
                 bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
             }
+            // Add the transaction to the memory pool.
+            trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
+            let priority_fee = transaction.priority_fee_amount()?;
+            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
         }
 
         // Try to process the unconfirmed transactions in the memory pool.
@@ -420,7 +407,7 @@ impl<N: Network> Consensus<N> {
             // Determine the available capacity.
             let capacity = Primary::<N>::MAX_TRANSMISSIONS_TOLERANCE.saturating_sub(num_unconfirmed_transmissions);
             // Acquire the lock on the transactions queue.
-            let mut tx_queue = self.transactions_queue.lock();
+            let mut tx_queue = self.transactions_queue.write();
             // Determine the number of deployments to send.
             let num_deployments = tx_queue.deployments.len().min(capacity).min(MAX_DEPLOYMENTS_PER_INTERVAL);
             // Determine the number of executions to send.
@@ -430,13 +417,12 @@ impl<N: Network> Consensus<N> {
             let selector_iter = (0..num_deployments).map(|_| true).interleave((0..num_executions).map(|_| false));
             // Drain the transactions from the queue, interleaving deployments and executions.
             selector_iter
-                .filter_map(|select_deployment| {
-                    if select_deployment {
-                        tx_queue.deployments.pop_lru().map(|(_, tx)| tx)
-                    } else {
-                        tx_queue.executions.pop_lru().map(|(_, tx)| tx)
-                    }
-                })
+                .filter_map(
+                    |select_deployment| {
+                        if select_deployment { tx_queue.deployments.pop() } else { tx_queue.executions.pop() }
+                    },
+                )
+                .map(|(_, tx)| tx)
                 .collect_vec()
         };
         // Iterate over the transactions.

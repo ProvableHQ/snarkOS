@@ -18,6 +18,9 @@
 
 //! **Tcp** is a simple, low-level, and customizable implementation of a TCP stack.
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 mod helpers;
 pub use helpers::*;
 

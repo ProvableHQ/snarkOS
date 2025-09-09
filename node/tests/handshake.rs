@@ -20,7 +20,6 @@ mod common;
 use common::{node::*, test_peer::TestPeer};
 
 use snarkos_node::{Client, Prover, Validator};
-use snarkos_node_router::Outbound;
 use snarkos_node_tcp::{ConnectError, P2P};
 use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 

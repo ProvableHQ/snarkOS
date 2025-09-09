@@ -167,10 +167,40 @@ fn check_file_licenses<P: AsRef<Path>>(path: P) {
 fn check_locktick_profile() {
     let locktick_enabled = env::var("CARGO_FEATURE_LOCKTICK").is_ok();
     if locktick_enabled {
+        // First check the env variables that can override the TOML values.
+        let (mut valid_debug_override, mut valid_strip_override) = (false, false);
+
+        if let Ok(val) = env::var("CARGO_PROFILE_RELEASE_DEBUG") {
+            if val != "line-tables-only" {
+                eprintln!(
+                    "🔴 When enabling the locktick feature, CARGO_PROFILE_RELEASE_DEBUG may only be set to `line-tables-only`."
+                );
+                process::exit(1);
+            } else {
+                valid_debug_override = true;
+            }
+        }
+        if let Ok(val) = env::var("CARGO_PROFILE_RELEASE_STRIP") {
+            if val != "none" {
+                eprintln!(
+                    "🔴 When enabling the locktick feature, CARGO_PROFILE_RELEASE_STRIP may only be set to `none`."
+                );
+                process::exit(1);
+            } else {
+                valid_strip_override = true;
+            }
+        }
+
+        if valid_debug_override && valid_strip_override {
+            // Both overrides are compatible with locktick, no need to check the TOML.
+            return;
+        }
+
+        // If the relevant overrides were either invalid or not present, check the TOML.
         let profile = env::var("PROFILE").unwrap_or_else(|_| "".to_string());
         let manifest = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("Cargo.toml");
         let contents = fs::read_to_string(&manifest).expect("failed to read Cargo.toml");
-        let doc = contents.parse::<Value>().expect("invalid TOML in Cargo.toml");
+        let doc: Value = toml::from_str(&contents).expect("invalid TOML in Cargo.toml");
 
         let profile_table = doc.get("profile").and_then(|p| p.get(profile));
         if let Some(Value::Table(profile_settings)) = profile_table {
@@ -181,16 +211,29 @@ fn check_locktick_profile() {
                     }
                     _ => {
                         eprintln!(
-                            "🔴 When enabling the locktick feature, the profile must have debug set to line-tables-only. Uncomment the relevant lines in Cargo.toml."
+                            "🔴 When enabling the locktick feature, the profile must have debug set to `line-tables-only`. Uncomment the relevant lines in Cargo.toml."
                         );
                         process::exit(1);
                     }
                 }
             } else {
                 eprintln!(
-                    "🔴 When enabling the locktick feature, the profile must have debug set to line-tables-only. Uncomment the relevant lines in Cargo.toml."
+                    "🔴 When enabling the locktick feature, the profile must have `debug` set to `line-tables-only`. Uncomment the relevant lines in Cargo.toml."
                 );
                 process::exit(1);
+            }
+            if let Some(debug) = profile_settings.get("strip") {
+                match debug {
+                    Value::String(s) if s == "none" => {
+                        println!("cargo:info=manifest has strip=none");
+                    }
+                    _ => {
+                        eprintln!(
+                            "🔴 When enabling the locktick feature, the profile must have `strip` set to `none`. Uncomment the relevant lines in Cargo.toml."
+                        );
+                        process::exit(1);
+                    }
+                }
             }
         }
     }

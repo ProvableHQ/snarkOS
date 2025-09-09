@@ -66,22 +66,29 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: set -e
       - run:
-          name: Prepare environment and install dependencies
+          name: Install sccache
           command: |
-            export SCCACHE_CACHE_SIZE=200M
             export WORK_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
             export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
+            export SCCACHE_VERSION=v0.10.0
+            export SCCACHE_PKG="sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+
             mkdir -p "$CIRCLE_WORKING_DIRECTORY/.bin"
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            mv $CIRCLE_WORKING_DIRECTORY/.bin/sccache-v0.3.0-x86_64-unknown-linux-musl/sccache $CIRCLE_WORKING_DIRECTORY/.bin/sccache
+            wget "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/$SCCACHE_PKG.tar.gz"
+            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf "$SCCACHE_PKG.tar.gz"
+            chmod +x "$CIRCLE_WORKING_DIRECTORY/.bin/$SCCACHE_PKG/sccache"
+            mv "$CIRCLE_WORKING_DIRECTORY/.bin/$SCCACHE_PKG/sccache" "$CIRCLE_WORKING_DIRECTORY/.bin/sccache"
+            rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+
             export PATH="$PATH:$CIRCLE_WORKING_DIRECTORY/.bin"
             export RUSTC_WRAPPER="sccache"
-            rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+      - run:
+          name: Install Debian packages
+          command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
       - restore_cache:
@@ -93,7 +100,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v3.3.1-rust-1.83.0-snarkos-stable-cache
+        default: v3.3.1-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: (sccache -s||true)
       - run: set +e
@@ -169,19 +176,15 @@ commands:
       - run:
           name: "Install snarkos"
           command: |
-            cargo install --locked --path .
+            cargo install --locked --path . --features test_network
       - run:
           name: "Run DB backup test"
           timeout: 10m  # Allow 10 minutes total
           command: |
             ./.circleci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
-            snarkos clean --dev 0
-            snarkos clean --dev 1
-            snarkos clean --dev 2
-            snarkos clean --dev 3
       - run:
           name: "Run block advancement test"
-          imeout: 20m  # Allow 20 minutes total
+          timeout: 20m  # Allow 20 minutes total
           command: |
             ./.circleci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - clear_environment:
@@ -195,7 +198,7 @@ commands:
 jobs:
   snarkos:
     executor: rust-docker
-    resource_class: << pipeline.parameters.xlarge >>
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: .
@@ -211,19 +214,11 @@ jobs:
 
   cli:
     executor: rust-docker
-    resource_class: << pipeline.parameters.xlarge >>
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: cli
           cache_key: cli
-
-  display:
-    executor: rust-docker
-    resource_class: << pipeline.parameters.medium >>
-    steps:
-      - run_serial:
-          workspace_member: display
-          cache_key: v3.3.1-rust-1.83.0-display-cache
 
   node:
     executor: rust-docker
@@ -275,7 +270,7 @@ jobs:
 
   node-consensus:
     executor: rust-docker
-    resource_class: << pipeline.parameters.medium >>
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/consensus
@@ -344,6 +339,25 @@ jobs:
       - run_devnet:
           workspace_member: .
           cache_key: v3.3.1-rust-1.88.0-devnet-test-cache
+
+  # Check crates that do not have any tests individually
+  check-other-crates:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v3.3.1-rust-1.88.0-check-other-crates-cache
+      - run:
+          name: Check snarkos-node-metrics crate
+          no_output_timeout: 10m
+          command: cargo check --package=snarkos-node-metrics --all-features
+      - run:
+          name: Check snarkos-display crate
+          no_output_timeout: 10m
+          command: cargo check --package=snarkos-node-metrics --all-features
+      - clear_environment:
+          cache_key: v3.3.1-rust-1.88.0-check-other-crates-cache
 
   check-fmt:
     executor: rust-docker
@@ -429,7 +443,6 @@ workflows:
       - snarkos
       - account
       - cli
-      - display
       - node
       - node-bft
       - node-bft-events
@@ -448,6 +461,7 @@ workflows:
       - check-clippy
       - check-unused-dependencies
       - check-cargo-audit
+      - check-other-crates
       - devnet-test
 
   windows-workflow:
@@ -461,4 +475,3 @@ workflows:
                 display,
                 node
               ]
-      

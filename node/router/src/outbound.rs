@@ -48,12 +48,12 @@ pub trait Outbound<N: Network> {
         // }
 
         // Prepare the peers to send to.
-        let connected_peers = self.router().connected_peers();
-        let peers = connected_peers.iter().filter(|peer_ip| !excluded_peers.contains(peer_ip));
+        let connected_peers =
+            self.router().filter_connected_peers(|peer| !excluded_peers.contains(&peer.listener_addr));
 
         // Iterate through all peers that are not the sender and excluded peers.
-        for peer_ip in peers {
-            self.router().send(*peer_ip, message.clone());
+        for addr in connected_peers.iter().map(|peer| peer.listener_addr) {
+            self.router().send(addr, message.clone());
         }
     }
 
@@ -76,12 +76,13 @@ pub trait Outbound<N: Network> {
         // }
 
         // Prepare the peers to send to.
-        let connected_validators = self.router().connected_validators();
-        let peers = connected_validators.iter().filter(|peer_ip| !excluded_peers.contains(peer_ip));
+        let connected_validators = self.router().filter_connected_peers(|peer| {
+            peer.node_type.is_validator() && !excluded_peers.contains(&peer.listener_addr)
+        });
 
         // Iterate through all validators that are not the sender and excluded validators.
-        for peer_ip in peers {
-            self.router().send(*peer_ip, message.clone());
+        for listener_addr in connected_validators.iter().map(|peer| peer.listener_addr) {
+            self.router().send(listener_addr, message.clone());
         }
     }
 }

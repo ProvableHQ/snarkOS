@@ -15,7 +15,6 @@
 
 use crate::{
     Outbound,
-    Peer,
     messages::{
         BlockRequest,
         BlockResponse,
@@ -198,15 +197,6 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // If the peer is a prover, ensure there are no block locators.
                 else if message.node_type.is_prover() && message.block_locators.is_some() {
                     bail!("Peer '{peer_ip}' is a prover or client, but block locators were provided");
-                }
-
-                // Update the connected peer.
-                if let Err(error) =
-                    self.router().update_connected_peer(peer_ip, message.node_type, |conn: &mut Peer<N>| {
-                        conn.update_version(message.version);
-                    })
-                {
-                    bail!("[Ping] {error}");
                 }
 
                 // Process the ping message.

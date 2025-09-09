@@ -1,9 +1,0 @@
-version: 2
-updates:
-- package-ecosystem: cargo
-  directory: "/"
-  schedule:
-    interval: daily
-    time: "10:00"
-  target-branch: "mainnet"
-  open-pull-requests-limit: 10

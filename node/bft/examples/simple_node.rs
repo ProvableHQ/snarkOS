@@ -16,6 +16,9 @@
 #[macro_use]
 extern crate tracing;
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft::{
@@ -51,6 +54,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+
 use axum_extra::response::ErasedJson;
 use clap::{Parser, ValueEnum};
 use indexmap::IndexMap;
@@ -456,12 +460,6 @@ impl IntoResponse for RestError {
     }
 }
 
-impl From<anyhow::Error> for RestError {
-    fn from(err: anyhow::Error) -> Self {
-        Self(err.to_string())
-    }
-}
-
 #[derive(Clone)]
 struct NodeState {
     bft: Option<BFT<CurrentNetwork>>,
@@ -472,7 +470,7 @@ struct NodeState {
 async fn get_leader(State(node): State<NodeState>) -> Result<ErasedJson, RestError> {
     match &node.bft {
         Some(bft) => Ok(ErasedJson::pretty(bft.leader())),
-        None => Err(RestError::from(anyhow!("BFT is not enabled"))),
+        None => Err(RestError("BFT is not enabled".into())),
     }
 }
 

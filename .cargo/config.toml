@@ -4,3 +4,6 @@ rustflags = [
     # See here: https://github.com/rust-lang/rust/issues/71515
     "-C", "link-arg=-fuse-ld=lld",
 ]
+
+[env]
+CXXFLAGS = "-include cstdint" #TODO: remove once RocksDB 0.24 is released

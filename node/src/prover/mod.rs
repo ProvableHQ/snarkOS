@@ -157,6 +157,10 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         // Return the node.
         Ok(node)
     }
+
+    pub fn router(&self) -> &Router<N> {
+        &self.router
+    }
 }
 
 #[async_trait]

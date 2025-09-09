@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft-ledger-service"
-version = "4.1.0"
+version = "4.2.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A ledger service for the memory pool in a decentralized operating system"
 homepage = "https://aleo.org"
@@ -21,7 +21,7 @@ default = [ ]
 ledger = [ "parking_lot", "rand", "rayon", "tokio", "tracing" ]
 ledger-write = [ ]
 locktick = [ "dep:locktick", "snarkvm/locktick" ]
-metrics = [ "dep:metrics", "snarkvm/metrics" ]
+metrics = [ "dep:snarkos-node-metrics", "snarkvm/metrics" ]
 mock = [ "parking_lot", "tracing" ]
 prover = [ ]
 cuda = [ "snarkvm/cuda" ]
@@ -40,26 +40,24 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../../metrics"
-version = "=4.1.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 optional = true
 
 [dependencies.rand]
-version = "0.8"
+workspace = true
 optional = true
 
 [dependencies.rayon]
-version = "1"
+workspace = true
 optional = true
 
 [dependencies.snarkvm]

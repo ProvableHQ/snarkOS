@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync"
-version = "4.1.0"
+version = "4.2.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A synchronization module for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -24,8 +24,7 @@ locktick = [
   "snarkos-node-router/locktick",
 ]
 serial = ["snarkos-node-bft-ledger-service/serial"]
-
-metrics = [ "dep:metrics" ]
+metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]
 test = [ "snarkos-node-sync-locators/test" ]
 
@@ -43,7 +42,7 @@ workspace = true
 workspace = true
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 features = [ "parking_lot" ]
 optional = true
 
@@ -58,16 +57,14 @@ workspace = true
 features = [ "sync" ]
 
 [dependencies.rand]
-version = "0.8"
+workspace = true
 
 [dependencies.snarkos-node-bft-ledger-service]
 workspace = true
 features = [ "ledger-write" ]
 
-[dependencies.metrics]
-package = "snarkos-node-metrics"
-path = "../metrics"
-version = "=4.1.0"
+[dependencies.snarkos-node-metrics]
+workspace = true
 optional = true
 
 [dependencies.snarkos-node-router]
@@ -77,7 +74,7 @@ workspace = true
 workspace = true
 
 [dependencies.snarkos-node-sync-locators]
-workspace =true
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
@@ -86,11 +83,11 @@ workspace = true
 workspace = true
 
 [dev-dependencies.snarkos-node-bft-ledger-service]
-path = "../bft/ledger-service"
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-sync-locators]
-path = "locators"
+workspace = true
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-sync-communication-service]

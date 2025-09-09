@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::{content_style, header_style};
+
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -65,7 +67,9 @@ impl Logs {
 
         let combined_logs = self.log_cache.iter().map(|s| s.as_str()).collect::<String>();
 
-        let combined_logs = Paragraph::new(combined_logs).block(Block::default().borders(Borders::ALL).title("Logs"));
+        let combined_logs = Paragraph::new(combined_logs)
+            .style(content_style())
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Logs"));
         f.render_widget(combined_logs, chunks[0]);
     }
 }

@@ -13,40 +13,90 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkos_node::Node;
+use crate::{content_style, header_style};
+
+use snarkos_node::{Node, router::Peer};
 use snarkvm::prelude::Network;
 
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::Span,
-    widgets::{Block, Borders, canvas::Canvas},
+    style::{Color, Modifier, Style},
+    text::Text,
+    widgets::{Block, Borders, Paragraph, Row, Table},
 };
 
 pub(crate) struct Overview;
 
 impl Overview {
-    pub(crate) fn draw<N: Network>(&self, f: &mut Frame, area: Rect, _node: &Node<N>) {
+    fn draw_latest_block<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
+        let text = if let Some(ledger) = node.ledger() {
+            let block = ledger.latest_block();
+            Text::raw(format!("Hash: {} | Height: {}", block.hash(), block.height()))
+        } else {
+            Text::raw("N/A")
+        };
+
+        let paragraph = Paragraph::new(text)
+            .style(content_style())
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Latest Block"));
+        f.render_widget(&paragraph, area);
+    }
+
+    /// Draws a table containing all connected and connecting peers.
+    fn draw_peer_table<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
+        let header = ["IP", "State", "Node Type"];
+        let constraints = [Constraint::Length(20), Constraint::Length(10), Constraint::Length(10)];
+
+        let rows: Vec<_> = node
+            .router()
+            .get_peers()
+            .into_iter()
+            .filter(|peer| !peer.is_candidate()) // Too many candidate peers for overview.
+            .map(|peer| {
+                let state = match peer {
+                    Peer::Candidate(_) => "candidate",
+                    Peer::Connecting(_) => "connecting",
+                    Peer::Connected(_) => "connected",
+                }.to_string();
+
+                let node_type = if let Some(node_type ) = peer.node_type() {
+                    node_type.to_string()
+                } else {
+                    "unknown".to_string()
+                };
+
+                let last_seen = if let Peer::Connected(p) = &peer {
+                    format!("{:.2}s ago", p.last_seen.elapsed().as_secs_f64())
+                } else {
+                    "N/A".to_string()
+                };
+
+                Row::new([format!("{:?}", peer.listener_addr()), state, node_type, last_seen]).style(content_style())
+            })
+            .collect();
+
+        let peer_table = Table::new(rows, constraints)
+            .style(content_style())
+            .header(Row::new(header).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)))
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Peers"));
+
+        f.render_widget(peer_table, area);
+    }
+
+    pub(crate) fn draw<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
         // Initialize the layout of the page.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(10), Constraint::Percentage(70), Constraint::Max(2)].as_ref())
+            .constraints([Constraint::Length(3), Constraint::Min(10), Constraint::Length(3)]) // The box border adds a line on both sides.
             .split(area);
 
-        let canvas = Canvas::default().block(Block::default().borders(Borders::ALL).title("Block")).paint(|_ctx| {
-            // ctx.draw(&ball);
-        });
-        f.render_widget(canvas, chunks[0]);
+        self.draw_latest_block(f, chunks[0], node);
+        self.draw_peer_table(f, chunks[1], node);
 
-        let canvas = Canvas::default().block(Block::default().borders(Borders::ALL).title("Peers")).paint(|_ctx| {
-            // ctx.draw(&ball);
-        });
-        f.render_widget(canvas, chunks[1]);
-
-        let canvas = Canvas::default().block(Block::default().borders(Borders::ALL).title("Help")).paint(|ctx| {
-            ctx.print(0f64, 0f64, Span::styled("Press ESC to quit", Style::default().fg(Color::White)));
-        });
-        f.render_widget(canvas, chunks[2]);
+        let help = Paragraph::new("Press ESC to quit")
+            .style(content_style())
+            .block(Block::default().borders(Borders::ALL).title("Help").style(header_style()));
+        f.render_widget(help, chunks[2]);
     }
 }

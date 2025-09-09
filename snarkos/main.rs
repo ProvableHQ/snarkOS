@@ -70,8 +70,11 @@ fn main() -> anyhow::Result<()> {
 
     // Parse the given arguments.
     let cli = CLI::parse();
-    // Run the updater.
-    println!("{}", Updater::print_cli());
+    if !cli.noupdater {
+        // Run the updater.
+        println!("{}", Updater::print_cli());
+    }
+
     // Run the CLI.
     match cli.command.parse() {
         Ok(output) => println!("{output}\n"),
