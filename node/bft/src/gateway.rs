@@ -20,6 +20,7 @@ use crate::{
     MAX_BATCH_DELAY_IN_MS,
     MEMORY_POOL_PORT,
     Worker,
+    errors::log_warning,
     events::{EventCodec, PrimaryPing},
     helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
@@ -583,7 +584,7 @@ impl<N: Network> Gateway<N> {
         let result = self.unicast(peer_addr, event);
         // If the event was unable to be sent, disconnect.
         if let Err(e) = &result {
-            warn!("{CONTEXT} Failed to send '{name}' to '{peer_ip}': {e}");
+            warn!("{CONTEXT} Failed to send '{name}' to '{peer_ip}' - {e}");
             debug!("{CONTEXT} Disconnecting from '{peer_ip}' (unable to send)");
             self.disconnect(peer_ip);
         }
@@ -719,8 +720,8 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(e) = sync_sender.advance_with_sync_blocks(peer_ip, blocks.0).await {
-                        warn!("Unable to process block response from '{peer_ip}' - {e}");
+                    if let Err(err) = sync_sender.advance_with_sync_blocks(peer_ip, blocks.0).await {
+                        log_warning(err.context(format!("Unable to process block response from '{peer_ip}'")));
                     }
                 }
                 Ok(())
@@ -1086,7 +1087,7 @@ impl<N: Network> Gateway<N> {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
             if let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
-                warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
+                log_warning(error.context(format!("{CONTEXT} Disconnecting from '{peer_ip}'")));
                 let self_ = self.clone();
                 tokio::spawn(async move {
                     Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;

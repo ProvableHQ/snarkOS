@@ -97,3 +97,41 @@ macro_rules! spawn_blocking {
         $crate::execute_blocking(move || $expr).await
     };
 }
+
+pub mod errors {
+    use colored::Colorize;
+
+    /// Prints an anyhow::Error
+    /// Helper function for `log_error` and `log_warning`.
+    /// TODO(kaimast): replace with similar logic in snarkvm
+    #[inline]
+    fn flatten_anyhow_error<E: std::borrow::Borrow<anyhow::Error>>(error: E) -> String {
+        let error = error.borrow();
+        let chain = error.chain().skip(1).map(|next| next.to_string()).collect::<Vec<String>>().join(" — ");
+        format!("{error} — {}", chain.dimmed())
+    }
+
+    /// Logs `anyhow::Error`'s its error chain using the `ERROR` log level.
+    ///
+    /// This follows the existing convention in the codebase that joins errors using em dashes.
+    /// For example, an error "Invalid transaction" with a cause "Proof failed"would be logged
+    /// as "Invalid transaction — Proof failed".
+    /// TODO(kaimast): replace with similar logic in snarkvm
+    pub fn log_error<E: std::borrow::Borrow<anyhow::Error>>(error: E) {
+        tracing::error!("{}", flatten_anyhow_error(error));
+    }
+
+    /// Logs `anyhow::Error`'s its error chain using the `WARN` log level.
+    ///
+    /// This follows the existing convention in the codebase that joins errors using em dashes.
+    /// For example, an error "Invalid transaction" with a cause "Proof failed"would be logged
+    /// as "Invalid transaction — Proof failed".
+    pub fn log_warning<E: std::borrow::Borrow<anyhow::Error>>(error: E) {
+        tracing::warn!("{}", flatten_anyhow_error(error));
+    }
+
+    /// Logs `anyhow::Error`'s its error chain using the `DEBUG` log level.
+    pub fn log_debug<E: std::borrow::Borrow<anyhow::Error>>(error: E) {
+        tracing::debug!("{}", flatten_anyhow_error(error));
+    }
+}

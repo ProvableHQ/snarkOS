@@ -16,6 +16,7 @@
 use crate::{
     MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
     Primary,
+    errors::log_warning,
     helpers::{
         BFTReceiver,
         ConsensusSender,
@@ -269,8 +270,10 @@ impl<N: Network> BFT<N> {
         // If the BFT is ready, then update to the next round.
         if is_ready {
             // Update to the next round in storage.
-            if let Err(e) = self.storage().increment_to_next_round(current_round) {
-                warn!("BFT failed to increment to the next round from round {current_round} - {e}");
+            if let Err(err) = self.storage().increment_to_next_round(current_round) {
+                log_warning(
+                    err.context(format!("BFT failed to increment to the next round from round {current_round}")),
+                );
                 return false;
             }
             // Update the timer for the leader certificate.

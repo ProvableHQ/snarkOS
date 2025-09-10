@@ -18,6 +18,7 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
     Transport,
+    errors::log_error,
     events::DataBlocks,
     execute_blocking,
     helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
@@ -31,7 +32,7 @@ use snarkvm::{
     prelude::{cfg_into_iter, cfg_iter},
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -228,7 +229,7 @@ impl<N: Network> Sync<N> {
                 let res = callback.send(self_.advance_with_sync_blocks(peer_ip, blocks).await);
 
                 if let Err(err) = res {
-                    warn!("Failed to send response to callbac: {err:?}");
+                    warn!("Failed to send response to callback: {err:?}");
                 }
             }
 
@@ -259,7 +260,7 @@ impl<N: Network> Sync<N> {
                     let res = callback.send(self_clone.update_peer_locators(peer_ip, locators));
 
                     if let Err(err) = res {
-                        warn!("Failed to send response to callbac: {err:?}");
+                        warn!("Failed to send response to callback: {err:?}");
                     }
                 });
             }
@@ -450,9 +451,11 @@ impl<N: Network> Sync<N> {
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(bft_sender) = self.bft_sender.get() {
             // Await the callback to continue.
-            if let Err(e) = bft_sender.tx_sync_bft_dag_at_bootup.send(certificates).await {
-                bail!("Failed to update the BFT DAG from sync: {e}");
-            }
+            bft_sender
+                .tx_sync_bft_dag_at_bootup
+                .send(certificates)
+                .await
+                .with_context(|| "Failed to update the BFT DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -599,7 +602,7 @@ impl<N: Network> Sync<N> {
             if within_gc {
                 info!("Finished catching up with the network. Switching back to BFT sync.");
                 if let Err(err) = self.sync_storage_with_ledger_at_bootup().await {
-                    error!("BFT sync (with bootup routine) failed - {err}");
+                    log_error(err.context("BFT sync (with bootup routine) failed"));
                 }
             }
 
@@ -687,9 +690,7 @@ impl<N: Network> Sync<N> {
                     // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
                     if let Some(bft_sender) = self.bft_sender.get() {
                         // Await the callback to continue.
-                        if let Err(err) = bft_sender.send_sync_bft(certificate).await {
-                            bail!("Failed to sync certificate - {err}");
-                        };
+                        bft_sender.send_sync_bft(certificate).await.with_context(|| "Failed to sync certificate")?;
                     }
                 }
             }
