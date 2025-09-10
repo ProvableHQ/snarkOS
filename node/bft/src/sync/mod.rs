@@ -225,8 +225,14 @@ impl<N: Network> Sync<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, blocks, callback)) = rx_block_sync_advance_with_sync_blocks.recv().await {
-                callback.send(self_.advance_with_sync_blocks(peer_ip, blocks).await).ok();
+                let res = callback.send(self_.advance_with_sync_blocks(peer_ip, blocks).await);
+
+                if let Err(err) = res {
+                    warn!("Failed to send response to callbac: {err:?}");
+                }
             }
+
+            debug!("Handler for block_sync_advance_with_sync_blocks stopped");
         });
 
         // Process the block sync request to remove the peer.
@@ -235,6 +241,8 @@ impl<N: Network> Sync<N> {
             while let Some(peer_ip) = rx_block_sync_remove_peer.recv().await {
                 self_.remove_peer(peer_ip);
             }
+
+            debug!("Handler for block_sync_remove_peer stopped");
         });
 
         // Process each block sync request to update peer locators.
@@ -248,9 +256,15 @@ impl<N: Network> Sync<N> {
             while let Some((peer_ip, locators, callback)) = rx_block_sync_update_peer_locators.recv().await {
                 let self_clone = self_.clone();
                 tokio::spawn(async move {
-                    callback.send(self_clone.update_peer_locators(peer_ip, locators)).ok();
+                    let res = callback.send(self_clone.update_peer_locators(peer_ip, locators));
+
+                    if let Err(err) = res {
+                        warn!("Failed to send response to callbac: {err:?}");
+                    }
                 });
             }
+
+            debug!("Handler for block_sync_remove_peer stopped");
         });
 
         // Process each certificate request.
@@ -263,6 +277,8 @@ impl<N: Network> Sync<N> {
             while let Some((peer_ip, certificate_request)) = rx_certificate_request.recv().await {
                 self_.send_certificate_response(peer_ip, certificate_request);
             }
+
+            debug!("Handler for certificate_request stopped");
         });
 
         // Process each certificate response.
@@ -275,6 +291,8 @@ impl<N: Network> Sync<N> {
             while let Some((peer_ip, certificate_response)) = rx_certificate_response.recv().await {
                 self_.finish_certificate_request(peer_ip, certificate_response);
             }
+
+            debug!("Handler for certificate_response stopped");
         });
 
         Ok(())
