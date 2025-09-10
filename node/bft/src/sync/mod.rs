@@ -20,8 +20,8 @@ use crate::{
     Transport,
     events::DataBlocks,
     helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
-    spawn_blocking,
 };
+
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
@@ -29,6 +29,7 @@ use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
     prelude::{cfg_into_iter, cfg_iter},
+    utilities::spawn_blocking,
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
@@ -198,10 +199,10 @@ impl<N: Network> Sync<N> {
 
                 // Remove the expired pending transmission requests.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
+                spawn_blocking(move || {
                     self__.pending.clear_expired_callbacks();
-                    Ok(())
-                });
+                })
+                .await;
             }
         });
 
@@ -620,7 +621,7 @@ impl<N: Network> Sync<N> {
         let _lock = self.sync_lock.lock().await;
 
         let self_ = self.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking(move || {
             // Check the next block.
             self_.ledger.check_next_block(&block)?;
             // Attempt to advance to the next block.
@@ -635,7 +636,7 @@ impl<N: Network> Sync<N> {
 
             Ok(())
         })
-        .await?
+        .await
     }
 
     /// Helper function for [`Self::sync_storage_with_block`].

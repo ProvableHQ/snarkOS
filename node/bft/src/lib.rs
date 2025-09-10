@@ -69,14 +69,3 @@ pub const MAX_WORKERS: u8 = 1; // worker(s)
 pub const PRIMARY_PING_IN_MS: u64 = 2 * MAX_BATCH_DELAY_IN_MS; // ms
 /// The interval at which each worker broadcasts a ping to every other node.
 pub const WORKER_PING_IN_MS: u64 = 4 * MAX_BATCH_DELAY_IN_MS; // ms
-
-/// A helper macro to spawn a blocking task.
-#[macro_export]
-macro_rules! spawn_blocking {
-    ($expr:expr) => {
-        match tokio::task::spawn_blocking(move || $expr).await {
-            Ok(value) => value,
-            Err(error) => Err(anyhow::anyhow!("[tokio::spawn_blocking] {error}")),
-        }
-    };
-}
