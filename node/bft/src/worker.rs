@@ -19,6 +19,7 @@ use crate::{
     ProposedBatch,
     Transport,
     events::{Event, TransmissionRequest, TransmissionResponse},
+    execute_blocking,
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
     spawn_blocking,
 };
@@ -390,12 +391,11 @@ impl<N: Network> Worker<N> {
             bail!("Transaction '{}.{}' already exists.", fmt_id(transaction_id), fmt_id(checksum).dimmed());
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-        let transaction = spawn_blocking!({
-            match transaction {
-                Data::Object(transaction) => Ok(transaction),
-                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?),
-            }
-        })?;
+        let transaction = execute_blocking(|| match transaction {
+            Data::Object(transaction) => Ok(transaction),
+            Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64)),
+        })
+        .await?;
 
         // Check that the transaction is well-formed and unique.
         self.ledger.check_transaction_basic(transaction_id, transaction).await?;
@@ -426,9 +426,8 @@ impl<N: Network> Worker<N> {
 
                 // Remove the expired pending certificate requests.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
+                spawn_blocking!({
                     self__.pending.clear_expired_callbacks();
-                    Ok(())
                 });
             }
         });
@@ -455,9 +454,8 @@ impl<N: Network> Worker<N> {
             while let Some((peer_ip, transmission_response)) = rx_transmission_response.recv().await {
                 // Process the transmission response.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
+                spawn_blocking!({
                     self__.finish_transmission_request(peer_ip, transmission_response);
-                    Ok(())
                 });
             }
         });

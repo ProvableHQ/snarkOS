@@ -19,8 +19,8 @@ use crate::{
     PRIMARY_PING_IN_MS,
     Transport,
     events::DataBlocks,
+    execute_blocking,
     helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
-    spawn_blocking,
 };
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -198,10 +198,10 @@ impl<N: Network> Sync<N> {
 
                 // Remove the expired pending transmission requests.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
+                execute_blocking(move || {
                     self__.pending.clear_expired_callbacks();
-                    Ok(())
-                });
+                })
+                .await;
             }
         });
 
@@ -597,7 +597,7 @@ impl<N: Network> Sync<N> {
         let _lock = self.sync_lock.lock().await;
 
         let self_ = self.clone();
-        tokio::task::spawn_blocking(move || {
+        execute_blocking(move || {
             // Check the next block.
             self_.ledger.check_next_block(&block)?;
             // Attempt to advance to the next block.
@@ -612,7 +612,7 @@ impl<N: Network> Sync<N> {
 
             Ok(())
         })
-        .await?
+        .await
     }
 
     /// Advances the ledger by the given block and updates the storage accordingly.
@@ -770,7 +770,7 @@ impl<N: Network> Sync<N> {
                     let block_authority = block.authority().clone();
 
                     let self_ = self.clone();
-                    tokio::task::spawn_blocking(move || {
+                    execute_blocking(move || {
                         // Check the next block.
                         self_.ledger.check_next_block(&block)?;
                         // Attempt to advance to the next block.
@@ -783,7 +783,7 @@ impl<N: Network> Sync<N> {
 
                         Ok::<(), anyhow::Error>(())
                     })
-                    .await??;
+                    .await?;
                     // Remove the block height from the latest block responses.
                     latest_block_responses.remove(&block_height);
 

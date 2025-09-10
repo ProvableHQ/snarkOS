@@ -70,13 +70,30 @@ pub const PRIMARY_PING_IN_MS: u64 = 2 * MAX_BATCH_DELAY_IN_MS; // ms
 /// The interval at which each worker broadcasts a ping to every other node.
 pub const WORKER_PING_IN_MS: u64 = 4 * MAX_BATCH_DELAY_IN_MS; // ms
 
+/// Wrapper around `tokio::spawn_blocking` that awaits the future and propagates panics.
+pub async fn execute_blocking<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    match tokio::task::spawn_blocking(f).await {
+        Ok(inner) => inner,
+        Err(err) => {
+            if err.is_panic() {
+                // Resume the panic on the main task
+                std::panic::resume_unwind(err.into_panic());
+            } else {
+                panic!("Got unexpected tokio error: {err}");
+            }
+        }
+    }
+}
+
 /// A helper macro to spawn a blocking task.
+/// It is cleaner to use `execute_blocking` directly.
 #[macro_export]
 macro_rules! spawn_blocking {
     ($expr:expr) => {
-        match tokio::task::spawn_blocking(move || $expr).await {
-            Ok(value) => value,
-            Err(error) => Err(anyhow::anyhow!("[tokio::spawn_blocking] {error}")),
-        }
+        $crate::execute_blocking(move || $expr).await
     };
 }

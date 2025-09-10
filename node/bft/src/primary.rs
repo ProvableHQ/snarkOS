@@ -24,6 +24,7 @@ use crate::{
     WORKER_PING_IN_MS,
     Worker,
     events::{BatchPropose, BatchSignature, Event},
+    execute_blocking,
     helpers::{
         BFTSender,
         PrimaryReceiver,
@@ -571,14 +572,13 @@ impl<N: Network> Primary<N> {
                         }
 
                         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!({
-                            match transaction {
-                                Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => {
-                                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                                }
+                        let transaction = execute_blocking(|| match transaction {
+                            Data::Object(transaction) => Ok(transaction),
+                            Data::Buffer(bytes) => {
+                                Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))
                             }
-                        })?;
+                        })
+                        .await?;
 
                         // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                         // ConsensusVersion V8 Migration logic -
@@ -874,14 +874,13 @@ impl<N: Network> Primary<N> {
                     (transmission_id, transmission)
                 {
                     // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                    let transaction = spawn_blocking!({
-                        match transaction {
-                            Data::Object(transaction) => Ok(transaction),
-                            Data::Buffer(bytes) => {
-                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                            }
+                    let transaction = execute_blocking(|| match transaction {
+                        Data::Object(transaction) => Ok(transaction),
+                        Data::Buffer(bytes) => {
+                            Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))
                         }
-                    })?;
+                    })
+                    .await?;
 
                     // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                     // ConsensusVersion V8 Migration logic -
