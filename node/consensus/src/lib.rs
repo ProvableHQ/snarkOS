@@ -32,7 +32,6 @@ use snarkos_node_bft::{
     Primary,
     helpers::{Storage as NarwhalStorage, fmt_id},
     ledger_service::LedgerService,
-    spawn_blocking,
     storage_service::BFTPersistentStorage,
 };
 use snarkos_node_sync::{BlockSync, Ping};
@@ -44,6 +43,7 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
     },
     prelude::*,
+    utilities::task::{self, JoinHandle},
 };
 
 use aleo_std::StorageMode;
@@ -56,7 +56,6 @@ use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::task::JoinHandle;
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -477,7 +476,7 @@ impl<N: Network> BftCallback<N> for Consensus<N> {
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
-        let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_) };
+        let result = task::spawn_blocking(move || self_.try_advance_to_next_block(subdag, transmissions_)).await;
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
         if result.is_err() {
@@ -616,7 +615,7 @@ impl<N: Network> Consensus<N> {
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the consensus and BFT layers.

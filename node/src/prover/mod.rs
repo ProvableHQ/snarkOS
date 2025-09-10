@@ -40,6 +40,7 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     synthesizer::VM,
+    utilities::task::{self, JoinHandle},
 };
 
 use aleo_std::StorageMode;
@@ -59,7 +60,6 @@ use std::{
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
-use tokio::task::JoinHandle;
 
 /// A prover is a light node, capable of producing proofs for consensus.
 #[derive(Clone)]
@@ -153,8 +153,6 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         node.initialize_routing().await;
         // Initialize the puzzle.
         node.initialize_puzzle().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
         // Pass the node to the signal handler.
         let _ = signal_node.set(node.clone());
         // Return the node.
@@ -192,7 +190,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
     async fn initialize_puzzle(&self) {
         for _ in 0..self.max_puzzle_instances {
             let prover = self.clone();
-            self.handles.lock().push(tokio::spawn(async move {
+            self.handles.lock().push(task::spawn(async move {
                 prover.puzzle_loop().await;
             }));
         }
@@ -228,13 +226,13 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             if let (Some(epoch_hash), Some((coinbase_target, proof_target))) = (latest_epoch_hash, latest_state) {
                 // Execute the puzzle.
                 let prover = self.clone();
-                let result = tokio::task::spawn_blocking(move || {
+                let result = task::spawn_blocking(move || {
                     prover.puzzle_iteration(epoch_hash, coinbase_target, proof_target, &mut OsRng)
                 })
                 .await;
 
                 // If the prover found a solution, then broadcast it.
-                if let Ok(Some((solution_target, solution))) = result {
+                if let Some((solution_target, solution)) = result {
                     info!("Found a Solution '{}' (Proof Target {solution_target})", solution.id());
                     // Broadcast the solution.
                     self.broadcast_solution(solution);

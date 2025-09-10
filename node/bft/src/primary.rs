@@ -34,7 +34,6 @@ use crate::{
         init_worker_channels,
         now,
     },
-    spawn_blocking,
     sync::{Sync, SyncCallback},
 };
 use snarkos_account::Account;
@@ -53,6 +52,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
+    utilities::spawn_blocking,
 };
 
 use aleo_std::StorageMode;
@@ -571,14 +571,13 @@ impl<N: Network> Primary<N> {
                         }
 
                         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!({
-                            match transaction {
-                                Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => {
-                                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                                }
+                        let transaction = spawn_blocking(|| match transaction {
+                            Data::Object(transaction) => Ok(transaction),
+                            Data::Buffer(bytes) => {
+                                Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))
                             }
-                        })?;
+                        })
+                        .await?;
 
                         // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                         // ConsensusVersion V8 Migration logic -
@@ -677,7 +676,7 @@ impl<N: Network> Primary<N> {
         // Prepare the previous batch certificate IDs.
         let previous_certificate_ids = previous_certificates.into_iter().map(|c| c.id()).collect();
         // Sign the batch header and construct the proposal.
-        let (batch_header, proposal) = spawn_blocking!({
+        let (batch_header, proposal) = spawn_blocking(move || {
             BatchHeader::new(
                 &private_key,
                 round,
@@ -688,6 +687,7 @@ impl<N: Network> Primary<N> {
                 &mut rand::thread_rng(),
             )
         })
+        .await
         .and_then(|batch_header| {
             Proposal::new(committee_lookback, batch_header.clone(), transmissions.clone())
                 .map(|proposal| (batch_header, proposal))
@@ -720,7 +720,7 @@ impl<N: Network> Primary<N> {
         let BatchPropose { round: batch_round, batch_header } = batch_propose;
 
         // Deserialize the batch header.
-        let batch_header = spawn_blocking!(batch_header.deserialize_blocking())?;
+        let batch_header = spawn_blocking(|| batch_header.deserialize_blocking()).await?;
         // Ensure the round matches in the batch header.
         if batch_round != batch_header.round() {
             // Proceed to disconnect the validator.
@@ -851,7 +851,8 @@ impl<N: Network> Primary<N> {
         // Ensure the batch header from the peer is valid.
         let (storage, header) = (self.storage.clone(), batch_header.clone());
         let missing_transmissions =
-            spawn_blocking!({ storage.check_batch_header(&header, missing_transmissions, Default::default()) })?;
+            spawn_blocking(move || storage.check_batch_header(&header, missing_transmissions, Default::default()))
+                .await?;
         // Inserts the missing transmissions into the workers.
         self.insert_missing_transmissions_into_workers(peer_ip, missing_transmissions.into_iter())?;
 
@@ -876,14 +877,13 @@ impl<N: Network> Primary<N> {
                     (transmission_id, transmission)
                 {
                     // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                    let transaction = spawn_blocking!({
-                        match transaction {
-                            Data::Object(transaction) => Ok(transaction),
-                            Data::Buffer(bytes) => {
-                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                            }
+                    let transaction = spawn_blocking(|| match transaction {
+                        Data::Object(transaction) => Ok(transaction),
+                        Data::Buffer(bytes) => {
+                            Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))
                         }
-                    })?;
+                    })
+                    .await?;
 
                     // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                     // ConsensusVersion V8 Migration logic -
@@ -944,7 +944,7 @@ impl<N: Network> Primary<N> {
         let batch_id = batch_header.batch_id();
         // Sign the batch ID.
         let account = self.gateway.account().clone();
-        let signature = spawn_blocking!(account.sign(&[batch_id], &mut rand::thread_rng()))?;
+        let signature = spawn_blocking(move || account.sign(&[batch_id], &mut rand::thread_rng())).await?;
 
         // Ensure the proposal has not already been signed.
         //
@@ -1017,7 +1017,7 @@ impl<N: Network> Primary<N> {
         }
 
         let self_ = self.clone();
-        let Some(proposal) = spawn_blocking!({
+        let Some(proposal) = spawn_blocking(move || {
             // Acquire the write lock.
             let mut proposed_batch = self_.proposed_batch.write();
             // Add the signature to the batch, and determine if the batch is ready to be certified.
@@ -1065,7 +1065,7 @@ impl<N: Network> Primary<N> {
                 Some(proposal) => Ok(Some(proposal)),
                 None => Ok(None),
             }
-        })?
+        }).await?
         else {
             return Ok(());
         };
@@ -1202,7 +1202,7 @@ impl<N: Network> Primary<N> {
 
                 // Retrieve the block locators.
                 let self__ = self_.clone();
-                let block_locators = match spawn_blocking!(self__.sync.get_block_locators()) {
+                let block_locators = match spawn_blocking(move || self__.sync.get_block_locators()).await {
                     Ok(block_locators) => block_locators,
                     Err(e) => {
                         warn!("Failed to retrieve block locators - {e}");
@@ -1463,7 +1463,7 @@ impl<N: Network> Primary<N> {
         let transmissions = transmissions.into_iter().collect::<HashMap<_, _>>();
         // Store the certified batch.
         let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-        spawn_blocking!(storage.insert_certificate(certificate_, transmissions, Default::default()))?;
+        spawn_blocking(move || storage.insert_certificate(certificate_, transmissions, Default::default())).await?;
         debug!("Stored a batch certificate for round {}", certificate.round());
         // If a BFT sender was provided, send the certificate to the BFT.
         if let Some(cb) = self.primary_callback.get() {
@@ -1549,7 +1549,8 @@ impl<N: Network> Primary<N> {
         if !self.storage.contains_certificate(certificate.id()) {
             // Store the batch certificate.
             let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-            spawn_blocking!({ storage.insert_certificate(certificate_, missing_transmissions, Default::default()) })?;
+            spawn_blocking(move || storage.insert_certificate(certificate_, missing_transmissions, Default::default()))
+                .await?;
             debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
             // If a BFT sender was provided, send the round and certificate to the BFT.
             if let Some(cb) = self.primary_callback.get() {
@@ -1805,7 +1806,8 @@ impl<N: Network> GatewayPrimaryCallback<N> for Primary<N> {
             let self_ = self.clone();
             tokio::spawn(async move {
                 // Deserialize the primary certificate in the primary ping.
-                let Ok(primary_certificate) = spawn_blocking!(primary_certificate.deserialize_blocking()) else {
+                let Ok(primary_certificate) = spawn_blocking(|| primary_certificate.deserialize_blocking()).await
+                else {
                     warn!("Failed to deserialize primary certificate in 'PrimaryPing' from '{peer_ip}'");
                     return;
                 };
@@ -1865,7 +1867,7 @@ impl<N: Network> GatewayPrimaryCallback<N> for Primary<N> {
         let self_ = self.clone();
         tokio::spawn(async move {
             // Deserialize the batch certificate.
-            let Ok(batch_certificate) = spawn_blocking!(batch_certificate.deserialize_blocking()) else {
+            let Ok(batch_certificate) = spawn_blocking(|| batch_certificate.deserialize_blocking()).await else {
                 warn!("Failed to deserialize the batch certificate from '{peer_ip}'");
                 return;
             };

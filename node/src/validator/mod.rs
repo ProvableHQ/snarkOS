@@ -18,7 +18,7 @@ mod router;
 use crate::traits::NodeInterface;
 
 use snarkos_account::Account;
-use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_bft::ledger_service::CoreLedgerService;
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_rest::Rest;
@@ -35,12 +35,15 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkvm::prelude::{
-    Ledger,
-    Network,
-    block::{Block, Header},
-    puzzle::Solution,
-    store::ConsensusStorage,
+use snarkvm::{
+    prelude::{
+        Ledger,
+        Network,
+        block::{Block, Header},
+        puzzle::Solution,
+        store::ConsensusStorage,
+    },
+    utilities::task::{self, JoinHandle},
 };
 
 use aleo_std::StorageMode;
@@ -55,7 +58,6 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
-use tokio::task::JoinHandle;
 
 /// A validator is a full node, capable of validating blocks.
 #[derive(Clone)]
@@ -186,8 +188,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Initialize the routing.
         node.initialize_routing().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
         // Pass the node to the signal handler.
         let _ = signal_node.set(node.clone());
         // Return the node.
@@ -416,15 +416,19 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                 let inputs = [Value::from(Literal::Address(self_.address())), Value::from(Literal::U64(U64::new(1)))];
                 // Execute the transaction.
                 let self__ = self_.clone();
-                let transaction = match spawn_blocking!(self__.ledger.vm().execute(
-                    self__.private_key(),
-                    locator,
-                    inputs.into_iter(),
-                    None,
-                    10_000,
-                    None,
-                    &mut rand::thread_rng(),
-                )) {
+                let transaction = match task::spawn_blocking(move || {
+                    self__.ledger.vm().execute(
+                        self__.private_key(),
+                        locator,
+                        inputs.into_iter(),
+                        None,
+                        10_000,
+                        None,
+                        &mut rand::thread_rng(),
+                    )
+                })
+                .await
+                {
                     Ok(transaction) => transaction,
                     Err(error) => {
                         error!("Transaction pool encountered an execution error - {error}");
@@ -449,7 +453,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     pub fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 }
 

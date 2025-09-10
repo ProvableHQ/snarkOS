@@ -22,7 +22,6 @@ use crate::{
     Worker,
     events::{BatchPropose, BatchSignature, EventCodec, PrimaryPing},
     helpers::{Cache, CallbackHandle, Resolver, Storage, WorkerSender, assign_to_worker},
-    spawn_blocking,
 };
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
@@ -61,6 +60,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::task::{self, JoinHandle},
 };
 
 use colored::Colorize;
@@ -84,7 +84,6 @@ use std::{
 use tokio::{
     net::TcpStream,
     sync::{OnceCell, oneshot},
-    task::{self, JoinHandle},
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -325,7 +324,7 @@ impl<N: Network> CommunicationService for Gateway<N> {
         let tcp = self.tcp().clone();
         tcp.banned_peers().update_ip_ban(peer_ip.ip());
 
-        tokio::spawn(async move {
+        task::spawn(async move {
             tcp.disconnect(peer_ip).await;
         });
     }
@@ -479,7 +478,7 @@ impl<N: Network> Gateway<N> {
         }
 
         let self_ = self.clone();
-        Some(tokio::spawn(async move {
+        Some(task::spawn(async move {
             debug!("Connecting to validator {peer_ip}...");
             // Attempt to connect to the peer.
             if let Err(error) = self_.tcp.connect(peer_ip).await {
@@ -707,22 +706,17 @@ impl<N: Network> Gateway<N> {
                 }
 
                 let self_ = self.clone();
-                let blocks = match task::spawn_blocking(move || {
+                let blocks = task::spawn_blocking(move || {
                     // Retrieve the blocks within the requested range.
                     match self_.ledger.get_blocks(start_height..end_height) {
                         Ok(blocks) => Ok(Data::Object(DataBlocks(blocks))),
                         Err(error) => bail!("Missing blocks {start_height} to {end_height} from ledger - {error}"),
                     }
                 })
-                .await
-                {
-                    Ok(Ok(blocks)) => blocks,
-                    Ok(Err(error)) => return Err(error),
-                    Err(error) => return Err(anyhow!("[BlockRequest] {error}")),
-                };
+                .await?;
 
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                task::spawn(async move {
                     // Send the `BlockResponse` message to the peer.
                     let event = Event::BlockResponse(BlockResponse { request: block_request, blocks });
                     Transport::send(&self_, peer_ip, event).await;
@@ -853,7 +847,7 @@ impl<N: Network> Gateway<N> {
                 connected_peers.shuffle(&mut rand::thread_rng());
 
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                task::spawn(async move {
                     // Initialize the validators.
                     let mut validators = IndexMap::with_capacity(MAX_VALIDATORS_TO_SEND);
                     // Iterate over the validators.
@@ -885,7 +879,7 @@ impl<N: Network> Gateway<N> {
                 if self.number_of_connected_peers() < MIN_CONNECTED_VALIDATORS {
                     // Attempt to connect to any validators that are not already connected.
                     let self_ = self.clone();
-                    tokio::spawn(async move {
+                    task::spawn(async move {
                         for (validator_ip, validator_address) in validators {
                             if self_.dev.is_some() {
                                 // Ensure the validator IP is not this node.
@@ -951,7 +945,7 @@ impl<N: Network> Gateway<N> {
     /// Disconnects from the given peer IP, if the peer is connected.
     pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<()> {
         let gateway = self.clone();
-        tokio::spawn(async move {
+        task::spawn(async move {
             if let Some(peer_addr) = gateway.resolver.get_ambiguous(peer_ip) {
                 // Disconnect from this peer.
                 let _disconnected = gateway.tcp.disconnect(peer_addr).await;
@@ -977,9 +971,8 @@ impl<N: Network> Gateway<N> {
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
-    #[allow(dead_code)]
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the gateway.
@@ -1086,7 +1079,7 @@ impl<N: Network> Gateway<N> {
     /// This function attempts to disconnect any validators that are not in the current committee.
     fn handle_unauthorized_validators(&self) {
         let self_ = self.clone();
-        tokio::spawn(async move {
+        task::spawn(async move {
             // Retrieve the connected validators.
             let validators = self_.connected_peers().read().clone();
             // Iterate over the validator IPs.
@@ -1116,7 +1109,7 @@ impl<N: Network> Gateway<N> {
             // Select a random validator IP.
             if let Some(validator_ip) = validators.into_iter().choose(&mut rand::thread_rng()) {
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                task::spawn(async move {
                     // Increment the number of outbound validators requests for this validator.
                     self_.cache.increment_outbound_validators_requests(validator_ip);
                     // Send a `ValidatorsRequest` to the validator.
@@ -1133,7 +1126,7 @@ impl<N: Network> Gateway<N> {
             if let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
                 warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                task::spawn(async move {
                     Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
                     // Disconnect from this peer.
                     self_.disconnect(peer_ip);
@@ -1205,7 +1198,7 @@ impl<N: Network> Transport<N> for Gateway<N> {
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
             let connected_peers = self.connected_peers.read().clone();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 // Iterate through all connected peers.
                 for peer_ip in connected_peers {
                     // Send the event to the peer.
@@ -1240,7 +1233,7 @@ impl<N: Network> Reading for Gateway<N> {
             let self_ = self.clone();
             // Handle BlockRequest and BlockResponse messages in a separate task to not block the
             // inbound queue.
-            tokio::spawn(async move {
+            task::spawn(async move {
                 self_.process_message_inner(peer_addr, message).await;
             });
         } else {
@@ -1587,7 +1580,7 @@ impl<N: Network> Gateway<N> {
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         // Perform the deferred non-blocking deserialization of the signature.
-        let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
+        let Ok(signature) = task::spawn_blocking(|| signature.deserialize_blocking()).await else {
             warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         };

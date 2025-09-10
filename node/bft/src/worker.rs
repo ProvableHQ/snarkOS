@@ -20,7 +20,6 @@ use crate::{
     events::{Event, TransmissionRequest, TransmissionResponse},
     gateway::Transport,
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
-    spawn_blocking,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
@@ -30,6 +29,7 @@ use snarkvm::{
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
+    utilities::task::{self, JoinHandle},
 };
 
 use anyhow::Context;
@@ -41,7 +41,7 @@ use locktick::parking_lot::{Mutex, RwLock};
 use parking_lot::{Mutex, RwLock};
 use rand::seq::IteratorRandom;
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
+use tokio::{sync::oneshot, time::timeout};
 
 /// A worker's main role is maintaining a queue of verified ("ready") transmissions,
 /// which will eventually be fetched by the primary when the primary generates a new batch.
@@ -268,7 +268,7 @@ impl<N: Network> Worker<N> {
         }
         // Attempt to fetch the transmission from the peer.
         let self_ = self.clone();
-        tokio::spawn(async move {
+        task::spawn(async move {
             // Send a transmission request to the peer.
             match self_.send_transmission_request(peer_ip, transmission_id).await {
                 // If the transmission was fetched, then process it.
@@ -323,7 +323,7 @@ impl<N: Network> Worker<N> {
             if tx.is_execute() {
                 let self_ = self.clone();
                 let tx_ = tx.clone();
-                tokio::spawn(async move {
+                task::spawn(async move {
                     let _ = self_.ledger.check_transaction_basic(tx_id, tx_).await;
                 });
             }
@@ -391,12 +391,11 @@ impl<N: Network> Worker<N> {
             bail!("Transaction '{}.{}' already exists.", fmt_id(transaction_id), fmt_id(checksum).dimmed());
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-        let transaction = spawn_blocking!({
-            match transaction {
-                Data::Object(transaction) => Ok(transaction),
-                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?),
-            }
-        })?;
+        let transaction = task::spawn_blocking(|| match transaction {
+            Data::Object(transaction) => Ok(transaction),
+            Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64)),
+        })
+        .await?;
 
         // Check that the transaction is well-formed and unique.
         self.ledger.check_transaction_basic(transaction_id, transaction).await?;
@@ -427,10 +426,7 @@ impl<N: Network> Worker<N> {
 
                 // Remove the expired pending certificate requests.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
-                    self__.pending.clear_expired_callbacks();
-                    Ok(())
-                });
+                task::spawn_blocking(move || self__.pending.clear_expired_callbacks()).await;
             }
         });
 
@@ -456,10 +452,7 @@ impl<N: Network> Worker<N> {
             while let Some((peer_ip, transmission_response)) = rx_transmission_response.recv().await {
                 // Process the transmission response.
                 let self__ = self_.clone();
-                let _ = spawn_blocking!({
-                    self__.finish_transmission_request(peer_ip, transmission_response);
-                    Ok(())
-                });
+                task::spawn_blocking(move || self__.finish_transmission_request(peer_ip, transmission_response)).await;
             }
         });
     }
@@ -533,7 +526,7 @@ impl<N: Network> Worker<N> {
         if let Some(transmission) = self.get_transmission(transmission_id) {
             // Send the transmission response to the peer.
             let self_ = self.clone();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 self_.gateway.send(peer_ip, Event::TransmissionResponse((transmission_id, transmission).into())).await;
             });
         }
@@ -541,14 +534,14 @@ impl<N: Network> Worker<N> {
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the worker.
     pub(crate) fn shut_down(&self) {
         trace!("Shutting down worker {}...", self.id);
-        // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        // Abort and discard the tasks.
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
     }
 }
 

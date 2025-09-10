@@ -43,6 +43,7 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
+    utilities::task::{self, JoinHandle},
 };
 
 use aleo_std::StorageMode;
@@ -67,10 +68,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{
-    task::JoinHandle,
-    time::{sleep, timeout},
-};
+use tokio::time::{sleep, timeout};
 
 /// The maximum number of solutions to verify in parallel.
 /// Note: worst case memory to verify a solution is 0.5 GiB.
@@ -227,8 +225,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node.initialize_deploy_verification();
         // Initialize execution verification.
         node.initialize_execute_verification();
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
         // Pass the node to the signal handler.
         let _ = signal_node.set(node.clone());
         // Return the node.
@@ -261,7 +257,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let _self = self.clone();
         let mut last_update = Instant::now();
 
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if _self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
@@ -282,7 +278,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 _self.try_block_sync().await;
                 last_update = now;
             }
-        }));
+        });
     }
 
     /// Client-side version of `snarkos_node_bft::Sync::try_block_sync()`.
@@ -360,7 +356,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             }
 
             // Sleep to avoid triggering spam detection.
-            tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
+            sleep(BLOCK_REQUEST_BATCH_DELAY).await;
         }
     }
 
@@ -368,7 +364,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     fn initialize_solution_verification(&self) {
         // Start the solution verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -394,7 +390,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let previous_counter = node.num_verifying_solutions.fetch_add(1, Relaxed);
                     let _node = node.clone();
                     // For each solution, spawn a task to verify it.
-                    tokio::task::spawn_blocking(move || {
+                    task::spawn_blocking(move || {
                         // Retrieve the latest epoch hash.
                         if let Ok(epoch_hash) = _node.ledger.latest_epoch_hash() {
                             // Check if the prover has reached their solution limit.
@@ -435,14 +431,14 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Initializes deploy verification.
     fn initialize_deploy_verification(&self) {
         // Start the deploy verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -468,7 +464,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let previous_counter = node.num_verifying_deploys.fetch_add(1, Relaxed);
                     let _node = node.clone();
                     // For each deployment, spawn a task to verify it.
-                    tokio::task::spawn_blocking(move || {
+                    task::spawn_blocking(move || {
                         // Check the deployment.
                         match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
                             Ok(_) => {
@@ -488,14 +484,14 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Initializes execute verification.
     fn initialize_execute_verification(&self) {
         // Start the execute verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -521,7 +517,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let previous_counter = node.num_verifying_executions.fetch_add(1, Relaxed);
                     let _node = node.clone();
                     // For each execution, spawn a task to verify it.
-                    tokio::task::spawn_blocking(move || {
+                    task::spawn_blocking(move || {
                         // Check the execution.
                         match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
                             Ok(_) => {
@@ -541,12 +537,12 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     pub fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 }
 
