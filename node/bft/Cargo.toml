@@ -157,7 +157,7 @@ features = [ "derive" ]
 version = "0.2"
 
 [dev-dependencies.itertools]
-version = "0.12"
+version = "0.14"
 
 [dev-dependencies.open]
 version = "5"
@@ -203,7 +203,7 @@ features = [ "env-filter" ]
 workspace = true
 
 [dev-dependencies.mockall]
-version = "0.12.1"
+version = "0.13"
 
 [[test]]
 name = "gateway-e2e"
