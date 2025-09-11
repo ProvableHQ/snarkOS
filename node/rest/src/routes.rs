@@ -279,7 +279,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Path(tx_id): Path<N::TransactionID>,
     ) -> Result<ErasedJson, RestError> {
         // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
-        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+        Ok(ErasedJson::pretty(rest.ledger.get_confirmed_transaction(tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
         })?))
     }
@@ -290,7 +290,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Path(tx_id): Path<N::TransactionID>,
     ) -> Result<ErasedJson, RestError> {
         // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
-        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+        Ok(ErasedJson::pretty(rest.ledger.get_unconfirmed_transaction(&tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
         })?))
     }
@@ -616,11 +616,33 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     // POST /<network>/transaction/broadcast
     // POST /<network>/transaction/broadcast?check_transaction={true}
+    //
+    // Transaction Broadcast Flow
+    //
+    // /transaction/broadcast
+    //         |
+    //    +----+---------------------------+
+    //    |                               |
+    //    v                               v
+    // Without Query Params        With Query Param
+    //                                check_transaction=true
+    //    |                               |
+    //    +---------+                     +---------+
+    //    |         |                     |         |
+    //    v         v                     v         v
+    // Synced   Not Synced            Synced   Not Synced
+    //    |         |                     |         |
+    //    v         v                     v         v
+    //   200       200        check_transaction  check_transaction
+    //                           +---------+        +---------+
+    //                           |         |        |         |
+    //                           v         v        v         v
+    //                          200       422      203       503
     pub(crate) async fn transaction_broadcast(
         State(rest): State<Self>,
         check_transaction: Query<CheckTransaction>,
         json_result: Result<Json<Transaction<N>>, JsonRejection>,
-    ) -> Result<ErasedJson, RestError> {
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
         let Json(tx) = match json_result {
             Ok(json) => json,
             Err(JsonRejection::JsonDataError(err)) => {
@@ -629,9 +651,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
             Err(other_rejection) => return Err(other_rejection.into()),
         };
-
-        // Determine transaction type.
-        let is_exec = tx.is_execute();
 
         // If the transaction exceeds the transaction size limit, return an error.
         // The buffer is initially roughly sized to hold a `transfer_public`,
@@ -649,20 +668,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             transaction: Data::Object(tx.clone()),
         });
 
-        // Broadcast the transaction.
-        rest.routing.propagate(message, &[]);
+        // Check if the node is within sync leniency.
+        let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
 
-        // Do not process the transaction if the node is too far behind.
-        if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError::service_unavailable(anyhow!(
-                "Broadcasted transaction '{}', but will not process it (node is syncing)",
-                fmt_id(tx_id)
-            )));
-        }
+        // Determine if we need to check the transaction.
+        let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
-        if check_transaction.check_transaction.unwrap_or(false) {
+        if check_transaction {
             // Select counter and limit based on transaction type.
-            let (counter, limit, err_msg) = if is_exec {
+            let (counter, limit, err_msg) = if tx.is_execute() {
                 (
                     &rest.num_verifying_executions,
                     VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
@@ -691,10 +705,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
 
             // Perform the check.
-            let res = rest
-                .ledger
-                .check_transaction_basic(&tx, None, &mut rand::thread_rng())
-                .map_err(|err| RestError::unprocessable_entity(err.context("Invalid transaction")));
+            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::thread_rng()).map_err(|err| {
+                match is_within_sync_leniency {
+                    // The transaction failed to verify.
+                    true => RestError::unprocessable_entity(err.context("Invalid transaction")),
+                    // The node is out of sync and may not be able to properly validate the transaction.
+                    false => {
+                        RestError::service_unavailable(err.context("Unable to validate transaction (node is syncing)"))
+                    }
+                }
+            });
             // Release the slot.
             counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
@@ -707,7 +727,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             consensus.add_unconfirmed_transaction(tx.clone()).await?;
         }
 
-        Ok(ErasedJson::pretty(tx_id))
+        // Broadcast the transaction.
+        rest.routing.propagate(message, &[]);
+
+        // Determine if the node is synced and if the transaction was checked.
+        match !is_within_sync_leniency && check_transaction {
+            // If the node is not synced and we validated the transaction, return a 203.
+            true => Ok((StatusCode::NON_AUTHORITATIVE_INFORMATION, ErasedJson::pretty(tx_id))),
+            // Otherwise, return a 200.
+            false => Ok((StatusCode::OK, ErasedJson::pretty(tx_id))),
+        }
     }
 
     // POST /<network>/solution/broadcast
@@ -715,19 +744,23 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Json(solution): Json<Solution<N>>,
     ) -> Result<ErasedJson, RestError> {
-        // Do not process the solution if the node is too far behind.
-        if !rest.routing.is_within_sync_leniency() {
-            return Err(RestError::service_unavailable(anyhow!(
-                "Unable to broadcast solution '{}' (node is syncing)",
-                fmt_id(solution.id())
-            )));
-        }
+        // Check if the node is within sync leniency.
+        let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
 
         // If the consensus module is enabled, add the unconfirmed solution to the memory pool.
         // Otherwise, verify it prior to broadcasting.
         match rest.consensus {
             // Add the unconfirmed solution to the memory pool.
-            Some(consensus) => consensus.add_unconfirmed_solution(solution).await?,
+            Some(consensus) => {
+                // Do not process the solution if the node is too far behind.
+                if !is_within_sync_leniency {
+                    return Err(RestError::service_unavailable(anyhow!(
+                        "Unable to broadcast solution '{}' (node is syncing)",
+                        fmt_id(solution.id())
+                    )));
+                }
+                consensus.add_unconfirmed_solution(solution).await?
+            }
             // Verify the solution.
             None => {
                 // Compute the current epoch hash.
@@ -752,9 +785,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(err)) => {
-                        return Err(RestError::unprocessable_entity(
-                            err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
-                        ));
+                        return match is_within_sync_leniency {
+                            // The solution failed to verify.
+                            true => Err(RestError::unprocessable_entity(
+                                err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
+                            )),
+                            // The node is out of sync and may not be able to properly validate the solution.
+                            false => Err(RestError::service_unavailable(anyhow!(
+                                "Unable to validate solution '{}' (node is syncing)",
+                                fmt_id(solution.id())
+                            ))),
+                        };
                     }
                     Err(err) => {
                         return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));

@@ -30,6 +30,7 @@ pub use transfer_private::*;
 
 use crate::helpers::{args::network_id_parser, logger::initialize_terminal_logger};
 
+use snarkos_node_rest::{API_VERSION_V1, API_VERSION_V2};
 use snarkvm::{package::Package, prelude::*};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -184,20 +185,28 @@ impl Developer {
     ///  - `base_url`: the hostname (and path prefix) of the node to query. this must exclude the network name.
     ///  - `route`: the route to the endpoint (e.g., `stateRoot/latest`). This cannot start with a slash.
     fn build_endpoint<N: Network>(base_url: &http::Uri, route: &str) -> Result<String> {
-        const API_VERSION: &str = "v2";
-
         // This function is only called internally but check for additional sanity.
         ensure!(!route.starts_with('/'), "path cannot start with a slash");
 
-        // Work around a bug in the `http` crate where empty paths will be set to '/' but other paths are not appended with a slash.
-        // See [this issue](https://github.com/hyperium/http/issues/507).
-        let path = if base_url.path().ends_with('/') {
-            format!("{base_url}{API_VERSION}/{network}/{route}", network = N::SHORT_NAME)
-        } else {
-            format!("{base_url}/{API_VERSION}/{network}/{route}", network = N::SHORT_NAME)
+        // If the route already ends with a version segment (v1 or v2), don't prepend a version.
+        let route_has_version_suffix = {
+            let r = base_url.path().trim_end_matches('/');
+            r.ends_with(API_VERSION_V1) || r.ends_with(API_VERSION_V2)
         };
 
-        Ok(path)
+        // Work around a bug in the `http` crate where empty paths will be set to '/'
+        // but other paths are not appended with a slash.
+        // See https://github.com/hyperium/http/issues/507
+        let sep = if base_url.path().ends_with('/') { "" } else { "/" };
+
+        // Build "{base}/{maybe_version}/{network}/{route}"
+        let prefix = if route_has_version_suffix {
+            format!("{}/", N::SHORT_NAME)
+        } else {
+            format!("{}/{}/", API_VERSION_V2, N::SHORT_NAME)
+        };
+
+        Ok(format!("{base_url}{sep}{prefix}{route}"))
     }
 
     /// Converts the returned JSON error (if any) into an anyhow Error chain.
@@ -363,7 +372,7 @@ impl Developer {
             let broadcast_endpoint = if let Some(url) = broadcast_value {
                 url.to_string()
             } else {
-                format!("{endpoint}v2/{}/transaction/broadcast", N::SHORT_NAME)
+                Self::build_endpoint::<N>(endpoint, "transaction/broadcast")?
             };
 
             let result: Result<String> = match Self::http_post_json(&broadcast_endpoint, &transaction) {

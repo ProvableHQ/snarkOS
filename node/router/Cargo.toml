@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "4.1.0"
+version = "4.2.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -119,11 +119,11 @@ workspace = true
 features = [ "ledger-write", "test" ]
 
 [dev-dependencies.snarkos-node-sync]
-workspace = true
+path = "../sync"
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router]
-workspace = true
+path = "."
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router-messages]
