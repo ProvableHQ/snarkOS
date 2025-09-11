@@ -44,6 +44,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
+use anyhow::Context;
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -880,7 +881,10 @@ impl<N: Network> BFT<N> {
         self.spawn(async move {
             while let Some((certificate, callback)) = rx_primary_certificate.recv().await {
                 // Update the DAG with the certificate.
-                let result = self_.update_dag::<true, false>(certificate).await;
+                let result = self_.update_dag::<true, false>(certificate).await.with_context(|| "Updated the DAG.");
+                if let Err(e) = &result {
+                    log_warning(e);
+                }
                 // Send the callback **after** updating the DAG.
                 // Note: We must await the DAG update before proceeding.
                 callback.send(result).ok();
