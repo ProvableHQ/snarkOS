@@ -94,6 +94,8 @@ struct SyncStatus<'a> {
     p2p_height: Option<u32>,
     /// The number of outstanding p2p sync requests.
     outstanding_block_requests: usize,
+    /// The current sync speed in blocks per second.
+    sync_speed_bps: f64,
 }
 
 impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -213,6 +215,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             ledger_height: rest.ledger.latest_height(),
             p2p_height: rest.block_sync.greatest_peer_block_height(),
             outstanding_block_requests: rest.block_sync.num_outstanding_block_requests(),
+            sync_speed_bps: rest.block_sync.get_sync_speed(),
         }))
     }
 

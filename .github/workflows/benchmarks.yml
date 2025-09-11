@@ -1,0 +1,115 @@
+name: Run snarkOS Benchmarks
+
+on:
+  push:
+    branches:
+      - 'staging'
+      - 'ci/sync-variance-benchmark'
+  workflow_dispatch:
+
+jobs:
+  # Run benchmarks and stores the output to a file
+  benchmark:
+    name: Benchmark
+    runs-on:
+      labels: ubuntu-latest-m
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88 # Update this when the MSRV changes.
+
+      - name: Install required Debian pacakges
+        run: sudo apt install -y lld
+
+      - name: Set up Rust build chaching
+        uses: Swatinem/rust-cache@v2
+
+      - name: "Setup GCP"
+        env:
+          GCLOUD_SERVICE_KEY: ${{ secrets.GCLOUD_SERVICE_KEY }}
+        run: |
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+            sudo apt-get update
+            sudo apt-get install google-cloud-cli -y
+            echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
+            gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
+
+      - name: "Fetch Ledger Data"
+        run: |
+            gcloud config set project protocol-development-sandbox
+            # Created with `.ci/generate_ledger.sh 40 250 1`
+            gcloud storage cp gs://ci_testdata/sync-ledger-val40-250.zip ledger.zip
+            unzip ledger.zip
+ 
+      - name: Install snarkOS (test_network)
+        run:
+          # use `test_network` flag without snarkVM `dev_println`
+          cargo install --path=. --locked --features=test_consensus_heights,test_targets
+
+      # Download previous benchmark result from cache (if exists)
+      - name: Download previous benchmark data
+        uses: actions/cache@v4
+        with:
+          path: ./cache
+          key: ${{ runner.os }}-benchmark
+
+      - name: Create results file
+        run: |
+          # Close the array
+          printf "[\n" | tee -a results.json
+
+          echo "Generated results file:"
+          cat results.json
+
+      - name: Run P2P sync benchmark
+        timeout-minutes: 60
+        run:
+          ./.ci/bench_p2p_sync.sh
+
+      - name: Run BFT sync benchmark
+        timeout-minutes: 60
+        run:
+          ./.ci/bench_bft_sync.sh
+
+      - name: Install snarkOS (production)
+        run:
+          cargo install --path=. --locked
+
+      - name: Run CDN sync benchmark
+        timeout-minutes: 60
+        run:
+          ./.ci/bench_cdn_sync.sh
+
+      - name: Finish results file
+        run: printf "]\n" | tee -a results.json
+
+      - name: Generate benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: snarkOS Benchmarks
+          alert-threshold: '150%'
+          comment-on-alert: true
+          # TODO: Set to `true` once the benchmarks have less noise.
+          fail-on-alert: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Use generic JSON format
+          tool: 'customSmallerIsBetter'
+          output-file-path: results.json
+          alert-comment-cc-users: '@kaimast'
+          # Only push the results on staging (see below)
+          auto-push: false
+          # Enable Job Summary for PRs
+          summary-always: true
+
+      - name: Push benchmark result
+        # Avoid pushing results on pull requests or experimental branches, to reduce noise in the data.
+        # The results for all other runs are still accessible through the workflow summary.
+        if: github.ref_name == 'staging' || github.ref_name == 'ci/sync-variance-benchmark'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: git push origin gh-pages

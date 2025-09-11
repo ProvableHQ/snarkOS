@@ -181,12 +181,12 @@ commands:
           name: "Run DB backup test"
           timeout: 10m  # Allow 10 minutes total
           command: |
-            ./.circleci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+            ./.ci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
       - run:
           name: "Run block advancement test"
           timeout: 20m  # Allow 20 minutes total
           command: |
-            ./.circleci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
@@ -438,11 +438,16 @@ jobs:
 workflows:
   version: 2
 
-  main-workflow:
+  cargo-workflow:
     jobs:
-      - snarkos
-      - account
-      - cli
+      - check-fmt
+      - check-clippy
+      - check-unused-dependencies
+      - check-cargo-audit
+      - check-other-crates
+
+  node-workflow:
+    jobs:
       - node
       - node-bft
       - node-bft-events
@@ -457,12 +462,16 @@ workflows:
       - node-sync-communication-service
       - node-sync-locators
       - node-tcp
-      - check-fmt
-      - check-clippy
-      - check-unused-dependencies
-      - check-cargo-audit
-      - check-other-crates
+
+  devnet-workflow:
+    jobs:
       - devnet-test
+
+  snarkos-workflow:
+    jobs:
+      - snarkos
+      - account
+      - cli
 
   windows-workflow:
     jobs:

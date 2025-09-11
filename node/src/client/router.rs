@@ -189,6 +189,11 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Client<N, C> {
     fn num_blocks_behind(&self) -> Option<u32> {
         self.sync.num_blocks_behind()
     }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        self.sync.get_sync_speed()
+    }
 }
 
 #[async_trait]

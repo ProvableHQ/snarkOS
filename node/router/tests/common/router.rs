@@ -162,6 +162,11 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
     fn num_blocks_behind(&self) -> Option<u32> {
         None
     }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        0.0
+    }
 }
 
 #[async_trait]

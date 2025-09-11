@@ -16,7 +16,9 @@
 use crate::LedgerService;
 use snarkvm::{
     ledger::{
-        block::{Block, Transaction},
+        Block,
+        PendingBlock,
+        Transaction,
         committee::Committee,
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -164,6 +166,14 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         _transaction: Transaction<N>,
     ) -> Result<()> {
         Ok(())
+    }
+
+    fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+        bail!("Cannot check block subDAG in prover")
+    }
+
+    fn check_block_content(&self, _pending_block: PendingBlock<N>) -> Result<Block<N>> {
+        bail!("Cannot check block content in prover")
     }
 
     /// Checks the given block is valid next block.

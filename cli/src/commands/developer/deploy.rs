@@ -147,8 +147,12 @@ impl Deploy {
 
         println!("📦 Creating deployment transaction for '{}'...\n", &program_id.to_string().bold());
 
+        // Generate the process with the appropriate imports.
+        let process = package.get_process()?;
+
         // Generate the deployment
-        let mut deployment = package.deploy::<A>(None).with_context(|| "Failed to generate the deployment")?;
+        let mut deployment =
+            package.deploy::<A>(&process, None).with_context(|| "Failed to generate the deployment")?;
 
         // Get the consensus version.
         let consensus_version =
@@ -167,6 +171,10 @@ impl Deploy {
         // Compute the deployment ID.
         let deployment_id = deployment.to_deployment_id().with_context(|| "Failed to compute deployment ID")?;
 
+        // Compute the minimum deployment cost.
+        let (minimum_deployment_cost, (_, _, _, _)) = deployment_cost(&process, &deployment, consensus_version)
+            .with_context(|| "Failed to compute the minimum deployment cost")?;
+
         // Generate the deployment transaction.
         let transaction = {
             // Initialize an RNG.
@@ -177,14 +185,11 @@ impl Deploy {
                 Some(path) => StorageMode::Custom(path.clone()),
                 None => StorageMode::Production,
             };
-            let store = ConsensusStore::<N, ConsensusMemory<N>>::open(storage_mode)?;
+            let store = ConsensusStore::<N, ConsensusMemory<N>>::open(storage_mode)
+                .with_context(|| "Failed to open the consensus store")?;
 
             // Initialize the VM.
             let vm = VM::from(store).with_context(|| "Failed to initialize the virtual machine")?;
-
-            // Compute the minimum deployment cost.
-            let (minimum_deployment_cost, (_, _, _, _)) =
-                deployment_cost(&vm.process().read(), &deployment, consensus_version)?;
 
             // Prepare the fees.
             let fee = match &self.record {

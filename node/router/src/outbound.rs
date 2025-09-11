@@ -29,6 +29,9 @@ pub trait Outbound<N: Network> {
     /// or `None` if not connected to peers yet.
     fn num_blocks_behind(&self) -> Option<u32>;
 
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64;
+
     /// Sends the given message to every connected peer, excluding the sender and any specified peer IPs.
     fn propagate(&self, message: Message<N>, excluded_peers: &[SocketAddr]) {
         // TODO (howardwu): Serialize large messages once only.

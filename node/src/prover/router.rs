@@ -137,6 +137,11 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Prover<N, C> {
         //TODO(kaimast): should this return None instead?
         Some(0)
     }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        0.0
+    }
 }
 
 #[async_trait]

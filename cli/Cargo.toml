@@ -33,9 +33,11 @@ cuda = [
   "snarkos-node-cdn/cuda",
   "snarkos-node-rest/cuda"
 ]
-test_network = [ 
-  "snarkvm/test_targets", 
-  "snarkvm/test_consensus_heights",
+test_targets = [ "snarkvm/test_targets" ]
+test_consensus_heights = [ "snarkvm/test_consensus_heights" ]
+test_network = [
+  "test_targets", 
+  "test_consensus_heights",
   "snarkvm/dev-print"
 ]
 serial = [ ]

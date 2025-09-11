@@ -18,8 +18,10 @@ use async_trait::async_trait;
 use indexmap::IndexMap;
 use snarkvm::{
     ledger::{
+        Block,
         Ledger,
-        block::{Block, Transaction},
+        PendingBlock,
+        Transaction,
         committee::Committee,
         narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -175,6 +177,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         _transaction: Transaction<N>,
     ) -> Result<()> {
         Ok(())
+    }
+
+    fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+        unimplemented!();
+    }
+
+    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>> {
+        unimplemented!();
     }
 
     /// Always succeeds.

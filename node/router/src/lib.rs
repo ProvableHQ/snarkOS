@@ -52,6 +52,7 @@ use snarkos_node_tcp::{Config, ConnectionSide, P2P, Tcp, is_bogon_ip, is_unspeci
 
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 
+use aleo_std::{StorageMode, aleo_ledger_dir};
 use anyhow::{Result, bail};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -61,7 +62,9 @@ use parking_lot::{Mutex, RwLock};
 use std::net::IpAddr;
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     future::Future,
+    io::Write,
     net::SocketAddr,
     ops::Deref,
     str::FromStr,
@@ -72,6 +75,9 @@ use tokio::task::JoinHandle;
 
 /// The default port used by the router.
 pub const DEFAULT_NODE_PORT: u16 = 4130;
+
+/// The name of the file containing cached peers.
+const PEER_CACHE_FILENAME: &str = "cached_router_peers";
 
 /// The router keeps track of connected and connecting peers.
 /// The actual network communication happens in Inbound/Outbound,
@@ -108,6 +114,8 @@ pub struct InnerRouter<N: Network> {
     rotate_external_peers: bool,
     /// If the flag is set, the node will engage in P2P gossip to request more peers.
     allow_external_peers: bool,
+    /// The storage mode.
+    storage_mode: StorageMode,
     /// The boolean flag for the development mode.
     is_dev: bool,
 }
@@ -118,7 +126,7 @@ impl<N: Network> Router<N> {
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
     /// The maximum number of candidate peers permitted to be stored in the node.
     const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
-    /// The maximum amount of connection attempts within a 10 second threshold
+    /// The maximum amount of connection attempts within a 10 second threshold.
     #[cfg(not(test))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
     /// The duration after which a connected peer is considered inactive or
@@ -138,16 +146,27 @@ impl<N: Network> Router<N> {
         max_peers: u16,
         rotate_external_peers: bool,
         allow_external_peers: bool,
+        storage_mode: StorageMode,
         is_dev: bool,
     ) -> Result<Self> {
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(node_ip, max_peers));
 
-        let trusted_peers = trusted_peers
+        let mut initial_peers = trusted_peers
             .iter()
             .copied()
             .map(|addr| (addr, Peer::new_candidate(addr, true)))
             .collect::<HashMap<_, _>>();
+
+        let mut peer_cache_path = aleo_ledger_dir(N::ID, &storage_mode);
+        peer_cache_path.push(PEER_CACHE_FILENAME);
+        if let Ok(cached_peers_str) = fs::read_to_string(&peer_cache_path) {
+            for peer_addr_str in cached_peers_str.lines() {
+                if let Ok(addr) = SocketAddr::from_str(peer_addr_str) {
+                    initial_peers.insert(addr, Peer::new_candidate(addr, false));
+                }
+            }
+        }
 
         // Initialize the router.
         Ok(Self(Arc::new(InnerRouter {
@@ -157,10 +176,11 @@ impl<N: Network> Router<N> {
             ledger,
             cache: Default::default(),
             resolver: Default::default(),
-            peer_pool: RwLock::new(trusted_peers),
+            peer_pool: RwLock::new(initial_peers),
             handles: Default::default(),
             rotate_external_peers,
             allow_external_peers,
+            storage_mode,
             is_dev,
         })))
     }
@@ -528,9 +548,59 @@ impl<N: Network> Router<N> {
         self.handles.lock().push(tokio::spawn(future));
     }
 
+    // Save the best peers to disk.
+    fn save_best_peers(&self) -> Result<()> {
+        // Collect all prospect peers.
+        let mut peers = self.get_peers();
+
+        // Get the average values to gauge peer quality.
+        let known_peers = self.tcp().known_peers().snapshot();
+        let sent_msgs = known_peers.values().map(|stats| stats.sent().0).sum::<u64>();
+        let recv_msgs = known_peers.values().map(|stats| stats.received().0).sum::<u64>();
+        let failures = known_peers.values().map(|stats| stats.failures()).sum::<u64>();
+        let avg_sent_msgs = (sent_msgs as f64) / (known_peers.len() as f64);
+        let avg_recv_msgs = (recv_msgs as f64) / (known_peers.len() as f64);
+        let avg_failures = (failures as f64) / (known_peers.len() as f64);
+
+        // Keep the peers that aren't outliers.
+        peers.retain(|peer| {
+            let peer_ip = peer.listener_addr().ip();
+            if let Some(peer_stats) = known_peers.get(&peer_ip) {
+                (peer_stats.sent().0 as f64) > avg_sent_msgs * 0.75
+                    && (peer_stats.received().0 as f64) > avg_recv_msgs * 0.75
+                    && (peer_stats.failures() as f64) <= avg_failures
+            } else {
+                false
+            }
+        });
+        // Prioritize peers with the lowest failure count.
+        peers.sort_unstable_by_key(|peer| {
+            if let Some(peer_stats) = known_peers.get(&peer.listener_addr().ip()) {
+                peer_stats.failures()
+            } else {
+                0 // A dummy value - this is unreachable.
+            }
+        });
+        peers.truncate(MAX_PEERS_TO_SEND);
+
+        // Dump the connected peers to a file.
+        let mut path = aleo_ledger_dir(N::ID, &self.storage_mode);
+        path.push(PEER_CACHE_FILENAME);
+        let mut file = fs::File::create(path)?;
+        for peer in peers {
+            writeln!(file, "{}", peer.listener_addr())?;
+        }
+
+        Ok(())
+    }
+
     /// Shuts down the router.
     pub async fn shut_down(&self) {
         info!("Shutting down the router...");
+        // Save the best peers for future use.
+        if let Err(e) = self.save_best_peers() {
+            warn!("Failed to persist best peers to disk: {e}");
+        }
         // Abort the tasks.
         self.handles.lock().iter().for_each(|handle| handle.abort());
         // Close the listener.

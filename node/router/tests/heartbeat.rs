@@ -67,6 +67,10 @@ impl Outbound<Network> for HeartbeatTest {
     fn num_blocks_behind(&self) -> Option<u32> {
         None
     }
+
+    fn get_sync_speed(&self) -> f64 {
+        0.0
+    }
 }
 
 impl Heartbeat<Network> for HeartbeatTest {

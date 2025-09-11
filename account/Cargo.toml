@@ -21,7 +21,7 @@ cuda = [ "snarkvm/cuda" ]
 test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true

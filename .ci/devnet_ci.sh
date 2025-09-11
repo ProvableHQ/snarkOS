@@ -1,4 +1,9 @@
 #!/bin/bash
+
+####################################################
+# Runs and tests a development network
+####################################################
+
 set -eo pipefail # error on any command failure
 
 # Uncomment this to print commands before executing them for easier debugging.
@@ -16,26 +21,10 @@ min_height=$4
 : "${network_id:=0}"
 : "${min_height:=60}" # To likely go past the 100 round garbage collection limit.
 
-# Change this to increase/decrease log messages
-log_filter="info,snarkos_node_router=error,snarkos_node_tcp=error"
+. ./.ci/utils.sh
 
 # Determine network name based on network_id
-case $network_id in
-  0)
-    network_name="mainnet"
-    ;;
-  1)
-    network_name="testnet"
-    ;;
-  2)
-    network_name="canary"
-    ;;
-  *)
-    echo "Unknown network ID: $network_id, defaulting to mainnet"
-    network_name="mainnet"
-    ;;
-esac
-
+network_name=$(get_network_name "$network_id")
 echo "Using network: $network_name (ID: $network_id)"
 
 # Create log directory
@@ -43,46 +32,42 @@ log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 chmod 755 "$log_dir"
 
-# Array to store PIDs of all processes
-declare -a PIDS
-
-# Define a cleanup function to kill all processes on exit
-function cleanup() {
-  echo "🚨 Cleaning up ${#PIDS[@]} process(es)…"
-  for pid in "${PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -9 "$pid" 2>/dev/null || true
-    fi
-  done
+# Define a trap handler that cleans up all processes on exit.
+function exit_handler() {
+  stop_nodes
 
   # Remove all temporary files and folders
   rm program/program.json program/main.aleo || true
   rm program/txn_data.json program/invalid_txn_data.json || true
   rmdir program || true
 }
-trap cleanup EXIT
+trap exit_handler EXIT
+trap child_exit_handler CHLD
+
+# Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Flags used by all ndoes
-common_flags="--nodisplay --nobanner --noupdater --network=$network_id \
-  --log-filter=$log_filter \
-  --dev-num-validators=$total_validators"
+common_flags=(
+  --nodisplay --nobanner --noupdater "--network=$network_id" --verbosity=1
+  --allow-external-peers "--dev-num-validators=$total_validators"
+)
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-  snarkos clean --dev $validator_index
+  snarkos clean "--dev=$validator_index" "--network=$network_id"
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
-    snarkos start ${common_flags} --dev "$validator_index" --allow-external-peers \
-      --validator --logfile "$log_file" \
-      --metrics --no-dev-txs &
+    snarkos start "${common_flags[@]}" "--dev=$validator_index" \
+      --validator "--logfile=$log_file" --metrics --no-dev-txs &
   else
-    snarkos start ${common_flags} --dev "$validator_index" --allow-external-peers \
-      --validator --logfile "$log_file" &
+    snarkos start "${common_flags[@]}" "--dev=$validator_index" \
+      --validator "--logfile=$log_file" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
+
   # Add 1-second delay between starting nodes to avoid hitting rate limits
   sleep 1
 done
@@ -94,8 +79,8 @@ for ((client_index = 0; client_index < total_clients; client_index++)); do
   snarkos clean --dev $node_index
 
   log_file="$log_dir/client-$client_index.log"
-  snarkos start ${common_flags} --dev $node_index \
-    --client --logfile "$log_file" &
+  snarkos start "${common_flags[@]}" "--dev=$node_index" \
+    --client "--logfile=$log_file" &
   PIDS[node_index]=$!
   echo "Started client $client_index with PID ${PIDS[$node_index]}"
   # Add 1-second delay between starting nodes to avoid hitting rate limits
@@ -104,45 +89,19 @@ for ((client_index = 0; client_index < total_clients; client_index++)); do
   fi
 done
 
-# Function checking that each node reached a sufficient block height.
-check_heights() {
-  echo "Checking block heights on all nodes..."
-  all_reached=true
-  highest_height=0
-  for ((node_index = 0; node_index < $((total_validators + total_clients)); node_index++)); do
-    port=$((3030 + node_index))
-    height=$(curl -s "http://127.0.0.1:$port/v2/$network_name/block/height/latest" || echo "0")
-    echo "Node $node_index block height: $height"
-    
-    # Track highest height for reporting
-    if [[ "$height" =~ ^[0-9]+$ ]] && (( height > highest_height )); then
-      highest_height=$height
-    fi
-    
-    if ! [[ "$height" =~ ^[0-9]+$ ]] || (( height < min_height )); then
-      all_reached=false
-    fi
-  done
-  
-  if $all_reached; then
-    echo "✅ SUCCESS: All nodes reached minimum height of $min_height"
-    return 0
-  else
-    echo "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height)"
-    return 1
-  fi
-}
+# Ensure all nodes are up and running.
+wait_for_nodes "$total_validators" "$total_clients"
 
 last_seen_consensus_version=0
 last_seen_height=0
 
 # Function checking that the first node reached the latest (unchanging) consensus version.
-consensus_version_stable() {
+function consensus_version_stable() {
   consensus_version=$(curl -s "http://localhost:3030/v2/$network_name/consensus_version")
   height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
-  if [[ "$consensus_version" =~ ^[0-9]+$ ]] && [[ "$height" =~ ^[0-9]+$ ]]; then
+  if (is_integer "$consensus_version") && (is_integer "$height"); then
     # If the consensus version is greater than the last seen, we update it.
-    if (( consensus_version > last_seen_consensus_version)); then
+    if (( consensus_version > last_seen_consensus_version )); then
       echo "✅ Consensus version updated to $consensus_version"
     # If the consensus version is the same whereas the block height is different and at least 10, we can assume that the consensus version is stable
     else
@@ -173,32 +132,9 @@ while (( total_wait < 300 )); do  # 5 minutes max
   echo "Waited $total_wait seconds so far..."
 done
 
-# Function checking that nodes created logs on disk.
-function check_logs() {
-  echo "Checking logs for all nodes..."
-  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-    if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
-      echo "❌ Test failed! Validator #${validator_index} did not create any logs."
-      ls "$log_dir"
-      return 1
-    fi
-  done
-  for ((client_index = 0; client_index < total_clients; client_index++)); do
-    if [ ! -s "$log_dir/client-${client_index}.log" ]; then
-      echo "❌ Test failed! Client #${client_index} did not create any logs."
-      ls "$log_dir"
-      return 1
-    fi
-  done
-
-  return 0
-}
-
-echo "ℹ️Testing Program Deployment and Execution"
-
 # Creates a test program.
 mkdir -p program
-echo """program test_program.aleo;
+echo "program test_program.aleo;
 
 function main:
     input r0 as u32.public;
@@ -208,8 +144,9 @@ function main:
 
 constructor:
     assert.eq true true;
-""" > program/main.aleo
-echo """{
+" > program/main.aleo
+
+echo "{
   \"program\": \"test_program.aleo\",
   \"version\": \"0.1.0\",
   \"description\": \"\",
@@ -217,15 +154,15 @@ echo """{
   \"dependencies\": null,
   \"editions\": {}
 }
-""" > program/program.json
+" > program/program.json
 
 # Deploy the test program and wait for the deployment to be processed.
-_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast  --wait --timeout 10 test_program.aleo)
+_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 10 test_program.aleo)
 
 # Execute a function in the deployed program and wait for the execution to be processed.
 # Use the old flags here `--query` and `--broadcast=URL` to test they still work.
 # Also, use the v1 API to test it still works.
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 --broadcast=http://localhost:3030/v1/${network_name}/transaction/broadcast test_program.aleo main 1u32 1u32 --wait --timeout 10)
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" test_program.aleo main 1u32 1u32 --wait --timeout 10)
 
 # Fail if the execution transaction does not exist.
 tx=$(echo "$execute_result" | tail -n 1)
@@ -356,10 +293,10 @@ echo "ℹ️Testing network progress"
 # Check heights periodically with a timeout
 total_wait=0
 while (( total_wait < 600 )); do  # 10 minutes max
-  if check_heights; then
+  if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$total_wait"; then
     echo "🎉 Test passed! All nodes reached minimum height."
-    
-    if check_logs; then
+
+    if check_logs "$log_dir" "$total_validators" "$total_clients"; then
       exit 0
     else
       exit 1
