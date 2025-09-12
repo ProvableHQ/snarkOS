@@ -31,9 +31,11 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
     },
     prelude::{Field, Network, Result, bail, ensure},
+    utilities::LoggableError,
 };
 
 use aleo_std::StorageMode;
+use anyhow::Context;
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -256,8 +258,8 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
         // If the BFT is ready, then update to the next round.
         if is_ready {
             // Update to the next round in storage.
-            if let Err(e) = self.storage().increment_to_next_round(current_round) {
-                warn!("BFT failed to increment to the next round from round {current_round} - {e}");
+            if let Err(err) = self.storage().increment_to_next_round(current_round) {
+                err.log_warning(format!("BFT failed to increment to the next round from round {current_round}"));
                 return false;
             }
             // Update the timer for the leader certificate.
@@ -334,8 +336,10 @@ impl<N: Network> BFT<N> {
         // Retrieve the committee lookback of the current round.
         let committee_lookback = match self.ledger().get_committee_lookback_for_round(current_round) {
             Ok(committee) => committee,
-            Err(e) => {
-                error!("BFT failed to retrieve the committee lookback for the even round {current_round} - {e}");
+            Err(err) => {
+                err.log_error(format!(
+                    "BFT failed to retrieve the committee lookback for the even round {current_round}"
+                ));
                 return false;
             }
         };
@@ -346,8 +350,8 @@ impl<N: Network> BFT<N> {
                 // Compute the leader for the current round.
                 let computed_leader = match committee_lookback.get_leader(current_round) {
                     Ok(leader) => leader,
-                    Err(e) => {
-                        error!("BFT failed to compute the leader for the even round {current_round} - {e}");
+                    Err(err) => {
+                        err.log_error(format!("BFT failed to compute the leader for the even round {current_round}"));
                         return false;
                     }
                 };
@@ -425,8 +429,10 @@ impl<N: Network> BFT<N> {
         // Retrieve the committee lookback for the current round.
         let committee_lookback = match self.ledger().get_committee_lookback_for_round(current_round) {
             Ok(committee) => committee,
-            Err(e) => {
-                error!("BFT failed to retrieve the committee lookback for the odd round {current_round} - {e}");
+            Err(err) => {
+                err.log_error(format!(
+                    "BFT failed to retrieve the committee lookback for the odd round {current_round}"
+                ));
                 return false;
             }
         };
@@ -520,7 +526,7 @@ impl<N: Network> BFT<N> {
 
         // Retrieve the committee lookback for the commit round.
         let Ok(committee_lookback) = self.ledger().get_committee_lookback_for_round(commit_round) else {
-            bail!("BFT failed to retrieve the committee with lag for commit round {commit_round}");
+            bail!("BFT failed to retrieve the committee lookback for commit round {commit_round}");
         };
 
         // Either retrieve the cached leader or compute it.
@@ -595,23 +601,19 @@ impl<N: Network> BFT<N> {
             for round in (self.dag.read().last_committed_round() + 2..=leader_round.saturating_sub(2)).rev().step_by(2)
             {
                 // Retrieve the previous committee for the leader round.
-                let previous_committee_lookback = match self.ledger().get_committee_lookback_for_round(round) {
-                    Ok(committee) => committee,
-                    Err(e) => {
-                        bail!("BFT failed to retrieve a previous committee lookback for the even round {round} - {e}");
-                    }
-                };
+                let previous_committee_lookback =
+                    self.ledger().get_committee_lookback_for_round(round).with_context(|| {
+                        format!("BFT failed to retrieve a previous committee lookback for the even round {round}")
+                    })?;
+
                 // Either retrieve the cached leader or compute it.
                 let leader = match self.ledger().latest_leader() {
                     Some((cached_round, cached_leader)) if cached_round == round => cached_leader,
                     _ => {
                         // Compute the leader for the commit round.
-                        let computed_leader = match previous_committee_lookback.get_leader(round) {
-                            Ok(leader) => leader,
-                            Err(e) => {
-                                bail!("BFT failed to compute the leader for the even round {round} - {e}");
-                            }
-                        };
+                        let computed_leader = previous_committee_lookback
+                            .get_leader(round)
+                            .with_context(|| format!("BFT failed to compute the leader for the even round {round}"))?;
 
                         // Cache the computed leader.
                         self.ledger().update_latest_leader(round, computed_leader);
@@ -727,8 +729,9 @@ impl<N: Network> BFT<N> {
                 if let Some(cb) = self.bft_callback.get() {
                     // Send the subdag and transmissions to consensus.
                     if let Err(err) = cb.process_bft_subdag(subdag, transmissions).await {
-                        error!("BFT failed to advance the subdag for round {anchor_round}: {err:?}");
+                        err.log_error("BFT failed to advance the subdag for round {anchor_round}");
                         return Ok(());
+
                     }
                 }
 

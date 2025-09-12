@@ -60,9 +60,13 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data},
     },
     prelude::{Address, Field},
-    utilities::task::{self, JoinHandle},
+    utilities::{
+        LoggableError,
+        task::{self, JoinHandle},
+    },
 };
 
+use anyhow::Context;
 use colored::Colorize;
 use futures::SinkExt;
 use indexmap::{IndexMap, IndexSet};
@@ -238,15 +242,15 @@ impl<N: Network> Gateway<N> {
         worker_senders: IndexMap<u8, WorkerSender<N>>,
         primary_callback: Arc<dyn GatewayPrimaryCallback<N>>,
         sync_callback: Option<Arc<dyn GatewaySyncCallback<N>>>,
-    ) {
+    ) -> Result<()> {
         debug!("Starting the gateway for the memory pool...");
 
-        self.worker_senders.set(worker_senders).expect("The worker senders are already set");
+        self.worker_senders.set(worker_senders).with_context(|| "The worker senders are already set")?;
 
-        self.primary_callback.set(primary_callback).expect("The primary callback is already set");
+        self.primary_callback.set(primary_callback)?;
 
         if let Some(sync_callback) = sync_callback {
-            self.sync_callback.set(sync_callback).unwrap();
+            self.sync_callback.set(sync_callback)?;
         }
 
         // Enable the TCP protocols.
@@ -257,13 +261,15 @@ impl<N: Network> Gateway<N> {
         self.enable_on_connect().await;
 
         // Enable the TCP listener. Note: This must be called after the above protocols.
-        let listen_addr = self.tcp.enable_listener().await.expect("Failed to enable the TCP listener");
+        let listen_addr = self.tcp.enable_listener().await.with_context(|| "Failed to enable the TCP listener")?;
         debug!("Listening for validator connections at address {listen_addr:?}");
 
         // Initialize the heartbeat.
         self.initialize_heartbeat();
 
         info!("Started the gateway for the memory pool at '{}'", self.local_ip());
+
+        Ok(())
     }
 }
 
@@ -752,7 +758,7 @@ impl<N: Network> Gateway<N> {
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
                     if let Err(err) = cb.insert_block_response(peer_ip, blocks.0) {
-                        warn!("Unable to process block response from '{peer_ip}': {err}");
+                        err.log_warning(format!("Unable to process block response from '{peer_ip}'"));
                     }
                 }
                 Ok(())
@@ -1832,7 +1838,7 @@ mod prop_tests {
             (workers, tx_workers)
         };
 
-        gateway.run(worker_senders, Arc::new(DummyGatewayPrimaryCallback::default()), None).await;
+        gateway.run(worker_senders, Arc::new(DummyGatewayPrimaryCallback::default()), None).await.unwrap();
         assert_eq!(
             gateway.local_ip(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + dev.port().unwrap())

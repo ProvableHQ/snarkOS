@@ -44,7 +44,7 @@ async fn new_test_gateway(
     let gateway = sample_gateway(accounts[0].clone(), storage, ledger);
 
     // Set up primary channels, we discard the rx as we're testing the gateway sans BFT.
-    gateway.run([].into(), Arc::new(DummyGatewayPrimaryCallback::default()), None).await;
+    gateway.run([].into(), Arc::new(DummyGatewayPrimaryCallback::default()), None).await.unwrap();
 
     (accounts, gateway)
 }

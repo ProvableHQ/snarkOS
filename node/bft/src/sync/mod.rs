@@ -17,24 +17,28 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
     events::DataBlocks,
-    gateway::{Gateway, GatewaySyncCallback, Transport},
-    helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
+    helpers::CallbackHandle,
+    gateway::{Gateway, Transport, GatewaySyncCallback},
+    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
+    events::{CertificateRequest, CertificateResponse, Event},
+    ledger_service::LedgerService,
 };
-
-use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
-use snarkos_node_bft_ledger_service::LedgerService;
+    
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
     prelude::{cfg_into_iter, cfg_iter},
-    utilities::spawn_blocking,
+    utilities::{LoggableError, spawn_blocking, task},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
+use locktick::{
+    parking_lot::Mutex,
+    tokio::Mutex as TMutex,
+};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 #[cfg(not(feature = "serial"))]
@@ -203,7 +207,7 @@ impl<N: Network> Sync<N> {
                     if let Some(ping) = &ping {
                         match self_.get_block_locators() {
                             Ok(locators) => ping.update_block_locators(locators),
-                            Err(err) => error!("Failed to update block locators: {err}"),
+                            Err(err) => err.log_error("Failed to update block locators"),
                         }
                     }
                 }
@@ -264,7 +268,7 @@ impl<N: Network> Sync<N> {
         match self.try_advancing_block_synchronization().await {
             Ok(new_blocks) => new_blocks,
             Err(err) => {
-                error!("Block synchronization failed - {err}");
+                err.log_error("Block synchronization failed");
                 false
             }
         }
@@ -403,7 +407,7 @@ impl<N: Network> Sync<N> {
         // If a callback was provided, send the certificates to it.
         if let Some(cb) = self.sync_callback.get() {
             cb.sync_dag_at_bootup(certificates).await.with_context(|| "Failed to update the DAG from sync")?;
-        }
+       }
 
         self.block_sync.set_sync_height(block_height);
 
@@ -550,7 +554,7 @@ impl<N: Network> Sync<N> {
             if within_gc {
                 info!("Finished catching up with the network. Switching back to BFT sync.");
                 if let Err(err) = self.sync_storage_with_ledger_at_bootup().await {
-                    error!("BFT sync (with bootup routine) failed - {err}");
+                    err.log_error("BFT sync (with bootup routine) failed");
                 }
             }
 
@@ -566,7 +570,7 @@ impl<N: Network> Sync<N> {
         let _lock = self.sync_lock.lock().await;
 
         let self_ = self.clone();
-        spawn_blocking(move || {
+        task::spawn_blocking(move || {
             // Check the next block.
             self_.ledger.check_next_block(&block)?;
             // Attempt to advance to the next block.
@@ -856,12 +860,12 @@ impl<N: Network> Sync<N> {
         }
         // Wait for the certificate to be fetched.
         // TODO (raychu86): Consider making the timeout dynamic based on network traffic and/or the number of validators.
-        match tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the certificate was fetched, return it.
-            Ok(result) => Ok(result?),
-            // If the certificate was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch certificate {} - (timeout) {e}", fmt_id(certificate_id)),
-        }
+        let cert = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| format!("Unable to fetch certificate {} (timeout)", fmt_id(certificate_id)))?
+            .with_context(|| format!("Unable to fetch certificate {} (timeout)", fmt_id(certificate_id)))?;
+
+        Ok(cert)
     }
 }
 

@@ -20,8 +20,9 @@ use crate::{
     events::{Event, TransmissionRequest, TransmissionResponse},
     gateway::Transport,
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
+    ledger_service::LedgerService
 };
-use snarkos_node_bft_ledger_service::LedgerService;
+
 use snarkvm::{
     console::prelude::*,
     ledger::{
