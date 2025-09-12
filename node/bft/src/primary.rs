@@ -1940,6 +1940,8 @@ impl<N: Network> Primary<N> {
         info!("Shutting down the primary...");
         // Remove the callback.
         let _ = self.primary_callback.write().take();
+        // Stop syncing.
+        self.sync.shut_down().await;
         // Shut down the workers.
         self.workers.iter().for_each(|worker| worker.shut_down());
         // Abort the tasks.
