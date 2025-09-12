@@ -1708,7 +1708,6 @@ mod prop_tests {
         MAX_WORKERS,
         MEMORY_POOL_PORT,
         Worker,
-        gateway::prop_tests::GatewayAddress::{Dev, Prod},
         helpers::{Storage, init_primary_channels, init_worker_channels},
     };
 
@@ -1810,7 +1809,7 @@ mod prop_tests {
                     Just(account_selector.select(validators)),
                     0u8..,
                 )
-                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, Dev(d)))
+                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, GatewayAddress::Dev(d)))
             })
             .boxed()
     }
@@ -1825,7 +1824,7 @@ mod prop_tests {
                     Just(account_selector.select(validators)),
                     any::<Option<SocketAddr>>(),
                 )
-                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, Prod(d)))
+                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, GatewayAddress::Prod(d)))
             })
             .boxed()
     }
