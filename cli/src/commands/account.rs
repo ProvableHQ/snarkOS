@@ -568,6 +568,94 @@ mod tests {
     }
 
     #[test]
+    fn test_import() -> Result<()> {
+        for _ in 0..3 {
+            let account = Account::Import { network: 0, private_key: None, discreet: false, save_to_file: None };
+            account.parse().with_context(|| "Account import failed")?;
+        }
+
+        let mut expected = format!(
+            " {:>12}  {}\n",
+            "Private Key".cyan().bold(),
+            "APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X"
+        );
+        expected += &format!(
+            " {:>12}  {}\n",
+            "View Key".cyan().bold(),
+            "AViewKey1pNxZHn79XVJ4D2WG5Vn2YWsAzf5wzAs3dAuQtUAmUFF7"
+        );
+        expected += &format!(
+            " {:>12}  {}",
+            "Address".cyan().bold(),
+            "aleo1uxl69laseuv3876ksh8k0nd7tvpgjt6ccrgccedpjk9qwyfensxst9ftg5"
+        );
+
+        let account = Account::Import {
+            network: 0,
+            private_key: Some("APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X".to_string()),
+            discreet: false,
+            save_to_file: None,
+        };
+        let actual = account.parse().with_context(|| "Command execution failed")?;
+        assert_eq!(expected, actual);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_import_disallow_save_to_file_with_discreet() {
+        let discreet = true;
+        let save_to_file = Some("/tmp/not-important".to_string());
+        let account = Account::Import {
+            network: 0,
+            private_key: Some("APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X".to_string()),
+            discreet,
+            save_to_file,
+        };
+
+        let res = account.parse();
+        assert!(res.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_import_save_to_file() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().expect("Failed to create temp folder");
+        let dir_path = dir.path();
+        fs::set_permissions(dir_path, Permissions::from_mode(0o700)).expect("Failed to set permissions");
+
+        let mut file = dir.path().to_owned();
+        file.push("my-private-key-file");
+        let file = file.display().to_string();
+
+        let discreet = false;
+        let save_to_file = Some(file.clone());
+        let account = Account::Import {
+            network: 0,
+            private_key: Some("APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X".to_string()),
+            discreet,
+            save_to_file,
+        };
+
+        let actual = account.parse().with_context(|| "Command execution failed")?;
+
+        let expected = "APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X";
+        assert!(actual.contains(expected));
+
+        let content = fs::read_to_string(&file).expect("Failed to read private-key-file");
+        assert_eq!(expected, content);
+
+        // check the permissions - to read-only for the owner
+        let metadata = fs::metadata(file).unwrap();
+        let permissions = metadata.permissions();
+        assert_eq!(permissions.mode() & 0o777, 0o400, "File permissions are not 0o400");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_signature_raw() -> Result<()> {
         let key = "APrivateKey1zkp61PAYmrYEKLtRWeWhUoDpFnGLNuHrCciSqN49T86dw3p".to_string();
         let message = "Hello, world!".to_string();
