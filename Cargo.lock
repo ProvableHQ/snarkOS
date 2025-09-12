@@ -732,7 +732,7 @@ dependencies = [
  "cookie",
  "document-features",
  "idna",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "log",
  "serde",
  "serde_derive",
@@ -1454,7 +1454,7 @@ dependencies = [
  "js-sys",
  "libc",
  "r-efi",
- "wasi 0.14.6+wasi-0.2.4",
+ "wasi 0.14.7+wasi-0.2.4",
  "wasm-bindgen",
 ]
 
@@ -1518,7 +1518,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http 1.3.1",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "slab",
  "tokio",
  "tokio-util",
@@ -1944,14 +1944,15 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.11.1"
+version = "2.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "206a8042aec68fa4a62e8d3f7aa4ceb508177d9324faf261e1959e495b7a1921"
+checksum = "92119844f513ffa41556430369ab02c295a3578af21cf945caa3e9e0c2481ac3"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.5",
  "rayon",
  "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -2083,9 +2084,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.78"
+version = "0.3.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c0b063578492ceec17683ef2f8c5e89121fbd0b172cbc280635ab7567db2738"
+checksum = "6247da8b8658ad4e73a186e747fcc5fc2a29f979d6fe6269127fdb5fd08298d0"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -2238,6 +2239,16 @@ dependencies = [
  "backtrace",
  "parking_lot",
  "simple_moving_average",
+]
+
+[[package]]
+name = "locktick"
+version = "0.3.0"
+source = "git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard#014d3940ae8c52e860d7ed539f8c3e9452b769ff"
+dependencies = [
+ "backtrace",
+ "parking_lot",
+ "simple_moving_average",
  "tokio",
 ]
 
@@ -2321,7 +2332,7 @@ dependencies = [
  "base64 0.21.7",
  "hyper 0.14.32",
  "hyper-tls 0.5.0",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "ipnet",
  "metrics",
  "metrics-util",
@@ -3477,9 +3488,9 @@ checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
 
 [[package]]
 name = "serde"
-version = "1.0.224"
+version = "1.0.225"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aaeb1e94f53b16384af593c71e20b095e958dab1d26939c1b70645c5cfbcc0b"
+checksum = "fd6c24dee235d0da097043389623fb913daddf92c76e9f5a1db88607a0bcbd1d"
 dependencies = [
  "serde_core",
  "serde_derive",
@@ -3487,18 +3498,18 @@ dependencies = [
 
 [[package]]
 name = "serde_core"
-version = "1.0.224"
+version = "1.0.225"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32f39390fa6346e24defbcdd3d9544ba8a19985d0af74df8501fbfe9a64341ab"
+checksum = "659356f9a0cb1e529b24c01e43ad2bdf520ec4ceaf83047b83ddcc2251f96383"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.224"
+version = "1.0.225"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ff78ab5e8561c9a675bfc1785cb07ae721f0ee53329a595cefd8c04c2ac4e0"
+checksum = "0ea936adf78b1f766949a4977b91d2f5595825bd6ec079aa9543ad2685fc4516"
 dependencies = [
  "proc-macro2",
  "quote 1.0.40",
@@ -3511,7 +3522,7 @@ version = "1.0.145"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "402a6f66d8c709116cf22f558eab210f5a50187f702eb4d7e5ef38d9a7f1c79c"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itoa",
  "memchr",
  "ryu",
@@ -3561,7 +3572,7 @@ dependencies = [
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "schemars 0.9.0",
  "schemars 1.0.4",
  "serde",
@@ -3720,7 +3731,7 @@ version = "4.2.1"
 dependencies = [
  "built",
  "clap",
- "locktick",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusty-hook",
  "snarkos-account",
  "snarkos-cli",
@@ -3759,8 +3770,8 @@ dependencies = [
  "clap",
  "colored 3.0.0",
  "crossterm 0.29.0",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "nix",
  "num_cpus",
  "parking_lot",
@@ -3811,8 +3822,8 @@ dependencies = [
  "deadline",
  "futures-util",
  "http 1.3.1",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "lru 0.16.1",
  "num_cpus",
  "once_cell",
@@ -3853,9 +3864,9 @@ dependencies = [
  "colored 3.0.0",
  "deadline",
  "futures",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itertools 0.12.1",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "lru 0.16.1",
  "mockall",
  "open",
@@ -3894,7 +3905,7 @@ version = "4.2.1"
 dependencies = [
  "anyhow",
  "bytes",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "proptest",
  "serde",
  "snarkos-node-sync-locators",
@@ -3911,8 +3922,8 @@ version = "4.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "parking_lot",
  "rand 0.8.5",
  "rayon",
@@ -3928,8 +3939,8 @@ version = "4.2.1"
 dependencies = [
  "aleo-std",
  "anyhow",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "lru 0.16.1",
  "parking_lot",
  "snarkvm",
@@ -3944,7 +3955,7 @@ dependencies = [
  "bincode",
  "colored 3.0.0",
  "http 1.3.1",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "parking_lot",
  "rayon",
  "reqwest",
@@ -3964,9 +3975,9 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "colored 3.0.0",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itertools 0.14.0",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "lru 0.16.1",
  "once_cell",
  "parking_lot",
@@ -3986,7 +3997,7 @@ dependencies = [
 name = "snarkos-node-metrics"
 version = "4.2.1"
 dependencies = [
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "metrics-exporter-prometheus",
  "parking_lot",
  "rayon",
@@ -4004,9 +4015,9 @@ dependencies = [
  "base64 0.22.1",
  "built",
  "http 1.3.1",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "jsonwebtoken",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "once_cell",
  "parking_lot",
  "rand 0.8.5",
@@ -4039,7 +4050,7 @@ dependencies = [
  "futures",
  "futures-util",
  "linked-hash-map",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "parking_lot",
  "peak_alloc",
  "rand 0.8.5",
@@ -4082,9 +4093,9 @@ version = "4.2.1"
 dependencies = [
  "anyhow",
  "futures",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itertools 0.14.0",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "parking_lot",
  "rand 0.8.5",
  "serde",
@@ -4113,7 +4124,7 @@ name = "snarkos-node-sync-locators"
 version = "4.2.1"
 dependencies = [
  "anyhow",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "serde",
  "snarkvm",
  "tracing",
@@ -4126,7 +4137,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-util",
- "locktick",
+ "locktick 0.3.0 (git+https://github.com/kaimast/locktick.git?branch=fix%2Fexport-lock-guard)",
  "once_cell",
  "parking_lot",
  "snarkos-node-metrics",
@@ -4173,7 +4184,7 @@ dependencies = [
  "fxhash",
  "hashbrown 0.15.5",
  "hex",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itertools 0.14.0",
  "num-traits",
  "rand 0.8.5",
@@ -4249,7 +4260,7 @@ name = "snarkvm-circuit-environment"
 version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itertools 0.14.0",
  "nom",
  "num-traits",
@@ -4441,7 +4452,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#
 dependencies = [
  "anyhow",
  "enum-iterator",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "lazy_static",
  "paste",
  "serde",
@@ -4480,7 +4491,7 @@ dependencies = [
  "enum-iterator",
  "enum_index",
  "enum_index_derive",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "num-derive",
  "num-traits",
  "serde_json",
@@ -4618,8 +4629,8 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#
 dependencies = [
  "aleo-std",
  "anyhow",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lru 0.16.1",
  "parking_lot",
  "rand 0.8.5",
@@ -4656,7 +4667,7 @@ version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
  "anyhow",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "rayon",
  "serde_json",
  "snarkvm-console",
@@ -4678,7 +4689,7 @@ version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
  "anyhow",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "proptest",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -4709,7 +4720,7 @@ name = "snarkvm-ledger-narwhal-batch-certificate"
 version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "rayon",
  "serde_json",
  "snarkvm-console",
@@ -4722,7 +4733,7 @@ name = "snarkvm-ledger-narwhal-batch-header"
 version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "rayon",
  "serde_json",
  "snarkvm-console",
@@ -4746,7 +4757,7 @@ name = "snarkvm-ledger-narwhal-subdag"
 version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "rayon",
  "serde_json",
  "snarkvm-console",
@@ -4786,8 +4797,8 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "bincode",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lru 0.16.1",
  "parking_lot",
  "rand 0.8.5",
@@ -4806,8 +4817,8 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "colored 3.0.0",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lru 0.16.1",
  "parking_lot",
  "rand 0.8.5",
@@ -4846,8 +4857,8 @@ dependencies = [
  "aleo-std-storage",
  "anyhow",
  "bincode",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot",
  "rayon",
  "rocksdb",
@@ -4903,7 +4914,7 @@ dependencies = [
  "curl",
  "hex",
  "lazy_static",
- "locktick",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot",
  "paste",
  "rand 0.8.5",
@@ -4921,9 +4932,9 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#
 dependencies = [
  "aleo-std",
  "anyhow",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "itertools 0.14.0",
- "locktick",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lru 0.16.1",
  "parking_lot",
  "rand 0.8.5",
@@ -4954,8 +4965,8 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#
 dependencies = [
  "aleo-std",
  "colored 3.0.0",
- "indexmap 2.11.1",
- "locktick",
+ "indexmap 2.11.3",
+ "locktick 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -4977,7 +4988,7 @@ name = "snarkvm-synthesizer-program"
 version = "4.2.1"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=35c82646eeb2e9561be#35c82646eeb2e9561be9b8d549d1f7532dfe2b22"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "paste",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -5558,7 +5569,7 @@ version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae2a4cf385da23d1d53bc15cdfa5c2109e93d8d362393c801e87da2f72f0e201"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "serde_core",
  "serde_spanned",
  "toml_datetime",
@@ -5965,9 +5976,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasi"
-version = "0.14.6+wasi-0.2.4"
+version = "0.14.7+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f71243a3f320c00a8459e455c046ce571229c2f31fd11645d9dc095e3068ca0"
+checksum = "883478de20367e224c0090af9cf5f9fa85bed63a95c1abf3afc5c083ebc06e8c"
 dependencies = [
  "wasip2",
 ]
@@ -5983,9 +5994,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.101"
+version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e14915cadd45b529bb8d1f343c4ed0ac1de926144b746e2710f9cd05df6603b"
+checksum = "4ad224d2776649cfb4f4471124f8176e54c1cca67a88108e30a0cd98b90e7ad3"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -5996,9 +6007,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-backend"
-version = "0.2.101"
+version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e28d1ba982ca7923fd01448d5c30c6864d0a14109560296a162f80f305fb93bb"
+checksum = "3a1364104bdcd3c03f22b16a3b1c9620891469f5e9f09bc38b2db121e593e732"
 dependencies = [
  "bumpalo",
  "log",
@@ -6010,9 +6021,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.51"
+version = "0.4.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ca85039a9b469b38336411d6d6ced91f3fc87109a2a27b0c197663f5144dffe"
+checksum = "9c0a08ecf5d99d5604a6666a70b3cde6ab7cc6142f5e641a8ef48fc744ce8854"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -6023,9 +6034,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.101"
+version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c3d463ae3eff775b0c45df9da45d68837702ac35af998361e2c84e7c5ec1b0d"
+checksum = "0d7ab4ca3e367bb1ed84ddbd83cc6e41e115f8337ed047239578210214e36c76"
 dependencies = [
  "quote 1.0.40",
  "wasm-bindgen-macro-support",
@@ -6033,9 +6044,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.101"
+version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bb4ce89b08211f923caf51d527662b75bdc9c9c7aab40f86dcb9fb85ac552aa"
+checksum = "4a518014843a19e2dbbd0ed5dfb6b99b23fb886b14e6192a00803a3e14c552b0"
 dependencies = [
  "proc-macro2",
  "quote 1.0.40",
@@ -6046,18 +6057,18 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.101"
+version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f143854a3b13752c6950862c906306adb27c7e839f7414cec8fea35beab624c1"
+checksum = "255eb0aa4cc2eea3662a00c2bbd66e93911b7361d5e0fcd62385acfd7e15dcee"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "web-sys"
-version = "0.3.78"
+version = "0.3.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77e4b637749ff0d92b8fad63aa1f7cff3cbe125fd49c175cd6345e7272638b12"
+checksum = "50462a022f46851b81d5441d1a6f5bac0b21a1d72d64bd4906fbdd4bf7230ec7"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -6548,7 +6559,7 @@ dependencies = [
  "crossbeam-utils",
  "displaydoc",
  "flate2",
- "indexmap 2.11.1",
+ "indexmap 2.11.3",
  "memchr",
  "thiserror 2.0.16",
  "time",

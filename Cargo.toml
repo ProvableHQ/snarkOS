@@ -94,7 +94,9 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.3"
+#version = "0.3"
+git = "https://github.com/kaimast/locktick.git"
+branch = "fix/export-lock-guard"
 
 [workspace.dependencies.lru]
 version = "0.16"

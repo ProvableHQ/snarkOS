@@ -14,18 +14,16 @@
 // limitations under the License.
 
 use crate::{
-    Gateway,
     MAX_BATCH_DELAY_IN_MS,
     MAX_WORKERS,
     MIN_BATCH_DELAY_IN_SECS,
     PRIMARY_PING_IN_MS,
-    Sync,
-    Transport,
     WORKER_PING_IN_MS,
     Worker,
     events::{BatchPropose, BatchSignature, Event},
+    gateway::{Gateway, Transport},
     helpers::{
-        BFTSender,
+        CallbackHandle,
         PrimaryReceiver,
         PrimarySender,
         Proposal,
@@ -39,6 +37,7 @@ use crate::{
         now,
     },
     spawn_blocking,
+    sync::{Sync, SyncCallback},
 };
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
@@ -58,6 +57,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
+use anyhow::Context;
 use colored::Colorize;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::{IndexMap, IndexSet};
@@ -79,10 +79,21 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{sync::OnceCell, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 /// A helper type for an optional proposed batch.
 pub type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
+
+/// This callback trait allows listening to changes in the Primary, such as round advancement.
+/// This is currently used by BFT.
+#[async_trait::async_trait]
+pub trait PrimaryCallback<N: Network>: Send + std::marker::Sync {
+    /// Notifies that a new round has started.
+    fn update_to_next_round(&self, current_round: u64) -> bool;
+
+    /// Sends a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
+}
 
 /// The primary logic of a node.
 /// AleoBFT adopts a primary-worker architecture as described in the Narwhal and Tusk paper (Section 4.2).
@@ -98,8 +109,8 @@ pub struct Primary<N: Network> {
     ledger: Arc<dyn LedgerService<N>>,
     /// The workers.
     workers: Arc<[Worker<N>]>,
-    /// The BFT sender.
-    bft_sender: Arc<OnceCell<BFTSender<N>>>,
+    /// The primary callback (used by [`BFT`]).
+    primary_callback: Arc<CallbackHandle<Arc<dyn PrimaryCallback<N>>>>,
     /// The batch proposal, if the primary is currently proposing a batch.
     proposed_batch: Arc<ProposedBatch<N>>,
     /// The timestamp of the most recent proposed batch.
@@ -142,7 +153,7 @@ impl<N: Network> Primary<N> {
             storage,
             ledger,
             workers: Arc::from(vec![]),
-            bft_sender: Default::default(),
+            primary_callback: Default::default(),
             proposed_batch: Default::default(),
             latest_proposed_batch_timestamp: Default::default(),
             signed_proposals: Default::default(),
@@ -196,16 +207,16 @@ impl<N: Network> Primary<N> {
     pub async fn run(
         &mut self,
         ping: Option<Arc<Ping<N>>>,
-        bft_sender: Option<BFTSender<N>>,
+        primary_callback: Option<Arc<dyn PrimaryCallback<N>>>,
+        sync_callback: Option<Arc<dyn SyncCallback<N>>>,
         primary_sender: PrimarySender<N>,
         primary_receiver: PrimaryReceiver<N>,
     ) -> Result<()> {
         info!("Starting the primary instance of the memory pool...");
 
         // Set the BFT sender.
-        if let Some(bft_sender) = &bft_sender {
-            // Set the BFT sender in the primary.
-            self.bft_sender.set(bft_sender.clone()).expect("BFT sender already set");
+        if let Some(callback) = primary_callback {
+            self.primary_callback.set(callback)?;
         }
 
         // Construct a map of the worker senders.
@@ -235,7 +246,7 @@ impl<N: Network> Primary<N> {
         self.workers = Arc::from(workers);
 
         // Next, initialize the sync module and sync the storage from ledger.
-        self.sync.initialize(bft_sender).await?;
+        self.sync.initialize(sync_callback).await?;
         // Next, load and process the proposal cache before running the sync module.
         self.load_proposal_cache().await?;
         // Next, run the sync module.
@@ -429,17 +440,12 @@ impl<N: Network> Primary<N> {
         // Ensure the primary has not proposed a batch for this round before.
         if self.storage.contains_certificate_in_round_from(round, self.gateway.account().address()) {
             // If a BFT sender was provided, attempt to advance the current round.
-            if let Some(bft_sender) = self.bft_sender.get() {
-                match bft_sender.send_primary_round_to_bft(self.current_round()).await {
+            if let Some(cb) = &*self.primary_callback.get_ref() {
+                match cb.update_to_next_round(self.current_round()) {
                     // 'is_ready' is true if the primary is ready to propose a batch for the next round.
-                    Ok(true) => (), // continue,
+                    true => (), // continue,
                     // 'is_ready' is false if the primary is not ready to propose a batch for the next round.
-                    Ok(false) => return Ok(()),
-                    // An error occurred while attempting to advance the current round.
-                    Err(e) => {
-                        warn!("Failed to update the BFT to the next round - {e}");
-                        return Err(e);
-                    }
+                    false => return Ok(()),
                 }
             }
             debug!("Primary is safely skipping {}", format!("(round {round} was already certified)").dimmed());
@@ -1537,14 +1543,8 @@ impl<N: Network> Primary<N> {
         // Attempt to advance to the next round.
         if current_round < next_round {
             // If a BFT sender was provided, send the current round to the BFT.
-            let is_ready = if let Some(bft_sender) = self.bft_sender.get() {
-                match bft_sender.send_primary_round_to_bft(current_round).await {
-                    Ok(is_ready) => is_ready,
-                    Err(e) => {
-                        warn!("Failed to update the BFT to the next round - {e}");
-                        return Err(e);
-                    }
-                }
+            let is_ready = if let Some(cb) = self.primary_callback.get() {
+                cb.update_to_next_round(current_round)
             }
             // Otherwise, handle the Narwhal case.
             else {
@@ -1631,12 +1631,11 @@ impl<N: Network> Primary<N> {
         spawn_blocking!(storage.insert_certificate(certificate_, transmissions, Default::default()))?;
         debug!("Stored a batch certificate for round {}", certificate.round());
         // If a BFT sender was provided, send the certificate to the BFT.
-        if let Some(bft_sender) = self.bft_sender.get() {
+        if let Some(cb) = self.primary_callback.get() {
             // Await the callback to continue.
-            if let Err(e) = bft_sender.send_primary_certificate_to_bft(certificate.clone()).await {
-                warn!("Failed to update the BFT DAG from primary - {e}");
-                return Err(e);
-            };
+            cb.add_new_certificate(certificate.clone())
+                .await
+                .with_context(|| "Failed to add new certificate from primary")?;
         }
         // Broadcast the certified batch to all validators.
         self.gateway.broadcast(Event::BatchCertified(certificate.clone().into()));
@@ -1718,12 +1717,8 @@ impl<N: Network> Primary<N> {
             spawn_blocking!(storage.insert_certificate(certificate_, missing_transmissions, Default::default()))?;
             debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
             // If a BFT sender was provided, send the round and certificate to the BFT.
-            if let Some(bft_sender) = self.bft_sender.get() {
-                // Send the certificate to the BFT.
-                if let Err(e) = bft_sender.send_primary_certificate_to_bft(certificate).await {
-                    warn!("Failed to update the BFT DAG from sync: {e}");
-                    return Err(e);
-                };
+            if let Some(cb) = self.primary_callback.get() {
+                cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
             }
         }
         Ok(())
@@ -1934,10 +1929,12 @@ impl<N: Network> Primary<N> {
     /// Shuts down the primary.
     pub async fn shut_down(&self) {
         info!("Shutting down the primary...");
+        // Remove the callback.
+        self.primary_callback.clear();
         // Shut down the workers.
         self.workers.iter().for_each(|worker| worker.shut_down());
         // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
         // Save the current proposal cache to disk.
         let proposal_cache = {
             let proposal = self.proposed_batch.write().take();

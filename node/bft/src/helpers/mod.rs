@@ -55,6 +55,12 @@ pub mod timestamp;
 pub use timestamp::*;
 
 use anyhow::{Result, bail};
+#[cfg(feature = "locktick")]
+use locktick::{
+    LockGuard,
+    parking_lot::{RwLock, RwLockReadGuard},
+};
+#[cfg(not(feature = "locktick"))]
 use parking_lot::{RwLock, RwLockReadGuard};
 
 /// Formats an ID into a truncated identifier (for logging purposes).
@@ -102,7 +108,7 @@ impl<C: Send + Sync + Clone> CallbackHandle<C> {
     /// Cannot be shared across await-boundaries.
     #[cfg(feature = "locktick")]
     #[inline]
-    pub fn get_ref(&self) -> RwLockReadGuard<'_, Option<C>> {
+    pub fn get_ref(&self) -> LockGuard<RwLockReadGuard<'_, Option<C>>> {
         self.callback.read()
     }
 

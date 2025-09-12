@@ -1570,12 +1570,15 @@ impl<N: Network> Gateway<N> {
 
 #[cfg(test)]
 mod prop_tests {
-    use crate::{
+    use super::{
         Gateway,
+        prop_tests::GatewayAddress::{Dev, Prod},
+    };
+
+    use crate::{
         MAX_WORKERS,
         MEMORY_POOL_PORT,
         Worker,
-        gateway::prop_tests::GatewayAddress::{Dev, Prod},
         helpers::{Storage, init_primary_channels, init_worker_channels},
     };
     use snarkos_account::Account;

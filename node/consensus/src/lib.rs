@@ -53,7 +53,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -84,7 +84,7 @@ const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
 ///
 /// Consensus acts as a rate limiter to prevents workers in BFT from being overloaded.
 /// Each worker maintains a ready queue (which is essentially also a mempool), but verifies transactions/solutions
-/// before enquing them.
+/// before enqueuing them.
 /// Consensus only passes more transactions/solutions to the BFT layer if its ready queues are not already full.
 #[derive(Clone)]
 pub struct Consensus<N: Network> {
@@ -501,8 +501,7 @@ impl<N: Network> Consensus<N> {
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_) };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if let Err(e) = &result {
-            error!("Unable to advance to the next block - {e}");
+        if result.is_err() {
             // On failure, reinsert the transmissions into the memory pool.
             self.reinsert_transmissions(transmissions).await;
         }
@@ -517,6 +516,8 @@ impl<N: Network> Consensus<N> {
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<()> {
+        trace!("Trying to advance to new subdag anchored at round {}", subdag.anchor_round());
+
         #[cfg(feature = "metrics")]
         let start = subdag.leader_certificate().batch_header().timestamp();
         #[cfg(feature = "metrics")]
@@ -525,14 +526,20 @@ impl<N: Network> Consensus<N> {
         let current_block_timestamp = self.ledger.latest_block().header().metadata().timestamp();
 
         // Create the candidate next block.
-        let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+        let next_block = self
+            .ledger
+            .prepare_advance_to_next_quorum_block(subdag, transmissions)
+            .with_context(|| "Ledger preparation for advancement to next block failed")?;
         // Check that the block is well-formed.
-        self.ledger.check_next_block(&next_block)?;
+        self.ledger.check_next_block(&next_block).with_context(|| "Check for new block failed")?;
         // Advance to the next block.
-        self.ledger.advance_to_next_block(&next_block)?;
+        self.ledger.advance_to_next_block(&next_block).with_context(|| "Ledger advancement to new block failed")?;
+
+        // Note: Do not return failure after this point, as the ledger already advanced.
+
         #[cfg(feature = "telemetry")]
         // Fetch the latest committee
-        let latest_committee = self.ledger.current_committee()?;
+        let latest_committee = self.ledger.current_committee();
 
         // If the next block starts a new epoch, clear the existing solutions.
         if next_block.height() % N::NUM_BLOCKS_PER_EPOCH == 0 {
@@ -543,8 +550,10 @@ impl<N: Network> Consensus<N> {
         }
 
         // Notify peers that we have a new block.
-        let locators = self.block_sync.get_block_locators()?;
-        self.ping.update_block_locators(locators);
+        match self.block_sync.get_block_locators() {
+            Ok(locators) => self.ping.update_block_locators(locators),
+            Err(err) => warn!("Failed to generate new block locators after block advancement: {err:?}"),
+        }
 
         // Make block sync aware of the new block.
         self.block_sync.set_sync_height(next_block.height());
@@ -571,7 +580,7 @@ impl<N: Network> Consensus<N> {
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);
 
             #[cfg(feature = "telemetry")]
-            {
+            if let Ok(latest_committee) = latest_committee {
                 // Retrieve the latest participation scores.
                 let participation_scores =
                     self.bft().primary().gateway().validator_telemetry().get_participation_scores(&latest_committee);
