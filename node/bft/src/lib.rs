@@ -35,7 +35,7 @@ mod bft;
 pub use bft::*;
 
 mod gateway;
-pub use gateway::*;
+pub use gateway::{Gateway, MAX_VALIDATORS_TO_SEND};
 
 mod primary;
 pub use primary::*;

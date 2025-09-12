@@ -16,10 +16,9 @@
 use crate::{
     Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
-    Transport,
     events::DataBlocks,
-    gateway::SyncCallback as GatewaySyncCallback,
-    helpers::{BFTSender, Pending, Storage, fmt_id, max_redundant_requests},
+    gateway::{SyncCallback as GatewaySyncCallback, Transport},
+    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
 };
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -31,7 +30,7 @@ use snarkvm::{
         network::{ConsensusVersion, Network},
         types::Field,
     },
-    ledger::{PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
+    ledger::{CheckBlockError, PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
     utilities::{
         cfg_into_iter,
         cfg_iter,
@@ -42,6 +41,7 @@ use snarkvm::{
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
+use async_trait::async_trait;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -59,9 +59,18 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
-    sync::{OnceCell, oneshot},
+    sync::oneshot,
     time::{sleep, timeout},
 };
+
+/// A callback trait for the sync module.
+#[async_trait]
+pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
+    /// Syncs the BFT DAG with the given batch certificates. These batch certificates **must** already exist in the ledger.
+    fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>) -> Result<()>;
+    /// Sends a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
+}
 
 /// Block synchronization logic for validators.
 ///
@@ -87,14 +96,14 @@ pub struct Sync<N: Network> {
     block_sync: Arc<BlockSync<N>>,
     /// The pending certificates queue.
     pending: Arc<Pending<Field<N>, BatchCertificate<N>>>,
-    /// The BFT sender.
-    bft_sender: Arc<OnceCell<BFTSender<N>>>,
     /// Handles to the spawned background tasks.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
     response_lock: Arc<TMutex<()>>,
     /// The sync lock. Ensures that only one task syncs the ledger at a time.
     sync_lock: Arc<TMutex<()>>,
+    /// The sync callback.
+    sync_callback: Arc<Mutex<Option<Arc<dyn SyncCallback<N>>>>>,
     /// The latest block responses.
     ///
     /// This is used in [`Sync::sync_storage_with_block()`] to accumulate blocks
@@ -123,8 +132,8 @@ impl<N: Network> Sync<N> {
             storage,
             ledger,
             block_sync,
+            sync_callback: Default::default(),
             pending: Default::default(),
-            bft_sender: Default::default(),
             handles: Default::default(),
             response_lock: Default::default(),
             sync_lock: Default::default(),
@@ -133,10 +142,9 @@ impl<N: Network> Sync<N> {
     }
 
     /// Initializes the sync module and sync the storage with the ledger at bootup.
-    pub async fn initialize(&self, bft_sender: Option<BFTSender<N>>) -> Result<()> {
-        // If a BFT sender was provided, set it.
-        if let Some(bft_sender) = bft_sender {
-            self.bft_sender.set(bft_sender).expect("BFT sender already set in gateway");
+    pub async fn initialize(&self, callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
+        if let Some(callback) = callback {
+            *self.sync_callback.lock() = Some(callback);
         }
 
         info!("Syncing storage with the ledger...");
@@ -206,6 +214,7 @@ impl<N: Network> Sync<N> {
 
                 let ping = ping.clone();
                 let self_ = self_.clone();
+
                 let hdl = tokio::spawn(async move {
                     self_.try_advancing_block_synchronization(&ping).await;
                 });
@@ -444,13 +453,9 @@ impl<N: Network> Sync<N> {
             .collect::<Vec<_>>();
 
         // If a BFT sender was provided, send the certificates to the BFT.
-        if let Some(bft_sender) = self.bft_sender.get() {
+        if let Some(callback) = self.sync_callback.lock().as_ref() {
             // Await the callback to continue.
-            bft_sender
-                .tx_sync_bft_dag_at_bootup
-                .send(certificates)
-                .await
-                .with_context(|| "Failed to update the BFT DAG from sync")?;
+            callback.sync_dag_at_bootup(certificates).with_context(|| "Failed to update the BFT DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -683,18 +688,17 @@ impl<N: Network> Sync<N> {
                 self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions);
             });
 
-            // Sync the BFT DAG with the certificates.
-            for certificate in certificates {
-                // If a BFT sender was provided, send the certificate to the BFT.
-                // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                if let Some(bft_sender) = self.bft_sender.get() {
-                    let (callback_tx, callback_rx) = oneshot::channel();
-                    bft_sender
-                        .tx_sync_bft
-                        .send((certificate, callback_tx))
+            let callback = self.sync_callback.lock().as_ref().map(|callback| callback.clone());
+            if let Some(callback) = callback {
+                // Sync the BFT DAG with the certificates.
+                for certificate in certificates {
+                    // If a BFT sender was provided, send the certificate to the BFT.
+                    // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
+                    callback
+                        .clone()
+                        .add_new_certificate(certificate)
                         .await
-                        .with_context(|| "Failed to sync certificate")?;
-                    callback_rx.await?.with_context(|| "Failed to sync certificate")?;
+                        .with_context(|| "Failed to sync certificate")?
                 }
             }
         }
@@ -821,15 +825,12 @@ impl<N: Network> Sync<N> {
         // Check the block against the chain of pending blocks and append it on success.
         let new_block = match self.ledger.check_block_subdag(new_block, pending_blocks.make_contiguous()) {
             Ok(new_block) => new_block,
+            Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                debug!("Ledger is already synced with block at height {new_block_height}. Will not sync.",);
+                return Ok(());
+            }
             Err(err) => {
-                // TODO(kaimast): this shoud not return an error on the snarkVM side.
-                if err.to_string().contains("already in the ledger") {
-                    debug!("Ledger is already synced with block at height {new_block_height}. Will not sync.",);
-
-                    return Ok(());
-                } else {
-                    return Err(err.into_anyhow());
-                }
+                return Err(err.into_anyhow());
             }
         };
 
@@ -881,10 +882,17 @@ impl<N: Network> Sync<N> {
                 let storage = self.storage.clone();
 
                 task::spawn_blocking(move || {
-                    let block =
-                        ledger.check_block_content(pending_block).map_err(|e| e.into_anyhow()).with_context(|| {
-                            format!("Failed to check contents of pending block {hash} at height {height}")
-                        })?;
+                    let block = match ledger.check_block_content(pending_block) {
+                        Ok(block) => block,
+                        Err(CheckBlockError::InvalidHeight { .. })
+                        | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                            debug!("Ledger is already synced with block at height {new_block_height}. Will not sync.",);
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            return Err(err.into_anyhow());
+                        }
+                    };
 
                     trace!("Adding pending block {hash} at height {height} to the ledger");
                     ledger.advance_to_next_block(&block)?;
@@ -893,7 +901,7 @@ impl<N: Network> Sync<N> {
                     // Sync the round with the block.
                     storage.sync_round_with_block(block.round());
 
-                    Result::<(), anyhow::Error>::Ok(())
+                    anyhow::Result::<()>::Ok(())
                 })
                 .await?;
             }
@@ -1191,24 +1199,33 @@ mod tests {
             }
 
             let subdag = Subdag::from(subdag_map.clone())?;
-            let ledger = core_ledger.clone();
-            let block =
-                task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))
-                    .await
-                    .unwrap();
-
             previous_leader_cert = Some(leader_certificate);
+
+            let core_ledger = core_ledger.clone();
+            let block = task::spawn_blocking(move || {
+                let block = core_ledger.clone().prepare_advance_to_next_quorum_block(subdag, Default::default())?;
+                core_ledger.advance_to_next_block(&block)?;
+                anyhow::Result::<Block<_>>::Ok(block)
+            })
+            .await?;
+
             blocks.push(block);
         }
 
-        // Initialize the syncing ledger.
+        // ### Test that sync works as expected ###
         let storage_mode = StorageMode::new_test(None);
+
+        // Create a new ledger to test with, but use the existing storage
+        // so that the certificates exist.
         let syncing_ledger = {
-            let ledger =
-                task::spawn_blocking(move || CurrentLedger::load(genesis, storage_mode.clone())).await.unwrap();
-            Arc::new(CoreLedgerService::new(ledger, SimpleStoppable::new()))
+            let storage_mode = storage_mode.clone();
+            Arc::new(CoreLedgerService::new(
+                task::spawn_blocking(move || CurrentLedger::load(genesis, storage_mode)).await.unwrap(),
+                SimpleStoppable::new(),
+            ))
         };
-        // Initialize the gateway.
+
+        // Set up sync and its dependencies.
         let gateway = Gateway::new(
             account.clone(),
             storage.clone(),
