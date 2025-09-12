@@ -132,8 +132,9 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
         }
 
         // If the file has a lock import "imbalance", print it out and increment the counter.
+        // Allow having more locktick, than regular, imports.
         assert!(
-            lock_balance == 0,
+            lock_balance <= 0,
             "The locks in \"{}\" don't seem to have `locktick` counterparts!",
             entry.path().display()
         );
