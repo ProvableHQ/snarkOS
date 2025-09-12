@@ -68,6 +68,21 @@ pub enum Account {
         #[clap(long)]
         save_to_file: Option<String>,
     },
+    /// Derive an Aleo account from a private key
+    Import {
+        /// Account private key
+        private_key: Option<String>,
+        /// Specify the network to create an execution for.
+        /// [options: 0 = mainnet, 1 = testnet, 2 = canary]
+        #[clap(long, default_value_t=MainnetV0::ID, long, value_parser = network_id_parser())]
+        network: u16,
+        /// Print sensitive information (such as the private key) discreetly in an alternate screen
+        #[clap(long)]
+        discreet: bool,
+        /// Specify the path to a file where to save the account in addition to printing it
+        #[clap(long)]
+        save_to_file: Option<String>,
+    },
     Sign(Sign),
     Verify {
         /// Specify the network to create an execution for.
@@ -129,8 +144,18 @@ impl Account {
                     },
                 }
             }
+            Self::Import { private_key, network, discreet, save_to_file } => {
+                if save_to_file.is_some() && discreet {
+                    bail!("Cannot specify both the '--save-to-file' and '--discreet' flags");
+                }
+                match network {
+                    MainnetV0::ID => Self::import::<MainnetV0>(private_key, discreet, save_to_file),
+                    TestnetV0::ID => Self::import::<TestnetV0>(private_key, discreet, save_to_file),
+                    CanaryV0::ID => Self::import::<CanaryV0>(private_key, discreet, save_to_file),
+                    unknown_id => bail!("Unknown network ID ({unknown_id})"),
+                }
+            }
             Self::Sign(sign) => sign.execute(),
-
             Self::Verify { network, address, signature, message, raw } => {
                 // Verify the signature for the specified network.
                 match network {
@@ -230,6 +255,48 @@ impl Account {
         // Recover the private key from the seed as a field element.
         let private_key =
             PrivateKey::try_from(seed).map_err(|_| anyhow!("Failed to convert the seed into a valid private key"))?;
+        // Construct the account.
+        let account = snarkos_account::Account::<N>::try_from(private_key)?;
+        // Save to file in addition to printing it back to the user
+        if let Some(path) = save_to_file {
+            crate::check_parent_permissions(&path)?;
+            let mut file = File::create_new(path)?;
+            file.write_all(account.private_key().to_string().as_bytes())?;
+            crate::set_user_read_only(&file)?;
+        }
+        // Print the new Aleo account.
+        if !discreet {
+            return Ok(account.to_string());
+        }
+        display_string_discreetly(
+            &format!("{:>12}  {}", "Private Key".cyan().bold(), account.private_key()),
+            "### Do not share or lose this private key! Press any key to complete. ###",
+        )
+        .unwrap();
+        let account_info = format!(
+            " {:>12}  {}\n {:>12}  {}",
+            "View Key".cyan().bold(),
+            account.view_key(),
+            "Address".cyan().bold(),
+            account.address()
+        );
+        Ok(account_info)
+    }
+
+    /// Generates a new Aleo account from a given private key
+    fn import<N: Network>(private_key: Option<String>, discreet: bool, save_to_file: Option<String>) -> Result<String> {
+        // Read the private key.
+        let private_key = match discreet {
+            true => {
+                let private_key_input = rpassword::prompt_password("Please enter your private key: ").unwrap();
+                PrivateKey::from_str(&private_key_input)
+            }
+            false => match private_key {
+                Some(private_key) => PrivateKey::from_str(&private_key),
+                None => bail!("PRIVATE_KEY shouldn't be empty when --discreet is false"),
+            },
+        }?;
+
         // Construct the account.
         let account = snarkos_account::Account::<N>::try_from(private_key)?;
         // Save to file in addition to printing it back to the user
