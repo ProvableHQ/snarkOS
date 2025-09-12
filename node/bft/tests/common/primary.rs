@@ -230,7 +230,7 @@ impl TestNetwork {
                 bft.run(None, None, primary_sender, primary_receiver).await.unwrap();
             } else {
                 // Setup the channels and start the primary.
-                validator.primary.run(None, None, primary_sender, primary_receiver).await.unwrap();
+                validator.primary.run(None, None, None, primary_sender, primary_receiver).await.unwrap();
             }
 
             if let Some(interval_ms) = self.config.fire_transmissions {
