@@ -14,13 +14,11 @@
 // limitations under the License.
 
 use crate::{
-    Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
-    Transport,
     events::DataBlocks,
-    gateway::SyncCallback as GatewaySyncCallback,
-    helpers::{BFTSender, Pending, Storage, fmt_id, max_redundant_requests},
+    gateway::{Gateway, SyncCallback as GatewaySyncCallback, Transport},
+    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
 };
 
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
@@ -36,9 +34,12 @@ use snarkvm::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
+use locktick::{
+    parking_lot::{Mutex, RwLock},
+    tokio::Mutex as TMutex,
+};
 #[cfg(not(feature = "locktick"))]
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
@@ -51,10 +52,20 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
-    sync::{OnceCell, oneshot},
+    sync::oneshot,
     task::JoinHandle,
     time::{sleep, timeout},
 };
+
+/// This callback trait allows listening to synchronization updates, such as discorvering new `BatchCertificate`s.
+/// This is currently used by BFT.
+#[async_trait::async_trait]
+pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
+    async fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>) -> Result<()>;
+
+    /// Sends a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
+}
 
 /// Block synchronization logic for validators.
 ///
@@ -80,8 +91,8 @@ pub struct Sync<N: Network> {
     block_sync: Arc<BlockSync<N>>,
     /// The pending certificates queue.
     pending: Arc<Pending<Field<N>, BatchCertificate<N>>>,
-    /// The BFT sender.
-    bft_sender: Arc<OnceCell<BFTSender<N>>>,
+    /// The sync callback (used by [`BFT`]).
+    sync_callback: Arc<RwLock<Option<Arc<dyn SyncCallback<N>>>>>,
     /// Handles to the spawned background tasks.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
@@ -115,7 +126,7 @@ impl<N: Network> Sync<N> {
             ledger,
             block_sync,
             pending: Default::default(),
-            bft_sender: Default::default(),
+            sync_callback: Default::default(),
             handles: Default::default(),
             response_lock: Default::default(),
             sync_lock: Default::default(),
@@ -124,10 +135,11 @@ impl<N: Network> Sync<N> {
     }
 
     /// Initializes the sync module and sync the storage with the ledger at bootup.
-    pub async fn initialize(&self, bft_sender: Option<BFTSender<N>>) -> Result<()> {
-        // If a BFT sender was provided, set it.
-        if let Some(bft_sender) = bft_sender {
-            self.bft_sender.set(bft_sender).expect("BFT sender already set in gateway");
+    pub async fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
+        // If a callback was provided, set it.
+        if let Some(callback) = sync_callback {
+            let prev = self.sync_callback.write().replace(callback);
+            ensure!(prev.is_none(), "Sync callback was already set");
         }
 
         info!("Syncing storage with the ledger...");
@@ -137,6 +149,11 @@ impl<N: Network> Sync<N> {
 
         debug!("Finished initial block synchronization at startup");
         Ok(())
+    }
+
+    /// Get the `SyncCallback` if one is set.
+    fn get_callback(&self) -> Option<Arc<dyn SyncCallback<N>>> {
+        self.sync_callback.read().clone()
     }
 
     /// Sends the given batch of block requests to peers.
@@ -393,13 +410,9 @@ impl<N: Network> Sync<N> {
             .collect::<Vec<_>>();
 
         // If a BFT sender was provided, send the certificates to the BFT.
-        if let Some(bft_sender) = self.bft_sender.get() {
+        if let Some(cb) = self.get_callback() {
             // Await the callback to continue.
-            bft_sender
-                .tx_sync_bft_dag_at_bootup
-                .send(certificates)
-                .await
-                .with_context(|| "Failed to update the BFT DAG from sync")?;
+            cb.sync_dag_at_bootup(certificates).await.with_context(|| "Failed to update the DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -612,9 +625,9 @@ impl<N: Network> Sync<N> {
             for certificate in certificates {
                 // If a BFT sender was provided, send the certificate to the BFT.
                 // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                if let Some(bft_sender) = self.bft_sender.get() {
+                if let Some(cb) = self.get_callback() {
                     // Await the callback to continue.
-                    bft_sender.send_sync_bft(certificate).await.with_context(|| "Failed to sync certificate")?;
+                    cb.add_new_certificate(certificate).await.with_context(|| "Failed to sync certificate")?;
                 }
             }
         }
@@ -849,12 +862,14 @@ impl<N: Network> Sync<N> {
     /// Shuts down the primary.
     pub async fn shut_down(&self) {
         info!("Shutting down the sync module...");
+        // Remove the callback.
+        let _ = self.sync_callback.write().take();
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
         // Acquire the sync lock.
         let _lock = self.sync_lock.lock().await;
-        // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        // Abort all running tasks.
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
     }
 }
 
