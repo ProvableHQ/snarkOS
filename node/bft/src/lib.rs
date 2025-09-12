@@ -41,7 +41,6 @@ mod primary;
 pub use primary::*;
 
 mod sync;
-pub use sync::*;
 
 mod worker;
 pub use worker::*;
