@@ -13,7 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::locators::BlockLocators;
 use snarkos_node_router::Router;
 use snarkvm::prelude::Network;
 
@@ -36,24 +35,24 @@ use tokio::{sync::Notify, time::timeout};
 /// for when a peer should next be pinged.
 ///
 /// TODO (kaimast): maybe keep track of the last ping too, to not trigger spam detection?
-struct PingInner<N: Network> {
+struct PingInner {
     /// The next time we should ping a peer.
     next_ping: BTreeMap<Instant, SocketAddr>,
-    /// The most recent block locators.
+    /// The current block height.
     /// (or None if this node does not offer block sync)
-    block_locators: Option<BlockLocators<N>>,
+    block_height: Option<u32>,
 }
 
 /// Manages sending Ping messages to all connected peers.
 pub struct Ping<N: Network> {
     router: Router<N>,
-    inner: Arc<Mutex<PingInner<N>>>,
+    inner: Arc<Mutex<PingInner>>,
     notify: Arc<Notify>,
 }
 
-impl<N: Network> PingInner<N> {
-    fn new(block_locators: Option<BlockLocators<N>>) -> Self {
-        Self { block_locators, next_ping: Default::default() }
+impl PingInner {
+    fn new(block_height: Option<u32>) -> Self {
+        Self { block_height, next_ping: Default::default() }
     }
 }
 
@@ -67,9 +66,9 @@ impl<N: Network> Ping<N> {
     /// # Usage
     /// Initialize this with the most up-to-date block locators and call
     /// update_block_locators, whenever a new block is received/created.
-    pub fn new(router: Router<N>, block_locators: BlockLocators<N>) -> Self {
+    pub fn new(router: Router<N>, block_height: u32) -> Self {
         let notify = Arc::new(Notify::default());
-        let inner = Arc::new(Mutex::new(PingInner::new(Some(block_locators))));
+        let inner = Arc::new(Mutex::new(PingInner::new(Some(block_height))));
 
         {
             let inner = inner.clone();
@@ -116,22 +115,22 @@ impl<N: Network> Ping<N> {
     /// Notify the ping logic that a new peer connected.
     pub fn on_peer_connected(&self, peer_ip: SocketAddr) {
         // Send the first ping.
-        let locators = self.inner.lock().block_locators.clone();
-        if !self.router.send_ping(peer_ip, locators) {
+        let block_height = self.inner.lock().block_height;
+        if !self.router.send_ping(peer_ip, block_height) {
             warn!("Peer {peer_ip} connected and immediately disconnected?");
         }
     }
 
     /// Notify the ping logic that new blocks were created or synced.
-    pub fn update_block_locators(&self, locators: BlockLocators<N>) {
-        self.inner.lock().block_locators = Some(locators);
+    pub fn update_block_height(&self, block_height: u32) {
+        self.inner.lock().block_height = Some(block_height);
 
         // wake up the ping task
         self.notify.notify_one();
     }
 
     /// Background task that periodically sends out new ping messages.
-    async fn ping_task(inner: &Mutex<PingInner<N>>, router: &Router<N>, notify: &Notify) {
+    async fn ping_task(inner: &Mutex<PingInner>, router: &Router<N>, notify: &Notify) {
         let mut new_block = false;
 
         loop {
@@ -165,7 +164,7 @@ impl<N: Network> Ping<N> {
     }
 
     /// Ping all peers that have an expired timer.
-    fn ping_expired_peers(now: Instant, inner: &mut PingInner<N>, router: &Router<N>) {
+    fn ping_expired_peers(now: Instant, inner: &mut PingInner, router: &Router<N>) {
         loop {
             // Find next peer to contact.
             let peer_ip = {
@@ -181,8 +180,7 @@ impl<N: Network> Ping<N> {
             };
 
             // Send new ping
-            let locators = inner.block_locators.clone();
-            let success = router.send_ping(peer_ip, locators.clone());
+            let success = router.send_ping(peer_ip, inner.block_height);
             inner.next_ping.pop_first();
 
             if !success {
@@ -192,13 +190,12 @@ impl<N: Network> Ping<N> {
     }
 
     /// Ping all known peers.
-    fn ping_all_peers(inner: &mut PingInner<N>, router: &Router<N>) {
+    fn ping_all_peers(inner: &mut PingInner, router: &Router<N>) {
         let peers: Vec<SocketAddr> = inner.next_ping.values().copied().collect();
         inner.next_ping.clear();
 
         for peer_ip in peers {
-            let locators = inner.block_locators.clone();
-            let success = router.send_ping(peer_ip, locators);
+            let success = router.send_ping(peer_ip, inner.block_height);
 
             if !success {
                 trace!("Failed to send ping to peer {peer_ip}. Disconnected.");

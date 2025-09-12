@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkos_node_sync::locators::NUM_RECENT_BLOCKS;
+use snarkos_node_sync::locators::MAX_LOCATOR_SIZE;
 use snarkvm::{
     console::{
         account::{Address, Signature},
@@ -65,9 +65,9 @@ impl<N: Network> FromBytes for SignedProposals<N> {
         let max_certificates = N::LATEST_MAX_CERTIFICATES()
             .map_err(|e| error(format!("Failed to extract the maximum number of certificates: {e}")))?;
         // Ensure the number of signed proposals is within bounds
-        if num_signed_proposals as usize > max_certificates as usize * NUM_RECENT_BLOCKS {
+        if num_signed_proposals as usize > max_certificates as usize * MAX_LOCATOR_SIZE {
             return Err(error(format!(
-                "Number of signed proposals ({num_signed_proposals}) is greater than the maximum ({max_certificates} * {NUM_RECENT_BLOCKS})",
+                "Number of signed proposals ({num_signed_proposals}) is greater than the maximum ({max_certificates} * {MAX_LOCATOR_SIZE})",
             )));
         }
         // Deserialize the signed proposals.

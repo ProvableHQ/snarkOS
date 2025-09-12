@@ -25,9 +25,11 @@ use snarkos_node_router::messages::{
     PuzzleRequest,
     UnconfirmedTransaction,
 };
+use snarkos_node_sync::locators::BlockLocators;
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::prelude::{Field, Network, Zero, block::Transaction};
 
+use anyhow::{Context, Result, bail};
 use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Prover<N, C> {
@@ -109,13 +111,11 @@ impl<N: Network, C: ConsensusStorage<N>> Routing<N> for Prover<N, C> {}
 impl<N: Network, C: ConsensusStorage<N>> Heartbeat<N> for Prover<N, C> {
     /// This function updates the puzzle if network has updated.
     fn handle_puzzle_request(&self) {
-        // Find the sync peers.
-        if let Some((sync_peers, _)) = self.sync.find_sync_peers() {
-            // Choose the peer with the highest block height.
-            if let Some((peer_ip, _)) = sync_peers.into_iter().max_by_key(|(_, height)| *height) {
-                // Request the puzzle from the peer.
-                self.router().send(peer_ip, Message::PuzzleRequest(PuzzleRequest));
-            }
+        // Get connected peers and request puzzle from any available peer.
+        let connected_peers = self.router().connected_peers();
+        if let Some(peer_ip) = connected_peers.first() {
+            // Request the puzzle from the peer.
+            self.router().send(*peer_ip, Message::PuzzleRequest(PuzzleRequest));
         }
     }
 }
@@ -152,37 +152,46 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
     }
 
     /// Handles a `BlockRequest` message.
-    fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
-        false
+    fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> Result<bool> {
+        bail!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
-        false
+    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> Result<bool> {
+        bail!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+    }
+
+    /// Handles a `BlocklocatorsRequest` message.
+    async fn block_locators_request(&self, peer_ip: SocketAddr, _start_height: u32, _end_height: u32) -> Result<bool> {
+        bail!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+    }
+
+    /// Handles a `BlockLocatorsResponse` message.
+    async fn block_locators_response(&self, peer_ip: SocketAddr, _locators: BlockLocators<N>) -> Result<bool> {
+        bail!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
     }
 
     /// Processes the block locators and sends back a `Pong` message.
-    fn ping(&self, peer_ip: SocketAddr, message: Ping<N>) -> bool {
+    async fn ping(&self, peer_ip: SocketAddr, message: Ping) -> Result<()> {
         // If block locators were provided, then update the peer in the sync pool.
-        if let Some(block_locators) = message.block_locators {
+        if let Some(height) = message.block_height {
             // Check the block locators are valid, and update the peer in the sync pool.
-            if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
-                warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
-                return false;
-            }
+            let sync = self.sync.clone();
+            sync.update_peer_block_height(peer_ip, height)
+                .await
+                .with_context(|| format!("Peer '{peer_ip}' sent invalid block locators"))?;
         }
 
         // Send a `Pong` message to the peer.
         self.router().send(peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
-        true
+
+        Ok(())
     }
 
     /// Sleeps for a period and then sends a `Ping` message to the peer.
-    fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> bool {
+    fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> Result<()> {
         self.ping.on_pong_received(peer_ip);
-        true
+        Ok(())
     }
 
     /// Disconnects on receipt of a `PuzzleRequest` message.

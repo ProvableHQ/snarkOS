@@ -15,7 +15,7 @@
 
 use super::*;
 
-use snarkos_node_sync_locators::BlockLocators;
+use messages::Ping;
 use snarkos_node_tcp::protocols::Writing;
 
 use std::io;
@@ -26,8 +26,8 @@ impl<N: Network> Router<N> {
     ///
     /// Returns false if the peer does not exist or disconnected.
     #[must_use]
-    pub fn send_ping(&self, peer_ip: SocketAddr, block_locators: Option<BlockLocators<N>>) -> bool {
-        let result = self.send(peer_ip, Message::Ping(messages::Ping::new(self.node_type(), block_locators)));
+    pub fn send_ping(&self, peer_ip: SocketAddr, block_height: Option<u32>) -> bool {
+        let result = self.send(peer_ip, Message::Ping(Ping::new::<N>(self.node_type(), block_height)));
         result.is_some()
     }
 

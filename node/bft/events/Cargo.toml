@@ -62,4 +62,4 @@ workspace = true
 
 [dev-dependencies.snarkos-node-sync-locators]
 workspace = true
-features = [ "test" ]
+features = [ "test-helpers" ]

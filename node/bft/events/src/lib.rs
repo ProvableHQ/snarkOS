@@ -66,6 +66,9 @@ pub use validators_response::ValidatorsResponse;
 mod worker_ping;
 pub use worker_ping::WorkerPing;
 
+mod block_locators;
+pub use block_locators::{BlockLocatorsRequest, BlockLocatorsResponse};
+
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::{
     console::prelude::{FromBytes, Network, Read, ToBytes, Write, error},
@@ -90,7 +93,6 @@ pub trait EventTrait: ToBytes + FromBytes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 // TODO (howardwu): For mainnet - Remove this clippy lint. The CertificateResponse should not
 //  be a large enum variant, after removing the versioning.
-#[allow(clippy::large_enum_variant)]
 pub enum Event<N: Network> {
     BatchPropose(BatchPropose<N>),
     BatchSignature(BatchSignature<N>),
@@ -108,6 +110,8 @@ pub enum Event<N: Network> {
     ValidatorsRequest(ValidatorsRequest),
     ValidatorsResponse(ValidatorsResponse<N>),
     WorkerPing(WorkerPing<N>),
+    BlockLocatorsRequest(BlockLocatorsRequest),
+    BlockLocatorsResponse(BlockLocatorsResponse<N>),
 }
 
 impl<N: Network> From<DisconnectReason> for Event<N> {
@@ -140,6 +144,8 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(event) => event.name(),
             Self::ValidatorsResponse(event) => event.name(),
             Self::WorkerPing(event) => event.name(),
+            Self::BlockLocatorsRequest(event) => event.name(),
+            Self::BlockLocatorsResponse(event) => event.name(),
         }
     }
 
@@ -163,6 +169,8 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(..) => 13,
             Self::ValidatorsResponse(..) => 14,
             Self::WorkerPing(..) => 15,
+            Self::BlockLocatorsRequest(..) => 16,
+            Self::BlockLocatorsResponse(..) => 17,
         }
     }
 }
@@ -188,6 +196,8 @@ impl<N: Network> ToBytes for Event<N> {
             Self::ValidatorsRequest(event) => event.write_le(writer),
             Self::ValidatorsResponse(event) => event.write_le(writer),
             Self::WorkerPing(event) => event.write_le(writer),
+            Self::BlockLocatorsRequest(event) => event.write_le(writer),
+            Self::BlockLocatorsResponse(event) => event.write_le(writer),
         }
     }
 }
@@ -215,7 +225,9 @@ impl<N: Network> FromBytes for Event<N> {
             13 => Self::ValidatorsRequest(ValidatorsRequest::read_le(&mut reader)?),
             14 => Self::ValidatorsResponse(ValidatorsResponse::read_le(&mut reader)?),
             15 => Self::WorkerPing(WorkerPing::read_le(&mut reader)?),
-            16.. => return Err(error(format!("Unknown event ID {id}"))),
+            16 => Self::BlockLocatorsRequest(BlockLocatorsRequest::read_le(&mut reader)?),
+            17 => Self::BlockLocatorsResponse(BlockLocatorsResponse::read_le(&mut reader)?),
+            18.. => return Err(error(format!("Unknown event ID {id}"))),
         };
 
         // Ensure that there are no "dangling" bytes.

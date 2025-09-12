@@ -26,6 +26,8 @@ use crate::{
 };
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
+    BlockLocatorsRequest,
+    BlockLocatorsResponse,
     BlockRequest,
     BlockResponse,
     CertificateRequest,
@@ -62,6 +64,7 @@ use snarkvm::{
     prelude::{Address, Field},
 };
 
+use anyhow::anyhow;
 use colored::Colorize;
 use futures::SinkExt;
 use indexmap::{IndexMap, IndexSet};
@@ -275,6 +278,11 @@ impl<N: Network> CommunicationService for Gateway<N> {
     fn prepare_block_request(start_height: u32, end_height: u32) -> Self::Message {
         debug_assert!(start_height < end_height, "Invalid block request format");
         Event::BlockRequest(BlockRequest { start_height, end_height })
+    }
+
+    /// Prepare a block locators requets to be sent
+    fn prepare_block_locators_request(start_height: u32, end_height: u32) -> Self::Message {
+        Event::BlockLocatorsRequest(BlockLocatorsRequest { start_height, end_height })
     }
 
     /// Sends the given message to specified peer.
@@ -751,7 +759,7 @@ impl<N: Network> Gateway<N> {
                 bail!("{CONTEXT} {:?}", disconnect.reason)
             }
             Event::PrimaryPing(ping) => {
-                let PrimaryPing { version, block_locators, primary_certificate } = ping;
+                let PrimaryPing { version, current_block_height, primary_certificate } = ping;
 
                 // Ensure the event version is not outdated.
                 if version < Event::<N>::VERSION {
@@ -761,7 +769,7 @@ impl<N: Network> Gateway<N> {
                 // Update the peer locators. Except for some tests, there is always a sync sender.
                 if let Some(sync_sender) = self.sync_sender.get() {
                     // Check the block locators are valid, and update the validators in the sync module.
-                    if let Err(error) = sync_sender.update_peer_locators(peer_ip, block_locators).await {
+                    if let Err(error) = sync_sender.update_peer_block_height(peer_ip, current_block_height).await {
                         bail!("Validator '{peer_ip}' sent invalid block locators - {error}");
                     }
                 }
@@ -902,6 +910,29 @@ impl<N: Network> Gateway<N> {
                     }
                 }
                 Ok(())
+            }
+            Event::BlockLocatorsRequest(BlockLocatorsRequest { start_height, end_height }) => {
+                ensure!(start_height < end_height, "Invalid block locators range");
+
+                let Some(sync_sender) = self.sync_sender.get() else {
+                    bail!("Cannot process block locators request: no sync sender");
+                };
+
+                let locators = sync_sender.get_block_locators(start_height, end_height).await?;
+                let event = Event::BlockLocatorsResponse(BlockLocatorsResponse { locators });
+
+                let Some(result) = Transport::send(self, peer_ip, event).await else {
+                    bail!("Failed to send block locator response to peer {peer_ip}");
+                };
+
+                result.await?.map_err(|err| anyhow!("Send failed: {err}"))
+            }
+            Event::BlockLocatorsResponse(BlockLocatorsResponse { locators }) => {
+                if let Some(sync_sender) = self.sync_sender.get() {
+                    sync_sender.update_peer_block_locators(peer_ip, locators).await
+                } else {
+                    bail!("Cannot update peer block locators: no sync sender");
+                }
             }
         }
     }

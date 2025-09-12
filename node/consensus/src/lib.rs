@@ -543,8 +543,7 @@ impl<N: Network> Consensus<N> {
         }
 
         // Notify peers that we have a new block.
-        let locators = self.block_sync.get_block_locators()?;
-        self.ping.update_block_locators(locators);
+        self.ping.update_block_height(next_block.height());
 
         // Make block sync aware of the new block.
         self.block_sync.set_sync_height(next_block.height());
