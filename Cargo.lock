@@ -536,9 +536,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.36"
+version = "1.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5252b3d2648e5eedbc1a6f501e3c795e07025c1e93bbf8bbdd6eef7f447a6d54"
+checksum = "65193589c6404eb80b450d618eaf9a2cafaaafd57ecce47370519ef674a7bd44"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1786,7 +1786,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -1796,9 +1796,9 @@ dependencies = [
 
 [[package]]
 name = "iana-time-zone"
-version = "0.1.63"
+version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c919e5debc312ad217002b8048a17b7d83f80703865bbfcfebb0458b0b27d8"
+checksum = "33e57f83510bb73707521ebaffa789ec8caf86f9657cad665b092b581d40e9fb"
 dependencies = [
  "android_system_properties",
  "core-foundation-sys",
@@ -2892,7 +2892,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.16",
  "tokio",
  "tracing",
@@ -2929,7 +2929,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4117,7 +4117,7 @@ dependencies = [
 [[package]]
 name = "snarkvm"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -4142,7 +4142,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-algorithms"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4170,7 +4170,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-algorithms-cuda"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "blst",
  "cc",
@@ -4181,7 +4181,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -4195,7 +4195,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-account"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-network",
  "snarkvm-circuit-types",
@@ -4205,7 +4205,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-algorithms"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-types",
  "snarkvm-console-algorithms",
@@ -4215,7 +4215,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-collections"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-types",
@@ -4225,7 +4225,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-environment"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "indexmap 2.11.1",
  "itertools 0.14.0",
@@ -4243,12 +4243,12 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-environment-witness"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 
 [[package]]
 name = "snarkvm-circuit-network"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-collections",
@@ -4259,7 +4259,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-program"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -4273,7 +4273,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-address",
@@ -4288,7 +4288,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-address"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4301,7 +4301,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-boolean"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-console-types-boolean",
@@ -4310,7 +4310,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-field"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4320,7 +4320,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-group"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4332,7 +4332,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-integers"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4344,7 +4344,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-scalar"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4355,7 +4355,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-string"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4367,7 +4367,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-account",
  "snarkvm-console-algorithms",
@@ -4380,7 +4380,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-account"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "bs58",
  "snarkvm-console-network",
@@ -4391,7 +4391,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-algorithms"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "blake2s_simd",
  "smallvec",
@@ -4404,7 +4404,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-collections"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "rayon",
@@ -4415,7 +4415,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-network"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anyhow",
  "enum-iterator",
@@ -4435,7 +4435,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-network-environment"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anyhow",
  "bech32",
@@ -4453,7 +4453,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-program"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "enum-iterator",
  "enum_index",
@@ -4473,7 +4473,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-address",
@@ -4488,7 +4488,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-address"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4499,7 +4499,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-boolean"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
 ]
@@ -4507,7 +4507,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-field"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4517,7 +4517,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-group"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4528,7 +4528,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-integers"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4539,7 +4539,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-scalar"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4550,7 +4550,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-string"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4561,7 +4561,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-curves"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "rand 0.8.5",
  "rayon",
@@ -4575,7 +4575,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-fields"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4592,7 +4592,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4619,7 +4619,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-authority"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anyhow",
  "rand 0.8.5",
@@ -4631,7 +4631,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-block"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anyhow",
  "indexmap 2.11.1",
@@ -4653,7 +4653,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-committee"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anyhow",
  "indexmap 2.11.1",
@@ -4672,7 +4672,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-ledger-narwhal-batch-certificate",
  "snarkvm-ledger-narwhal-batch-header",
@@ -4685,7 +4685,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-certificate"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "indexmap 2.11.1",
  "rayon",
@@ -4698,7 +4698,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-header"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "indexmap 2.11.1",
  "rayon",
@@ -4711,7 +4711,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-data"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "bytes",
  "serde_json",
@@ -4722,7 +4722,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-subdag"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "indexmap 2.11.1",
  "rayon",
@@ -4737,7 +4737,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "bytes",
  "serde_json",
@@ -4750,7 +4750,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission-id"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "snarkvm-console",
  "snarkvm-ledger-puzzle",
@@ -4759,7 +4759,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-puzzle"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4779,7 +4779,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-puzzle-epoch"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4802,7 +4802,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-query"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4819,7 +4819,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-store"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std-storage",
  "anyhow",
@@ -4846,7 +4846,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-test-helpers"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4864,7 +4864,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-metrics"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "metrics",
 ]
@@ -4872,7 +4872,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-parameters"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4895,7 +4895,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4928,7 +4928,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-process"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "colored 3.0.0",
@@ -4953,7 +4953,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-program"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "indexmap 2.11.1",
  "paste",
@@ -4971,7 +4971,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-snark"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "bincode",
  "serde_json",
@@ -4984,7 +4984,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-utilities"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5008,7 +5008,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-utilities-derives"
 version = "4.1.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9affc29f0d290a0edbd86ace6f1d25abb604ad66"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=feat%2Ftrack-error#9fc636f2ff17865580ab5ee1fbbef4c2d59b8db3"
 dependencies = [
  "proc-macro2",
  "quote 1.0.40",
@@ -6118,15 +6118,15 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-core"
-version = "0.61.2"
+version = "0.62.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
+checksum = "57fe7168f7de578d2d8a05b07fd61870d2e73b4020e9f49aa00da8471723497c"
 dependencies = [
  "windows-implement",
  "windows-interface",
- "windows-link 0.1.3",
- "windows-result",
- "windows-strings",
+ "windows-link 0.2.0",
+ "windows-result 0.4.0",
+ "windows-strings 0.5.0",
 ]
 
 [[package]]
@@ -6170,8 +6170,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b8a9ed28765efc97bbc954883f4e6796c33a06546ebafacbabee9696967499e"
 dependencies = [
  "windows-link 0.1.3",
- "windows-result",
- "windows-strings",
+ "windows-result 0.3.4",
+ "windows-strings 0.4.2",
 ]
 
 [[package]]
@@ -6184,12 +6184,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-result"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7084dcc306f89883455a206237404d3eaf961e5bd7e0f312f7c91f57eb44167f"
+dependencies = [
+ "windows-link 0.2.0",
+]
+
+[[package]]
 name = "windows-strings"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7218c655a553b0bed4426cf54b20d7ba363ef543b52d515b3e48d7fd55318dda"
+dependencies = [
+ "windows-link 0.2.0",
 ]
 
 [[package]]

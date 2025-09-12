@@ -32,7 +32,7 @@ use snarkvm::{
     utilities::spawn_blocking,
 };
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -229,7 +229,7 @@ impl<N: Network> Sync<N> {
                 let res = callback.send(self_.advance_with_sync_blocks(peer_ip, blocks).await);
 
                 if let Err(err) = res {
-                    warn!("Failed to send response to callbac: {err:?}");
+                    warn!("Failed to send response to callback: {err:?}");
                 }
             }
 
@@ -451,9 +451,11 @@ impl<N: Network> Sync<N> {
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(bft_sender) = self.bft_sender.get() {
             // Await the callback to continue.
-            if let Err(e) = bft_sender.tx_sync_bft_dag_at_bootup.send(certificates).await {
-                bail!("Failed to update the BFT DAG from sync: {e}");
-            }
+            bft_sender
+                .tx_sync_bft_dag_at_bootup
+                .send(certificates)
+                .await
+                .with_context(|| "Failed to update the BFT DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -668,9 +670,7 @@ impl<N: Network> Sync<N> {
                 // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
                 if let Some(bft_sender) = self.bft_sender.get() {
                     // Await the callback to continue.
-                    if let Err(err) = bft_sender.send_sync_bft(certificate).await {
-                        bail!("Failed to sync certificate - {err}");
-                    };
+                    bft_sender.send_sync_bft(certificate).await.with_context(|| "Failed to sync certificate")?;
                 }
             }
         }
@@ -812,13 +812,13 @@ impl<N: Network> Sync<N> {
             for pending_block in pending_blocks.drain(0..num_blocks) {
                 let hash = pending_block.hash();
                 let height = pending_block.height();
-                match self.ledger.check_block_content(pending_block) {
-                    Ok(block) => {
-                        trace!("Adding pending block {hash} at height {height} to the ledger");
-                        self.ledger.advance_to_next_block(&block)?;
-                    }
-                    Err(err) => bail!("Failed to check contents of pending block {hash} at height {height}: {err}"),
-                }
+                let block = self
+                    .ledger
+                    .check_block_content(pending_block)
+                    .with_context(|| format!("Failed to check contents of pending block {hash} at height {height}"))?;
+
+                trace!("Adding pending block {hash} at height {height} to the ledger");
+                self.ledger.advance_to_next_block(&block).with_context(|| "Failed to advance to next block")?;
             }
         }
 
@@ -887,12 +887,12 @@ impl<N: Network> Sync<N> {
         }
         // Wait for the certificate to be fetched.
         // TODO (raychu86): Consider making the timeout dynamic based on network traffic and/or the number of validators.
-        match tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the certificate was fetched, return it.
-            Ok(result) => Ok(result?),
-            // If the certificate was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch certificate {} - (timeout) {e}", fmt_id(certificate_id)),
-        }
+        let cert = tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| format!("Unable to fetch certificate {} (timeout)", fmt_id(certificate_id)))?
+            .with_context(|| format!("Unable to fetch certificate {} (timeout)", fmt_id(certificate_id)))?;
+
+        Ok(cert)
     }
 
     /// Handles the incoming certificate request.
