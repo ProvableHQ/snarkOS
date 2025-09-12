@@ -14,15 +14,13 @@
 // limitations under the License.
 
 use crate::{
-    Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
-    Transport,
-    events::DataBlocks,
-    helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
+    events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
+    gateway::{Gateway, Transport},
+    helpers::{Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
+    ledger_service::LedgerService,
     spawn_blocking,
 };
-use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
-use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{
     BLOCK_REQUEST_BATCH_DELAY,
@@ -32,6 +30,7 @@ use snarkos_node_sync::{
     PrepareSyncRequest,
     locators::BlockLocators,
 };
+use snarkos_utilities::CallbackHandle;
 
 use snarkvm::{
     console::{
@@ -59,10 +58,17 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{
-    sync::{OnceCell, oneshot},
-    task::JoinHandle,
-};
+use tokio::{sync::oneshot, task::JoinHandle};
+
+/// This callback trait allows listening to synchronization updates, such as discorvering new `BatchCertificate`s.
+/// This is currently used by BFT.
+#[async_trait::async_trait]
+pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
+    async fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>) -> Result<()>;
+
+    /// Sends a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
+}
 
 /// Block synchronization logic for validators.
 ///
@@ -88,8 +94,8 @@ pub struct Sync<N: Network> {
     block_sync: Arc<BlockSync<N>>,
     /// The pending certificates queue.
     pending: Arc<Pending<Field<N>, BatchCertificate<N>>>,
-    /// The BFT sender.
-    bft_sender: Arc<OnceCell<BFTSender<N>>>,
+    /// The sync callback (used by [`BFT`]).
+    sync_callback: Arc<CallbackHandle<Arc<dyn SyncCallback<N>>>>,
     /// Handles to the spawned background tasks.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
@@ -125,7 +131,7 @@ impl<N: Network> Sync<N> {
             ledger,
             block_sync,
             pending: Default::default(),
-            bft_sender: Default::default(),
+            sync_callback: Default::default(),
             handles: Default::default(),
             response_lock: Default::default(),
             sync_lock: Default::default(),
@@ -134,10 +140,10 @@ impl<N: Network> Sync<N> {
     }
 
     /// Initializes the sync module and sync the storage with the ledger at bootup.
-    pub async fn initialize(&self, bft_sender: Option<BFTSender<N>>) -> Result<()> {
-        // If a BFT sender was provided, set it.
-        if let Some(bft_sender) = bft_sender {
-            self.bft_sender.set(bft_sender).expect("BFT sender already set in gateway");
+    pub async fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
+        // If a callback was provided, set it.
+        if let Some(callback) = sync_callback {
+            self.sync_callback.set(callback).with_context(|| "Failed to set sync callback")?;
         }
 
         info!("Syncing storage with the ledger...");
@@ -493,13 +499,9 @@ impl<N: Network> Sync<N> {
             .collect::<Vec<_>>();
 
         // If a BFT sender was provided, send the certificates to the BFT.
-        if let Some(bft_sender) = self.bft_sender.get() {
+        if let Some(cb) = self.sync_callback.get() {
             // Await the callback to continue.
-            bft_sender
-                .tx_sync_bft_dag_at_bootup
-                .send(certificates)
-                .await
-                .with_context(|| "Failed to update the BFT DAG from sync")?;
+            cb.sync_dag_at_bootup(certificates).await.with_context(|| "Failed to update the DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -732,20 +734,15 @@ impl<N: Network> Sync<N> {
             });
 
             // Sync the BFT DAG with the certificates.
-            for certificate in certificates {
-                // If a BFT sender was provided, send the certificate to the BFT.
-                // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                if let Some(bft_sender) = self.bft_sender.get() {
-                    let (callback_tx, callback_rx) = oneshot::channel();
-                    bft_sender
-                        .tx_sync_bft
-                        .send((certificate, callback_tx))
-                        .await
-                        .with_context(|| "Failed to sync certificate")?;
-                    callback_rx.await?.with_context(|| "Failed to sync certificate")?;
+            if let Some(cb) = self.sync_callback.get() {
+                for certificate in certificates {
+                    // If a BFT sender was provided, send the certificate to the BFT.
+                    // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
+                    cb.add_new_certificate(certificate).await.with_context(|| "Failed to sync certificate")?;
                 }
             }
         }
+
         Ok(())
     }
 
@@ -1054,6 +1051,8 @@ impl<N: Network> Sync<N> {
     /// Shuts down the primary.
     pub async fn shut_down(&self) {
         info!("Shutting down the sync module...");
+        // Remove the callback.
+        self.sync_callback.clear();
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
         // Acquire the sync lock.

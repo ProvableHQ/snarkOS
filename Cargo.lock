@@ -5071,6 +5071,7 @@ dependencies = [
 name = "snarkos-utilities"
 version = "4.2.1"
 dependencies = [
+ "anyhow",
  "locktick",
  "parking_lot",
  "tokio",

@@ -212,7 +212,7 @@ pub async fn start_primary(
         None,
     )?;
     // Run the primary instance.
-    primary.run(None, None, sender.clone(), receiver).await?;
+    primary.run(None, None, None, sender.clone(), receiver).await?;
     // Handle OS signals.
     handle_signals(&primary);
     // Return the primary instance.
