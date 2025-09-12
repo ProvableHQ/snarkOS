@@ -21,7 +21,7 @@ use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_router::{PeerPoolHandling, messages::DataBlocks};
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
-use snarkvm::prelude::{Network, block::Block};
+use snarkvm::{console::network::Network, ledger::Block, utilities::LoggableError};
 
 use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
@@ -360,8 +360,8 @@ impl<N: Network> BlockSync<N> {
         // Insert the chunk of block requests.
         for (height, (hash, previous_hash, _)) in requests.iter() {
             // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
-            if let Err(error) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
-                warn!("Block sync failed - {error}");
+            if let Err(err) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
+                err.log_error("Block sync failed");
                 return false;
             }
         }
@@ -380,7 +380,7 @@ impl<N: Network> BlockSync<N> {
                 match sender {
                     Some(sender) => {
                         if let Err(err) = sender.await {
-                            warn!("Failed to send block request to peer '{sync_ip}': {err}");
+                            err.log_warning(format!("Failed to send block request to peer '{sync_ip}'"));
                             false
                         } else {
                             true
@@ -401,7 +401,7 @@ impl<N: Network> BlockSync<N> {
             let success = match result {
                 Ok(success) => success,
                 Err(err) => {
-                    error!("tokio join error: {err}");
+                    err.log_error("tokio join error");
                     false
                 }
             };
@@ -432,7 +432,7 @@ impl<N: Network> BlockSync<N> {
         for block in blocks {
             if let Err(error) = self.insert_block_response(peer_ip, block) {
                 self.remove_block_requests_to_peer(&peer_ip);
-                bail!("{error}");
+                return Err(error);
             }
         }
         Ok(())
@@ -509,20 +509,20 @@ impl<N: Network> BlockSync<N> {
                     Ok(_) => match ledger.advance_to_next_block(&block) {
                         Ok(_) => true,
                         Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                            err.log_warning(format!(
+                                "Failed to advance to next block (height: {}, hash: '{}')",
                                 block.height(),
                                 block.hash()
-                            );
+                            ));
                             false
                         }
                     },
                     Err(err) => {
-                        warn!(
-                            "The next block (height: {}, hash: '{}') is invalid - {err}",
+                        err.log_warning(format!(
+                            "The next block (height: {}, hash: '{}') is invalid",
                             block.height(),
                             block.hash()
-                        );
+                        ));
                         false
                     }
                 }

@@ -122,7 +122,7 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "utilities" ]
+features = [ "async", "utilities" ]
 
 [dependencies.time]
 workspace = true
