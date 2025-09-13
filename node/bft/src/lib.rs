@@ -37,13 +37,13 @@ pub use bft::{BFT, BftCallback};
 pub mod gateway;
 pub use gateway::{Gateway, GatewayPrimaryCallback, GatewaySyncCallback};
 
-mod primary;
-pub use primary::*;
-
 mod sync;
 
+mod primary;
+pub use primary::{Primary, PrimaryCallback};
+
 mod worker;
-pub use worker::*;
+pub use worker::Worker;
 
 pub const CONTEXT: &str = "[MemoryPool]";
 

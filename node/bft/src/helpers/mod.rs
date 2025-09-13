@@ -34,16 +34,16 @@ pub use proposal::*;
 pub mod proposal_cache;
 pub use proposal_cache::*;
 
-pub mod ready;
-pub use ready::*;
+mod ready;
+pub(crate) use ready::*;
 
-pub mod resolver;
-pub use resolver::*;
+mod resolver;
+pub(crate) use resolver::*;
 
 pub mod signed_proposals;
 pub use signed_proposals::*;
 
-pub mod storage;
+mod storage;
 pub use storage::*;
 
 #[cfg(feature = "telemetry")]

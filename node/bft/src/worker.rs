@@ -16,11 +16,11 @@
 use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     MAX_WORKERS,
-    ProposedBatch,
     events::{Event, TransmissionRequest, TransmissionResponse},
     gateway::Transport,
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
-    ledger_service::LedgerService
+    ledger_service::LedgerService,
+    primary::ProposedBatch,
 };
 
 use snarkvm::{

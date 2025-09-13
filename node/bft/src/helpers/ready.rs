@@ -52,6 +52,7 @@ impl<N: Network> Ready<N> {
     }
 
     /// Returns `true` if the ready queue is empty.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.transmissions.is_empty()
     }
