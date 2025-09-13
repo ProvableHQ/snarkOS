@@ -30,6 +30,8 @@ telemetry = [ "snarkos-node-bft/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
 
+[dependencies.async-trait]
+workspace = true
 
 [dependencies.aleo-std]
 workspace = true

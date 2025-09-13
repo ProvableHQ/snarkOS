@@ -32,7 +32,7 @@ pub use snarkos_node_bft_storage_service as storage_service;
 pub mod helpers;
 
 mod bft;
-pub use bft::*;
+pub use bft::{BFT, BftCallback};
 
 mod gateway;
 pub use gateway::Gateway;
