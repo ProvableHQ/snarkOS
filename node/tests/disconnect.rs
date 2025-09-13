@@ -52,7 +52,7 @@ macro_rules! test_disconnect {
             let peer_addr = peer.node().listening_addr().unwrap();
 
             // Connect the node to the test peer.
-            node.router().connect(peer_addr).unwrap().await.unwrap();
+            node.router().connect(peer_addr).unwrap().await;
 
             // Check the peer counts.
             let node_clone = node.clone();
@@ -64,7 +64,7 @@ macro_rules! test_disconnect {
 
             // Disconnect.
             if $node_disconnects {
-                node.router().disconnect(node.tcp().connected_addrs()[0]).await.unwrap();
+                node.router().disconnect(node.tcp().connected_addrs()[0]).await;
             } else {
                 peer.node().disconnect(peer.node().connected_addrs()[0]).await;
             }
@@ -155,15 +155,15 @@ async fn duplicate_disconnect_attempts() {
     let addr2 = node2.tcp().listening_addr().unwrap();
 
     // Connect node1 to node2.
-    assert!(node1.router().connect(addr2).unwrap().await.unwrap());
+    assert!(node1.router().connect(addr2).unwrap().await);
 
     // Prepare disconnect attempts.
     let node1_clone = node1.clone();
-    let disconn1 = tokio::spawn(async move { node1_clone.router().disconnect(addr2).await.unwrap() });
+    let disconn1 = tokio::spawn(async move { node1_clone.router().disconnect(addr2).await });
     let node1_clone = node1.clone();
-    let disconn2 = tokio::spawn(async move { node1_clone.router().disconnect(addr2).await.unwrap() });
+    let disconn2 = tokio::spawn(async move { node1_clone.router().disconnect(addr2).await });
     let node1_clone = node1.clone();
-    let disconn3 = tokio::spawn(async move { node1_clone.router().disconnect(addr2).await.unwrap() });
+    let disconn3 = tokio::spawn(async move { node1_clone.router().disconnect(addr2).await });
 
     // Attempt to disconnect the 1st node from the other one several times at once.
     let (result1, result2, result3) = tokio::join!(disconn1, disconn2, disconn3);

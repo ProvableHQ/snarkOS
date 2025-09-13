@@ -218,9 +218,7 @@ async fn test_validator_connection() {
         });
 
         // Connect node1 to node0.
-        let Ok(res) = node1.connect(node0.local_ip()).unwrap().await else {
-            panic!("Connection failed for the wrong reasons.");
-        };
+        let res = node1.connect(node0.local_ip()).unwrap().await;
         assert!(!res, "Connection was accepted when it should not have been.");
 
         // Check the TCP level - connection was not accepted.

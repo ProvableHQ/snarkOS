@@ -52,7 +52,10 @@ use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_tcp::{Config, ConnectionSide, P2P, Tcp, is_bogon_ip, is_unspecified_or_broadcast_ip};
 
-use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
+use snarkvm::{
+    prelude::{Address, Network, PrivateKey, ViewKey},
+    utilities::task::{self, JoinHandle},
+};
 
 use aleo_std::{StorageMode, aleo_ledger_dir};
 use anyhow::{Result, bail};
@@ -72,7 +75,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::task::JoinHandle;
+use tokio::sync::oneshot;
 
 /// The default port used by the router.
 pub const DEFAULT_NODE_PORT: u16 = 4130;
@@ -155,7 +158,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             self.is_trusted(listener_addr) || bootstrap_peers::<N>(false).contains(&listener_addr);
 
         let tcp = self.tcp().clone();
-        Some(tokio::spawn(async move {
+        Some(task::spawn(async move {
             debug!("{{Self::OWNER}} Connecting to {listener_addr}...");
             // Attempt to connect to the peer.
             match tcp.connect(listener_addr).await {
@@ -177,9 +180,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn disconnect(&self, listener_addr: SocketAddr) -> JoinHandle<bool> {
         if let Some(connected_addr) = self.resolve_to_ambiguous(listener_addr) {
             let tcp = self.tcp().clone();
-            tokio::spawn(async move { tcp.disconnect(connected_addr).await })
+            task::spawn(async move { tcp.disconnect(connected_addr).await })
         } else {
-            tokio::spawn(async { false })
+            task::spawn(async { false })
         }
     }
 
@@ -652,7 +655,7 @@ impl<N: Network> Router<N> {
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     pub fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the router.
@@ -685,11 +688,7 @@ impl<N: Network> CommunicationService for Router<N> {
     /// This function returns as soon as the message is queued to be sent,
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the message has been delivered.
-    async fn send(
-        &self,
-        peer_ip: SocketAddr,
-        message: Self::Message,
-    ) -> Option<tokio::sync::oneshot::Receiver<io::Result<()>>> {
+    async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>> {
         self.send(peer_ip, message)
     }
 }
