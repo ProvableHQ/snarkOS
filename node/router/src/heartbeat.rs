@@ -273,9 +273,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.router().connect(peer_ip) {
                     Some(hdl) => {
-                        let result = hdl.await;
-                        if let Err(err) = result {
-                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
+                        if !hdl.await {
+                            warn!("Failed to connect to bootstrap peer at {peer_ip}");
                         }
                     }
                     None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
@@ -314,9 +313,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             })
             .collect();
 
-        for result in futures::future::join_all(handles).await {
-            if let Err(err) = result {
-                warn!("Could not connect to trusted peer: {err}");
+        for success in futures::future::join_all(handles).await {
+            if !success {
+                warn!("Could not connect to trusted peer");
             }
         }
     }
