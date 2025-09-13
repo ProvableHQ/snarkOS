@@ -24,14 +24,19 @@ use crate::{
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
-    console::prelude::*,
+    console::{network::Network, prelude::Read},
     ledger::{
         block::Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
+    utilities::{
+        FromBytes,
+        task::{self, JoinHandle},
+    },
 };
 
+use anyhow::{Context, Result, bail, ensure};
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -40,7 +45,7 @@ use locktick::parking_lot::{Mutex, RwLock};
 use parking_lot::{Mutex, RwLock};
 use rand::seq::IteratorRandom;
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
+use tokio::{sync::oneshot, time::timeout};
 
 /// A worker's main role is maintaining a queue of verified ("ready") transmissions,
 /// which will eventually be fetched by the primary when the primary generates a new batch.
@@ -498,12 +503,11 @@ impl<N: Network> Worker<N> {
             );
         }
         // Wait for the transmission to be fetched.
-        match timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the transmission was fetched, return it.
-            Ok(result) => Ok((transmission_id, result?)),
-            // If the transmission was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch transmission - (timeout) {e}"),
-        }
+        let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| "Unable to fetch transmission - (timeout)")??;
+
+        Ok((transmission_id, transmission))
     }
 
     /// Handles the incoming transmission response.
@@ -540,7 +544,7 @@ impl<N: Network> Worker<N> {
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the worker.
@@ -558,19 +562,25 @@ mod tests {
     use snarkos_node_bft_ledger_service::LedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
-        console::{network::Network, types::Field},
+        console::{
+            network::{ConsensusVersion, Network},
+            types::{Address, Field},
+        },
         ledger::{
             block::Block,
             committee::Committee,
             narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
             test_helpers::sample_execution_transaction_with_fee,
         },
-        prelude::Address,
+        prelude::{Itertools, Uniform},
+        utilities::TestRng,
     };
 
+    use anyhow::anyhow;
     use bytes::Bytes;
     use indexmap::IndexMap;
     use mockall::mock;
+    use rand::Rng;
     use std::{io, ops::Range};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -926,7 +936,7 @@ mod tests {
         for i in 1..=num_flood_requests {
             let worker_ = worker.clone();
             let peer_ip = peer_ips.pop().unwrap();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 let _ = worker_.send_transmission_request(peer_ip, transmission_id).await;
             });
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -946,7 +956,7 @@ mod tests {
         // Flood the pending queue with transmission requests again, this time to a single peer
         for i in 1..=num_flood_requests {
             let worker_ = worker.clone();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 let _ = worker_.send_transmission_request(first_peer_ip, transmission_id).await;
             });
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -999,12 +1009,15 @@ mod tests {
 mod prop_tests {
     use super::*;
     use crate::Gateway;
+
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkvm::{
         console::account::Address,
         ledger::committee::{Committee, MIN_VALIDATOR_STAKE},
+        prelude::TestRng,
     };
 
+    use rand::Rng;
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
