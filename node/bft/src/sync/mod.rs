@@ -18,7 +18,7 @@ use crate::{
     PRIMARY_PING_IN_MS,
     events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
     gateway::{Gateway, SyncCallback as GatewaySyncCallback, Transport},
-    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
+    helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
     ledger_service::LedgerService,
 };
 
@@ -36,15 +36,12 @@ use snarkvm::{
     },
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::{
-    parking_lot::{Mutex, RwLock},
-    tokio::Mutex as TMutex,
-};
+use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
@@ -96,7 +93,7 @@ pub struct Sync<N: Network> {
     /// The pending certificates queue.
     pending: Arc<Pending<Field<N>, BatchCertificate<N>>>,
     /// The sync callback (used by [`BFT`]).
-    sync_callback: Arc<RwLock<Option<Arc<dyn SyncCallback<N>>>>>,
+    sync_callback: Arc<CallbackHandle<Arc<dyn SyncCallback<N>>>>,
     /// Handles to the spawned background tasks.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
@@ -142,8 +139,7 @@ impl<N: Network> Sync<N> {
     pub async fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
         // If a callback was provided, set it.
         if let Some(callback) = sync_callback {
-            let prev = self.sync_callback.write().replace(callback);
-            ensure!(prev.is_none(), "Sync callback was already set");
+            self.sync_callback.set(callback)?;
         }
 
         info!("Syncing storage with the ledger...");
@@ -153,11 +149,6 @@ impl<N: Network> Sync<N> {
 
         debug!("Finished initial block synchronization at startup");
         Ok(())
-    }
-
-    /// Get the `SyncCallback` if one is set.
-    fn get_callback(&self) -> Option<Arc<dyn SyncCallback<N>>> {
-        self.sync_callback.read().clone()
     }
 
     /// Sends the given batch of block requests to peers.
@@ -413,9 +404,8 @@ impl<N: Network> Sync<N> {
             .flatten()
             .collect::<Vec<_>>();
 
-        // If a BFT sender was provided, send the certificates to the BFT.
-        if let Some(cb) = self.get_callback() {
-            // Await the callback to continue.
+        // If a callback was provided, send the certificates to it.
+        if let Some(cb) = self.sync_callback.get() {
             cb.sync_dag_at_bootup(certificates).await.with_context(|| "Failed to update the DAG from sync")?;
         }
 
@@ -648,9 +638,9 @@ impl<N: Network> Sync<N> {
 
                 // Sync the BFT DAG with the certificates.
                 for certificate in certificates {
-                    // If a BFT sender was provided, send the certificate to the BFT.
+                    // If a callback was provided, send the certificate to ti.
                     // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                    if let Some(cb) = self.get_callback() {
+                    if let Some(cb) = self.sync_callback.get() {
                         cb.add_new_certificate(certificate)
                             .await
                             .with_context(|| "Failed to sync certificate - {err}")?;
@@ -889,7 +879,7 @@ impl<N: Network> Sync<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the sync module...");
         // Remove the callback.
-        let _ = self.sync_callback.write().take();
+        self.sync_callback.clear();
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
         // Acquire the sync lock.
