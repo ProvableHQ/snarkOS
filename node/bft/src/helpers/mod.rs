@@ -13,9 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod cache;
-pub use cache::*;
-
 pub mod channels;
 pub use channels::*;
 
@@ -36,9 +33,6 @@ pub use proposal_cache::*;
 
 mod ready;
 pub(crate) use ready::*;
-
-mod resolver;
-pub(crate) use resolver::*;
 
 pub mod signed_proposals;
 pub use signed_proposals::*;
