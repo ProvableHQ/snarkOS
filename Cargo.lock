@@ -4335,6 +4335,7 @@ version = "4.4.0"
 dependencies = [
  "aleo-std",
  "anyhow",
+ "async-trait",
  "colored 3.0.0",
  "indexmap 2.12.1",
  "itertools 0.14.0",

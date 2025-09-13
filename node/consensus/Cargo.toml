@@ -37,6 +37,9 @@ serial = [
 [dependencies.aleo-std]
 workspace = true
 
+[dependencies.async-trait]
+workspace = true
+
 [dependencies.anyhow]
 workspace = true
 

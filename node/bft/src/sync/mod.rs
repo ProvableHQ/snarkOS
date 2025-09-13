@@ -14,14 +14,12 @@
 // limitations under the License.
 
 use crate::{
-    Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
-    events::DataBlocks,
-    gateway::{SyncCallback as GatewaySyncCallback, Transport},
-    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
+    events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
+    gateway::{Gateway, SyncCallback as GatewaySyncCallback, Transport},
+    helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
+    ledger_service::LedgerService,
 };
-use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
-use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 
@@ -96,14 +94,14 @@ pub struct Sync<N: Network> {
     block_sync: Arc<BlockSync<N>>,
     /// The pending certificates queue.
     pending: Arc<Pending<Field<N>, BatchCertificate<N>>>,
+    /// The sync callback (used by [`BFT`]).
+    sync_callback: Arc<CallbackHandle<Arc<dyn SyncCallback<N>>>>,
     /// Handles to the spawned background tasks.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
     response_lock: Arc<TMutex<()>>,
     /// The sync lock. Ensures that only one task syncs the ledger at a time.
     sync_lock: Arc<TMutex<()>>,
-    /// The sync callback.
-    sync_callback: Arc<Mutex<Option<Arc<dyn SyncCallback<N>>>>>,
     /// The latest block responses.
     ///
     /// This is used in [`Sync::sync_storage_with_block()`] to accumulate blocks
@@ -142,9 +140,10 @@ impl<N: Network> Sync<N> {
     }
 
     /// Initializes the sync module and sync the storage with the ledger at bootup.
-    pub async fn initialize(&self, callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
-        if let Some(callback) = callback {
-            *self.sync_callback.lock() = Some(callback);
+    pub async fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
+        // If a callback was provided, set it.
+        if let Some(callback) = sync_callback {
+            self.sync_callback.set(callback)?;
         }
 
         info!("Syncing storage with the ledger...");
@@ -452,10 +451,9 @@ impl<N: Network> Sync<N> {
             .flatten()
             .collect::<Vec<_>>();
 
-        // If a BFT sender was provided, send the certificates to the BFT.
-        if let Some(callback) = self.sync_callback.lock().as_ref() {
-            // Await the callback to continue.
-            callback.sync_dag_at_bootup(certificates).with_context(|| "Failed to update the BFT DAG from sync")?;
+        // If a callback was provided, send the certificates to it.
+        if let Some(cb) = self.sync_callback.get() {
+            cb.sync_dag_at_bootup(certificates).with_context(|| "Failed to update the DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -688,8 +686,7 @@ impl<N: Network> Sync<N> {
                 self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions);
             });
 
-            let callback = self.sync_callback.lock().as_ref().map(|callback| callback.clone());
-            if let Some(callback) = callback {
+            if let Some(callback) = self.sync_callback.get() {
                 // Sync the BFT DAG with the certificates.
                 for certificate in certificates {
                     // If a BFT sender was provided, send the certificate to the BFT.
@@ -781,13 +778,10 @@ impl<N: Network> Sync<N> {
         // Fetch the latest block height.
         let ledger_block_height = self.ledger.latest_block_height();
 
-        // First, clear any older pending blocks.
-        // TODO(kaimast): ensure there are no dangling block requests
-        while let Some(pending_block) = pending_blocks.front() {
-            if pending_block.height() > ledger_block_height {
-                break;
-            }
-
+        while let Some(pending_block) = pending_blocks.front()
+            && pending_block.height() <= ledger_block_height
+        {
+            debug!("Removing obsolete pending block at height {}", pending_block.height());
             pending_blocks.pop_front();
         }
 
@@ -990,6 +984,8 @@ impl<N: Network> Sync<N> {
     /// Shuts down the primary.
     pub async fn shut_down(&self) {
         info!("Shutting down the sync module...");
+        // Remove the callback.
+        self.sync_callback.clear();
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
         // Acquire the sync lock.

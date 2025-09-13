@@ -18,39 +18,16 @@ use snarkvm::{
     console::network::*,
     ledger::{
         block::Transaction,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, Data, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::Result,
 };
 
-use indexmap::IndexMap;
 use std::net::SocketAddr;
 use tokio::sync::{mpsc, oneshot};
 
 const MAX_CHANNEL_SIZE: usize = 8192;
-
-#[derive(Debug)]
-pub struct ConsensusSender<N: Network> {
-    pub tx_consensus_subdag:
-        mpsc::Sender<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
-}
-
-#[derive(Debug)]
-pub struct ConsensusReceiver<N: Network> {
-    pub rx_consensus_subdag:
-        mpsc::Receiver<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
-}
-
-/// Initializes the consensus channels.
-pub fn init_consensus_channels<N: Network>() -> (ConsensusSender<N>, ConsensusReceiver<N>) {
-    let (tx_consensus_subdag, rx_consensus_subdag) = mpsc::channel(MAX_CHANNEL_SIZE);
-
-    let sender = ConsensusSender { tx_consensus_subdag };
-    let receiver = ConsensusReceiver { rx_consensus_subdag };
-
-    (sender, receiver)
-}
 
 #[derive(Clone, Debug)]
 pub struct PrimarySender<N: Network> {
