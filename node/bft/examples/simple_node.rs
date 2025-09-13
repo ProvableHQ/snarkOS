@@ -23,9 +23,10 @@ use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
+    BftCallback,
     MEMORY_POOL_PORT,
     Primary,
-    helpers::{ConsensusReceiver, PrimarySender, Storage, init_consensus_channels, init_primary_channels},
+    helpers::{PrimarySender, Storage, init_primary_channels},
 };
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
@@ -37,7 +38,7 @@ use snarkvm::{
         Ledger,
         block::Transaction,
         committee::{Committee, MIN_VALIDATOR_STAKE},
-        narwhal::{BatchHeader, Data},
+        narwhal::{BatchHeader, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
@@ -142,15 +143,13 @@ pub async fn start_bft(
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     // Initialize the consensus channels.
-    let (consensus_sender, consensus_receiver) = init_consensus_channels::<CurrentNetwork>();
-    // Initialize the consensus receiver handler.
-    consensus_handler(consensus_receiver);
+    let consensus_handler = Arc::new(ConsensusHandler {});
     // Initialize the BFT instance.
     let block_sync = Arc::new(BlockSync::new(ledger.clone()));
     let mut bft =
         BFT::<CurrentNetwork>::new(account, storage, ledger, block_sync, ip, &trusted_validators, storage_mode, None)?;
     // Run the BFT instance.
-    bft.run(None, Some(consensus_sender), sender.clone(), receiver).await?;
+    bft.run(None, Some(consensus_handler), sender.clone(), receiver).await?;
     // Retrieve the BFT's primary.
     let primary = bft.primary();
     // Handle OS signals.
@@ -308,25 +307,28 @@ fn initialize_components(node_id: u16, num_nodes: u16) -> Result<(Committee<Curr
 }
 
 /// Handles the consensus receiver.
-fn consensus_handler(receiver: ConsensusReceiver<CurrentNetwork>) {
-    let ConsensusReceiver { mut rx_consensus_subdag } = receiver;
+struct ConsensusHandler {}
 
-    tokio::task::spawn(async move {
-        while let Some((subdag, transmissions, callback)) = rx_consensus_subdag.recv().await {
-            // Determine the amount of time to sleep for the subdag.
-            let subdag_ms = subdag.values().flatten().count();
-            // Determine the amount of time to sleep for the transmissions.
-            let transmissions_ms = transmissions.len() * 25;
-            // Add a constant delay.
-            let constant_ms = 100;
-            // Compute the total amount of time to sleep.
-            let sleep_ms = (subdag_ms + transmissions_ms + constant_ms) as u64;
-            // Sleep for the determined amount of time.
-            tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
-            // Call the callback.
-            callback.send(Ok(())).ok();
-        }
-    });
+#[async_trait::async_trait]
+impl BftCallback<CurrentNetwork> for ConsensusHandler {
+    async fn process_bft_subdag(
+        &self,
+        subdag: Subdag<CurrentNetwork>,
+        transmissions: IndexMap<TransmissionID<CurrentNetwork>, Transmission<CurrentNetwork>>,
+    ) -> Result<()> {
+        // Determine the amount of time to sleep for the subdag.
+        let subdag_ms = subdag.values().flatten().count();
+        // Determine the amount of time to sleep for the transmissions.
+        let transmissions_ms = transmissions.len() * 25;
+        // Add a constant delay.
+        let constant_ms = 100;
+        // Compute the total amount of time to sleep.
+        let sleep_ms = (subdag_ms + transmissions_ms + constant_ms) as u64;
+        // Sleep for the determined amount of time.
+        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+
+        Ok(())
+    }
 }
 
 /// Returns the trusted validators.
