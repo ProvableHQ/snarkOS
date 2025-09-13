@@ -27,8 +27,13 @@ use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncR
 use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
-    prelude::{cfg_into_iter, cfg_iter},
-    utilities::{LoggableError, spawn_blocking, task},
+    utilities::{
+        LoggableError,
+        cfg_into_iter,
+        cfg_iter,
+        spawn_blocking,
+        task::{self, JoinHandle},
+    },
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -53,7 +58,6 @@ use std::{
 use tokio::sync::Mutex as TMutex;
 use tokio::{
     sync::oneshot,
-    task::JoinHandle,
     time::{sleep, timeout},
 };
 
@@ -309,7 +313,7 @@ impl<N: Network> GatewaySyncCallback<N> for Sync<N> {
         if let Some(certificate) = self.storage.get_certificate(request.certificate_id) {
             // Send the certificate response to the peer.
             let self_ = self.clone();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 let _ = self_.gateway.send(peer_ip, Event::CertificateResponse(certificate.into())).await;
             });
         }
@@ -851,7 +855,7 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the primary.
