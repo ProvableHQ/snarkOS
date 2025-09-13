@@ -13,6 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod resolver;
+use resolver::Resolver;
+
+mod cache;
+use cache::Cache;
+
 #[cfg(feature = "telemetry")]
 use crate::helpers::Telemetry;
 use crate::{
@@ -21,7 +27,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{BatchPropose, BatchSignature, EventCodec, PrimaryPing},
-    helpers::{Cache, CallbackHandle, Resolver, Storage, WorkerSender, assign_to_worker},
+    helpers::{CallbackHandle, Storage, WorkerSender, assign_to_worker},
 };
 use snarkos_account::Account;
 use snarkos_node_bft_events::{

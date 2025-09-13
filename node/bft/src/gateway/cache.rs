@@ -54,13 +54,7 @@ pub struct Cache<N: Network> {
 impl<N: Network> Default for Cache<N> {
     /// Initializes a new instance of the cache.
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<N: Network> Cache<N> {
-    /// Initializes a new instance of the cache.
-    pub fn new() -> Self {
+        // This needs to be manually implemented as `Network` does not implement `Default`.
         Self {
             seen_inbound_connections: Default::default(),
             seen_inbound_events: Default::default(),
