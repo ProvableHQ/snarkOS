@@ -16,10 +16,10 @@
 use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     MAX_WORKERS,
-    ProposedBatch,
     events::{Event, TransmissionRequest, TransmissionResponse},
     gateway::Transport,
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
+    primary::ProposedBatch,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{

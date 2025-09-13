@@ -32,18 +32,18 @@ pub use snarkos_node_bft_storage_service as storage_service;
 pub mod helpers;
 
 mod bft;
-pub use bft::*;
+pub use bft::BFT;
 
 mod gateway;
 pub use gateway::Gateway;
 
-mod primary;
-pub use primary::*;
-
 mod sync;
 
+mod primary;
+pub use primary::{Primary, PrimaryCallback};
+
 mod worker;
-pub use worker::*;
+pub use worker::Worker;
 
 pub const CONTEXT: &str = "[MemoryPool]";
 
