@@ -14,12 +14,7 @@
 // limitations under the License.
 
 use crate::events::{TransmissionRequest, TransmissionResponse};
-use snarkvm::{
-    console::network::*,
-    ledger::{
-        narwhal::TransmissionID,
-    },
-};
+use snarkvm::{console::network::*, ledger::narwhal::TransmissionID};
 
 use std::net::SocketAddr;
 use tokio::sync::mpsc;

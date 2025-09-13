@@ -14,10 +14,9 @@
 // limitations under the License.
 
 use crate::{
+    communication_service::CommunicationService,
     helpers::{PeerPair, PrepareSyncRequest, SyncRequest},
-    locators::BlockLocators,
-locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS},
-communication_service::CommunicationService,
+    locators::{BlockLocators, CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS},
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_router::messages::DataBlocks;
@@ -1283,12 +1282,14 @@ fn construct_request<N: Network>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::locators::{
-        CHECKPOINT_INTERVAL,
-        NUM_RECENT_BLOCKS,
-        test_helpers::{sample_block_locators, sample_block_locators_with_fork},
+    use crate::{
+        communication_service::test_helpers::DummyCommunicationService,
+        locators::{
+            CHECKPOINT_INTERVAL,
+            NUM_RECENT_BLOCKS,
+            test_helpers::{sample_block_locators, sample_block_locators_with_fork},
+        },
     };
-    use crate::communication_service::test_helpers::DummyCommunicationService;
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkvm::{

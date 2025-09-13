@@ -24,16 +24,19 @@ use crate::{
 };
 
 use snarkvm::{
-    console::prelude::*,
+    console::{network::Network, prelude::Read},
     ledger::{
         block::Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    utilities::task::{self, JoinHandle},
+    utilities::{
+        FromBytes,
+        task::{self, JoinHandle},
+    },
 };
 
-use anyhow::Context;
+use anyhow::{Context, Result, bail, ensure};
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -553,19 +556,25 @@ mod tests {
     use snarkos_node_bft_ledger_service::LedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
-        console::{network::Network, types::Field},
+        console::{
+            network::{ConsensusVersion, Network},
+            types::{Address, Field},
+        },
         ledger::{
             block::Block,
             committee::Committee,
             narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
             snarkvm_ledger_test_helpers::sample_execution_transaction_with_fee,
         },
-        prelude::Address,
+        prelude::{Itertools, Uniform},
+        utilities::TestRng,
     };
 
+    use anyhow::anyhow;
     use bytes::Bytes;
     use indexmap::IndexMap;
     use mockall::mock;
+    use rand::Rng;
     use std::{io, ops::Range};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -921,7 +930,7 @@ mod tests {
         for i in 1..=num_flood_requests {
             let worker_ = worker.clone();
             let peer_ip = peer_ips.pop().unwrap();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 let _ = worker_.send_transmission_request(peer_ip, transmission_id).await;
             });
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -941,7 +950,7 @@ mod tests {
         // Flood the pending queue with transmission requests again, this time to a single peer
         for i in 1..=num_flood_requests {
             let worker_ = worker.clone();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 let _ = worker_.send_transmission_request(first_peer_ip, transmission_id).await;
             });
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -994,12 +1003,15 @@ mod tests {
 mod prop_tests {
     use super::*;
     use crate::Gateway;
+
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkvm::{
         console::account::Address,
         ledger::committee::{Committee, MIN_VALIDATOR_STAKE},
+        prelude::TestRng,
     };
 
+    use rand::Rng;
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;

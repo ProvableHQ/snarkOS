@@ -16,29 +16,29 @@
 use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
-    events::DataBlocks,
-    helpers::CallbackHandle,
-    gateway::{Gateway, Transport, GatewaySyncCallback},
-    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
-    events::{CertificateRequest, CertificateResponse, Event},
+    events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
+    gateway::{Gateway, GatewaySyncCallback, Transport},
+    helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
     ledger_service::LedgerService,
 };
-    
+
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
-    prelude::{cfg_into_iter, cfg_iter},
-    utilities::{LoggableError, spawn_blocking, task},
+    utilities::{
+        LoggableError,
+        cfg_into_iter,
+        cfg_iter,
+        spawn_blocking,
+        task::{self, JoinHandle},
+    },
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::{
-    parking_lot::Mutex,
-    tokio::Mutex as TMutex,
-};
+use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 #[cfg(not(feature = "serial"))]
@@ -54,7 +54,6 @@ use std::{
 use tokio::sync::Mutex as TMutex;
 use tokio::{
     sync::oneshot,
-    task::JoinHandle,
     time::{sleep, timeout},
 };
 
@@ -304,7 +303,7 @@ impl<N: Network> GatewaySyncCallback<N> for Sync<N> {
         if let Some(certificate) = self.storage.get_certificate(request.certificate_id) {
             // Send the certificate response to the peer.
             let self_ = self.clone();
-            tokio::spawn(async move {
+            task::spawn(async move {
                 let _ = self_.gateway.send(peer_ip, Event::CertificateResponse(certificate.into())).await;
             });
         }
@@ -407,7 +406,7 @@ impl<N: Network> Sync<N> {
         // If a callback was provided, send the certificates to it.
         if let Some(cb) = self.sync_callback.get() {
             cb.sync_dag_at_bootup(certificates).await.with_context(|| "Failed to update the DAG from sync")?;
-       }
+        }
 
         self.block_sync.set_sync_height(block_height);
 
@@ -867,7 +866,7 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the primary.

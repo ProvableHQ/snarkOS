@@ -729,9 +729,8 @@ impl<N: Network> BFT<N> {
                 if let Some(cb) = self.bft_callback.get() {
                     // Send the subdag and transmissions to consensus.
                     if let Err(err) = cb.process_bft_subdag(subdag, transmissions).await {
-                        err.log_error("BFT failed to advance the subdag for round {anchor_round}");
+                        err.log_error(format!("BFT failed to advance the subdag for round {anchor_round}"));
                         return Ok(());
-
                     }
                 }
 
