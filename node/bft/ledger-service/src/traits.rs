@@ -16,6 +16,7 @@
 use snarkvm::{
     ledger::{
         Block,
+        CheckBlockError,
         PendingBlock,
         Transaction,
         committee::Committee,
@@ -109,10 +110,14 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     ) -> Result<()>;
 
     /// Checks that the subDAG in a given block is valid, but does not fully verify the block.
-    fn check_block_subdag(&self, block: Block<N>, prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>>;
+    fn check_block_subdag(
+        &self,
+        block: Block<N>,
+        prefix: &[PendingBlock<N>],
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>>;
 
     /// Takes a pending block and performs the remaining checks to full verify it.
-    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>>;
+    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>>;
 
     /// Checks the given block is valid next block.
     fn check_next_block(&self, block: &Block<N>) -> Result<()>;

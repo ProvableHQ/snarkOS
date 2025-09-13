@@ -32,7 +32,13 @@ use snarkvm::{
         types::Field,
     },
     ledger::{PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
-    utilities::{cfg_into_iter, cfg_iter, ensure_equals, flatten_error},
+    utilities::{
+        cfg_into_iter,
+        cfg_iter,
+        ensure_equals,
+        flatten_error,
+        task::{self, JoinHandle},
+    },
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -52,10 +58,7 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{
-    sync::{OnceCell, oneshot},
-    task::JoinHandle,
-};
+use tokio::sync::{OnceCell, oneshot};
 
 /// Block synchronization logic for validators.
 ///
@@ -870,7 +873,7 @@ impl<N: Network> Sync<N> {
 
                     return Ok(());
                 } else {
-                    return Err(err);
+                    return Err(err.into_anyhow());
                 }
             }
         };
@@ -1042,7 +1045,7 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the primary.
