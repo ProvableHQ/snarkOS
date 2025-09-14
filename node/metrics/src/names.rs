@@ -15,7 +15,7 @@
 
 pub(super) const COUNTER_NAMES: [&str; 2] = [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSMISSIONS];
 
-pub(super) const GAUGE_NAMES: [&str; 26] = [
+pub(super) const GAUGE_NAMES: [&str; 27] = [
     bft::CONNECTED,
     bft::CONNECTING,
     bft::LAST_STORED_ROUND,
@@ -42,6 +42,7 @@ pub(super) const GAUGE_NAMES: [&str; 26] = [
     router::CANDIDATE,
     router::RESTRICTED,
     tcp::TCP_TASKS,
+    build::BUILD_INFO,
 ];
 
 pub(super) const HISTOGRAM_NAMES: [&str; 3] =
@@ -93,4 +94,8 @@ pub mod router {
 
 pub mod tcp {
     pub const TCP_TASKS: &str = "snarkos_tcp_tasks_total";
+}
+
+pub mod build {
+    pub const BUILD_INFO: &str = "snarkos_build_info";
 }
