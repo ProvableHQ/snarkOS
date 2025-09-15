@@ -569,10 +569,8 @@ mod tests {
 
     #[test]
     fn test_import() -> Result<()> {
-        for _ in 0..3 {
-            let account = Account::Import { network: 0, private_key: None, discreet: false, save_to_file: None };
-            account.parse().with_context(|| "Account import failed")?;
-        }
+        let account = Account::Import { network: 0, private_key: None, discreet: false, save_to_file: None };
+        assert!(account.parse().is_err());
 
         let mut expected = format!(
             " {:>12}  {}\n",
