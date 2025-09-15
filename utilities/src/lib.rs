@@ -15,5 +15,4 @@
 
 /// Utilities for signal and shutdown handling.
 pub mod signals;
-
 pub use signals::*;
