@@ -555,24 +555,7 @@ impl<N: Network> Router<N> {
 
         // Get the average values to gauge peer quality.
         let known_peers = self.tcp().known_peers().snapshot();
-        let sent_msgs = known_peers.values().map(|stats| stats.sent().0).sum::<u64>();
-        let recv_msgs = known_peers.values().map(|stats| stats.received().0).sum::<u64>();
-        let failures = known_peers.values().map(|stats| stats.failures()).sum::<u64>();
-        let avg_sent_msgs = (sent_msgs as f64) / (known_peers.len() as f64);
-        let avg_recv_msgs = (recv_msgs as f64) / (known_peers.len() as f64);
-        let avg_failures = (failures as f64) / (known_peers.len() as f64);
 
-        // Keep the peers that aren't outliers.
-        peers.retain(|peer| {
-            let peer_ip = peer.listener_addr().ip();
-            if let Some(peer_stats) = known_peers.get(&peer_ip) {
-                (peer_stats.sent().0 as f64) > avg_sent_msgs * 0.75
-                    && (peer_stats.received().0 as f64) > avg_recv_msgs * 0.75
-                    && (peer_stats.failures() as f64) <= avg_failures
-            } else {
-                false
-            }
-        });
         // Prioritize peers with the lowest failure count.
         peers.sort_unstable_by_key(|peer| {
             if let Some(peer_stats) = known_peers.get(&peer.listener_addr().ip()) {
