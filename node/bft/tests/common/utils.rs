@@ -14,10 +14,11 @@
 // limitations under the License.
 
 use crate::common::{CurrentNetwork, TranslucentLedgerService, primary};
-use snarkos_account::Account;
-use snarkos_node_bft::{Gateway, Primary, Worker, helpers::Storage};
 
-use snarkos_node_bft_storage_service::BFTMemoryService;
+use snarkos_account::Account;
+use snarkos_node_bft::{Gateway, Primary, Worker, helpers::Storage, storage_service::BFTMemoryService};
+use snarkos_utilities::SimpleStoppable;
+
 use snarkvm::{
     console::account::Address,
     ledger::{
@@ -180,7 +181,7 @@ pub fn sample_ledger(
 
     let gen_ledger =
         primary::genesis_ledger(gen_key, committee.clone(), balances.clone(), bonded_balances.clone(), rng);
-    Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()))
+    Arc::new(TranslucentLedgerService::new(gen_ledger, SimpleStoppable::new()))
 }
 
 /// Samples a new storage with the given ledger.

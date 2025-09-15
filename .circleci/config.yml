@@ -127,11 +127,11 @@ commands:
       - run:
           name: "Build Tests"
           no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >> --norun
+          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >> --no-run
       - run:
           name: "Run Tests"
           no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 RUST_BACKTRACE=1 RUST_LOG=snarkos=trace cargo test << parameters.flags >> --norun
+          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 RUST_BACKTRACE=1 RUST_LOG=snarkos=trace cargo test << parameters.flags >>
       - clear_environment:
           cache_key: v3.3.1-rust-1.88.0-<< parameters.cache_key >>-cache
 

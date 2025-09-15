@@ -22,6 +22,8 @@ mod tabs;
 use tabs::Tabs;
 
 use snarkos_node::Node;
+use snarkos_utilities::Stoppable;
+
 use snarkvm::prelude::Network;
 
 use anyhow::Result;
@@ -41,6 +43,8 @@ use ratatui::{
 };
 use std::{
     io,
+    io::Write,
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -67,7 +71,7 @@ fn content_style() -> Style {
 
 impl<N: Network> Display<N> {
     /// Initializes a new display.
-    pub fn start(node: Node<N>, log_receiver: Receiver<Vec<u8>>) -> Result<()> {
+    pub fn start(node: Node<N>, log_receiver: Receiver<Vec<u8>>, stoppable: Arc<dyn Stoppable>) -> Result<()> {
         // Initialize the display.
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -84,17 +88,26 @@ impl<N: Network> Display<N> {
         };
 
         // Render the display.
-        let res = display.render(&mut terminal);
+        let res = display.render(&mut terminal, stoppable);
 
         // Terminate the display.
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
         terminal.show_cursor()?;
 
-        // Exit.
+        // Print any error that may have occurred.
         if let Err(err) = res {
-            println!("{err:?}")
+            eprintln!("{err:?}");
         }
+
+        // Write any remaining log output to stdout while the node is shutting down.
+        let mut log_receiver = display.logs.into_log_receiver();
+        tokio::spawn(async move {
+            let mut stdout = io::stdout();
+            while let Some(log) = log_receiver.recv().await {
+                let _ = write!(stdout, "{}", String::from_utf8(log).unwrap_or_default());
+            }
+        });
 
         Ok(())
     }
@@ -102,7 +115,7 @@ impl<N: Network> Display<N> {
 
 impl<N: Network> Display<N> {
     /// Renders the display.
-    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
+    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>, stoppable: Arc<dyn Stoppable>) -> io::Result<()> {
         let mut last_tick = Instant::now();
         loop {
             terminal.draw(|f| self.draw(f))?;
@@ -114,11 +127,7 @@ impl<N: Network> Display<N> {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
                         KeyCode::Esc => {
-                            // // TODO (howardwu): @ljedrz to implement a wrapping scope for Display within Node/Server.
-                            // #[allow(unused_must_use)]
-                            // {
-                            //     self.node.shut_down();
-                            // }
+                            stoppable.stop();
                             return Ok(());
                         }
                         KeyCode::Left => self.tabs.previous(),
