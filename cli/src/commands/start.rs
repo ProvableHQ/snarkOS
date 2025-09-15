@@ -741,6 +741,7 @@ impl Start {
 
         // Set up the tokio Runtime.
         // TODO(kaimast): set up a panic handler here for each worker thread once [`tokio::runtime::Builder::unhandled_panic`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.unhandled_panic) is stabilized.
+        // As of now, detached tasks may panic and the error may not be handled by the top-level `catch_unwind`.
         runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(8 * 1024 * 1024)
