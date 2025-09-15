@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod names;
+pub mod names;
 
 // Expose the names at the crate level for easy access.
 pub use names::*;
@@ -41,6 +41,7 @@ use std::{
     },
 };
 use time::OffsetDateTime;
+
 
 /// Initializes the metrics and returns a handle to the task running the metrics exporter.
 pub fn initialize_metrics(ip: Option<SocketAddr>) {
@@ -158,27 +159,22 @@ pub fn add_transmission_latency_metric<N: Network>(
     }
 }
 
+// Include the generated build information
+mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 /// Sets the build information metric with version details as labels.
+/// The resulting metric will show as:
+/// snarkos_build_info{version="4.2.1",git_commit="abc123",git_branch="main",features="cuda,metrics"} 1
 pub fn set_build_info() {
-    // Include the generated build information
-    mod built_info {
-        include!(concat!(env!("OUT_DIR"), "/built.rs"));
-    }
-    
     let version = built_info::PKG_VERSION;
     let git_commit = built_info::GIT_COMMIT_HASH.unwrap_or("unknown");
     let git_branch = built_info::GIT_HEAD_REF.unwrap_or("unknown");
     let features = built_info::FEATURES_LOWERCASE_STR.replace(' ', "");
 
-    // Set the build info metric to 1 with version information as labels
-    gauge_with_labels(
-        build::BUILD_INFO,
-        vec![
-            ("version".to_string(), version.to_string()),
-            ("git_commit".to_string(), git_commit.to_string()),
-            ("git_branch".to_string(), git_branch.to_string()),
-            ("features".to_string(), features),
-        ],
-        1.0,
-    );
+    ::metrics::gauge!(build::BUILD_INFO, "version" => version.to_string()).set(1.0);
+    ::metrics::gauge!(build::BUILD_INFO, "git_commit" => git_commit.to_string()).set(1.0);
+    ::metrics::gauge!(build::BUILD_INFO, "git_branch" => git_branch.to_string()).set(1.0);
+    ::metrics::gauge!(build::BUILD_INFO, "features" => features).set(1.0);
 }

@@ -15,7 +15,7 @@
 
 pub(super) const COUNTER_NAMES: [&str; 2] = [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSMISSIONS];
 
-pub(super) const GAUGE_NAMES: [&str; 27] = [
+pub(super) const GAUGE_NAMES: [&str; 26] = [
     bft::CONNECTED,
     bft::CONNECTING,
     bft::LAST_STORED_ROUND,
@@ -42,7 +42,6 @@ pub(super) const GAUGE_NAMES: [&str; 27] = [
     router::CANDIDATE,
     router::RESTRICTED,
     tcp::TCP_TASKS,
-    build::BUILD_INFO,
 ];
 
 pub(super) const HISTOGRAM_NAMES: [&str; 3] =

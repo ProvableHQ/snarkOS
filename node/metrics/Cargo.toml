@@ -27,6 +27,9 @@ workspace = true
 features = [ "parking_lot" ]
 optional = true
 
+[dependencies.metrics]
+version = "0.22"
+
 [dependencies.metrics-exporter-prometheus]
 version = "0.13"
 
@@ -42,4 +45,7 @@ workspace = true
 features = [ "console", "ledger", "metrics" ]
 
 [dependencies.time]
+workspace = true
+
+[build-dependencies.built]
 workspace = true
