@@ -17,6 +17,8 @@ use super::DEFAULT_ENDPOINT;
 use crate::helpers::{args::prepare_endpoint, dev::get_development_key};
 
 use snarkos_node_cdn::CDN_BASE_URL;
+use snarkos_utilities::SimpleStoppable;
+
 use snarkvm::{
     console::network::Network,
     prelude::{Ciphertext, Field, FromBytes, Plaintext, PrivateKey, Record, ViewKey, block::Block},
@@ -285,7 +287,7 @@ impl Scan {
         let rt = tokio::runtime::Runtime::new()?;
 
         // Create a placeholder shutdown flag.
-        let _shutdown = Default::default();
+        let _shutdown = SimpleStoppable::new();
 
         // Copy endpoint for background task.
         let endpoint = endpoint.clone();

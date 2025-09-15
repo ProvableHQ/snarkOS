@@ -15,9 +15,13 @@
 
 mod router;
 
-use crate::traits::NodeInterface;
+use crate::{
+    bft::ledger_service::ProverLedgerService,
+    sync::{BlockSync, Ping},
+    traits::NodeInterface,
+};
+
 use snarkos_account::Account;
-use snarkos_node_bft::ledger_service::ProverLedgerService;
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
@@ -27,11 +31,12 @@ use snarkos_node_router::{
     Routing,
     messages::{Message, NodeType, UnconfirmedSolution},
 };
-use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
+use snarkos_utilities::{SignalHandler, Stoppable};
+
 use snarkvm::{
     ledger::narwhal::Data,
     prelude::{
@@ -57,7 +62,7 @@ use std::{
     net::SocketAddr,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
 };
 use tokio::task::JoinHandle;
@@ -83,10 +88,10 @@ pub struct Prover<N: Network, C: ConsensusStorage<N>> {
     max_puzzle_instances: u8,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The shutdown signal.
-    shutdown: Arc<AtomicBool>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
+    /// The signal handling logic.
+    signal_handler: Arc<SignalHandler>,
     /// PhantomData.
     _phantom: PhantomData<C>,
 }
@@ -100,11 +105,8 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         genesis: Block<N>,
         storage_mode: StorageMode,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
-
         // Initialize the ledger service.
         let ledger_service = Arc::new(ProverLedgerService::new());
         // Determine if the prover should allow external peers.
@@ -147,17 +149,14 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             max_puzzle_instances: u8::try_from(max_puzzle_instances)?,
             handles: Default::default(),
             ping,
-            shutdown,
+            signal_handler,
             _phantom: Default::default(),
         };
         // Initialize the routing.
         node.initialize_routing().await;
         // Initialize the puzzle.
         node.initialize_puzzle().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
+
         // Return the node.
         Ok(node)
     }
@@ -175,7 +174,6 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Prover<N, C> {
 
         // Shut down the puzzle.
         debug!("Shutting down the puzzle...");
-        self.shutdown.store(true, Ordering::Release);
 
         // Abort the tasks.
         debug!("Shutting down the prover...");
@@ -246,7 +244,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             }
 
             // If the Ctrl-C handler registered the signal, stop the prover.
-            if self.shutdown.load(Ordering::Acquire) {
+            if self.signal_handler.is_stopped() {
                 debug!("Shutting down the puzzle...");
                 break;
             }

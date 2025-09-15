@@ -13,19 +13,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkos_node_router::{Routing, messages::NodeType};
+use crate::router::{Routing, messages::NodeType};
+
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 
-use once_cell::sync::OnceCell;
-use std::{
-    future::Future,
-    io,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 #[async_trait]
 pub trait NodeInterface<N: Network>: Routing<N> {
@@ -56,65 +50,20 @@ pub trait NodeInterface<N: Network>: Routing<N> {
 
     /// Handles OS signals for the node to intercept and perform a clean shutdown.
     /// The optional `shutdown_flag` flag can be used to cleanly terminate the syncing process.
-    fn handle_signals(shutdown_flag: Arc<AtomicBool>) -> Arc<OnceCell<Self>> {
-        // In order for the signal handler to be started as early as possible, a reference to the node needs
-        // to be passed to it at a later time.
-        let node: Arc<OnceCell<Self>> = Default::default();
+    async fn wait_for_signals(&self, handler: &SignalHandler) {
+        handler.wait_for_signals().await;
 
-        #[cfg(target_family = "unix")]
-        fn signal_listener() -> impl Future<Output = io::Result<()>> {
-            use tokio::signal::unix::{SignalKind, signal};
+        warn!("==========================================================================================");
+        warn!("⚠️  Attention - Starting the graceful shutdown procedure (ETA: 30 seconds)...");
+        warn!("⚠️  Attention - To avoid DATA CORRUPTION, do NOT interrupt snarkOS (or press Ctrl+C again)");
+        warn!("⚠️  Attention - Please wait until the shutdown gracefully completes (ETA: 30 seconds)");
+        warn!("==========================================================================================");
 
-            // Handle SIGINT, SIGTERM, SIGQUIT, and SIGHUP.
-            let mut s_int = signal(SignalKind::interrupt()).unwrap();
-            let mut s_term = signal(SignalKind::terminate()).unwrap();
-            let mut s_quit = signal(SignalKind::quit()).unwrap();
-            let mut s_hup = signal(SignalKind::hangup()).unwrap();
+        // If the node is already initialized, then shut it down.
+        self.shut_down().await;
 
-            // Return when any of the signals above is received.
-            async move {
-                tokio::select!(
-                    _ = s_int.recv() => (),
-                    _ = s_term.recv() => (),
-                    _ = s_quit.recv() => (),
-                    _ = s_hup.recv() => (),
-                );
-                Ok(())
-            }
-        }
-        #[cfg(not(target_family = "unix"))]
-        fn signal_listener() -> impl Future<Output = io::Result<()>> {
-            tokio::signal::ctrl_c()
-        }
-
-        let node_clone = node.clone();
-        tokio::task::spawn(async move {
-            match signal_listener().await {
-                Ok(()) => {
-                    warn!("==========================================================================================");
-                    warn!("⚠️  Attention - Starting the graceful shutdown procedure (ETA: 30 seconds)...");
-                    warn!("⚠️  Attention - To avoid DATA CORRUPTION, do NOT interrupt snarkOS (or press Ctrl+C again)");
-                    warn!("⚠️  Attention - Please wait until the shutdown gracefully completes (ETA: 30 seconds)");
-                    warn!("==========================================================================================");
-
-                    match node_clone.get() {
-                        // If the node is already initialized, then shut it down.
-                        Some(node) => node.shut_down().await,
-                        // Otherwise, if the node is not yet initialized, then set the shutdown flag directly.
-                        None => shutdown_flag.store(true, Ordering::Relaxed),
-                    }
-
-                    // A best-effort attempt to let any ongoing activity conclude.
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-
-                    // Terminate the process.
-                    std::process::exit(0);
-                }
-                Err(error) => error!("tokio::signal::ctrl_c encountered an error: {}", error),
-            }
-        });
-
-        node
+        // A best-effort attempt to let any ongoing activity conclude.
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
     /// Shuts down the node.

@@ -64,18 +64,6 @@ pub fn log_clean_error(storage_mode: &StorageMode) {
     }
 }
 
-/// Starts the notification message loop.
-pub fn start_notification_message_loop() -> tokio::task::JoinHandle<()> {
-    // let mut interval = tokio::time::interval(std::time::Duration::from_secs(180));
-    tokio::spawn(async move {
-        //     loop {
-        //         interval.tick().await;
-        //         // TODO (howardwu): Swap this with the official message for announcements.
-        //         // info!("{}", notification_message());
-        //     }
-    })
-}
-
 /// Returns the notification message as a string.
 pub fn notification_message() -> String {
     use colored::Colorize;

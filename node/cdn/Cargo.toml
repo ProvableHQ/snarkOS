@@ -45,6 +45,9 @@ workspace = true
 optional = true
 features = [ "metrics" ]
 
+[dependencies.snarkos-utilities]
+workspace = true
+
 [dependencies.rayon]
 workspace = true
 optional = true
