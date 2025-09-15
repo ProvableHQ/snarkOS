@@ -14,14 +14,17 @@
 // limitations under the License.
 
 use snarkos_cli::{commands::CLI, helpers::Updater};
-use snarkvm::utilities::display_error;
+use snarkvm::utilities::{
+    display_error,
+    errors::{catch_unwind, set_panic_hook},
+};
 
 use clap::Parser;
 #[cfg(feature = "locktick")]
 use locktick::lock_snapshots;
+use std::env;
 #[cfg(feature = "locktick")]
 use std::time::Instant;
-use std::{backtrace::Backtrace, env, panic::catch_unwind};
 use tracing::log::logger;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -92,36 +95,10 @@ fn main() {
         }
     });
 
-    // Set a custom hook here to show "pretty" errors when panicking.
-    std::panic::set_hook(Box::new(|err| {
-        print_error!("⚠️ {}\n", err.to_string().replace("panicked at", "snarkOS encountered an unexpected error at"));
-
-        // Always show backtraces.
-        let backtrace = Backtrace::force_capture().to_string();
-
-        let mut msg = "Backtrace:\n".to_string();
-        msg.push_str("      [...]\n");
-
-        // Remove all the low level frames.
-        // This can be done more cleanly once the `backtrace_frames` feature is stabilized.
-        let lines = backtrace.lines().skip_while(|line| !line.contains("core::panicking"));
-
-        for line in lines {
-            // Stop printing once we hit the panic handler.
-            if line.contains("snarkos::main") {
-                break;
-            }
-
-            msg.push_str(&format!("{line}\n"));
-        }
-
-        // Print the entire backtrace as a single log message.
-        print_error!("{msg}");
-    }));
-
     // Run the CLI.
     // We use `catch_unwind` here to ensure a panic stops execution and not just a single thread.
     // Note: `catch_unwind` can be nested without problems.
+    set_panic_hook();
     let result = catch_unwind(|| {
         // Parse the given arguments.
         let cli = CLI::parse();
@@ -151,7 +128,30 @@ fn main() {
 
             exit(1);
         }
-        Err(_) => {
+        Err((msg, backtrace)) => {
+            print_error!("⚠️ {}\n", msg.replace("panicked at", "snarkOS encountered an unexpected error at"));
+
+            // Always show backtraces.
+            let mut msg = "Backtrace:\n".to_string();
+            msg.push_str("      [...]\n");
+
+            // Remove all the low level frames.
+            // This can be done more cleanly once the `backtrace_frames` feature is stabilized.
+            let backtrace = backtrace.to_string();
+            let lines = backtrace.lines().skip_while(|line| !line.contains("core::panicking"));
+
+            for line in lines {
+                // Stop printing once we hit the panic handler.
+                if line.contains("snarkos::main") {
+                    break;
+                }
+
+                msg.push_str(&format!("{line}\n"));
+            }
+
+            // Print the entire backtrace as a single log message.
+            print_error!("{msg}");
+            // Print some information for the end-user.
             print_error!(
                 "This is most likely a bug!\n\
                 Please report it to the snarkOS developers: https://github.com/ProvableHQ/snarkOS/issues/new?template=bug.md"
