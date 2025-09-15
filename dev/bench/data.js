@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1757631253987,
+  "lastUpdate": 1757972461309,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -1422,6 +1422,66 @@ window.BENCHMARK_DATA = {
             "value": 0.43,
             "unit": "blocks/s",
             "extra": "total_wait=569s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "de856fd42d6caa022810742329d7fd7c51e8913c",
+          "message": "Merge pull request #3847 from ProvableHQ/fix/revert-pending-blocks\n\n[Fix] Revert `PendingBlocks` PR",
+          "timestamp": "2025-09-15T15:24:01-05:00",
+          "tree_id": "6660d2d0b0ae7d1e50eaa35dc0cd606ead35f7d4",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/de856fd42d6caa022810742329d7fd7c51e8913c"
+        },
+        "date": 1757972460203,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.25,
+            "unit": "blocks/s",
+            "extra": "total_wait=976s, target_height=250, connect_time=5s, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.253667,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=949, mean_speed=0.133298, max_speed=3.150000, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-block",
+            "value": 0.65,
+            "unit": "ops/s",
+            "extra": "num_ops=500, total_wait=762, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 188.67,
+            "unit": "ops/s",
+            "extra": "num_ops=10000, total_wait=53, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.28,
+            "unit": "blocks/s",
+            "extra": "total_wait=863s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.44,
+            "unit": "blocks/s",
+            "extra": "total_wait=567s, target_height=250"
           }
         ]
       }
