@@ -30,6 +30,7 @@ macro_rules! test_reject_unsolicited_peer_response {
         $(
             paste! {
                 #[tokio::test]
+                #[tracing_test::traced_test]
                 async fn [<$node_type _rejects_unsolicited_peer_response>]() {
                     // Spin up a full node.
                     let node = $crate::common::node::$node_type().await;

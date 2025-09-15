@@ -33,6 +33,7 @@ use std::time::Duration;
 macro_rules! test_disconnect {
     ($node_type:ident, $peer_type:ident, $node_disconnects:expr, $($attr:meta)?) => {
         #[tokio::test]
+        #[tracing_test::traced_test]
         $(#[$attr])?
         async fn $peer_type() {
             use deadline::deadline;
@@ -144,6 +145,7 @@ mod validator {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[tracing_test::traced_test]
 async fn duplicate_disconnect_attempts() {
     // common::initialise_logger(3);
 

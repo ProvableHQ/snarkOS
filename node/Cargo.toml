@@ -155,6 +155,9 @@ features = [ "test" ]
 workspace = true
 features = [ "env-filter", "fmt" ]
 
+[dev-dependencies.tracing-test]
+workspace = true
+
 [dev-dependencies.rand_chacha]
 workspace = true
 

@@ -91,6 +91,7 @@ async fn connect_to(router: &TestRouter<Network>, other: &TestRouter<Network>) {
 
 /// Checks that clients are ordered before nodes and that ordering is based on when a peer was last seen.
 #[tokio::test]
+#[tracing_test::traced_test]
 async fn peer_priority_ordering() {
     let router = client(0, 10).await;
     router.enable_listener().await;

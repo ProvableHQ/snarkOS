@@ -134,6 +134,9 @@ features = [ "test" ]
 workspace = true
 features = [ "test-helpers" ]
 
+[dev-dependencies.tracing-test]
+workspace = true
+
 [dev-dependencies.tracing-subscriber]
 workspace = true
 features = [ "env-filter", "fmt" ]

@@ -183,6 +183,7 @@ mod validator {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[tracing_test::traced_test]
 async fn simultaneous_connection_attempt() {
     // common::initialise_logger(3);
 
@@ -242,6 +243,7 @@ async fn simultaneous_connection_attempt() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[tracing_test::traced_test]
 async fn duplicate_connection_attempts() {
     // common::initialise_logger(3);
 
