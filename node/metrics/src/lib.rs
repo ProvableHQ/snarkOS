@@ -42,7 +42,6 @@ use std::{
 };
 use time::OffsetDateTime;
 
-
 /// Initializes the metrics and returns a handle to the task running the metrics exporter.
 pub fn initialize_metrics(ip: Option<SocketAddr>) {
     // Build the Prometheus exporter.
