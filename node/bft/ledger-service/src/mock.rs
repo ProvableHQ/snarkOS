@@ -16,9 +16,7 @@
 use crate::{LedgerService, fmt_id};
 use snarkvm::{
     ledger::{
-        Block,
-        PendingBlock,
-        Transaction,
+        block::{Block, Transaction},
         committee::Committee,
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -211,14 +209,6 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     ) -> Result<()> {
         trace!("[MockLedgerService] Check transaction basic {:?} - Ok", fmt_id(transaction_id));
         Ok(())
-    }
-
-    fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
-        unimplemented!();
-    }
-
-    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>> {
-        unimplemented!();
     }
 
     /// Checks the given block is valid next block.

@@ -126,7 +126,7 @@ impl<N: Network> Router<N> {
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
     /// The maximum number of candidate peers permitted to be stored in the node.
     const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
-    /// The maximum amount of connection attempts within a 10 second threshold.
+    /// The maximum amount of connection attempts within a 10 second threshold
     #[cfg(not(test))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
     /// The duration after which a connected peer is considered inactive or
