@@ -17,7 +17,7 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
     events::DataBlocks,
-    gateway::{Gateway, SyncCallback as GatewaySyncCallback, Transport},
+    gateway::{Gateway, GatewaySyncCallback, Transport},
     helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
     spawn_blocking,
 };

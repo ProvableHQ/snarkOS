@@ -19,7 +19,7 @@ use snarkvm::{
     prelude::{Network, ToBytes},
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use sha2::{Digest, Sha256};
 
 fn double_sha256(data: &[u8]) -> [u8; 32] {
@@ -38,6 +38,8 @@ pub fn sha256d_to_u128(data: &[u8]) -> u128 {
 
 /// Returns the worker ID for the given transmission ID.
 pub fn assign_to_worker<N: Network>(transmission_id: impl Into<TransmissionID<N>>, num_workers: u8) -> Result<u8> {
+    ensure!(num_workers > 0, "Need at least one worker");
+
     // If there is only one worker, return it.
     if num_workers == 1 {
         return Ok(0);
