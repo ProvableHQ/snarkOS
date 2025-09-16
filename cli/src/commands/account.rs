@@ -59,13 +59,13 @@ pub enum Account {
         #[clap(short = 's', long)]
         seed: Option<String>,
         /// Try until an address with the vanity string is found
-        #[clap(short = 'v', long)]
+        #[clap(short = 'v', long, conflicts_with_all = &["seed", "save_to_file"])]
         vanity: Option<String>,
         /// Print sensitive information (such as the private key) discreetly in an alternate screen
         #[clap(long)]
         discreet: bool,
         /// Specify the path to a file where to save the account in addition to printing it
-        #[clap(long)]
+        #[clap(long, conflicts_with = "discreet")]
         save_to_file: Option<String>,
     },
     /// Derive an Aleo account from a private key
@@ -80,7 +80,7 @@ pub enum Account {
         #[clap(long)]
         discreet: bool,
         /// Specify the path to a file where to save the account in addition to printing it
-        #[clap(long)]
+        #[clap(long, conflicts_with = "discreet")]
         save_to_file: Option<String>,
     },
     Sign(Sign),
@@ -114,19 +114,6 @@ impl Account {
     pub fn parse(self) -> Result<String> {
         match self {
             Self::New { network, seed, vanity, discreet, save_to_file } => {
-                // Ensure only the seed or the vanity string is specified.
-                if seed.is_some() && vanity.is_some() {
-                    bail!("Cannot specify both the '--seed' and '--vanity' flags");
-                }
-
-                if save_to_file.is_some() && vanity.is_some() {
-                    bail!("Cannot specify both the '--save-to-file' and '--vanity' flags");
-                }
-
-                if save_to_file.is_some() && discreet {
-                    bail!("Cannot specify both the '--save-to-file' and '--discreet' flags");
-                }
-
                 match vanity {
                     // Generate a vanity account for the specified network.
                     Some(vanity) => match network {
@@ -145,9 +132,7 @@ impl Account {
                 }
             }
             Self::Import { private_key, network, discreet, save_to_file } => {
-                if save_to_file.is_some() && discreet {
-                    bail!("Cannot specify both the '--save-to-file' and '--discreet' flags");
-                }
+                // Import the account for the specified network.
                 match network {
                     MainnetV0::ID => Self::import::<MainnetV0>(private_key, discreet, save_to_file),
                     TestnetV0::ID => Self::import::<TestnetV0>(private_key, discreet, save_to_file),
