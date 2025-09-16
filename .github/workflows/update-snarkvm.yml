@@ -122,6 +122,35 @@ jobs:
           This update was performed automatically by the snarkVM update workflow."
           git push --force-with-lease origin update-snarkvm-staging
 
+      - name: Create or update PR
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if a PR already exists from update-snarkvm-staging to staging
+            const { data: prs } = await github.rest.pulls.list({
+              owner: 'ProvableHQ',
+              repo: 'snarkOS',
+              head: 'ProvableHQ:update-snarkvm-staging',
+              base: 'staging',
+              state: 'open'
+            });
+            
+            if (prs.length === 0) {
+              // No PR exists, create one
+              const { data: pr } = await github.rest.pulls.create({
+                owner: 'ProvableHQ',
+                repo: 'snarkOS',
+                title: 'Update snarkVM to latest staging commit',
+                head: 'update-snarkvm-staging',
+                base: 'staging',
+                body: 'This PR updates the snarkVM dependency to track the latest staging commit.\n\nLatest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}\nPrevious commit: ${{ steps.snarkvm-commit.outputs.current_commit }}\n\nThis PR was created automatically by the snarkVM update workflow.'
+              });
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              console.log(`PR already exists: ${prs[0].html_url}`);
+            }
+
       - name: Summary
         if: always()
         run: |
@@ -242,6 +271,35 @@ jobs:
           
           This update was performed automatically by the snarkVM update workflow."
           git push --force-with-lease origin update-snarkvm-canary
+
+      - name: Create or update PR
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if a PR already exists from update-snarkvm-canary to canary
+            const { data: prs } = await github.rest.pulls.list({
+              owner: 'ProvableHQ',
+              repo: 'snarkOS',
+              head: 'ProvableHQ:update-snarkvm-canary',
+              base: 'canary',
+              state: 'open'
+            });
+            
+            if (prs.length === 0) {
+              // No PR exists, create one
+              const { data: pr } = await github.rest.pulls.create({
+                owner: 'ProvableHQ',
+                repo: 'snarkOS',
+                title: 'Update snarkVM to latest canary commit',
+                head: 'update-snarkvm-canary',
+                base: 'canary',
+                body: 'This PR updates the snarkVM dependency to track the latest canary commit.\n\nLatest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}\nPrevious commit: ${{ steps.snarkvm-commit.outputs.current_commit }}\n\nThis PR was created automatically by the snarkVM update workflow.'
+              });
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              console.log(`PR already exists: ${prs[0].html_url}`);
+            }
 
       - name: Summary
         if: always()
@@ -364,6 +422,35 @@ jobs:
           This update was performed automatically by the snarkVM update workflow."
           git push --force-with-lease origin update-snarkvm-testnet
 
+      - name: Create or update PR
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if a PR already exists from update-snarkvm-testnet to testnet
+            const { data: prs } = await github.rest.pulls.list({
+              owner: 'ProvableHQ',
+              repo: 'snarkOS',
+              head: 'ProvableHQ:update-snarkvm-testnet',
+              base: 'testnet',
+              state: 'open'
+            });
+            
+            if (prs.length === 0) {
+              // No PR exists, create one
+              const { data: pr } = await github.rest.pulls.create({
+                owner: 'ProvableHQ',
+                repo: 'snarkOS',
+                title: 'Update snarkVM to latest testnet commit',
+                head: 'update-snarkvm-testnet',
+                base: 'testnet',
+                body: 'This PR updates the snarkVM dependency to track the latest testnet commit.\n\nLatest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}\nPrevious commit: ${{ steps.snarkvm-commit.outputs.current_commit }}\n\nThis PR was created automatically by the snarkVM update workflow.'
+              });
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              console.log(`PR already exists: ${prs[0].html_url}`);
+            }
+
       - name: Summary
         if: always()
         run: |
@@ -484,6 +571,35 @@ jobs:
           
           This update was performed automatically by the snarkVM update workflow."
           git push --force-with-lease origin update-snarkvm-mainnet
+
+      - name: Create or update PR
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if a PR already exists from update-snarkvm-mainnet to mainnet
+            const { data: prs } = await github.rest.pulls.list({
+              owner: 'ProvableHQ',
+              repo: 'snarkOS',
+              head: 'ProvableHQ:update-snarkvm-mainnet',
+              base: 'mainnet',
+              state: 'open'
+            });
+            
+            if (prs.length === 0) {
+              // No PR exists, create one
+              const { data: pr } = await github.rest.pulls.create({
+                owner: 'ProvableHQ',
+                repo: 'snarkOS',
+                title: 'Update snarkVM to latest mainnet commit',
+                head: 'update-snarkvm-mainnet',
+                base: 'mainnet',
+                body: 'This PR updates the snarkVM dependency to track the latest mainnet commit.\n\nLatest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}\nPrevious commit: ${{ steps.snarkvm-commit.outputs.current_commit }}\n\nThis PR was created automatically by the snarkVM update workflow.'
+              });
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              console.log(`PR already exists: ${prs[0].html_url}`);
+            }
 
       - name: Summary
         if: always()
