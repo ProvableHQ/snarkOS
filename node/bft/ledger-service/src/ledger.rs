@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{LedgerService, fmt_id, spawn_blocking};
+use crate::{LedgerService, fmt_id};
 
 use snarkos_utilities::Stoppable;
 
@@ -44,6 +44,7 @@ use snarkvm::{
         execute_compute_cost_in_microcredits,
         execution_cost,
     },
+    utilities::task,
 };
 
 use anyhow::ensure;
@@ -291,7 +292,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     /// Checks the given solution is well-formed.
     async fn check_solution_basic(&self, solution_id: SolutionID<N>, solution: Data<Solution<N>>) -> Result<()> {
         // Deserialize the solution.
-        let solution = spawn_blocking!(solution.deserialize_blocking())?;
+        let solution = task::spawn_blocking(move || solution.deserialize_blocking()).await?;
         // Ensure the solution ID matches in the solution.
         if solution_id != solution.id() {
             bail!("Invalid solution - expected {solution_id}, found {}", solution.id());
@@ -314,7 +315,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
         // Ensure that the solution is valid for the given epoch.
         let puzzle = self.ledger.puzzle().clone();
-        match spawn_blocking!(puzzle.check_solution(&solution, epoch_hash, proof_target)) {
+        match puzzle.check_solution(&solution, epoch_hash, proof_target) {
             Ok(()) => Ok(()),
             Err(e) => bail!("Invalid solution '{}' for the current epoch - {e}", fmt_id(solution_id)),
         }
@@ -336,7 +337,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         }
         // Check the transaction is well-formed.
         let ledger = self.ledger.clone();
-        spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()))
+        task::spawn_blocking(move || ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng())).await
     }
 
     fn check_block_subdag(

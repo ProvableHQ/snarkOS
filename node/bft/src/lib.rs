@@ -32,7 +32,7 @@ pub use snarkos_node_bft_storage_service as storage_service;
 pub mod helpers;
 
 mod bft;
-pub use bft::{BFT, BftCallback};
+pub use bft::*;
 
 mod gateway;
 pub use gateway::{Gateway, MAX_VALIDATORS_TO_SEND};
@@ -79,4 +79,9 @@ macro_rules! spawn_blocking {
             Err(error) => Err(anyhow::anyhow!("[tokio::spawn_blocking] {error}")),
         }
     };
+}
+
+#[cfg(feature = "test-helpers")]
+pub mod test_helpers {
+    pub use crate::gateway::test_helpers::*;
 }

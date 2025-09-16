@@ -405,12 +405,10 @@ impl<N: Network> Worker<N> {
             return Ok(false);
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-        let transaction = spawn_blocking!({
-            match transaction {
-                Data::Object(transaction) => Ok(transaction),
-                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?),
-            }
-        })?;
+        let transaction = match transaction {
+            Data::Object(transaction) => transaction,
+            Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?,
+        };
 
         // Check that the transaction is well-formed and unique.
         self.ledger.check_transaction_basic(transaction_id, transaction).await?;

@@ -39,11 +39,15 @@ cuda = [
   "snarkos-node-bft-ledger-service/cuda",
   "snarkos-node-sync/cuda"
 ]
+persistent-storage = [ "snarkos-node-bft-storage-service/persistent" ]
 test = [
   # "snarkvm/test" this breaks some of the tests
-  "snarkvm/test-helpers",
   "snarkos-node-bft-ledger-service/test",
-  "snarkos-node-bft-storage-service/test"
+  "snarkos-node-bft-storage-service/test",
+  "test-helpers"
+]
+test-helpers = [
+  "snarkvm/test-helpers",
 ]
 serial = [
   "snarkos-node-metrics/serial",
@@ -213,3 +217,8 @@ workspace = true
 
 [dev-dependencies.mockall]
 version = "0.13"
+
+[[test]]
+name = "gateway-e2e"
+path = "./tests/gateway_e2e.rs"
+required-features = [ "test-helpers" ]

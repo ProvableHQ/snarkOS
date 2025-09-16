@@ -16,7 +16,7 @@
 use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
-    gateway::{Gateway, SyncCallback as GatewaySyncCallback, Transport},
+    gateway::{Gateway, GatewaySyncCallback, Transport},
     helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
     ledger_service::LedgerService,
 };
@@ -1216,7 +1216,7 @@ mod tests {
         let syncing_ledger = {
             let storage_mode = storage_mode.clone();
             Arc::new(CoreLedgerService::new(
-                task::spawn_blocking(move || CurrentLedger::load(genesis, storage_mode)).await.unwrap(),
+                task::spawn_blocking(move || CurrentLedger::load(genesis, storage_mode)).await?,
                 SimpleStoppable::new(),
             ))
         };

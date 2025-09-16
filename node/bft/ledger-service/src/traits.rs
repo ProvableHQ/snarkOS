@@ -20,13 +20,17 @@ use snarkvm::{
         PendingBlock,
         Transaction,
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result},
 };
 
+#[cfg(feature = "ledger-write")]
 use indexmap::IndexMap;
+#[cfg(feature = "ledger-write")]
+use snarkvm::ledger::narwhal::Subdag;
+
 use std::{fmt::Debug, ops::Range};
 
 #[async_trait]
