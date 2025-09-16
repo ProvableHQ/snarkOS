@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758017106502,
+  "lastUpdate": 1758032262458,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -1602,6 +1602,66 @@ window.BENCHMARK_DATA = {
             "value": 0.44,
             "unit": "blocks/s",
             "extra": "total_wait=564s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d90fdc55cdf2f3a28738c199b98f1a61e0cea41",
+          "message": "Merge pull request #3848 from ljedrz/feat/track_peer_height_for_cache\n\n[Feat] Track peer height for cache purposes",
+          "timestamp": "2025-09-16T15:02:48+02:00",
+          "tree_id": "00028dcfc7bcc9c74e08ce0194ba2475aae92eaf",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/1d90fdc55cdf2f3a28738c199b98f1a61e0cea41"
+        },
+        "date": 1758032262015,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=1085s, target_height=250, connect_time=6s, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.244794,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=1054, mean_speed=0.206926, max_speed=1.916667, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-block",
+            "value": 0.64,
+            "unit": "ops/s",
+            "extra": "num_ops=500, total_wait=773, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 185.18,
+            "unit": "ops/s",
+            "extra": "num_ops=10000, total_wait=54, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.27,
+            "unit": "blocks/s",
+            "extra": "total_wait=908s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.44,
+            "unit": "blocks/s",
+            "extra": "total_wait=563s, target_height=250"
           }
         ]
       }
