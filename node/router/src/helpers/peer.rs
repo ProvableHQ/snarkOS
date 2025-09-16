@@ -62,6 +62,8 @@ pub struct ConnectedPeer<N: Network> {
     pub node_type: NodeType,
     /// The message version of the peer.
     pub version: u32,
+    /// The latest block height known to be associated with the peer.
+    pub last_height_seen: Option<u32>,
     /// The timestamp of the first message received from the peer.
     pub first_seen: Instant,
     /// The timestamp of the last message received from this peer.
@@ -99,6 +101,7 @@ impl<N: Network> Peer<N> {
             node_type: cr.node_type,
             trusted: self.is_trusted(),
             version: cr.version,
+            last_height_seen: None,
             first_seen: timestamp,
             last_seen: timestamp,
             router,
@@ -131,6 +134,15 @@ impl<N: Network> Peer<N> {
             Self::Candidate(p) => &p.listener_addr,
             Self::Connecting(p) => &p.listener_addr,
             Self::Connected(p) => &p.listener_addr,
+        }
+    }
+
+    /// The listener (public) address of this peer.
+    pub fn last_height_seen(&self) -> Option<u32> {
+        match self {
+            Self::Candidate(_) => None,
+            Self::Connecting(_) => None,
+            Self::Connected(peer) => peer.last_height_seen,
         }
     }
 

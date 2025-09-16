@@ -584,13 +584,13 @@ impl<N: Network> BlockSync<N> {
     ///
     /// This function does **not** check
     /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
-    pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
+    pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: &BlockLocators<N>) -> Result<()> {
         // Update the locators entry for the given peer IP.
         // We perform this update atomically, and drop the lock as soon as we are done with the update.
         match self.locators.write().entry(peer_ip) {
             hash_map::Entry::Occupied(mut e) => {
                 // Return early if the block locators did not change.
-                if e.get() == &locators {
+                if e.get() == locators {
                     return Ok(());
                 }
 
@@ -1446,7 +1446,7 @@ mod tests {
 
             for peer_id in 1..=num_peers {
                 // Add a peer.
-                sync.update_peer_locators(sample_peer_ip(peer_id), sample_block_locators(10)).unwrap();
+                sync.update_peer_locators(sample_peer_ip(peer_id), &sample_block_locators(10)).unwrap();
                 // Add the peer to the set of peers.
                 peers.insert(sample_peer_ip(peer_id));
             }
@@ -1471,15 +1471,15 @@ mod tests {
 
         // Add a peer (fork).
         let peer_1 = sample_peer_ip(1);
-        sync.update_peer_locators(peer_1, sample_block_locators_with_fork(20, 11)).unwrap();
+        sync.update_peer_locators(peer_1, &sample_block_locators_with_fork(20, 11)).unwrap();
 
         // Add a peer.
         let peer_2 = sample_peer_ip(2);
-        sync.update_peer_locators(peer_2, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_2, &sample_block_locators(10)).unwrap();
 
         // Add a peer.
         let peer_3 = sample_peer_ip(3);
-        sync.update_peer_locators(peer_3, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_3, &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, _) = sync.prepare_block_requests();
@@ -1514,15 +1514,15 @@ mod tests {
 
         // Add a peer (fork).
         let peer_1 = sample_peer_ip(1);
-        sync.update_peer_locators(peer_1, sample_block_locators_with_fork(20, 10)).unwrap();
+        sync.update_peer_locators(peer_1, &sample_block_locators_with_fork(20, 10)).unwrap();
 
         // Add a peer.
         let peer_2 = sample_peer_ip(2);
-        sync.update_peer_locators(peer_2, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_2, &sample_block_locators(10)).unwrap();
 
         // Add a peer.
         let peer_3 = sample_peer_ip(3);
-        sync.update_peer_locators(peer_3, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_3, &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, _) = sync.prepare_block_requests();
@@ -1532,7 +1532,7 @@ mod tests {
 
         // Add a peer.
         let peer_4 = sample_peer_ip(4);
-        sync.update_peer_locators(peer_4, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_4, &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, sync_peers) = sync.prepare_block_requests();
@@ -1562,15 +1562,15 @@ mod tests {
 
         // Add a peer (fork).
         let peer_1 = sample_peer_ip(1);
-        sync.update_peer_locators(peer_1, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_1, &sample_block_locators(10)).unwrap();
 
         // Add a peer.
         let peer_2 = sample_peer_ip(2);
-        sync.update_peer_locators(peer_2, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_2, &sample_block_locators(10)).unwrap();
 
         // Add a peer.
         let peer_3 = sample_peer_ip(3);
-        sync.update_peer_locators(peer_3, sample_block_locators_with_fork(20, 10)).unwrap();
+        sync.update_peer_locators(peer_3, &sample_block_locators_with_fork(20, 10)).unwrap();
 
         // Prepare the block requests.
         let (requests, _) = sync.prepare_block_requests();
@@ -1580,7 +1580,7 @@ mod tests {
 
         // Add a peer.
         let peer_4 = sample_peer_ip(4);
-        sync.update_peer_locators(peer_4, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_4, &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, sync_peers) = sync.prepare_block_requests();
@@ -1605,7 +1605,7 @@ mod tests {
         let sync = sample_sync_at_height(0);
 
         // Add a peer.
-        sync.update_peer_locators(sample_peer_ip(1), sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(sample_peer_ip(1), &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, sync_peers) = sync.prepare_block_requests();
@@ -1648,7 +1648,7 @@ mod tests {
         let sync = sample_sync_at_height(9);
 
         // Add a peer.
-        sync.update_peer_locators(sample_peer_ip(1), sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(sample_peer_ip(1), &sample_block_locators(10)).unwrap();
 
         // Inserting a block height that is already in the ledger should fail.
         sync.insert_block_request(9, (None, None, indexset![sample_peer_ip(1)])).unwrap_err();
@@ -1663,14 +1663,14 @@ mod tests {
         // Test 2 peers.
         let peer1_ip = sample_peer_ip(1);
         for peer1_height in 0..500u32 {
-            sync.update_peer_locators(peer1_ip, sample_block_locators(peer1_height)).unwrap();
+            sync.update_peer_locators(peer1_ip, &sample_block_locators(peer1_height)).unwrap();
             assert_eq!(sync.get_peer_height(&peer1_ip), Some(peer1_height));
 
             let peer2_ip = sample_peer_ip(2);
             for peer2_height in 0..500u32 {
                 println!("Testing peer 1 height at {peer1_height} and peer 2 height at {peer2_height}");
 
-                sync.update_peer_locators(peer2_ip, sample_block_locators(peer2_height)).unwrap();
+                sync.update_peer_locators(peer2_ip, &sample_block_locators(peer2_height)).unwrap();
                 assert_eq!(sync.get_peer_height(&peer2_ip), Some(peer2_height));
 
                 // Compute the distance between the peers.
@@ -1697,13 +1697,13 @@ mod tests {
         let sync = sample_sync_at_height(0);
 
         let peer_ip = sample_peer_ip(1);
-        sync.update_peer_locators(peer_ip, sample_block_locators(100)).unwrap();
+        sync.update_peer_locators(peer_ip, &sample_block_locators(100)).unwrap();
         assert_eq!(sync.get_peer_height(&peer_ip), Some(100));
 
         sync.remove_peer(&peer_ip);
         assert_eq!(sync.get_peer_height(&peer_ip), None);
 
-        sync.update_peer_locators(peer_ip, sample_block_locators(200)).unwrap();
+        sync.update_peer_locators(peer_ip, &sample_block_locators(200)).unwrap();
         assert_eq!(sync.get_peer_height(&peer_ip), Some(200));
 
         sync.remove_peer(&peer_ip);
@@ -1715,13 +1715,13 @@ mod tests {
         let sync = sample_sync_at_height(0);
 
         let peer_ip = sample_peer_ip(1);
-        sync.update_peer_locators(peer_ip, sample_block_locators(100)).unwrap();
+        sync.update_peer_locators(peer_ip, &sample_block_locators(100)).unwrap();
         assert_eq!(sync.get_peer_height(&peer_ip), Some(100));
 
         sync.remove_peer(&peer_ip);
         assert_eq!(sync.get_peer_height(&peer_ip), None);
 
-        sync.update_peer_locators(peer_ip, sample_block_locators(200)).unwrap();
+        sync.update_peer_locators(peer_ip, &sample_block_locators(200)).unwrap();
         assert_eq!(sync.get_peer_height(&peer_ip), Some(200));
     }
 
@@ -1732,7 +1732,7 @@ mod tests {
 
         // Add a peer.
         let peer_ip = sample_peer_ip(1);
-        sync.update_peer_locators(peer_ip, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_ip, &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, sync_peers) = sync.prepare_block_requests();
@@ -1763,7 +1763,7 @@ mod tests {
         assert_eq!(requests.len(), 0);
 
         // Add the peer again.
-        sync.update_peer_locators(peer_ip, sample_block_locators(10)).unwrap();
+        sync.update_peer_locators(peer_ip, &sample_block_locators(10)).unwrap();
 
         // Prepare the block requests.
         let (requests, _) = sync.prepare_block_requests();
@@ -1790,7 +1790,7 @@ mod tests {
 
         // Add a peer.
         let locators = sample_block_locators(locator_height);
-        sync.update_peer_locators(sample_peer_ip(1), locators.clone()).unwrap();
+        sync.update_peer_locators(sample_peer_ip(1), &locators).unwrap();
 
         // Construct block requests
         let (requests, sync_peers) = sync.prepare_block_requests();
@@ -1832,7 +1832,7 @@ mod tests {
         let locators = sample_block_locators(10);
         let block_hash = locators.get_hash(1);
 
-        sync.update_peer_locators(peer_ip, locators.clone()).unwrap();
+        sync.update_peer_locators(peer_ip, &locators).unwrap();
 
         let timestamp = Instant::now() - BLOCK_REQUEST_TIMEOUT - Duration::from_secs(1);
 
@@ -1869,9 +1869,9 @@ mod tests {
         let block_hash1 = locators.get_hash(1);
         let block_hash2 = locators.get_hash(2);
 
-        sync.update_peer_locators(peer_ip1, locators.clone()).unwrap();
-        sync.update_peer_locators(peer_ip2, locators.clone()).unwrap();
-        sync.update_peer_locators(peer_ip3, locators.clone()).unwrap();
+        sync.update_peer_locators(peer_ip1, &locators).unwrap();
+        sync.update_peer_locators(peer_ip2, &locators).unwrap();
+        sync.update_peer_locators(peer_ip3, &locators).unwrap();
 
         assert_eq!(sync.locators.read().len(), 3);
 

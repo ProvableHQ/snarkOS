@@ -61,6 +61,7 @@ use parking_lot::{Mutex, RwLock};
 #[cfg(not(any(test)))]
 use std::net::IpAddr;
 use std::{
+    cmp,
     collections::{HashMap, HashSet},
     fs,
     future::Future,
@@ -381,6 +382,21 @@ impl<N: Network> Router<N> {
         }
     }
 
+    /// Updates the connected peer - if it exists -  given the peer IP and a closure.
+    /// The returned status indicates whether the update was successful, i.e. the peer had existed.
+    pub fn update_connected_peer<F: FnMut(&mut ConnectedPeer<N>)>(
+        &self,
+        listener_addr: &SocketAddr,
+        mut update_fn: F,
+    ) -> bool {
+        if let Some(Peer::Connected(peer)) = self.peer_pool.write().get_mut(listener_addr) {
+            update_fn(peer);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the list of all peers (connected, connecting, and candidate).
     pub fn get_peers(&self) -> Vec<Peer<N>> {
         self.peer_pool.read().values().cloned().collect()
@@ -553,15 +569,17 @@ impl<N: Network> Router<N> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
 
-        // Get the average values to gauge peer quality.
+        // Get the low-level peer stats.
         let known_peers = self.tcp().known_peers().snapshot();
 
-        // Prioritize peers with the lowest failure count.
+        // Sort the list of peers.
         peers.sort_unstable_by_key(|peer| {
             if let Some(peer_stats) = known_peers.get(&peer.listener_addr().ip()) {
-                peer_stats.failures()
+                // Prioritize greatest height, then lowest failure count.
+                (cmp::Reverse(peer.last_height_seen()), peer_stats.failures())
             } else {
-                0 // A dummy value - this is unreachable.
+                // Unreachable; use an else-compatible dummy.
+                (cmp::Reverse(peer.last_height_seen()), 0)
             }
         });
         peers.truncate(MAX_PEERS_TO_SEND);

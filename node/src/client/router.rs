@@ -236,10 +236,13 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         // If block locators were provided, then update the peer in the sync pool.
         if let Some(block_locators) = message.block_locators {
             // Check the block locators are valid, and update the peer in the sync pool.
-            if let Err(error) = self.sync.update_peer_locators(peer_ip, block_locators) {
+            if let Err(error) = self.sync.update_peer_locators(peer_ip, &block_locators) {
                 warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
                 return false;
             }
+
+            let last_peer_height = Some(block_locators.latest_locator_height());
+            self.router().update_connected_peer(&peer_ip, |peer| peer.last_height_seen = last_peer_height);
         }
 
         // Send a `Pong` message to the peer.

@@ -336,7 +336,7 @@ impl<N: Network> Sync<N> {
 
     /// We received new peer locators during a Ping.
     fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
-        self.block_sync.update_peer_locators(peer_ip, locators)
+        self.block_sync.update_peer_locators(peer_ip, &locators)
     }
 
     /// A peer disconnected.
