@@ -172,7 +172,7 @@ jobs:
       - name: Checkout snarkOS
         uses: actions/checkout@v5
         with:
-          ref: staging
+          ref: canary
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get latest snarkVM canary commit
@@ -221,13 +221,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create new update-snarkvm-canary branch from staging
+      - name: Create new update-snarkvm-canary branch from canary
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
-          # Always create a fresh branch from staging
-          echo "Creating new update-snarkvm-canary branch from staging"
-          git checkout -B update-snarkvm-canary staging
-          echo "Created fresh update-snarkvm-canary branch from staging"
+          # Always create a fresh branch from canary
+          echo "Creating new update-snarkvm-canary branch from canary"
+          git checkout -B update-snarkvm-canary canary
+          echo "Created fresh update-snarkvm-canary branch from canary"
 
       - name: Update snarkVM dependency
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
@@ -322,7 +322,7 @@ jobs:
       - name: Checkout snarkOS
         uses: actions/checkout@v5
         with:
-          ref: staging
+          ref: testnet
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get latest snarkVM testnet commit
@@ -371,13 +371,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create new update-snarkvm-testnet branch from staging
+      - name: Create new update-snarkvm-testnet branch from testnet
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
-          # Always create a fresh branch from staging
-          echo "Creating new update-snarkvm-testnet branch from staging"
-          git checkout -B update-snarkvm-testnet staging
-          echo "Created fresh update-snarkvm-testnet branch from staging"
+          # Always create a fresh branch from testnet
+          echo "Creating new update-snarkvm-testnet branch from testnet"
+          git checkout -B update-snarkvm-testnet testnet
+          echo "Created fresh update-snarkvm-testnet branch from testnet"
 
       - name: Update snarkVM dependency
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
@@ -472,7 +472,7 @@ jobs:
       - name: Checkout snarkOS
         uses: actions/checkout@v5
         with:
-          ref: staging
+          ref: mainnet
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get latest snarkVM mainnet commit
@@ -521,13 +521,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create new update-snarkvm-mainnet branch from staging
+      - name: Create new update-snarkvm-mainnet branch from mainnet
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
         run: |
-          # Always create a fresh branch from staging
-          echo "Creating new update-snarkvm-mainnet branch from staging"
-          git checkout -B update-snarkvm-mainnet staging
-          echo "Created fresh update-snarkvm-mainnet branch from staging"
+          # Always create a fresh branch from mainnet
+          echo "Creating new update-snarkvm-mainnet branch from mainnet"
+          git checkout -B update-snarkvm-mainnet mainnet
+          echo "Created fresh update-snarkvm-mainnet branch from mainnet"
 
       - name: Update snarkVM dependency
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
