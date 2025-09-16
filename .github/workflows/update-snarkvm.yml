@@ -1,3 +1,7 @@
+# This workflow monitors the ProvableHQ/snarkVM staging branch for new commits
+# and automatically creates PRs to update the snarkVM git dependency in snarkOS.
+# It runs every 6 hours and can also be triggered manually.
+
 name: Update snarkVM dependency
 
 on:
@@ -59,11 +63,11 @@ jobs:
         if: steps.check-update.outputs.update_needed == 'true'
         run: |
           # Update the revision in Cargo.toml
-          sed -i 's/rev = "[^"]*"/rev = "${{ steps.latest-commit.outputs.latest_rev }}"/' Cargo.toml
+          sed -i "s/rev = \"[^\"]*\"/rev = \"${{ steps.latest-commit.outputs.latest_rev }}\"/" Cargo.toml
           
           # Verify the change
           echo "Updated Cargo.toml snarkVM dependency:"
-          grep -A 2 -B 2 "snarkvm" Cargo.toml
+          grep -A 3 -B 1 'rev = ' Cargo.toml
 
       - name: Set up Rust build caching
         if: steps.check-update.outputs.update_needed == 'true'
