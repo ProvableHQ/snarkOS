@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Enable Dependabot for Cargo.toml dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 10
+    target-branch: "staging"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "rust"
+    # Allow version updates for all dependencies
+    allow:
+      - dependency-type: "all"
+  
+  # Enable Dependabot for git submodules (if any are added in future)
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    target-branch: "staging"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "submodules"
