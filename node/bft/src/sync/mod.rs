@@ -17,7 +17,7 @@ use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     PRIMARY_PING_IN_MS,
     events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
-    gateway::{Gateway, SyncCallback as GatewaySyncCallback, Transport},
+    gateway::{Gateway, GatewaySyncCallback, Transport},
     helpers::{CallbackHandle, Pending, Storage, fmt_id, max_redundant_requests},
     ledger_service::LedgerService,
 };

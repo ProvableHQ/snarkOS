@@ -128,7 +128,9 @@ impl<N: Network> DAG<N> {
 
         // Update the recently committed IDs.
         let is_new = self.recent_committed_ids.entry(certificate_round).or_default().insert(certificate_id);
-        if !is_new {
+        if is_new {
+            trace!("Got new commit for certificate {certificate_id} at round {certificate_round}");
+        } else {
             //TODO (kaimast): return early here?
             trace!("Certificate {certificate_id} was already committed for round {certificate_round}");
         }
