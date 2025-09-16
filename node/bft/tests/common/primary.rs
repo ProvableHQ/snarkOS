@@ -20,13 +20,7 @@ use crate::common::{
 };
 
 use snarkos_account::Account;
-use snarkos_node_bft::{
-    BFT,
-    MAX_BATCH_DELAY_IN_MS,
-    MEMORY_POOL_PORT,
-    Primary,
-    helpers::{PrimarySender, Storage, init_primary_channels},
-};
+use snarkos_node_bft::{BFT, MAX_BATCH_DELAY_IN_MS, MEMORY_POOL_PORT, Primary, helpers::Storage};
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::BlockSync;
@@ -100,8 +94,6 @@ pub struct TestValidator {
     pub id: u16,
     /// The primary instance. When the BFT is enabled this is a clone of the BFT primary.
     pub primary: Primary<CurrentNetwork>,
-    /// The channel sender of the primary.
-    pub primary_sender: Option<PrimarySender<CurrentNetwork>>,
     /// The BFT instance. This is only set if the BFT is enabled.
     pub bft: OnceLock<BFT<CurrentNetwork>>,
     /// The tokio handles of all long-running tasks associated with the validator (incl. cannons).
@@ -112,9 +104,8 @@ pub type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
 
 impl TestValidator {
     pub fn fire_transmissions(&mut self, interval_ms: u64) {
-        let solution_handle = fire_unconfirmed_solutions(self.primary_sender.as_mut().unwrap(), self.id, interval_ms);
-        let transaction_handle =
-            fire_unconfirmed_transactions(self.primary_sender.as_mut().unwrap(), self.id, interval_ms);
+        let solution_handle = fire_unconfirmed_solutions(self.primary.clone(), self.id, interval_ms);
+        let transaction_handle = fire_unconfirmed_transactions(self.primary.clone(), self.id, interval_ms);
 
         self.handles.lock().push(solution_handle);
         self.handles.lock().push(transaction_handle);
@@ -137,7 +128,7 @@ impl TestValidator {
 
 impl TestNetwork {
     // Creates a new test network with the given configuration.
-    pub fn new(config: TestNetworkConfig) -> Self {
+    pub async fn new(config: TestNetworkConfig) -> Self {
         let mut rng = TestRng::default();
 
         if let Some(log_level) = config.log_level {
@@ -182,6 +173,7 @@ impl TestNetwork {
                     StorageMode::new_test(None),
                     None,
                 )
+                .await
                 .unwrap();
                 (bft.primary().clone(), Some(bft))
             } else {
@@ -195,17 +187,13 @@ impl TestNetwork {
                     StorageMode::new_test(None),
                     None,
                 )
+                .await
                 .unwrap();
                 (primary, None)
             };
 
-            let test_validator = TestValidator {
-                id: id as u16,
-                primary,
-                primary_sender: None,
-                bft: OnceLock::new(),
-                handles: Default::default(),
-            };
+            let test_validator =
+                TestValidator { id: id as u16, primary, bft: OnceLock::new(), handles: Default::default() };
             if let Some(bft) = bft {
                 assert!(test_validator.bft.set(bft).is_ok());
             }
@@ -218,19 +206,16 @@ impl TestNetwork {
     // Starts each node in the network.
     pub async fn start(&mut self) {
         for validator in self.validators.values_mut() {
-            let (primary_sender, primary_receiver) = init_primary_channels();
-            validator.primary_sender = Some(primary_sender.clone());
-
             // let ledger_service = validator.primary.ledger().clone();
             // let sync = BlockSync::new(BlockSyncMode::Gateway, ledger_service);
             // sync.try_block_sync(validator.primary.gateway()).await.unwrap();
 
             if let Some(bft) = validator.bft.get_mut() {
                 // Setup the channels and start the bft.
-                bft.run(None, None, primary_sender, primary_receiver).await.unwrap();
+                bft.run(None, None).await.unwrap();
             } else {
                 // Setup the channels and start the primary.
-                validator.primary.run(None, None, None, primary_sender, primary_receiver).await.unwrap();
+                validator.primary.run(None, None, None).await.unwrap();
             }
 
             if let Some(interval_ms) = self.config.fire_transmissions {

@@ -16,11 +16,7 @@
 use crate::common::{CurrentNetwork, TranslucentLedgerService, primary};
 use aleo_std::StorageMode;
 use snarkos_account::Account;
-use snarkos_node_bft::{
-    Gateway,
-    Worker,
-    helpers::{PrimarySender, Storage},
-};
+use snarkos_node_bft::{Gateway, Primary, Worker, helpers::Storage};
 
 use snarkos_node_bft::storage_service::BFTMemoryService;
 use snarkos_utilities::SimpleStoppable;
@@ -52,8 +48,7 @@ use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use rand::Rng;
-use tokio::{sync::oneshot, task::JoinHandle, time::sleep};
-use tracing::*;
+use tokio::{task::JoinHandle, time::sleep};
 use tracing_subscriber::{
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
@@ -91,12 +86,7 @@ pub fn initialize_logger(verbosity: u8) {
 }
 
 /// Fires *fake* unconfirmed solutions at the node.
-pub fn fire_unconfirmed_solutions(
-    sender: &PrimarySender<CurrentNetwork>,
-    node_id: u16,
-    interval_ms: u64,
-) -> JoinHandle<()> {
-    let tx_unconfirmed_solution = sender.tx_unconfirmed_solution.clone();
+pub fn fire_unconfirmed_solutions(primary: Primary<CurrentNetwork>, node_id: u16, interval_ms: u64) -> JoinHandle<()> {
     tokio::task::spawn(async move {
         // This RNG samples the *same* fake solutions for all nodes.
         let mut shared_rng = TestRng::fixed(123456789);
@@ -122,13 +112,8 @@ pub fn fire_unconfirmed_solutions(
             // Sample a random fake solution ID and solution.
             let (solution_id, solution) =
                 if counter % 2 == 0 { sample(&mut shared_rng).await } else { sample(&mut unique_rng).await };
-            // Initialize a callback sender and receiver.
-            let (callback, callback_receiver) = oneshot::channel();
             // Send the fake solution.
-            if let Err(e) = tx_unconfirmed_solution.send((solution_id, solution, callback)).await {
-                error!("Failed to send unconfirmed solution: {e}");
-            }
-            let _ = callback_receiver.await;
+            let _ = primary.process_unconfirmed_solution(solution_id, solution).await;
             // Increment the counter.
             counter += 1;
             // Sleep briefly.
@@ -139,11 +124,10 @@ pub fn fire_unconfirmed_solutions(
 
 /// Fires *fake* unconfirmed transactions at the node.
 pub fn fire_unconfirmed_transactions(
-    sender: &PrimarySender<CurrentNetwork>,
+    primary: Primary<CurrentNetwork>,
     node_id: u16,
     interval_ms: u64,
 ) -> JoinHandle<()> {
-    let tx_unconfirmed_transaction = sender.tx_unconfirmed_transaction.clone();
     tokio::task::spawn(async move {
         // This RNG samples the *same* fake transactions for all nodes.
         let mut shared_rng = TestRng::fixed(123456789);
@@ -170,13 +154,8 @@ pub fn fire_unconfirmed_transactions(
         loop {
             // Sample a random fake transaction ID and transaction.
             let (id, transaction) = if counter % 2 == 0 { sample(&mut shared_rng) } else { sample(&mut unique_rng) };
-            // Initialize a callback sender and receiver.
-            let (callback, callback_receiver) = oneshot::channel();
             // Send the fake transaction.
-            if let Err(e) = tx_unconfirmed_transaction.send((id, transaction, callback)).await {
-                error!("Failed to send unconfirmed transaction: {e}");
-            }
-            let _ = callback_receiver.await;
+            let _ = primary.process_unconfirmed_transaction(id, transaction).await;
             // Increment the counter.
             counter += 1;
             // Sleep briefly.
