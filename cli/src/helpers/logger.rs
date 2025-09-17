@@ -107,7 +107,9 @@ fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
 }
 
 /// Sets the log filter based on the given verbosity level.
+/// Initializes the logger with the specified verbosity level, where 0 is the lowest verbosity and 6 the highest.
 ///
+/// The following shows what messages are enabled at each level.
 /// ```ignore
 /// 0 => info
 /// 1 => info, debug
