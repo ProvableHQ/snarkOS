@@ -341,7 +341,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
         // Truncate and convert to socket addrs.
         peers.truncate(MAX_PEERS_TO_SEND);
-        let peers = peers.into_iter().map(|peer| peer.listener_addr).collect();
+        let peers = peers.into_iter().map(|peer| (peer.listener_addr, peer.last_height_seen)).collect();
 
         // Send a `PeerResponse` message to the peer.
         self.router().send(peer_ip, Message::PeerResponse(PeerResponse { peers }));
@@ -349,17 +349,17 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles a `PeerResponse` message.
-    fn peer_response(&self, _peer_ip: SocketAddr, peers: &[SocketAddr]) -> bool {
+    fn peer_response(&self, _peer_ip: SocketAddr, peers: &[(SocketAddr, Option<u32>)]) -> bool {
         // Check if the number of peers received is less than MAX_PEERS_TO_SEND.
         if peers.len() > MAX_PEERS_TO_SEND {
             return false;
         }
-        // Filter out invalid addresses.
+        // Filter out invalid addresses and peers with a lower known block height.
         let peers = match self.router().is_dev() {
             // In development mode, relax the validity requirements to make operating devnets more flexible.
-            true => peers.iter().copied().filter(|ip| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
+            true => peers.iter().copied().filter(|(ip, _)| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
             // In production mode, ensure the peer IPs are valid.
-            false => peers.iter().copied().filter(|ip| self.router().is_valid_peer_ip(*ip)).collect(),
+            false => peers.iter().copied().filter(|(ip, _)| self.router().is_valid_peer_ip(*ip)).collect(),
         };
         // Adds the given peer IPs to the list of candidate peers.
         self.router().insert_candidate_peers(&peers);

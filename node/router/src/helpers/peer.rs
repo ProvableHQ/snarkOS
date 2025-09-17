@@ -45,6 +45,8 @@ pub struct CandidatePeer {
     pub listener_addr: SocketAddr,
     /// Indicates whether the peer is considered trusted.
     pub trusted: bool,
+    /// The latest block height known to be associated with the peer.
+    pub last_height_seen: Option<u32>,
 }
 
 /// A fully connected peer.
@@ -73,7 +75,7 @@ pub struct ConnectedPeer<N: Network> {
 impl<N: Network> Peer<N> {
     /// Create a candidate peer.
     pub const fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Candidate(CandidatePeer { listener_addr, trusted })
+        Self::Candidate(CandidatePeer { listener_addr, trusted, last_height_seen: None })
     }
 
     /// Create a connecting peer.
@@ -114,7 +116,11 @@ impl<N: Network> Peer<N> {
 
     /// Demote a peer to candidate status, marking it as disconnected.
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
-        *self = Self::new_candidate(listener_addr, self.is_trusted());
+        *self = Self::Candidate(CandidatePeer {
+            listener_addr,
+            trusted: self.is_trusted(),
+            last_height_seen: self.last_height_seen(),
+        });
     }
 
     /// Returns the type of the node (only applicable to connected peers).

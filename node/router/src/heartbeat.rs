@@ -239,9 +239,21 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Initialize an RNG.
             let rng = &mut OsRng;
 
-            // Attempt to connect to more peers.
-            for peer_ip in self.router().candidate_peers().into_iter().choose_multiple(rng, num_deficient) {
-                self.router().connect(peer_ip);
+            // Attempt to connect to more peers, separately choosing from those at a greater block
+            // height, and those whose height is lower or unknown to us.
+            let own_height = self.router().ledger.latest_block_height();
+            let (higher_peers, other_peers): (Vec<_>, Vec<_>) = self
+                .router()
+                .get_candidate_peers()
+                .into_iter()
+                .partition(|peer| peer.last_height_seen.map(|h| h > own_height).unwrap_or(false));
+            // We may not know of half of `num_deficient` candidates; account for it using `min`.
+            let num_higher_peers = num_deficient.div_ceil(2).min(higher_peers.len());
+            for peer in higher_peers.into_iter().choose_multiple(rng, num_higher_peers) {
+                self.router().connect(peer.listener_addr);
+            }
+            for peer in other_peers.into_iter().choose_multiple(rng, num_deficient - num_higher_peers) {
+                self.router().connect(peer.listener_addr);
             }
 
             if self.router().allow_external_peers() {

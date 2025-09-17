@@ -294,13 +294,19 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of candidate peers.
-    fn candidate_peers(&self) -> HashSet<SocketAddr> {
+    fn get_candidate_peers(&self) -> Vec<CandidatePeer> {
         let banned_ips = self.tcp().banned_peers().get_banned_ips();
         self.peer_pool()
             .read()
             .iter()
             .filter_map(|(addr, peer)| {
-                (matches!(peer, Peer::Candidate(_)) && !banned_ips.contains(&addr.ip())).then_some(*addr)
+                if let Peer::Candidate(peer) = peer
+                    && !banned_ips.contains(&addr.ip())
+                {
+                    Some(peer.clone())
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -607,7 +613,7 @@ impl<N: Network> Router<N> {
     ///
     /// This method skips adding any given peers if the combined size exceeds the threshold,
     /// as the peer providing this list could be subverting the protocol.
-    pub fn insert_candidate_peers(&self, peers: &[SocketAddr]) {
+    pub fn insert_candidate_peers(&self, peers: &[(SocketAddr, Option<u32>)]) {
         // Compute the maximum number of candidate peers.
         let max_candidate_peers = Self::MAXIMUM_CANDIDATE_PEERS.saturating_sub(self.number_of_candidate_peers());
         {
@@ -615,16 +621,25 @@ impl<N: Network> Router<N> {
             // Ensure the combined number of peers does not surpass the threshold.
             let eligible_peers = peers
                 .iter()
-                .filter(|&peer_ip| {
-                    // Ensure the peer is not itself, and is not already known.
-                    !self.is_local_ip(*peer_ip) && !peer_pool.contains_key(peer_ip)
+                .filter(|(peer_ip, _)| {
+                    // Ensure the peer is not itself or connected.
+                    !self.is_local_ip(*peer_ip) && !self.is_connected(*peer_ip)
                 })
-                .take(max_candidate_peers)
-                .map(|addr| (*addr, Peer::new_candidate(*addr, false)))
-                .collect::<Vec<_>>();
+                .take(max_candidate_peers);
 
             // Proceed to insert the eligible candidate peer IPs.
-            peer_pool.extend(eligible_peers);
+            for (addr, height) in eligible_peers {
+                match peer_pool.entry(*addr) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(Peer::new_candidate(*addr, false));
+                    }
+                    Entry::Occupied(mut entry) => {
+                        if let Peer::Candidate(peer) = entry.get_mut() {
+                            peer.last_height_seen = *height;
+                        }
+                    }
+                }
+            }
         }
         #[cfg(feature = "metrics")]
         self.update_metrics();
