@@ -47,8 +47,9 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "fbd99608f"
+#rev = "fbd99608f"
 #version = "=4.3.0"
+branch="fix/restore-pending-blocks"
 default-features = false
 
 [workspace.dependencies.anyhow]
