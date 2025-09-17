@@ -16,8 +16,10 @@
 use crate::{LedgerService, fmt_id, spawn_blocking};
 use snarkvm::{
     ledger::{
+        Block,
         Ledger,
-        block::{Block, Transaction},
+        PendingBlock,
+        Transaction,
         committee::Committee,
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -339,6 +341,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         // Check the transaction is well-formed.
         let ledger = self.ledger.clone();
         spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()))
+    }
+
+    fn check_block_subdag(&self, block: Block<N>, prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+        self.ledger.check_block_subdag(block, prefix)
+    }
+
+    fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>> {
+        self.ledger.check_block_content(block, &mut rand::thread_rng())
     }
 
     /// Checks the given block is valid next block.
