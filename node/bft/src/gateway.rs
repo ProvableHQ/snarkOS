@@ -203,8 +203,14 @@ impl<N: Network> Gateway<N> {
             (None, None) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
             (Some(ip), _) => ip,
         };
+
+        // Allow at most as many connections as the maximum committe size.
+        // and fail if the chosen port is not available.
+        let mut tcp_config = Config::new(ip, Committee::<N>::max_committee_size()?);
+        tcp_config.allow_random_port = false;
+
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(tcp_config);
 
         // Return the gateway.
         Ok(Self {
@@ -1690,17 +1696,11 @@ mod prop_tests {
 
     impl GatewayAddress {
         fn ip(&self) -> Option<SocketAddr> {
-            if let GatewayAddress::Prod(ip) = self {
-                return *ip;
-            }
-            None
+            if let GatewayAddress::Prod(ip) = self { *ip } else { None }
         }
 
         fn port(&self) -> Option<u16> {
-            if let GatewayAddress::Dev(port) = self {
-                return Some(*port as u16);
-            }
-            None
+            if let GatewayAddress::Dev(port) = self { Some(*port as u16) } else { None }
         }
     }
 
@@ -1757,8 +1757,8 @@ mod prop_tests {
             .boxed()
     }
 
-    #[proptest]
-    fn gateway_dev_initialization(#[strategy(any_valid_dev_gateway())] input: GatewayInput) {
+    #[proptest(async = "tokio")]
+    async fn gateway_dev_initialization(#[strategy(any_valid_dev_gateway())] input: GatewayInput) {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
@@ -1772,10 +1772,13 @@ mod prop_tests {
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
         assert_eq!(gateway.account().address(), account.address());
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
-    #[proptest]
-    fn gateway_prod_initialization(#[strategy(any_valid_prod_gateway())] input: GatewayInput) {
+    #[proptest(async = "tokio")]
+    async fn gateway_prod_initialization(#[strategy(any_valid_prod_gateway())] input: GatewayInput) {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
@@ -1794,6 +1797,9 @@ mod prop_tests {
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
         assert_eq!(gateway.account().address(), account.address());
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
     #[proptest(async = "tokio")]
@@ -1839,6 +1845,9 @@ mod prop_tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + dev.port().unwrap())
         );
         assert_eq!(gateway.num_workers(), workers.len() as u8);
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
     #[proptest]

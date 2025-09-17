@@ -19,7 +19,7 @@ use crate::common::{
     utils::{fire_unconfirmed_solutions, fire_unconfirmed_transactions, initialize_logger},
 };
 use snarkos_account::Account;
-use snarkos_node_bft::{BFT, MAX_BATCH_DELAY_IN_MS, MEMORY_POOL_PORT, Primary, helpers::Storage};
+use snarkos_node_bft::{BFT, MAX_BATCH_DELAY_IN_MS, Primary, helpers::Storage};
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_sync::BlockSync;
 use snarkvm::{
@@ -164,7 +164,7 @@ impl TestNetwork {
                     storage,
                     ledger,
                     block_sync,
-                    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
+                    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
                     &[],
                     StorageMode::new_test(None),
                     None,
@@ -178,7 +178,7 @@ impl TestNetwork {
                     storage,
                     ledger,
                     block_sync,
-                    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
+                    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
                     &[],
                     StorageMode::new_test(None),
                     None,
