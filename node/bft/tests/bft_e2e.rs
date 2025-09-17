@@ -95,6 +95,7 @@ async fn test_resync() {
     deadline!(Duration::from_secs(20), move || { network_clone.is_round_reached(RECOVERY_ROUND) });
 }
 
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_quorum_threshold() {
     // Start N nodes but don't connect them.
@@ -150,6 +151,7 @@ async fn test_quorum_threshold() {
     deadline!(Duration::from_secs(20), move || { net.is_round_reached(TARGET_ROUND) });
 }
 
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_quorum_break() {
     // Start N nodes, connect them and start the cannons for each.

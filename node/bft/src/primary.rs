@@ -20,7 +20,7 @@ use crate::{
     PRIMARY_PING_IN_MS,
     WORKER_PING_IN_MS,
     Worker,
-    events::{BatchPropose, BatchSignature, Event},
+    events::{BatchPropose, BatchSignature, Event, PrimaryPing},
     gateway::{Gateway, GatewayPrimaryCallback, Transport},
     helpers::{
         CallbackHandle,
@@ -34,25 +34,26 @@ use crate::{
         init_worker_channels,
         now,
     },
-    spawn_blocking,
+    ledger_service::LedgerService,
     sync::{Sync, SyncCallback},
 };
+
 use snarkos_account::Account;
-use snarkos_node_bft_events::PrimaryPing;
-use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
+
 use snarkvm::{
     console::{
+        network::ConsensusVersion,
         prelude::*,
         types::{Address, Field},
     },
     ledger::{
         block::Transaction,
+        committee::Committee,
         narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{ConsensusVersion, committee::Committee},
     utilities::{
         flatten_error,
         task::{self, JoinHandle},
@@ -131,7 +132,7 @@ impl<N: Network> Primary<N> {
     /// The maximum number of unconfirmed transmissions to send to the primary.
     pub const MAX_TRANSMISSIONS_TOLERANCE: usize = BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH * 2;
 
-    /// Initializes a new primary instance.
+    /// Initializes a new primary instance and starts the gateway.
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         account: Account<N>,
@@ -1800,6 +1801,8 @@ impl<N: Network> Primary<N> {
         info!("Shutting down the primary...");
         // Remove the callback.
         self.primary_callback.clear();
+        // Stop syncing.
+        self.sync.shut_down().await;
         // Shut down the workers.
         self.workers.iter().for_each(|worker| worker.shut_down());
         // Abort the tasks.
@@ -1837,7 +1840,8 @@ impl<N: Network> GatewayPrimaryCallback<N> for Primary<N> {
             let self_ = self.clone();
             tokio::spawn(async move {
                 // Deserialize the primary certificate in the primary ping.
-                let Ok(primary_certificate) = spawn_blocking!(primary_certificate.deserialize_blocking()) else {
+                let Ok(primary_certificate) = task::spawn_blocking(|| primary_certificate.deserialize_blocking()).await
+                else {
                     warn!("Failed to deserialize primary certificate in 'PrimaryPing' from '{peer_ip}'");
                     return;
                 };
@@ -1897,7 +1901,7 @@ impl<N: Network> GatewayPrimaryCallback<N> for Primary<N> {
         let self_ = self.clone();
         tokio::spawn(async move {
             // Deserialize the batch certificate.
-            let Ok(batch_certificate) = spawn_blocking!(batch_certificate.deserialize_blocking()) else {
+            let Ok(batch_certificate) = task::spawn_blocking(|| batch_certificate.deserialize_blocking()).await else {
                 warn!("Failed to deserialize the batch certificate from '{peer_ip}'");
                 return;
             };
@@ -2231,6 +2235,7 @@ mod tests {
         }
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch() {
         let mut rng = TestRng::default();
@@ -2252,6 +2257,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_with_no_transmissions() {
         let mut rng = TestRng::default();
@@ -2265,6 +2271,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_in_round() {
         let round = 3;
@@ -2290,6 +2297,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_skip_transmissions_from_previous_certificates() {
         let round = 3;
@@ -2362,6 +2370,7 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_over_spend_limit() {
         let mut rng = TestRng::default();
@@ -2399,6 +2408,7 @@ mod tests {
         assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 3);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer() {
         let mut rng = TestRng::default();
@@ -2438,6 +2448,7 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_when_not_synced() {
         let mut rng = TestRng::default();
@@ -2475,6 +2486,7 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_in_round() {
         let round = 2;
@@ -2515,6 +2527,7 @@ mod tests {
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_wrong_round() {
         let mut rng = TestRng::default();
@@ -2557,6 +2570,7 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_in_round_wrong_round() {
         let round = 4;
@@ -2603,6 +2617,7 @@ mod tests {
     }
 
     /// Tests that the minimum batch delay is enforced as expected, i.e., that proposals with timestamps that are too close to the previous proposal are rejected.
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_with_past_timestamp() {
         let round = 2;
@@ -2653,6 +2668,7 @@ mod tests {
     }
 
     /// Check that proposals rejected that have timestamps older than the previous proposal.
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_over_spend_limit() {
         let mut rng = TestRng::default();
@@ -2718,6 +2734,7 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_with_storage_round_behind_proposal_lock() {
         let round = 3;
@@ -2751,6 +2768,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_with_storage_round_behind_proposal() {
         let round = 5;
@@ -2781,6 +2799,7 @@ mod tests {
         assert!(primary.proposed_batch.read().as_ref().unwrap().round() > primary.current_round());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_batch_signature_from_peer() {
         let mut rng = TestRng::default();
@@ -2817,6 +2836,7 @@ mod tests {
         assert_eq!(primary.current_round(), round + 1);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_batch_signature_from_peer_in_round() {
         let round = 5;
@@ -2856,6 +2876,7 @@ mod tests {
         assert_eq!(primary.current_round(), round + 1);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_signature_from_peer_no_quorum() {
         let mut rng = TestRng::default();
@@ -2891,6 +2912,7 @@ mod tests {
         assert_eq!(primary.current_round(), round);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_signature_from_peer_in_round_no_quorum() {
         let round = 7;
@@ -2929,6 +2951,7 @@ mod tests {
         assert_eq!(primary.current_round(), round);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_insert_certificate_with_aborted_transmissions() {
         let round = 3;

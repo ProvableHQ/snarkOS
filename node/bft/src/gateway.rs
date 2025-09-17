@@ -20,28 +20,32 @@ use crate::{
     MAX_BATCH_DELAY_IN_MS,
     MEMORY_POOL_PORT,
     Worker,
-    events::{BatchPropose, BatchSignature, Disconnect as DisconnectEvent, DisconnectReason, EventCodec, PrimaryPing},
+    events::{
+        BatchPropose,
+        BatchSignature,
+        BlockRequest,
+        BlockResponse,
+        CertificateRequest,
+        CertificateResponse,
+        ChallengeRequest,
+        ChallengeResponse,
+        DataBlocks,
+        Disconnect as DisconnectEvent,
+        DisconnectReason,
+        Event,
+        EventCodec,
+        EventTrait,
+        PrimaryPing,
+        TransmissionRequest,
+        TransmissionResponse,
+        ValidatorsRequest,
+        ValidatorsResponse,
+    },
     helpers::{Cache, CallbackHandle, Storage, WorkerSender, assign_to_worker},
-    spawn_blocking,
+    ledger_service::LedgerService,
 };
-use aleo_std::StorageMode;
+
 use snarkos_account::Account;
-use snarkos_node_bft_events::{
-    BlockRequest,
-    BlockResponse,
-    CertificateRequest,
-    CertificateResponse,
-    ChallengeRequest,
-    ChallengeResponse,
-    DataBlocks,
-    Event,
-    EventTrait,
-    TransmissionRequest,
-    TransmissionResponse,
-    ValidatorsRequest,
-    ValidatorsResponse,
-};
-use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::{
     ConnectionMode,
     NodeType,
@@ -61,6 +65,8 @@ use snarkos_node_tcp::{
     Tcp,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
+
+use aleo_std::StorageMode;
 use snarkvm::{
     console::prelude::*,
     ledger::{
@@ -69,6 +75,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::task::{self, JoinHandle},
 };
 
 use colored::Colorize;
@@ -93,7 +100,6 @@ use std::{
 use tokio::{
     net::TcpStream,
     sync::{OnceCell, oneshot},
-    task::{self, JoinHandle},
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -253,8 +259,14 @@ impl<N: Network> Gateway<N> {
             (None, None) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
             (Some(ip), _) => ip,
         };
+
+        // Allow at most as many connections as the maximum committe size.
+        // and fail if the chosen port is not available.
+        let mut tcp_config = Config::new(ip, Committee::<N>::max_committee_size()?);
+        tcp_config.allow_random_port = false;
+
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(tcp_config);
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
@@ -643,19 +655,14 @@ impl<N: Network> Gateway<N> {
                 let latest_consensus_version = N::CONSENSUS_VERSION(end_height - 1)?;
 
                 let self_ = self.clone();
-                let blocks = match task::spawn_blocking(move || {
+                let blocks = task::spawn_blocking(move || {
                     // Retrieve the blocks within the requested range.
                     match self_.ledger.get_blocks(start_height..end_height) {
                         Ok(blocks) => Ok(DataBlocks(blocks)),
                         Err(error) => bail!("Missing blocks {start_height} to {end_height} from ledger - {error}"),
                     }
                 })
-                .await
-                {
-                    Ok(Ok(blocks)) => blocks,
-                    Ok(Err(error)) => return Err(error),
-                    Err(error) => return Err(anyhow!("[BlockRequest] {error}")),
-                };
+                .await?;
 
                 let self_ = self.clone();
                 tokio::spawn(async move {
@@ -879,7 +886,7 @@ impl<N: Network> Gateway<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     #[allow(dead_code)]
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the gateway.
@@ -1671,8 +1678,8 @@ impl<N: Network> Gateway<N> {
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         // Perform the deferred non-blocking deserialization of the signature.
-        let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
-            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
+        let Ok(signature) = task::spawn_blocking(|| signature.deserialize_blocking()).await else {
+            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         };
         // Verify the signature.
@@ -1782,17 +1789,11 @@ mod prop_tests {
 
     impl GatewayAddress {
         fn ip(&self) -> Option<SocketAddr> {
-            if let GatewayAddress::Prod(ip) = self {
-                return *ip;
-            }
-            None
+            if let GatewayAddress::Prod(ip) = self { *ip } else { None }
         }
 
         fn port(&self) -> Option<u16> {
-            if let GatewayAddress::Dev(port) = self {
-                return Some(*port as u16);
-            }
-            None
+            if let GatewayAddress::Dev(port) = self { Some(*port as u16) } else { None }
         }
     }
 
@@ -1851,8 +1852,8 @@ mod prop_tests {
             .boxed()
     }
 
-    #[proptest]
-    fn gateway_dev_initialization(#[strategy(any_valid_dev_gateway())] input: GatewayInput) {
+    #[proptest(async = "tokio")]
+    async fn gateway_dev_initialization(#[strategy(any_valid_dev_gateway())] input: GatewayInput) {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
@@ -1874,10 +1875,13 @@ mod prop_tests {
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
         assert_eq!(gateway.account().address(), account.address());
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
-    #[proptest]
-    fn gateway_prod_initialization(#[strategy(any_valid_prod_gateway())] input: GatewayInput) {
+    #[proptest(async = "tokio")]
+    async fn gateway_prod_initialization(#[strategy(any_valid_prod_gateway())] input: GatewayInput) {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
@@ -1904,6 +1908,9 @@ mod prop_tests {
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
         assert_eq!(gateway.account().address(), account.address());
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
     #[proptest(async = "tokio")]
@@ -1958,6 +1965,9 @@ mod prop_tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + dev.port().unwrap())
         );
         assert_eq!(gateway.num_workers(), workers.len() as u8);
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
     #[proptest]

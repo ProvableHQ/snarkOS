@@ -16,7 +16,7 @@
 mod router;
 
 use crate::{
-    bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
+    bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService},
     cdn::CdnBlockSync,
     traits::NodeInterface,
 };
@@ -48,11 +48,11 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
-    utilities::flatten_error,
+    utilities::{flatten_error, task},
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use core::future::Future;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -148,13 +148,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
-        let ledger = {
-            let storage_mode = storage_mode.clone();
-            let genesis = genesis.clone();
-
-            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
-        }
-        .with_context(|| "Failed to initialize the ledger")?;
+        let genesis_clone = genesis.clone();
+        let mode = storage_mode.clone();
+        let ledger = task::spawn_blocking(move || Ledger::<N, C>::load(genesis_clone, mode)).await?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
