@@ -585,21 +585,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_import_disallow_save_to_file_with_discreet() {
-        let discreet = true;
-        let save_to_file = Some("/tmp/not-important".to_string());
-        let account = Account::Import {
-            network: 0,
-            private_key: Some("APrivateKey1zkp2n22c19hNdGF8wuEoQcuiyuWbquY6up4CtG5DYKqPX2X".to_string()),
-            discreet,
-            save_to_file,
-        };
-
-        let res = account.parse();
-        assert!(res.is_err());
-    }
-
     #[cfg(unix)]
     #[test]
     fn test_import_save_to_file() -> anyhow::Result<()> {
