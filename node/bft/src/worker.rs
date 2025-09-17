@@ -20,20 +20,17 @@ use crate::{
     events::{Event, TransmissionRequest, TransmissionResponse},
     gateway::Transport,
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
-    spawn_blocking,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
-    console::{network::Network, prelude::Read},
+    console::network::Network,
     ledger::{
         block::Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    utilities::{
-        FromBytes,
-        task::{self, JoinHandle},
-    },
+    prelude::{FromBytes, Read},
+    utilities::task::{self, JoinHandle},
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -395,12 +392,15 @@ impl<N: Network> Worker<N> {
             bail!("Transaction '{}.{}' already exists.", fmt_id(transaction_id), fmt_id(checksum).dimmed());
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-        let transaction = spawn_blocking!({
-            match transaction {
-                Data::Object(transaction) => Ok(transaction),
-                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?),
-            }
-        })?;
+        let transaction = task::spawn_blocking(move || {
+            let transaction = match transaction {
+                Data::Object(txn) => txn,
+                Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?,
+            };
+
+            Result::<Transaction<N>>::Ok(transaction)
+        })
+        .await?;
 
         // Check that the transaction is well-formed and unique.
         self.ledger.check_transaction_basic(transaction_id, transaction).await?;
@@ -430,11 +430,11 @@ impl<N: Network> Worker<N> {
                 tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
 
                 // Remove the expired pending certificate requests.
-                let self__ = self_.clone();
-                let _ = spawn_blocking!({
-                    self__.pending.clear_expired_callbacks();
-                    Ok(())
-                });
+                let self_ = self_.clone();
+                task::spawn_blocking(move || {
+                    self_.pending.clear_expired_callbacks();
+                })
+                .await;
             }
         });
 
@@ -459,11 +459,11 @@ impl<N: Network> Worker<N> {
         self.spawn(async move {
             while let Some((peer_ip, transmission_response)) = rx_transmission_response.recv().await {
                 // Process the transmission response.
-                let self__ = self_.clone();
-                let _ = spawn_blocking!({
-                    self__.finish_transmission_request(peer_ip, transmission_response);
-                    Ok(())
-                });
+                let self_ = self_.clone();
+                task::spawn_blocking(move || {
+                    self_.finish_transmission_request(peer_ip, transmission_response);
+                })
+                .await;
             }
         });
     }

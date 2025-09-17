@@ -899,7 +899,10 @@ mod tests {
     use aleo_std::StorageMode;
     use anyhow::Result;
     use indexmap::{IndexMap, IndexSet};
-    use std::sync::Arc;
+    use std::{
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        sync::Arc,
+    };
 
     type CurrentNetwork = snarkvm::console::network::MainnetV0;
 
@@ -934,13 +937,17 @@ mod tests {
     ) -> anyhow::Result<BFT<CurrentNetwork>> {
         // Create the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+
+        // Pick a random port so we can run tests concurrently.
+        let any_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+
         // Initialize the BFT.
         BFT::new(
             account.clone(),
             storage.clone(),
             ledger.clone(),
             block_sync,
-            None,
+            Some(any_addr),
             &[],
             StorageMode::new_test(None),
             None,
