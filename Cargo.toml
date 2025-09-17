@@ -47,8 +47,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-branch = "feat/track-error"
 #rev = "619464c8edf75636809d0bfb8e8404de78a62c97"
+branch = "fix/restore-pending-blocks"
 #version = "=4.2.1"
 default-features = false
 
