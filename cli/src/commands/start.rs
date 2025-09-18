@@ -21,7 +21,7 @@ use snarkos_node::{
     Node,
     bft::MEMORY_POOL_PORT,
     rest::DEFAULT_REST_PORT,
-    router::{DEFAULT_NODE_PORT, messages::NodeType},
+    router::{DEFAULT_NODE_PORT, bootstrap_peers, messages::NodeType},
 };
 use snarkvm::{
     console::{
@@ -55,6 +55,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::runtime::{self, Runtime};
+use tracing::warn;
 use ureq::http;
 
 /// The recommended minimum number of 'open files' limit for a validator.
@@ -619,6 +620,22 @@ impl Start {
         let mut trusted_peers = self.parse_trusted_peers()?;
         // Parse the trusted validators to connect to.
         let mut trusted_validators = self.parse_trusted_validators()?;
+
+        // Ensure there are no bootstrappers among the trusted peers and validators.
+        let bootstrap_peers = bootstrap_peers::<N>(self.dev.is_some());
+        for trusted in [&mut trusted_peers, &mut trusted_validators] {
+            let initial_peer_count = trusted.len();
+            trusted.retain(|addr| !bootstrap_peers.contains(addr));
+            let final_peer_count = trusted.len();
+            // Warn if this had to be corrected.
+            if final_peer_count != initial_peer_count {
+                warn!(
+                    "Removed some ({}) trusted peers due to them also being bootstrap peers.",
+                    initial_peer_count - final_peer_count
+                );
+            }
+        }
+
         // Parse the development configurations.
         self.parse_development(&mut trusted_peers, &mut trusted_validators);
 

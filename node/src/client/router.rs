@@ -16,6 +16,7 @@
 use super::*;
 use snarkos_node_router::{
     Routing,
+    bootstrap_peers,
     messages::{
         BlockRequest,
         BlockResponse,
@@ -67,7 +68,7 @@ impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
         // Resolve the peer address to the listener address.
         let Some(peer_ip) = self.router.resolve_to_listener(&peer_addr) else { return };
         // If it's a bootstrap peer, first request its peers.
-        if self.router.bootstrap_peers().contains(&peer_ip) {
+        if bootstrap_peers::<N>(self.router.is_dev()).contains(&peer_ip) {
             self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
         }
         // Send the first `Ping` message to the peer.
