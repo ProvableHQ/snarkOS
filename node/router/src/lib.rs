@@ -153,12 +153,14 @@ impl<N: Network> Router<N> {
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(node_ip, max_peers));
 
+        // Add the trusted peers to the peer pool
         let mut initial_peers = trusted_peers
             .iter()
             .copied()
             .map(|addr| (addr, Peer::new_candidate(addr, true)))
             .collect::<HashMap<_, _>>();
 
+        // Load additional peers from the peer cache (if present).
         let mut peer_cache_path = aleo_ledger_dir(N::ID, &storage_mode);
         peer_cache_path.push(PEER_CACHE_FILENAME);
         if let Ok(cached_peers_str) = fs::read_to_string(&peer_cache_path) {
@@ -170,7 +172,7 @@ impl<N: Network> Router<N> {
         }
 
         // Initialize the router.
-        Ok(Self(Arc::new(InnerRouter {
+        let router = Self(Arc::new(InnerRouter {
             tcp,
             node_type,
             account,
@@ -183,7 +185,25 @@ impl<N: Network> Router<N> {
             allow_external_peers,
             storage_mode,
             is_dev,
-        })))
+        }));
+
+        // Ensure there are no bootstrappers among the trusted peers.
+        {
+            let bootstrap_peers = router.bootstrap_peers();
+            let mut peer_pool = router.peer_pool.write();
+            let initial_peer_count = peer_pool.len();
+            peer_pool.retain(|addr, peer| !(peer.is_trusted() && bootstrap_peers.contains(addr)));
+            let final_peer_count = peer_pool.len();
+            // Warn if this had to be corrected.
+            if final_peer_count != initial_peer_count {
+                warn!(
+                    "Removed some ({}) trusted peers due to them also being bootstrap peers.",
+                    initial_peer_count - final_peer_count
+                );
+            }
+        }
+
+        Ok(router)
     }
 }
 
