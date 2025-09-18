@@ -590,11 +590,15 @@ impl<N: Network> Gateway<N> {
         result.ok()
     }
 
-    /// Handles the inbound event from the peer.
-    async fn inbound(&self, peer_addr: SocketAddr, event: Event<N>) -> Result<()> {
+    /// Handles the inbound event from the peer. The returned value indicates whether
+    /// the connection is still active, and errors cause a disconnect once they are
+    /// propagated to the caller.
+    async fn inbound(&self, peer_addr: SocketAddr, event: Event<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
         let Some(peer_ip) = self.resolver.get_listener(peer_addr) else {
-            bail!("{CONTEXT} Unable to resolve the (ambiguous) peer address '{peer_addr}'")
+            // No longer connected to the peer.
+            trace!("Dropping a {} from {peer_addr} - no longer connected.", event.name());
+            return Ok(false);
         };
         // Ensure that the peer is an authorized committee member.
         if !self.is_authorized_validator_ip(peer_ip) {
@@ -617,7 +621,7 @@ impl<N: Network> Gateway<N> {
                 // Skip processing this certificate if the rate limit was exceed (i.e. someone is spamming a specific certificate).
                 let num_events = self.cache.insert_inbound_certificate(certificate_id, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             Event::TransmissionRequest(TransmissionRequest { transmission_id })
@@ -625,13 +629,13 @@ impl<N: Network> Gateway<N> {
                 // Skip processing this certificate if the rate limit was exceeded (i.e. someone is spamming a specific certificate).
                 let num_events = self.cache.insert_inbound_transmission(transmission_id, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             Event::BlockRequest(_) => {
                 let num_events = self.cache.insert_inbound_block_request(peer_ip, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             _ => {}
@@ -644,17 +648,17 @@ impl<N: Network> Gateway<N> {
             Event::BatchPropose(batch_propose) => {
                 // Send the batch propose to the primary.
                 let _ = self.primary_sender().tx_batch_propose.send((peer_ip, batch_propose)).await;
-                Ok(())
+                Ok(true)
             }
             Event::BatchSignature(batch_signature) => {
                 // Send the batch signature to the primary.
                 let _ = self.primary_sender().tx_batch_signature.send((peer_ip, batch_signature)).await;
-                Ok(())
+                Ok(true)
             }
             Event::BatchCertified(batch_certified) => {
                 // Send the batch certificate to the primary.
                 let _ = self.primary_sender().tx_batch_certified.send((peer_ip, batch_certified.certificate)).await;
-                Ok(())
+                Ok(true)
             }
             Event::BlockRequest(block_request) => {
                 let BlockRequest { start_height, end_height } = block_request;
@@ -689,7 +693,7 @@ impl<N: Network> Gateway<N> {
                     let event = Event::BlockResponse(BlockResponse { request: block_request, blocks });
                     Transport::send(&self_, peer_ip, event).await;
                 });
-                Ok(())
+                Ok(true)
             }
             Event::BlockResponse(block_response) => {
                 // Process the block response. Except for some tests, there is always a sync sender.
@@ -723,7 +727,7 @@ impl<N: Network> Gateway<N> {
                         warn!("Unable to process block response from '{peer_ip}' - {e}");
                     }
                 }
-                Ok(())
+                Ok(true)
             }
             Event::CertificateRequest(certificate_request) => {
                 // Send the certificate request to the sync module.
@@ -732,7 +736,7 @@ impl<N: Network> Gateway<N> {
                     // Send the certificate request to the sync module.
                     let _ = sync_sender.tx_certificate_request.send((peer_ip, certificate_request)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::CertificateResponse(certificate_response) => {
                 // Send the certificate response to the sync module.
@@ -741,14 +745,17 @@ impl<N: Network> Gateway<N> {
                     // Send the certificate response to the sync module.
                     let _ = sync_sender.tx_certificate_response.send((peer_ip, certificate_response)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::ChallengeRequest(..) | Event::ChallengeResponse(..) => {
                 // Disconnect as the peer is not following the protocol.
                 bail!("{CONTEXT} Peer '{peer_ip}' is not following the protocol")
             }
-            Event::Disconnect(disconnect) => {
-                bail!("{CONTEXT} {:?}", disconnect.reason)
+            Event::Disconnect(message) => {
+                // The peer informs us that they had disconnected. Disconnect from them too.
+                debug!("Peer '{peer_ip}' decided to disconnect due to '{:?}'", message.reason);
+                self.disconnect(peer_ip);
+                Ok(false)
             }
             Event::PrimaryPing(ping) => {
                 let PrimaryPing { version, block_locators, primary_certificate } = ping;
@@ -768,34 +775,34 @@ impl<N: Network> Gateway<N> {
 
                 // Send the batch certificates to the primary.
                 let _ = self.primary_sender().tx_primary_ping.send((peer_ip, primary_certificate)).await;
-                Ok(())
+                Ok(true)
             }
             Event::TransmissionRequest(request) => {
                 // TODO (howardwu): Add rate limiting checks on this event, on a per-peer basis.
                 // Determine the worker ID.
                 let Ok(worker_id) = assign_to_worker(request.transmission_id, self.num_workers()) else {
                     warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", request.transmission_id);
-                    return Ok(());
+                    return Ok(true);
                 };
                 // Send the transmission request to the worker.
                 if let Some(sender) = self.get_worker_sender(worker_id) {
                     // Send the transmission request to the worker.
                     let _ = sender.tx_transmission_request.send((peer_ip, request)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::TransmissionResponse(response) => {
                 // Determine the worker ID.
                 let Ok(worker_id) = assign_to_worker(response.transmission_id, self.num_workers()) else {
                     warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", response.transmission_id);
-                    return Ok(());
+                    return Ok(true);
                 };
                 // Send the transmission response to the worker.
                 if let Some(sender) = self.get_worker_sender(worker_id) {
                     // Send the transmission response to the worker.
                     let _ = sender.tx_transmission_response.send((peer_ip, response)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::ValidatorsRequest(_) => {
                 // Retrieve the connected peers.
@@ -826,7 +833,7 @@ impl<N: Network> Gateway<N> {
                     let event = Event::ValidatorsResponse(ValidatorsResponse { validators });
                     Transport::send(&self_, peer_ip, event).await;
                 });
-                Ok(())
+                Ok(true)
             }
             Event::ValidatorsResponse(response) => {
                 let ValidatorsResponse { validators } = response;
@@ -878,7 +885,7 @@ impl<N: Network> Gateway<N> {
                         }
                     });
                 }
-                Ok(())
+                Ok(true)
             }
             Event::WorkerPing(ping) => {
                 // Ensure the number of transmissions is not too large.
@@ -901,7 +908,7 @@ impl<N: Network> Gateway<N> {
                         let _ = sender.tx_worker_ping.send((peer_ip, transmission_id)).await;
                     }
                 }
-                Ok(())
+                Ok(true)
             }
         }
     }

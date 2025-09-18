@@ -73,7 +73,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles the inbound message from the peer. The returned value indicates whether
-    /// the connection is still active, and errors causing a disconnect once they are
+    /// the connection is still active, and errors cause a disconnect once they are
     /// propagated to the caller.
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
