@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1758185214180,
+  "lastUpdate": 1758187440898,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -1776,6 +1776,66 @@ window.BENCHMARK_DATA = {
             "value": 0.15,
             "unit": "blocks/s",
             "extra": "total_wait=1593s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 0.44,
+            "unit": "blocks/s",
+            "extra": "total_wait=565s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d1c1355b2af79a616aafd956487d87d7f01d6bc",
+          "message": "Merge pull request #3862 from ljedrz/cleanup/remove_cuda_from_run-prover\n\n[Cleanup] Remove CUDA from run-prover.sh",
+          "timestamp": "2025-09-18T09:55:33+02:00",
+          "tree_id": "cf1df19803f07675f14fa60989aafd88ad87c301",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/1d1c1355b2af79a616aafd956487d87d7f01d6bc"
+        },
+        "date": 1758187439850,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "p2p-sync",
+            "value": 0.17,
+            "unit": "blocks/s",
+            "extra": "total_wait=1408s, target_height=250, connect_time=10s, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.119061,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=1366, mean_speed=0.104563, max_speed=3.050000, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-block",
+            "value": 0.67,
+            "unit": "ops/s",
+            "extra": "num_ops=500, total_wait=746, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 178.57,
+            "unit": "ops/s",
+            "extra": "num_ops=10000, total_wait=56, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=44b334d398, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.25,
+            "unit": "blocks/s",
+            "extra": "total_wait=963s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=44b334d398, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
