@@ -65,7 +65,10 @@ macro_rules! expect_message {
             }
             // Received nothing.
             None => {
-                return Err(error(format!("'{}' disconnected before sending {:?}", $peer_addr, stringify!($msg_ty),)))
+                return Err(error(format!(
+                    "the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
+                    stringify!($msg_ty),
+                )))
             }
         }
     };

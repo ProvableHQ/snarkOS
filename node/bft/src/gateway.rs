@@ -1349,8 +1349,7 @@ macro_rules! expect_event {
             // Received nothing.
             None => {
                 return Err(error(format!(
-                    "{CONTEXT} '{}' disconnected before sending {:?}",
-                    $peer_addr,
+                    "{CONTEXT} the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
                     stringify!($event_ty)
                 )))
             }
