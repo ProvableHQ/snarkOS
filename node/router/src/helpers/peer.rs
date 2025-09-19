@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{NodeType, Router, messages::ChallengeRequest};
+use crate::NodeType;
 use snarkvm::prelude::{Address, Network};
 
 use std::{net::SocketAddr, time::Instant};
@@ -68,8 +68,6 @@ pub struct ConnectedPeer<N: Network> {
     pub first_seen: Instant,
     /// The timestamp of the last message received from this peer.
     pub last_seen: Instant,
-    /// A reference to the associated `Router` object.
-    pub router: Router<N>,
 }
 
 impl<N: Network> Peer<N> {
@@ -84,38 +82,35 @@ impl<N: Network> Peer<N> {
     }
 
     /// Promote a connecting peer to a fully connected one.
-    pub fn upgrade_to_connected(&mut self, connected_addr: SocketAddr, cr: &ChallengeRequest<N>, router: Router<N>) {
+    pub fn upgrade_to_connected(
+        &mut self,
+        connected_addr: SocketAddr,
+        listener_port: u16,
+        aleo_address: Address<N>,
+        node_type: NodeType,
+        node_version: u32,
+    ) {
         // Logic check: this can only happen during the handshake.
         assert!(matches!(self, Self::Connecting(_)));
 
         let timestamp = Instant::now();
-        let listener_addr = SocketAddr::from((connected_addr.ip(), cr.listener_port));
-
-        // Introduce the peer in the resolver.
-        router.resolver.write().insert_peer(listener_addr, connected_addr);
+        let listener_addr = SocketAddr::from((connected_addr.ip(), listener_port));
 
         *self = Self::Connected(ConnectedPeer {
             listener_addr,
             connected_addr,
-            aleo_addr: cr.address,
-            node_type: cr.node_type,
+            aleo_addr: aleo_address,
+            node_type,
             trusted: self.is_trusted(),
-            version: cr.version,
+            version: node_version,
             last_height_seen: None,
             first_seen: timestamp,
             last_seen: timestamp,
-            router,
         });
     }
 
     /// Demote a peer to candidate status, marking it as disconnected.
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
-        // Connecting peers are not in the resolver.
-        if let Self::Connected(peer) = self {
-            // Remove the peer from the resolver.
-            peer.router.resolver.write().remove_peer(&peer.connected_addr);
-        };
-
         *self = Self::Candidate(CandidatePeer { listener_addr, trusted: self.is_trusted() });
     }
 
@@ -129,11 +124,11 @@ impl<N: Network> Peer<N> {
     }
 
     /// The listener (public) address of this peer.
-    pub fn listener_addr(&self) -> &SocketAddr {
+    pub fn listener_addr(&self) -> SocketAddr {
         match self {
-            Self::Candidate(p) => &p.listener_addr,
-            Self::Connecting(p) => &p.listener_addr,
-            Self::Connected(p) => &p.listener_addr,
+            Self::Candidate(p) => p.listener_addr,
+            Self::Connecting(p) => p.listener_addr,
+            Self::Connected(p) => p.listener_addr,
         }
     }
 

@@ -132,9 +132,10 @@ impl<N: Network> Router<N> {
         };
 
         if let Some(addr) = listener_addr {
-            if let Ok(ref challenge_request) = handshake_result {
+            if let Ok(ref cr) = handshake_result {
                 if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                    peer.upgrade_to_connected(peer_addr, challenge_request, self.clone());
+                    self.resolver.write().insert_peer(peer.listener_addr(), peer_addr);
+                    peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, cr.node_type, cr.version);
                 }
                 #[cfg(feature = "metrics")]
                 self.update_metrics();

@@ -518,6 +518,9 @@ impl<N: Network> Router<N> {
     pub fn remove_connected_peer(&self, peer_ip: SocketAddr) {
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             peer.downgrade_to_candidate(peer_ip);
+            if let Peer::Connected(peer) = peer {
+                self.resolver.write().remove_peer(&peer.connected_addr);
+            }
         }
         // Clear cached entries applicable to the peer.
         self.cache.clear_peer_entries(peer_ip);
