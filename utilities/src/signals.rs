@@ -95,9 +95,10 @@ impl SignalHandler {
 
         #[cfg(not(target_family = "unix"))]
         let signal_listener = async move {
-            tokio::signal::ctrl_c()?;
-            debug!("Got signal");
-            Ok(())
+            tokio::signal::ctrl_c().await?;
+            debug!("Received signal");
+
+            std::io::Result::<()>::Ok(())
         };
 
         // Block until the signal.
