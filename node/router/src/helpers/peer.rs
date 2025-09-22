@@ -77,8 +77,8 @@ impl<N: Network> Peer<N> {
     }
 
     /// Create a connecting peer.
-    pub const fn new_connecting(trusted: bool, listener_addr: SocketAddr) -> Self {
-        Self::Connecting(ConnectingPeer { trusted, listener_addr })
+    pub const fn new_connecting(listener_addr: SocketAddr, trusted: bool) -> Self {
+        Self::Connecting(ConnectingPeer { listener_addr, trusted })
     }
 
     /// Promote a connecting peer to a fully connected one.
@@ -111,7 +111,7 @@ impl<N: Network> Peer<N> {
 
     /// Demote a peer to candidate status, marking it as disconnected.
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
-        *self = Self::Candidate(CandidatePeer { listener_addr, trusted: self.is_trusted() });
+        *self = Self::new_candidate(listener_addr, self.is_trusted());
     }
 
     /// Returns the type of the node (only applicable to connected peers).

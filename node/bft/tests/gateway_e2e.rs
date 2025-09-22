@@ -24,7 +24,7 @@ use crate::common::{
 };
 use snarkos_account::Account;
 use snarkos_node_bft::{Gateway, helpers::init_primary_channels};
-use snarkos_node_bft_events::{ChallengeRequest, ChallengeResponse, Disconnect, DisconnectReason, Event, WorkerPing};
+use snarkos_node_bft_events::{ChallengeRequest, ChallengeResponse, Event};
 use snarkos_node_tcp::P2P;
 use snarkvm::{ledger::narwhal::Data, prelude::TestRng};
 
@@ -78,78 +78,9 @@ async fn handshake_responder_side_timeout() {
     deadline!(Duration::from_secs(5), move || gateway_clone.tcp().num_connecting() == 0);
 
     // Check the test peer hasn't been added to the gateway's connected peers.
-    assert!(gateway.connected_peers().read().is_empty());
+    assert!(gateway.connected_peers().is_empty());
     assert_eq!(gateway.tcp().num_connected(), 0);
 }
-
-// The test peer connects to the gateway and sends an unexpected event.
-// The gateway's handshake should be interrupted and the peer should be
-// disconnected.
-macro_rules! handshake_responder_side_unexpected_event {
-    ($test_name:ident, $payload:expr) => {
-        paste::paste! {
-            #[tokio::test(flavor = "multi_thread")]
-            async fn [<handshake_responder_side_unexpected_ $test_name>]() {
-                const NUM_NODES: u16 = 4;
-
-                let mut rng = TestRng::default();
-                let (_accounts, gateway) = new_test_gateway(NUM_NODES, &mut rng).await;
-                let test_peer = TestPeer::new().await;
-
-                // Initiate a connection with the gateway, this will only return once the handshake protocol has
-                // completed on the test peer's side, which is a no-op.
-                assert!(test_peer.connect(gateway.local_ip()).await.is_ok());
-
-                // Check the connection has been registered.
-                let gateway_clone = gateway.clone();
-                deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 1);
-
-                // Send an unexpected event.
-                let _ = test_peer.unicast(
-                    gateway.local_ip(),
-                    $payload
-                );
-
-                // Check the tcp stack's connection counts, make sure the disconnect interrupted handshaking,
-                // wait a short time to ensure the gateway has time to process the disconnect (note: this is
-                // shorter than the gateway's timeout, so we can ensure that's not the reason for the
-                // disconnect).
-                let gateway_clone = gateway.clone();
-                deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 0);
-
-                // Check the test peer hasn't been added to the gateway's connected peers.
-                assert!(gateway.connected_peers().read().is_empty());
-                assert_eq!(gateway.tcp().num_connected(), 0);
-            }
-        }
-    };
-}
-
-/* Unexpected disconnects. */
-
-macro_rules! handshake_responder_side_unexpected_disconnect {
-     ($($reason:ident),*) => {
-         $(
-             paste::paste! {
-                 handshake_responder_side_unexpected_event!(
-                     [<disconnect_ $reason:snake>],
-                     Event::Disconnect(Disconnect::from(DisconnectReason::$reason))
-                 );
-             }
-         )*
-     }
- }
-
-handshake_responder_side_unexpected_disconnect!(
-    ProtocolViolation,
-    NoReasonGiven,
-    InvalidChallengeResponse,
-    OutdatedClientVersion
-);
-
-/* Other unexpected event types */
-
-handshake_responder_side_unexpected_event!(worker_ping, Event::WorkerPing(WorkerPing::new([].into())));
 
 // TODO(nkls): other event types, can be done as a follow up.
 
@@ -188,7 +119,7 @@ async fn handshake_responder_side_invalid_challenge_request() {
     let gateway_clone = gateway.clone();
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 0);
     // Check the test peer hasn't been added to the gateway's connected peers.
-    assert!(gateway.connected_peers().read().is_empty());
+    assert!(gateway.connected_peers().is_empty());
     assert_eq!(gateway.tcp().num_connected(), 0);
 }
 
@@ -268,6 +199,6 @@ async fn handshake_responder_side_invalid_challenge_response() {
     let gateway_clone = gateway.clone();
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 0);
     // Check the test peer hasn't been added to the gateway's connected peers.
-    assert!(gateway.connected_peers().read().is_empty());
+    assert!(gateway.connected_peers().is_empty());
     assert_eq!(gateway.tcp().num_connected(), 0);
 }

@@ -120,7 +120,7 @@ impl TestValidator {
         let self_clone = self.clone();
         self.handles.lock().push(tokio::task::spawn(async move {
             loop {
-                let connections = self_clone.primary.gateway().connected_peers().read().clone();
+                let connections = self_clone.primary.gateway().connected_peers();
                 info!("{} connections", connections.len());
                 for connection in connections {
                     debug!("  {}", connection);
@@ -285,7 +285,7 @@ impl TestNetwork {
     // Disconnects N nodes from all other nodes.
     pub async fn disconnect(&self, num_nodes: u16) {
         for validator in self.validators.values().take(num_nodes as usize) {
-            for peer_ip in validator.primary.gateway().connected_peers().read().iter() {
+            for peer_ip in validator.primary.gateway().connected_peers().iter() {
                 validator.primary.gateway().disconnect(*peer_ip);
             }
         }
@@ -297,7 +297,7 @@ impl TestNetwork {
     // Disconnects a specific node from all other nodes.
     pub async fn disconnect_one(&self, id: u16) {
         let target_validator = self.validators.get(&id).unwrap();
-        for peer_ip in target_validator.primary.gateway().connected_peers().read().iter() {
+        for peer_ip in target_validator.primary.gateway().connected_peers().iter() {
             target_validator.primary.gateway().disconnect(*peer_ip);
         }
 

@@ -44,7 +44,8 @@ pub use routing::*;
 
 mod writing;
 
-use crate::messages::{Message, MessageCodec, NodeType};
+pub use crate::messages::NodeType;
+use crate::messages::{Message, MessageCodec};
 
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -517,10 +518,10 @@ impl<N: Network> Router<N> {
     /// Removes the connected peer and adds them to the candidate peers.
     pub fn remove_connected_peer(&self, peer_ip: SocketAddr) {
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            peer.downgrade_to_candidate(peer_ip);
             if let Peer::Connected(peer) = peer {
                 self.resolver.write().remove_peer(&peer.connected_addr);
             }
+            peer.downgrade_to_candidate(peer_ip);
         }
         // Clear cached entries applicable to the peer.
         self.cache.clear_peer_entries(peer_ip);

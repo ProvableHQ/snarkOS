@@ -158,10 +158,10 @@ impl<N: Network> Router<N> {
     ) -> io::Result<ChallengeRequest<N>> {
         match self.peer_pool.write().entry(peer_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(false, peer_addr));
+                entry.insert(Peer::new_connecting(peer_addr, false));
             }
             Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::new_connecting(entry.get().is_trusted(), peer_addr));
+                entry.insert(Peer::new_connecting(peer_addr, entry.get().is_trusted()));
             }
             Entry::Occupied(_) => {
                 return Err(error(format!("Duplicate connection attempt with '{peer_addr}'")));
@@ -324,11 +324,11 @@ impl<N: Network> Router<N> {
 
         match self.peer_pool.write().entry(listener_addr) {
             Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(false, listener_addr));
+                entry.insert(Peer::new_connecting(listener_addr, false));
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 peer @ Peer::Candidate(_) => {
-                    *peer = Peer::new_connecting(peer.is_trusted(), listener_addr);
+                    *peer = Peer::new_connecting(listener_addr, peer.is_trusted());
                 }
                 Peer::Connecting(_) => {
                     bail!("Dropping connection request from '{listener_addr}' (already connecting)");
