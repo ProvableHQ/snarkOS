@@ -3896,6 +3896,7 @@ dependencies = [
  "snarkos-node-bft-ledger-service",
  "snarkos-node-bft-storage-service",
  "snarkos-node-metrics",
+ "snarkos-node-router",
  "snarkos-node-sync",
  "snarkos-node-tcp",
  "snarkvm",
