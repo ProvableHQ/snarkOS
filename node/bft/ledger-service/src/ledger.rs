@@ -168,6 +168,23 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         self.ledger.get_block(height)
     }
 
+    /// Returns the block for the given hash.
+    fn get_block_by_hash(&self, hash: &N::BlockHash) -> Result<Block<N>> {
+        // First, check if the block is in the block cache.
+        // We know the hash is very small so iteration is not costly.
+        // Using `try_read` to avoid blocking the thread: https://github.com/rayon-rs/rayon/issues/1205
+        if let Some(block_cache) = self.block_cache.try_read() {
+            for block in block_cache.values() {
+                if block.hash() == *hash {
+                    return Ok(block.clone());
+                }
+            }
+        }
+
+        // If no block is found in the cache, then retrieve the block from the ledger.
+        self.ledger.get_block_by_hash(&hash)
+    }
+
     /// Returns the blocks in the given block range.
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>> {

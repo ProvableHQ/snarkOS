@@ -129,6 +129,11 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         unreachable!("MockLedgerService does not support get_block")
     }
 
+    /// Returns the block for the given hash.
+    fn get_block_by_hash(&self, _hash: &N::BlockHash) -> Result<Block<N>> {
+        unreachable!("MockLedgerService does not support get_block_by_hash")
+    }
+
     /// Returns the blocks in the given block range.
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, _heights: Range<u32>) -> Result<Vec<Block<N>>> {

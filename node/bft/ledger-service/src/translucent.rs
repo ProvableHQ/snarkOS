@@ -109,6 +109,11 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         self.inner.get_block(height)
     }
 
+    /// Returns the block for the given hash.
+    fn get_block_by_hash(&self, hash: &N::BlockHash) -> Result<Block<N>> {
+        self.inner.get_block_by_hash(hash)
+    }
+
     /// Returns the blocks in the given block range.
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>> {

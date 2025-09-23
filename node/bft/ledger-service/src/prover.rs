@@ -97,6 +97,11 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         bail!("Block {height} does not exist in prover")
     }
 
+    /// Returns the block for the given hash.
+    fn get_block_by_hash(&self, hash: &N::BlockHash) -> Result<Block<N>> {
+        bail!("Block with hash {hash} does not exist in prover")
+    }
+
     /// Returns the blocks in the given block range.
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>> {

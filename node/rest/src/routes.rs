@@ -98,7 +98,7 @@ struct SyncStatus<'a> {
     sync_speed_bps: f64,
 }
 
-impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
+impl<N: Network, R: Routing<N>> Rest<N, R> {
     /// GET /<network>/version
     pub(crate) async fn get_version() -> ErasedJson {
         ErasedJson::pretty(VersionInfo::get())
@@ -111,12 +111,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     /// GET /<network>/block/height/latest
     pub(crate) async fn get_block_height_latest(State(rest): State<Self>) -> ErasedJson {
-        ErasedJson::pretty(rest.ledger.latest_height())
+        ErasedJson::pretty(rest.ledger.latest_block().height())
     }
 
     /// GET /<network>/block/hash/latest
     pub(crate) async fn get_block_hash_latest(State(rest): State<Self>) -> ErasedJson {
-        ErasedJson::pretty(rest.ledger.latest_hash())
+        ErasedJson::pretty(rest.ledger.latest_block().hash())
     }
 
     /// GET /<network>/block/latest

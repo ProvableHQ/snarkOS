@@ -86,6 +86,9 @@ workspace = true
 [dependencies.snarkos-node-sync]
 workspace = true
 
+[dependencies.snarkos-node-bft-ledger-service]
+workspace = true
+
 [dependencies.snarkvm]
 workspace = true
 

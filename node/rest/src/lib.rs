@@ -26,6 +26,7 @@ mod routes;
 
 mod version;
 
+use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_router::{
@@ -73,13 +74,13 @@ pub const API_VERSION_V2: &str = "v2";
 
 /// A REST API server for the ledger.
 #[derive(Clone)]
-pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
+pub struct Rest<N: Network, R: Routing<N>> {
     /// CDN sync (only if node is using the CDN to sync).
     cdn_sync: Option<Arc<CdnBlockSync>>,
     /// The consensus module.
     consensus: Option<Consensus<N>>,
     /// The ledger.
-    ledger: Ledger<N, C>,
+    ledger: Arc<dyn LedgerService<N>>,
     /// The node (routing).
     routing: Arc<R>,
     /// The server handles.
@@ -92,13 +93,13 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     num_verifying_executions: Arc<AtomicUsize>,
 }
 
-impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
+impl<N: Network, R: Routing<N>> Rest<N, R> {
     /// Initializes a new instance of the server.
     pub async fn start(
         rest_ip: SocketAddr,
         rest_rps: u32,
         consensus: Option<Consensus<N>>,
-        ledger: Ledger<N, C>,
+        ledger: Arc<dyn LedgerService<N>>,
         routing: Arc<R>,
         cdn_sync: Option<Arc<CdnBlockSync>>,
         block_sync: Arc<BlockSync<N>>,
@@ -121,10 +122,10 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
     }
 }
 
-impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
+impl<N: Network, R: Routing<N>> Rest<N, R> {
     /// Returns the ledger.
-    pub const fn ledger(&self) -> &Ledger<N, C> {
-        &self.ledger
+    pub fn ledger(&self) -> &dyn LedgerService<N> {
+        &*self.ledger
     }
 
     /// Returns the handles.
@@ -133,7 +134,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 }
 
-impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
+impl<N: Network, R: Routing<N>> Rest<N, R> {
     fn build_routes(&self, rest_rps: u32) -> axum::Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)

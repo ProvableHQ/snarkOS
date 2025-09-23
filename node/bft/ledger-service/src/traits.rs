@@ -61,6 +61,9 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// Returns the block for the given block height.
     fn get_block(&self, height: u32) -> Result<Block<N>>;
 
+    /// Returns the block for the given hash.
+    fn get_block_by_hash(&self, hash: &N::BlockHash) -> Result<Block<N>>;
+
     /// Returns the blocks in the given block range.
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>>;
