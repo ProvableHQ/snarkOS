@@ -201,7 +201,7 @@ pub fn sample_ledger(
 
     let gen_ledger =
         primary::genesis_ledger(gen_key, committee.clone(), balances.clone(), bonded_balances.clone(), rng);
-    Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()))
+    Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()).unwrap())
 }
 
 /// Samples a new storage with the given ledger.

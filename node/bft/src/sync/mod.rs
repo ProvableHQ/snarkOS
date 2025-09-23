@@ -1001,7 +1001,7 @@ mod tests {
         // Initialize the ledger with the genesis block.
         let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
         // Initialize the ledger.
-        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
+        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()).unwrap());
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
@@ -1172,10 +1172,13 @@ mod tests {
         core_ledger.advance_to_next_block(&block_3)?;
 
         // Initialize the syncing ledger.
-        let syncing_ledger = Arc::new(CoreLedgerService::new(
-            CurrentLedger::load(genesis, StorageMode::new_test(None)).unwrap(),
-            Default::default(),
-        ));
+        let syncing_ledger = Arc::new(
+            CoreLedgerService::new(
+                CurrentLedger::load(genesis, StorageMode::new_test(None)).unwrap(),
+                Default::default(),
+            )
+            .unwrap(),
+        );
         // Initialize the gateway.
         let gateway = Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], None)?;
         // Initialize the block synchronization logic.
@@ -1226,7 +1229,7 @@ mod tests {
         // Initialize the ledger with the genesis block.
         let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
         // Initialize the ledger.
-        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
+        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()).unwrap());
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
             // Initialize the committee.

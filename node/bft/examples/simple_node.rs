@@ -64,7 +64,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
+    sync::{Arc, Mutex, OnceLock},
 };
 use tokio::{net::TcpListener, sync::oneshot};
 use tracing_subscriber::{
@@ -221,7 +221,7 @@ fn create_ledger(
     }
     let mut rng = TestRng::default();
     let gen_ledger = genesis_ledger(*gen_key, committee.clone(), balances.clone(), node_id, &mut rng);
-    Arc::new(TranslucentLedgerService::new(gen_ledger, Arc::new(AtomicBool::new(false))))
+    Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()).unwrap())
 }
 
 pub type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;

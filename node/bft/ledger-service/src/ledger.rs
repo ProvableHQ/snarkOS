@@ -37,7 +37,7 @@ use snarkvm::{
     },
 };
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -45,6 +45,7 @@ use locktick::parking_lot::RwLock;
 use parking_lot::RwLock;
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
+use tracing::log::*;
 
 use std::{
     collections::BTreeMap,
@@ -70,10 +71,27 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
 }
 
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
-    /// Initializes a new core ledger service.
-    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
-        let block_cache = Arc::new(RwLock::new(BTreeMap::new()));
-        Self { ledger, block_cache, latest_leader: Default::default(), shutdown }
+    /// Initializes a new core ledger service, which involves syncing its state with the underlying ledger.
+    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Result<Self> {
+        let mut block_cache = BTreeMap::default();
+        let ledger_height = ledger.latest_height();
+        let cache_start_height = ledger_height.saturating_sub((BLOCK_CACHE_SIZE - 1) as u32);
+
+        debug!("Starting ledger service at height {ledger_height}");
+
+        // Populate cache at startup
+        for height in cache_start_height..=ledger_height {
+            let block = ledger.get_block(height).with_context(|| "Failed to get block from storage")?;
+            block_cache.insert(height, block);
+        }
+        debug!("Populated ledger service cache with block(s) {cache_start_height} to {ledger_height}");
+
+        Ok(Self {
+            ledger,
+            block_cache: Arc::new(RwLock::new(block_cache)),
+            latest_leader: Default::default(),
+            shutdown,
+        })
     }
 }
 
@@ -133,7 +151,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the block round for the given block height, if it exists.
     fn get_block_round(&self, height: u32) -> Result<u64> {
-        self.ledger.get_block(height).map(|block| block.round())
+        self.get_block(height).map(|block| block.round())
     }
 
     /// Returns the block for the given block height.
@@ -145,6 +163,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 return Ok(block.clone());
             }
         }
+
         // If no block is found in the cache, then retrieve the block from the ledger.
         self.ledger.get_block(height)
     }

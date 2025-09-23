@@ -159,7 +159,7 @@ impl TestNetwork {
         for (id, account) in accounts.into_iter().enumerate() {
             let gen_ledger =
                 genesis_ledger(gen_key, committee.clone(), balances.clone(), bonded_balances.clone(), &mut rng);
-            let ledger = Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()));
+            let ledger = Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()).unwrap());
             let storage = Storage::new(
                 ledger.clone(),
                 Arc::new(BFTMemoryService::new()),

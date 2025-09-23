@@ -33,6 +33,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+/// Ledger service that does not perform any checks on block advancement.
 pub struct TranslucentLedgerService<N: Network, C: ConsensusStorage<N>> {
     inner: CoreLedgerService<N, C>,
 }
@@ -46,8 +47,8 @@ impl<N: Network, C: ConsensusStorage<N>> fmt::Debug for TranslucentLedgerService
 
 impl<N: Network, C: ConsensusStorage<N>> TranslucentLedgerService<N, C> {
     /// Initializes a new ledger service wrapper.
-    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
-        Self { inner: CoreLedgerService::new(ledger, shutdown) }
+    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Result<Self> {
+        Ok(Self { inner: CoreLedgerService::new(ledger, shutdown)? })
     }
 }
 

@@ -46,7 +46,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -149,7 +149,10 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let ledger = Ledger::<N, C>::load(genesis.clone(), storage_mode.clone())?;
 
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
+        let ledger_service = Arc::new(
+            CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone())
+                .with_context(|| "Failed to set up core ledger service")?,
+        );
         // Determine if the client should allow external peers.
         let allow_external_peers = true;
 

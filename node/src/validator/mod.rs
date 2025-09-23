@@ -44,7 +44,7 @@ use snarkvm::prelude::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
@@ -100,10 +100,13 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         let signal_node = Self::handle_signals(shutdown.clone());
 
         // Initialize the ledger.
-        let ledger = Ledger::load(genesis, storage_mode.clone())?;
+        let ledger = Ledger::load(genesis, storage_mode.clone()).with_context(|| "Failed to initialize ledger")?;
 
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
+        let ledger_service = Arc::new(
+            CoreLedgerService::new(ledger.clone(), shutdown.clone())
+                .with_context(|| "Failed to setup ledger service")?,
+        );
 
         // Determine if the validator should rotate external peers.
         let rotate_external_peers = false;
