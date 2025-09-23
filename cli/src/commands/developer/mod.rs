@@ -25,6 +25,9 @@ pub use execute::*;
 mod scan;
 pub use scan::*;
 
+mod solve;
+pub use solve::*;
+
 mod transfer_private;
 pub use transfer_private::*;
 
@@ -32,6 +35,7 @@ use crate::helpers::{args::network_id_parser, logger::initialize_terminal_logger
 
 use snarkos_node_rest::{API_VERSION_V1, API_VERSION_V2};
 use snarkvm::{package::Package, prelude::*};
+use snarkvm_circuit_network::{Aleo, AleoCanaryV0, AleoTestnetV0, AleoV0};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Parser, ValueEnum};
@@ -63,6 +67,8 @@ pub enum DeveloperCommand {
     Execute(Execute),
     /// Scan the node for records.
     Scan(Scan),
+    /// Solve the coinbase puzzle.
+    Solve(Solve),
     /// Execute the `credits.aleo/transfer_private` function.
     TransferPrivate(TransferPrivate),
 }
@@ -123,15 +129,15 @@ impl Developer {
         }
 
         match self.network {
-            MainnetV0::ID => self.parse_inner::<MainnetV0>(),
-            TestnetV0::ID => self.parse_inner::<TestnetV0>(),
-            CanaryV0::ID => self.parse_inner::<CanaryV0>(),
+            MainnetV0::ID => self.parse_inner::<MainnetV0, AleoV0>(),
+            TestnetV0::ID => self.parse_inner::<TestnetV0, AleoTestnetV0>(),
+            CanaryV0::ID => self.parse_inner::<CanaryV0, AleoCanaryV0>(),
             unknown_id => bail!("Unknown network ID ({unknown_id})"),
         }
     }
 
     /// Internal logic of [`Self::parse`] for each of the different networks.
-    fn parse_inner<N: Network>(self) -> Result<String> {
+    fn parse_inner<N: Network, A: Aleo<Network = N>>(self) -> Result<String> {
         use DeveloperCommand::*;
 
         match self.command {
@@ -139,6 +145,7 @@ impl Developer {
             Deploy(deploy) => deploy.parse::<N>(),
             Execute(execute) => execute.parse::<N>(),
             Scan(scan) => scan.parse::<N>(),
+            Solve(solve) => solve.parse::<N, A>(),
             TransferPrivate(transfer_private) => transfer_private.parse::<N>(),
         }
     }
