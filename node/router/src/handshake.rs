@@ -15,7 +15,7 @@
 
 use crate::{
     NodeType,
-    Peer,
+    PeerPoolHandling,
     Router,
     messages::{ChallengeRequest, ChallengeResponse, DisconnectReason, Message, MessageCodec, MessageTrait},
 };
@@ -28,7 +28,7 @@ use snarkvm::{
 use anyhow::{Result, bail};
 use futures::SinkExt;
 use rand::{Rng, rngs::OsRng};
-use std::{collections::hash_map::Entry, io, net::SocketAddr};
+use std::{io, net::SocketAddr};
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -156,17 +156,9 @@ impl<N: Network> Router<N> {
         genesis_header: Header<N>,
         restrictions_id: Field<N>,
     ) -> io::Result<ChallengeRequest<N>> {
-        match self.peer_pool.write().entry(peer_addr) {
-            Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(peer_addr, false));
-            }
-            Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::new_connecting(peer_addr, entry.get().is_trusted()));
-            }
-            Entry::Occupied(_) => {
-                return Err(error(format!("Duplicate connection attempt with '{peer_addr}'")));
-            }
-        }
+        // Introduce the peer into the peer pool.
+        self.add_peer_on_handshake_init(peer_addr)?;
+
         // Construct the stream.
         let mut framed = Framed::new(stream, MessageCodec::<N>::handshake());
 
@@ -318,27 +310,11 @@ impl<N: Network> Router<N> {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)")
         }
         // Unknown peers are untrusted, so check if `allow_external_peers` is true.
-        if !self.allow_external_peers() && !self.is_trusted(&listener_addr) {
+        if !self.allow_external_peers() && !self.is_trusted(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)")
         }
 
-        match self.peer_pool.write().entry(listener_addr) {
-            Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
-            }
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                peer @ Peer::Candidate(_) => {
-                    *peer = Peer::new_connecting(listener_addr, peer.is_trusted());
-                }
-                Peer::Connecting(_) => {
-                    bail!("Dropping connection request from '{listener_addr}' (already connecting)");
-                }
-                Peer::Connected(_) => {
-                    bail!("Dropping connection request from '{listener_addr}' (already connected)");
-                }
-            },
-        };
-        Ok(())
+        self.add_peer_on_handshake_resp(listener_addr)
     }
 
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.

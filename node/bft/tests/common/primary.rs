@@ -27,6 +27,7 @@ use snarkos_node_bft::{
     helpers::{PrimarySender, Storage, init_primary_channels},
 };
 use snarkos_node_bft_storage_service::BFTMemoryService;
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{

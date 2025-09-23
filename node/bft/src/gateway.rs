@@ -42,7 +42,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{ConnectedPeer, NodeType, Peer};
+use snarkos_node_router::{NodeType, Peer, PeerPoolHandling};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -74,7 +74,7 @@ use rand::seq::{IteratorRandom, SliceRandom};
 #[cfg(not(any(test)))]
 use std::net::IpAddr;
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     future::Future,
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -148,6 +148,12 @@ pub struct Gateway<N: Network> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The development mode.
     dev: Option<u16>,
+}
+
+impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
+    fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+        &self.peer_pool
+    }
 }
 
 impl<N: Network> Gateway<N> {
@@ -360,25 +366,15 @@ impl<N: Network> Gateway<N> {
         // Retrieve the peer IP of the given address.
         match self.resolver.read().get_peer_ip_for_address(address) {
             // Determine if the peer IP is connected.
-            Some(peer_ip) => self.is_connected_ip(peer_ip),
+            Some(peer_ip) => self.is_connected(peer_ip),
             None => false,
         }
-    }
-
-    /// Returns `true` if the node is connected to the given peer IP.
-    pub fn is_connected_ip(&self, ip: SocketAddr) -> bool {
-        self.peer_pool.read().get(&ip).is_some_and(|peer| peer.is_connected())
-    }
-
-    /// Returns `true` if the node is connecting to the given peer IP.
-    pub fn is_connecting_ip(&self, ip: SocketAddr) -> bool {
-        self.peer_pool.read().get(&ip).is_some_and(|peer| peer.is_connecting())
     }
 
     /// Returns `true` if the given peer IP is an authorized validator.
     pub fn is_authorized_validator_ip(&self, ip: SocketAddr) -> bool {
         // If the peer IP is in the trusted validators, return early.
-        if self.trusted_validators().contains(&ip) {
+        if self.trusted_peers().contains(&ip) {
             return true;
         }
         // Retrieve the Aleo address of the peer IP.
@@ -430,64 +426,9 @@ impl<N: Network> Gateway<N> {
         self.tcp.config().max_connections as usize
     }
 
-    /// Returns the number of connected peers.
-    pub fn number_of_connected_peers(&self) -> usize {
-        self.peer_pool.read().iter().filter(|(_, peer)| peer.is_connected()).count()
-    }
-
-    /// Returns the number of connecting peers.
-    pub fn number_of_connecting_peers(&self) -> usize {
-        self.peer_pool.read().iter().filter(|(_, peer)| peer.is_connecting()).count()
-    }
-
     /// Returns the list of connected addresses.
     pub fn connected_addresses(&self) -> HashSet<Address<N>> {
         self.get_connected_peers().into_iter().map(|peer| peer.aleo_addr).collect()
-    }
-
-    /// Returns the list of connected peers.
-    pub fn connected_peers(&self) -> Vec<SocketAddr> {
-        self.peer_pool.read().iter().filter_map(|(addr, peer)| peer.is_connected().then_some(*addr)).collect()
-    }
-
-    /// Returns the list of trusted validators.
-    pub fn trusted_validators(&self) -> Vec<SocketAddr> {
-        self.peer_pool.read().iter().filter_map(|(addr, peer)| peer.is_trusted().then_some(*addr)).collect()
-    }
-
-    /// Returns all connected peers that satisify the given predicate.
-    pub fn filter_connected_peers<P: FnMut(&ConnectedPeer<N>) -> bool>(
-        &self,
-        mut predicate: P,
-    ) -> Vec<ConnectedPeer<N>> {
-        self.peer_pool
-            .read()
-            .values()
-            .filter_map(|p| {
-                if let Peer::Connected(peer) = p
-                    && predicate(peer)
-                {
-                    Some(peer)
-                } else {
-                    None
-                }
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Returns all connected peers.
-    pub fn get_connected_peers(&self) -> Vec<ConnectedPeer<N>> {
-        self.filter_connected_peers(|_| true)
-    }
-
-    /// Returns the connected peer given the peer IP, if it exists.
-    pub fn get_connected_peer(&self, listener_addr: &SocketAddr) -> Option<ConnectedPeer<N>> {
-        if let Some(Peer::Connected(peer)) = self.peer_pool.read().get(listener_addr) {
-            Some(peer.clone())
-        } else {
-            None
-        }
     }
 
     /// Attempts to connect to the given peer IP.
@@ -523,11 +464,11 @@ impl<N: Network> Gateway<N> {
             bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (maximum peers reached)")
         }
         // Ensure the node is not already connected to this peer.
-        if self.is_connected_ip(peer_ip) {
+        if self.is_connected(peer_ip) {
             bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connected)")
         }
         // Ensure the node is not already connecting to this peer.
-        if self.is_connecting_ip(peer_ip) {
+        if self.is_connecting(peer_ip) {
             bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connecting)")
         }
         Ok(())
@@ -549,23 +490,7 @@ impl<N: Network> Gateway<N> {
             }
         }
 
-        match self.peer_pool.write().entry(listener_addr) {
-            Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
-            }
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                peer @ Peer::Candidate(_) => {
-                    *peer = Peer::new_connecting(listener_addr, peer.is_trusted());
-                }
-                Peer::Connecting(_) => {
-                    bail!("Dropping connection request from '{listener_addr}' (already connecting)");
-                }
-                Peer::Connected(_) => {
-                    bail!("Dropping connection request from '{listener_addr}' (already connected)");
-                }
-            },
-        };
-        Ok(())
+        self.add_peer_on_handshake_resp(listener_addr)
     }
 
     /// Check whether the given IP address is currently banned.
@@ -921,7 +846,7 @@ impl<N: Network> Gateway<N> {
                                 continue;
                             }
                             // Ensure the validator IP is not already connected or connecting.
-                            if self_.is_connected_ip(validator_ip) || self_.is_connecting_ip(validator_ip) {
+                            if self_.is_connected(validator_ip) || self_.is_connecting(validator_ip) {
                                 continue;
                             }
                             // Ensure the validator address is not already connected.
@@ -969,7 +894,7 @@ impl<N: Network> Gateway<N> {
     pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
         let gateway = self.clone();
         tokio::spawn(async move {
-            if let Some(peer) = gateway.get_connected_peer(&peer_ip) {
+            if let Some(peer) = gateway.get_connected_peer(peer_ip) {
                 let connected_addr = peer.connected_addr;
                 gateway.tcp.disconnect(connected_addr).await
             } else {
@@ -1086,11 +1011,11 @@ impl<N: Network> Gateway<N> {
     /// This function attempts to connect to any disconnected trusted validators.
     fn handle_trusted_validators(&self) {
         // Ensure that the trusted nodes are connected.
-        for validator_ip in &self.trusted_validators() {
+        for validator_ip in &self.trusted_peers() {
             // If the trusted_validator is not connected, attempt to connect to it.
             if !self.is_local_ip(*validator_ip)
-                && !self.is_connecting_ip(*validator_ip)
-                && !self.is_connected_ip(*validator_ip)
+                && !self.is_connecting(*validator_ip)
+                && !self.is_connected(*validator_ip)
             {
                 // Attempt to connect to the trusted validator.
                 self.connect(*validator_ip);
@@ -1448,17 +1373,8 @@ impl<N: Network> Gateway<N> {
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
     ) -> io::Result<ChallengeRequest<N>> {
-        match self.peer_pool.write().entry(peer_addr) {
-            Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(peer_addr, false));
-            }
-            Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::new_connecting(peer_addr, entry.get().is_trusted()));
-            }
-            Entry::Occupied(_) => {
-                return Err(error(format!("Duplicate connection attempt with '{peer_addr}'")));
-            }
-        }
+        // Introduce the peer into the peer pool.
+        self.add_peer_on_handshake_init(peer_addr)?;
 
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());

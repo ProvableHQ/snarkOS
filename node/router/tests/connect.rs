@@ -16,6 +16,7 @@
 mod common;
 use common::*;
 
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect},
@@ -106,7 +107,7 @@ async fn test_connect_with_handshake() {
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
-        deadline!(Duration::from_secs(5), move || { node1_.is_connected(&node0_ip) });
+        deadline!(Duration::from_secs(5), move || { node1_.is_connected(node0_ip) });
 
         print_tcp!(node0);
         print_tcp!(node1);
@@ -127,7 +128,7 @@ async fn test_connect_with_handshake() {
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
-        deadline!(Duration::from_secs(5), move || { node1_.is_connected(&node0_ip) });
+        deadline!(Duration::from_secs(5), move || { node1_.is_connected(node0_ip) });
 
         print_tcp!(node0);
         print_tcp!(node1);
@@ -148,7 +149,7 @@ async fn test_connect_with_handshake() {
         // Await for node0 to be connected.
         let node1_ip = node1.local_ip();
         let node0_ = node0.clone();
-        deadline!(Duration::from_secs(5), move || { node0_.is_connected(&node1_ip) });
+        deadline!(Duration::from_secs(5), move || { node0_.is_connected(node1_ip) });
 
         print_tcp!(node0);
         print_tcp!(node1);
@@ -192,7 +193,7 @@ async fn test_validator_connection() {
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
-        deadline!(Duration::from_secs(5), move || { node1_.is_connected(&node0_ip) });
+        deadline!(Duration::from_secs(5), move || { node1_.is_connected(node0_ip) });
 
         print_tcp!(node0);
         print_tcp!(node1);
@@ -213,7 +214,7 @@ async fn test_validator_connection() {
         let node1_ = node1.clone();
         let node0_ = node0.clone();
         deadline!(Duration::from_secs(5), move || {
-            !node1_.is_connected(&node0_.local_ip()) && !node0_.is_connected(&node1_.local_ip())
+            !node1_.is_connected(node0_.local_ip()) && !node0_.is_connected(node1_.local_ip())
         });
 
         // Connect node1 to node0.

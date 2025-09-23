@@ -15,6 +15,7 @@
 
 use super::*;
 use snarkos_node_router::{
+    PeerPoolHandling,
     Routing,
     bootstrap_peers,
     messages::{

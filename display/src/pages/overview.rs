@@ -15,7 +15,10 @@
 
 use crate::{content_style, header_style};
 
-use snarkos_node::{Node, router::Peer};
+use snarkos_node::{
+    Node,
+    router::{Peer, PeerPoolHandling},
+};
 use snarkvm::prelude::Network;
 
 use ratatui::{

@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Router, messages::Message};
+use crate::{PeerPoolHandling, Router, messages::Message};
 use snarkvm::prelude::Network;
 
 use std::net::SocketAddr;

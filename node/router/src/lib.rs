@@ -51,7 +51,7 @@ use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_tcp::{Config, ConnectionSide, P2P, Tcp, is_bogon_ip, is_unspecified_or_broadcast_ip};
 
-use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
+use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey, error};
 
 use aleo_std::{StorageMode, aleo_ledger_dir};
 use anyhow::{Result, bail};
@@ -63,10 +63,10 @@ use parking_lot::{Mutex, RwLock};
 use std::net::IpAddr;
 use std::{
     cmp,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     fs,
     future::Future,
-    io::Write,
+    io::{self, Write},
     net::SocketAddr,
     ops::Deref,
     str::FromStr,
@@ -81,6 +81,206 @@ pub const DEFAULT_NODE_PORT: u16 = 4130;
 /// The name of the file containing cached peers.
 const PEER_CACHE_FILENAME: &str = "cached_router_peers";
 
+pub trait PeerPoolHandling<N: Network>: P2P {
+    fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
+
+    /// Returns the connected peer address from the listener IP address.
+    fn resolve_to_ambiguous(&self, listener_addr: SocketAddr) -> Option<SocketAddr> {
+        if let Some(Peer::Connected(peer)) = self.peer_pool().read().get(&listener_addr) {
+            Some(peer.connected_addr)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the node is connecting to the given peer's listener address.
+    fn is_connecting(&self, listener_addr: SocketAddr) -> bool {
+        self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_connecting())
+    }
+
+    /// Returns `true` if the node is connected to the given peer listener address.
+    fn is_connected(&self, listener_addr: SocketAddr) -> bool {
+        self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_connected())
+    }
+
+    /// Returns `true` if the given listener address is trusted.
+    fn is_trusted(&self, listener_addr: SocketAddr) -> bool {
+        self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_trusted())
+    }
+
+    /// Returns the number of connected peers.
+    fn number_of_connected_peers(&self) -> usize {
+        self.peer_pool().read().iter().filter(|(_, peer)| peer.is_connected()).count()
+    }
+
+    /// Returns the number of connecting peers.
+    fn number_of_connecting_peers(&self) -> usize {
+        self.peer_pool().read().iter().filter(|(_, peer)| peer.is_connecting()).count()
+    }
+
+    /// Returns the number of candidate peers.
+    fn number_of_candidate_peers(&self) -> usize {
+        self.peer_pool().read().values().filter(|peer| matches!(peer, Peer::Candidate(_))).count()
+    }
+
+    /// Returns the connected peer given the peer IP, if it exists.
+    fn get_connected_peer(&self, listener_addr: SocketAddr) -> Option<ConnectedPeer<N>> {
+        if let Some(Peer::Connected(peer)) = self.peer_pool().read().get(&listener_addr) {
+            Some(peer.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Updates the connected peer - if it exists -  given the peer IP and a closure.
+    /// The returned status indicates whether the update was successful, i.e. the peer had existed.
+    fn update_connected_peer<F: FnMut(&mut ConnectedPeer<N>)>(
+        &self,
+        listener_addr: &SocketAddr,
+        mut update_fn: F,
+    ) -> bool {
+        if let Some(Peer::Connected(peer)) = self.peer_pool().write().get_mut(listener_addr) {
+            update_fn(peer);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the list of all peers (connected, connecting, and candidate).
+    fn get_peers(&self) -> Vec<Peer<N>> {
+        self.peer_pool().read().values().cloned().collect()
+    }
+
+    /// Returns all connected peers.
+    fn get_connected_peers(&self) -> Vec<ConnectedPeer<N>> {
+        self.filter_connected_peers(|_| true)
+    }
+
+    /// Returns all connected peers that satisify the given predicate.
+    fn filter_connected_peers<P: FnMut(&ConnectedPeer<N>) -> bool>(&self, mut predicate: P) -> Vec<ConnectedPeer<N>> {
+        self.peer_pool()
+            .read()
+            .values()
+            .filter_map(|p| {
+                if let Peer::Connected(peer) = p
+                    && predicate(peer)
+                {
+                    Some(peer)
+                } else {
+                    None
+                }
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Returns the list of connected peers.
+    fn connected_peers(&self) -> Vec<SocketAddr> {
+        self.peer_pool().read().iter().filter_map(|(addr, peer)| peer.is_connected().then_some(*addr)).collect()
+    }
+
+    /// Returns the list of trusted peers.
+    fn trusted_peers(&self) -> Vec<SocketAddr> {
+        self.peer_pool().read().iter().filter_map(|(addr, peer)| peer.is_trusted().then_some(*addr)).collect()
+    }
+
+    /// Returns the list of candidate peers.
+    fn candidate_peers(&self) -> HashSet<SocketAddr> {
+        let banned_ips = self.tcp().banned_peers().get_banned_ips();
+        self.peer_pool()
+            .read()
+            .iter()
+            .filter_map(|(addr, peer)| {
+                (matches!(peer, Peer::Candidate(_)) && !banned_ips.contains(&addr.ip())).then_some(*addr)
+            })
+            .collect()
+    }
+
+    /// Returns the list of unconnected trusted peers.
+    fn unconnected_trusted_peers(&self) -> HashSet<SocketAddr> {
+        self.peer_pool()
+            .read()
+            .iter()
+            .filter_map(
+                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.trusted.then_some(*addr) } else { None },
+            )
+            .collect()
+    }
+
+    // Save the best peers to disk.
+    fn save_best_peers(&self, storage_mode: &StorageMode) -> Result<()> {
+        // Collect all prospect peers.
+        let mut peers = self.get_peers();
+
+        // Get the low-level peer stats.
+        let known_peers = self.tcp().known_peers().snapshot();
+
+        // Sort the list of peers.
+        peers.sort_unstable_by_key(|peer| {
+            if let Some(peer_stats) = known_peers.get(&peer.listener_addr().ip()) {
+                // Prioritize greatest height, then lowest failure count.
+                (cmp::Reverse(peer.last_height_seen()), peer_stats.failures())
+            } else {
+                // Unreachable; use an else-compatible dummy.
+                (cmp::Reverse(peer.last_height_seen()), 0)
+            }
+        });
+        peers.truncate(MAX_PEERS_TO_SEND);
+
+        // Dump the connected peers to a file.
+        let mut path = aleo_ledger_dir(N::ID, storage_mode);
+        path.push(PEER_CACHE_FILENAME);
+        let mut file = fs::File::create(path)?;
+        for peer in peers {
+            writeln!(file, "{}", peer.listener_addr())?;
+        }
+
+        Ok(())
+    }
+
+    // Introduces a new connecting peer into the peer pool if unknown, or promotes
+    // a known candidate peer to a connecting one, at the beginning of handshake
+    // when initiating it.
+    fn add_peer_on_handshake_init(&self, listener_addr: SocketAddr) -> io::Result<()> {
+        match self.peer_pool().write().entry(listener_addr) {
+            Entry::Vacant(entry) => {
+                entry.insert(Peer::new_connecting(listener_addr, false));
+            }
+            Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
+                entry.insert(Peer::new_connecting(listener_addr, entry.get().is_trusted()));
+            }
+            Entry::Occupied(_) => {
+                return Err(error(format!("Duplicate connection attempt with '{listener_addr}'")));
+            }
+        }
+        Ok(())
+    }
+
+    // Introduces a new connecting peer into the peer pool if unknown, or promotes
+    // a known candidate peer to a connecting one, during the handshake when responding
+    // to it, once the peer's listener address is known.
+    fn add_peer_on_handshake_resp(&self, listener_addr: SocketAddr) -> anyhow::Result<()> {
+        match self.peer_pool().write().entry(listener_addr) {
+            Entry::Vacant(entry) => {
+                entry.insert(Peer::new_connecting(listener_addr, false));
+            }
+            Entry::Occupied(mut entry) => match entry.get_mut() {
+                peer @ Peer::Candidate(_) => {
+                    *peer = Peer::new_connecting(listener_addr, peer.is_trusted());
+                }
+                Peer::Connecting(_) => {
+                    bail!("Dropping connection request from '{listener_addr}' (already connecting)");
+                }
+                Peer::Connected(_) => {
+                    bail!("Dropping connection request from '{listener_addr}' (already connected)");
+                }
+            },
+        }
+        Ok(())
+    }
+}
+
 /// The router keeps track of connected and connecting peers.
 /// The actual network communication happens in Inbound/Outbound,
 /// which is implemented by Validator, Prover, and Client.
@@ -92,6 +292,12 @@ impl<N: Network> Deref for Router<N> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl<N: Network> PeerPoolHandling<N> for Router<N> {
+    fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+        &self.peer_pool
     }
 }
 
@@ -237,12 +443,12 @@ impl<N: Network> Router<N> {
             bail!("Dropping connection attempt to '{peer_ip}' (maximum peers reached)")
         }
         // Ensure the node is not already connecting to this peer.
-        if self.is_connecting(&peer_ip) {
+        if self.is_connecting(peer_ip) {
             debug!("Dropping connection attempt to '{peer_ip}' (already connecting)");
             return Ok(true);
         }
         // Ensure the node is not already connected to this peer.
-        if self.is_connected(&peer_ip) {
+        if self.is_connected(peer_ip) {
             debug!("Dropping connection attempt to '{peer_ip}' (already connected)");
             return Ok(true);
         }
@@ -254,7 +460,7 @@ impl<N: Network> Router<N> {
     pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
         let router = self.clone();
         tokio::spawn(async move {
-            if let Some(peer) = router.get_connected_peer(&peer_ip) {
+            if let Some(peer) = router.get_connected_peer(peer_ip) {
                 let connected_addr = peer.connected_addr;
                 router.tcp.disconnect(connected_addr).await
             } else {
@@ -337,126 +543,9 @@ impl<N: Network> Router<N> {
         self.resolver.read().get_listener(connected_addr)
     }
 
-    /// Returns the (ambiguous) peer address from the listener IP address.
-    pub fn resolve_to_ambiguous(&self, listener_addr: &SocketAddr) -> Option<SocketAddr> {
-        if let Some(Peer::Connected(peer)) = self.peer_pool.read().get(listener_addr) {
-            Some(peer.connected_addr)
-        } else {
-            None
-        }
-    }
-
-    /// Returns `true` if the node is connecting to the given peer's listener address.
-    pub fn is_connecting(&self, listener_addr: &SocketAddr) -> bool {
-        self.peer_pool.read().get(listener_addr).is_some_and(|peer| peer.is_connecting())
-    }
-
-    /// Returns `true` if the node is connected to the given peer listener address.
-    pub fn is_connected(&self, listener_addr: &SocketAddr) -> bool {
-        self.peer_pool.read().get(listener_addr).is_some_and(|peer| peer.is_connected())
-    }
-
-    /// Returns `true` if the given listener address is trusted.
-    pub fn is_trusted(&self, listener_addr: &SocketAddr) -> bool {
-        self.peer_pool.read().get(listener_addr).is_some_and(|peer| peer.is_trusted())
-    }
-
     /// Returns the maximum number of connected peers.
     pub fn max_connected_peers(&self) -> usize {
         self.tcp.config().max_connections as usize
-    }
-
-    /// Returns the number of connected peers.
-    pub fn number_of_connected_peers(&self) -> usize {
-        self.peer_pool.read().iter().filter(|(_, peer)| peer.is_connected()).count()
-    }
-
-    /// Returns the number of candidate peers.
-    pub fn number_of_candidate_peers(&self) -> usize {
-        self.peer_pool.read().values().filter(|peer| matches!(peer, Peer::Candidate(_))).count()
-    }
-
-    /// Returns the connected peer given the peer IP, if it exists.
-    pub fn get_connected_peer(&self, listener_addr: &SocketAddr) -> Option<ConnectedPeer<N>> {
-        if let Some(Peer::Connected(peer)) = self.peer_pool.read().get(listener_addr) {
-            Some(peer.clone())
-        } else {
-            None
-        }
-    }
-
-    /// Updates the connected peer - if it exists -  given the peer IP and a closure.
-    /// The returned status indicates whether the update was successful, i.e. the peer had existed.
-    pub fn update_connected_peer<F: FnMut(&mut ConnectedPeer<N>)>(
-        &self,
-        listener_addr: &SocketAddr,
-        mut update_fn: F,
-    ) -> bool {
-        if let Some(Peer::Connected(peer)) = self.peer_pool.write().get_mut(listener_addr) {
-            update_fn(peer);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns the list of all peers (connected, connecting, and candidate).
-    pub fn get_peers(&self) -> Vec<Peer<N>> {
-        self.peer_pool.read().values().cloned().collect()
-    }
-
-    /// Returns all connected peers.
-    pub fn get_connected_peers(&self) -> Vec<ConnectedPeer<N>> {
-        self.filter_connected_peers(|_| true)
-    }
-
-    /// Returns all connected peers that satisify the given predicate.
-    pub fn filter_connected_peers<P: FnMut(&ConnectedPeer<N>) -> bool>(
-        &self,
-        mut predicate: P,
-    ) -> Vec<ConnectedPeer<N>> {
-        self.peer_pool
-            .read()
-            .values()
-            .filter_map(|p| {
-                if let Peer::Connected(peer) = p
-                    && predicate(peer)
-                {
-                    Some(peer)
-                } else {
-                    None
-                }
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Returns the list of connected peers.
-    pub fn connected_peers(&self) -> Vec<SocketAddr> {
-        self.peer_pool.read().iter().filter_map(|(addr, peer)| peer.is_connected().then_some(*addr)).collect()
-    }
-
-    /// Returns the list of candidate peers.
-    pub fn candidate_peers(&self) -> HashSet<SocketAddr> {
-        let banned_ips = self.tcp().banned_peers().get_banned_ips();
-        self.peer_pool
-            .read()
-            .iter()
-            .filter_map(|(addr, peer)| {
-                (matches!(peer, Peer::Candidate(_)) && !banned_ips.contains(&addr.ip())).then_some(*addr)
-            })
-            .collect()
-    }
-
-    /// Returns the list of unconnected trusted peers.
-    pub fn unconnected_trusted_peers(&self) -> HashSet<SocketAddr> {
-        self.peer_pool
-            .read()
-            .iter()
-            .filter_map(
-                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.trusted.then_some(*addr) } else { None },
-            )
-            .collect()
     }
 
     /// Check whether the given IP address is currently banned.
@@ -534,42 +623,11 @@ impl<N: Network> Router<N> {
         self.handles.lock().push(tokio::spawn(future));
     }
 
-    // Save the best peers to disk.
-    fn save_best_peers(&self) -> Result<()> {
-        // Collect all prospect peers.
-        let mut peers = self.get_peers();
-
-        // Get the low-level peer stats.
-        let known_peers = self.tcp().known_peers().snapshot();
-
-        // Sort the list of peers.
-        peers.sort_unstable_by_key(|peer| {
-            if let Some(peer_stats) = known_peers.get(&peer.listener_addr().ip()) {
-                // Prioritize greatest height, then lowest failure count.
-                (cmp::Reverse(peer.last_height_seen()), peer_stats.failures())
-            } else {
-                // Unreachable; use an else-compatible dummy.
-                (cmp::Reverse(peer.last_height_seen()), 0)
-            }
-        });
-        peers.truncate(MAX_PEERS_TO_SEND);
-
-        // Dump the connected peers to a file.
-        let mut path = aleo_ledger_dir(N::ID, &self.storage_mode);
-        path.push(PEER_CACHE_FILENAME);
-        let mut file = fs::File::create(path)?;
-        for peer in peers {
-            writeln!(file, "{}", peer.listener_addr())?;
-        }
-
-        Ok(())
-    }
-
     /// Shuts down the router.
     pub async fn shut_down(&self) {
         info!("Shutting down the router...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers() {
+        if let Err(e) = self.save_best_peers(&self.storage_mode) {
             warn!("Failed to persist best peers to disk: {e}");
         }
         // Abort the tasks.
