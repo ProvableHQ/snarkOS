@@ -3799,6 +3799,8 @@ dependencies = [
  "snarkos-node-metrics",
  "snarkos-node-rest",
  "snarkvm",
+ "snarkvm-circuit-network",
+ "snarkvm-ledger-puzzle-epoch",
  "sys-info",
  "tempfile",
  "thiserror 2.0.16",
