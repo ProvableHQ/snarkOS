@@ -60,8 +60,17 @@ impl<N: Network> Encoder<Message<N>> for MessageCodec<N> {
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"))?;
 
         let serialized_message = dst.split_to(dst.len()).freeze();
-
-        self.codec.encode(serialized_message, dst)
+        #[cfg(feature = "metrics")]
+        let num_bytes = serialized_message.len() as f64;
+        self.codec.encode(serialized_message, dst)?;
+        #[cfg(feature = "metrics")]
+        snarkvm::metrics::histogram_label(
+            snarkos_node_metrics::tcp::TCP_ROUTER_MESSAGES_OUTBOUND,
+            "message",
+            String::from(message.name().clone()),
+            num_bytes,
+        );
+        Ok(())
     }
 }
 
@@ -78,10 +87,22 @@ impl<N: Network> Decoder for MessageCodec<N> {
 
         Self::Item::check_size(&bytes)?;
 
+        #[cfg(feature = "metrics")]
+        let num_bytes = bytes.len() as f64;
+
         // Convert the bytes to a message, or fail if it is not valid.
         let reader = bytes.reader();
         match Message::read_le(reader) {
-            Ok(message) => Ok(Some(message)),
+            Ok(message) => {
+                #[cfg(feature = "metrics")]
+                snarkvm::metrics::histogram_label(
+                    snarkos_node_metrics::tcp::TCP_ROUTER_MESSAGES_INBOUND,
+                    "message",
+                    String::from(message.name().clone()),
+                    num_bytes,
+                );
+                Ok(Some(message))
+            }
             Err(error) => {
                 warn!("Failed to deserialize a message - {}", error);
                 Err(std::io::ErrorKind::InvalidData.into())

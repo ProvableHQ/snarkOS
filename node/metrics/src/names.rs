@@ -45,8 +45,15 @@ pub(super) const GAUGE_NAMES: [&str; 26] = [
     tcp::TCP_TASKS,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 3] =
-    [bft::COMMIT_ROUNDS_LATENCY, consensus::CERTIFICATE_COMMIT_LATENCY, consensus::BLOCK_LATENCY];
+pub(super) const HISTOGRAM_NAMES: [&str; 7] = [
+    bft::COMMIT_ROUNDS_LATENCY,
+    consensus::CERTIFICATE_COMMIT_LATENCY,
+    consensus::BLOCK_LATENCY,
+    tcp::TCP_GATEWAY_EVENTS_OUTBOUND,
+    tcp::TCP_GATEWAY_EVENTS_INBOUND,
+    tcp::TCP_ROUTER_MESSAGES_OUTBOUND,
+    tcp::TCP_ROUTER_MESSAGES_INBOUND,
+];
 
 pub mod bft {
     pub const COMMIT_ROUNDS_LATENCY: &str = "snarkos_bft_commit_rounds_latency_secs"; // <-- This one doesn't even make sense.
@@ -95,4 +102,8 @@ pub mod router {
 
 pub mod tcp {
     pub const TCP_TASKS: &str = "snarkos_tcp_tasks_total";
+    pub const TCP_GATEWAY_EVENTS_OUTBOUND: &str = "snarkos_tcp_gateway_events_outbound";
+    pub const TCP_GATEWAY_EVENTS_INBOUND: &str = "snarkos_tcp_gateway_events_inbound";
+    pub const TCP_ROUTER_MESSAGES_OUTBOUND: &str = "snarkos_tcp_router_messages_outbound";
+    pub const TCP_ROUTER_MESSAGES_INBOUND: &str = "snarkos_tcp_router_messages_inbound";
 }
