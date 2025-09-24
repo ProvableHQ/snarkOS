@@ -736,10 +736,10 @@ fn check_permissions(path: &PathBuf) -> Result<(), snarkvm::prelude::Error> {
     #[cfg(target_family = "unix")]
     {
         use std::os::unix::fs::PermissionsExt;
-        ensure!(path.exists(), "The file '{:?}' does not exist", path);
+        ensure!(path.exists(), "The file '{path:?}' does not exist");
         crate::check_parent_permissions(path)?;
         let permissions = path.metadata()?.permissions().mode();
-        ensure!(permissions & 0o777 == 0o600, "The file {:?} must be readable only by the owner (0600)", path);
+        ensure!(permissions & 0o777 == 0o600, "The file {path:?} must be readable only by the owner (0600)");
     }
     Ok(())
 }

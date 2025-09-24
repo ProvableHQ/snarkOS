@@ -287,7 +287,7 @@ impl Developer {
         }
 
         // Timeout reached
-        bail!("❌ Transaction {} was not confirmed within {} seconds", transaction_id, timeout_seconds);
+        bail!("❌ Transaction {transaction_id} was not confirmed within {timeout_seconds} seconds");
     }
 
     /// Gets the latest eidtion of an Aleo program.

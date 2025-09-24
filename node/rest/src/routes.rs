@@ -653,7 +653,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Ok(json) => json,
             Err(JsonRejection::JsonDataError(err)) => {
                 // For JsonDataError, return 422 to let transaction validation handle it
-                return Err(RestError::unprocessable_entity(anyhow!("Invalid transaction data: {}", err)));
+                return Err(RestError::unprocessable_entity(anyhow!("Invalid transaction data: {err}")));
             }
             Err(other_rejection) => return Err(other_rejection.into()),
         };
@@ -707,7 +707,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 )
                 .is_err()
             {
-                return Err(RestError::too_many_requests(anyhow!("{}", err_msg)));
+                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
             }
 
             // Perform the check.
@@ -795,7 +795,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 )
                 .is_err()
             {
-                return Err(RestError::too_many_requests(anyhow!("{}", err_msg)));
+                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
             }
 
             // Compute the current epoch hash.
