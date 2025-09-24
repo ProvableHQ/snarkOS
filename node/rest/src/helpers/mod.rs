@@ -14,6 +14,8 @@
 // limitations under the License.
 
 mod auth;
+
+/// This is used by CLI and needs to be public.
 pub use auth::*;
 
 mod error;
@@ -21,3 +23,6 @@ pub(crate) use error::*;
 
 mod path;
 pub(crate) use path::Path;
+
+mod json;
+pub(crate) use json::*;
