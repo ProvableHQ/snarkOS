@@ -311,54 +311,14 @@ impl Start {
 
 impl Start {
     /// Returns the initial peer(s) to connect to, from the given configurations.
-    fn parse_trusted_peers(&self) -> Result<Vec<SocketAddr>> {
-        let Some(peers) = &self.peers else { return Ok(vec![]) };
+    fn parse_trusted_addrs(&self, list: &Option<String>) -> Result<Vec<SocketAddr>> {
+        let Some(list) = list else { return Ok(vec![]) };
 
-        match peers.is_empty() {
+        match list.is_empty() {
             // Split on an empty string returns an empty string.
             true => Ok(vec![]),
-            false => peers
-                .split(',')
-                .map(|ip_or_hostname| {
-                    let trimmed = ip_or_hostname.trim();
-                    match trimmed.to_socket_addrs() {
-                        Ok(mut ip_iter) => {
-                            // A hostname might resolve to multiple IP addresses. We will use only the first one,
-                            // assuming this aligns with the user's expectations.
-                            let Some(ip) = ip_iter.next() else {
-                                return Err(anyhow!(
-                                    "The hostname supplied to --peers ('{trimmed}') does not reference any ip."
-                                ));
-                            };
-                            Ok(ip)
-                        }
-                        Err(e) => {
-                            Err(anyhow!("The hostname or IP supplied to --peers ('{trimmed}') is malformed: {e}"))
-                        }
-                    }
-                })
-                .collect(),
+            false => list.split(',').map(resolve_potential_hostnames).collect(),
         }
-    }
-
-    /// Returns the initial validator(s) to connect to, from the given configurations.
-    fn parse_trusted_validators(&self) -> Result<Vec<SocketAddr>> {
-        let Some(validators) = &self.validators else { return Ok(vec![]) };
-
-        // Split on an empty string returns an empty string.
-        if validators.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let mut result = vec![];
-        for ip in validators.split(',') {
-            match ip.parse::<SocketAddr>() {
-                Ok(ip) => result.push(ip),
-                Err(err) => bail!("An address supplied to --validators ('{ip}') is malformed: {err}"),
-            }
-        }
-
-        Ok(result)
     }
 
     /// Returns the CDN to prefetch initial blocks from, from the given configurations.
@@ -617,9 +577,9 @@ impl Start {
         }
 
         // Parse the trusted peers to connect to.
-        let mut trusted_peers = self.parse_trusted_peers()?;
+        let mut trusted_peers = self.parse_trusted_addrs(&self.peers)?;
         // Parse the trusted validators to connect to.
-        let mut trusted_validators = self.parse_trusted_validators()?;
+        let mut trusted_validators = self.parse_trusted_addrs(&self.validators)?;
 
         // Ensure there are no bootstrappers among the trusted peers and validators.
         let bootstrap_peers = bootstrap_peers::<N>(self.dev.is_some());
@@ -900,6 +860,21 @@ fn load_or_compute_genesis<N: Network>(
     Ok(block)
 }
 
+fn resolve_potential_hostnames(ip_or_hostname: &str) -> Result<SocketAddr> {
+    let trimmed = ip_or_hostname.trim();
+    match trimmed.to_socket_addrs() {
+        Ok(mut ip_iter) => {
+            // A hostname might resolve to multiple IP addresses. We will use only the first one,
+            // assuming this aligns with the user's expectations.
+            let Some(ip) = ip_iter.next() else {
+                return Err(anyhow!("The supplied trusted hostname ('{trimmed}') does not reference any ip."));
+            };
+            Ok(ip)
+        }
+        Err(e) => Err(anyhow!("The supplied trusted hostname or IP ('{trimmed}') is malformed: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -911,18 +886,20 @@ mod tests {
     type CurrentNetwork = MainnetV0;
 
     #[test]
-    fn test_parse_trusted_peers() {
+    fn test_parse_trusted_addrs() {
         let config = Start::try_parse_from(["snarkos", "--peers", ""].iter()).unwrap();
-        assert!(config.parse_trusted_peers().is_ok());
-        assert!(config.parse_trusted_peers().unwrap().is_empty());
+        assert!(config.parse_trusted_addrs(&config.peers).is_ok());
+        assert!(config.parse_trusted_addrs(&config.peers).unwrap().is_empty());
 
         let config = Start::try_parse_from(["snarkos", "--peers", "1.2.3.4:5"].iter()).unwrap();
-        assert!(config.parse_trusted_peers().is_ok());
-        assert_eq!(config.parse_trusted_peers().unwrap(), vec![SocketAddr::from_str("1.2.3.4:5").unwrap()]);
+        assert!(config.parse_trusted_addrs(&config.peers).is_ok());
+        assert_eq!(config.parse_trusted_addrs(&config.peers).unwrap(), vec![
+            SocketAddr::from_str("1.2.3.4:5").unwrap()
+        ]);
 
         let config = Start::try_parse_from(["snarkos", "--peers", "1.2.3.4:5,6.7.8.9:0"].iter()).unwrap();
-        assert!(config.parse_trusted_peers().is_ok());
-        assert_eq!(config.parse_trusted_peers().unwrap(), vec![
+        assert!(config.parse_trusted_addrs(&config.peers).is_ok());
+        assert_eq!(config.parse_trusted_addrs(&config.peers).unwrap(), vec![
             SocketAddr::from_str("1.2.3.4:5").unwrap(),
             SocketAddr::from_str("6.7.8.9:0").unwrap()
         ]);
@@ -931,16 +908,18 @@ mod tests {
     #[test]
     fn test_parse_trusted_validators() {
         let config = Start::try_parse_from(["snarkos", "--validators", ""].iter()).unwrap();
-        assert!(config.parse_trusted_validators().is_ok());
-        assert!(config.parse_trusted_validators().unwrap().is_empty());
+        assert!(config.parse_trusted_addrs(&config.validators).is_ok());
+        assert!(config.parse_trusted_addrs(&config.validators).unwrap().is_empty());
 
         let config = Start::try_parse_from(["snarkos", "--validators", "1.2.3.4:5"].iter()).unwrap();
-        assert!(config.parse_trusted_validators().is_ok());
-        assert_eq!(config.parse_trusted_validators().unwrap(), vec![SocketAddr::from_str("1.2.3.4:5").unwrap()]);
+        assert!(config.parse_trusted_addrs(&config.validators).is_ok());
+        assert_eq!(config.parse_trusted_addrs(&config.validators).unwrap(), vec![
+            SocketAddr::from_str("1.2.3.4:5").unwrap()
+        ]);
 
         let config = Start::try_parse_from(["snarkos", "--validators", "1.2.3.4:5,6.7.8.9:0"].iter()).unwrap();
-        assert!(config.parse_trusted_validators().is_ok());
-        assert_eq!(config.parse_trusted_validators().unwrap(), vec![
+        assert!(config.parse_trusted_addrs(&config.validators).is_ok());
+        assert_eq!(config.parse_trusted_addrs(&config.validators).unwrap(), vec![
             SocketAddr::from_str("1.2.3.4:5").unwrap(),
             SocketAddr::from_str("6.7.8.9:0").unwrap()
         ]);
@@ -1186,7 +1165,7 @@ mod tests {
         let cli = CLI::parse_from(arg_vec);
 
         if let Command::Start(start) = cli.command {
-            let peers = start.parse_trusted_peers();
+            let peers = start.parse_trusted_addrs(&start.peers);
             assert!(peers.is_ok());
             assert_eq!(peers.unwrap().len(), 2, "Expected two peers");
         } else {
@@ -1200,7 +1179,7 @@ mod tests {
         let cli = CLI::parse_from(arg_vec);
 
         if let Command::Start(start) = cli.command {
-            let peers = start.parse_trusted_peers();
+            let peers = start.parse_trusted_addrs(&start.peers);
             assert!(peers.is_ok());
             assert_eq!(peers.unwrap().len(), 2, "Expected two peers");
         } else {
@@ -1214,7 +1193,7 @@ mod tests {
         let cli = CLI::parse_from(arg_vec);
 
         if let Command::Start(start) = cli.command {
-            let peers = start.parse_trusted_peers();
+            let peers = start.parse_trusted_addrs(&start.peers);
             assert!(peers.is_ok());
             assert_eq!(peers.unwrap().len(), 2, "Expected two peers");
         } else {
@@ -1228,7 +1207,7 @@ mod tests {
         let cli = CLI::parse_from(arg_vec);
 
         if let Command::Start(start) = cli.command {
-            assert!(start.parse_trusted_peers().is_err());
+            assert!(start.parse_trusted_addrs(&start.peers).is_err());
         } else {
             panic!("Unexpected result of clap parsing!");
         }
