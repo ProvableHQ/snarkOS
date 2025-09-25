@@ -16,6 +16,7 @@
 use crate::{
     ConnectedPeer,
     Outbound,
+    PeerPoolHandling,
     Router,
     bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
