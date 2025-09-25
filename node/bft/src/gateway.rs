@@ -125,7 +125,17 @@ pub trait Transport<N: Network>: Send + Sync {
 /// The gateway maintains connections to other validators.
 /// For connections with clients and provers, the Router logic is used.
 #[derive(Clone)]
-pub struct Gateway<N: Network> {
+pub struct Gateway<N: Network>(Arc<InnerGateway<N>>);
+
+impl<N: Network> Deref for Gateway<N> {
+    type Target = Arc<InnerGateway<N>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct InnerGateway<N: Network> {
     /// The account of the node.
     account: Account<N>,
     /// The storage.
@@ -135,21 +145,21 @@ pub struct Gateway<N: Network> {
     /// The TCP stack.
     tcp: Tcp,
     /// The cache.
-    cache: Arc<Cache<N>>,
+    cache: Cache<N>,
     /// The resolver.
-    resolver: Arc<RwLock<Resolver<N>>>,
+    resolver: RwLock<Resolver<N>>,
     /// The collection of both candidate and connected peers.
-    peer_pool: Arc<RwLock<HashMap<SocketAddr, Peer<N>>>>,
+    peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     #[cfg(feature = "telemetry")]
     validator_telemetry: Telemetry<N>,
     /// The primary sender.
-    primary_sender: Arc<OnceCell<PrimarySender<N>>>,
+    primary_sender: OnceCell<PrimarySender<N>>,
     /// The worker senders.
-    worker_senders: Arc<OnceCell<IndexMap<u8, WorkerSender<N>>>>,
+    worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
     /// The sync sender.
-    sync_sender: Arc<OnceCell<SyncSender<N>>>,
+    sync_sender: OnceCell<SyncSender<N>>,
     /// The spawned handles.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
     storage_mode: StorageMode,
     /// The development mode.
@@ -196,14 +206,14 @@ impl<N: Network> Gateway<N> {
         initial_peers.extend(trusted_validators.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
 
         // Return the gateway.
-        Ok(Self {
+        Ok(Self(Arc::new(InnerGateway {
             account,
             storage,
             ledger,
             tcp,
             cache: Default::default(),
             resolver: Default::default(),
-            peer_pool: Arc::new(RwLock::new(initial_peers)),
+            peer_pool: RwLock::new(initial_peers),
             #[cfg(feature = "telemetry")]
             validator_telemetry: Default::default(),
             primary_sender: Default::default(),
@@ -212,7 +222,7 @@ impl<N: Network> Gateway<N> {
             handles: Default::default(),
             storage_mode,
             dev,
-        })
+        })))
     }
 
     /// Run the gateway.
@@ -318,12 +328,12 @@ impl<N: Network> CommunicationService for Gateway<N> {
 
 impl<N: Network> Gateway<N> {
     /// Returns the account of the node.
-    pub const fn account(&self) -> &Account<N> {
+    pub fn account(&self) -> &Account<N> {
         &self.account
     }
 
     /// Returns the dev identifier of the node.
-    pub const fn dev(&self) -> Option<u16> {
+    pub fn dev(&self) -> Option<u16> {
         self.dev
     }
 
