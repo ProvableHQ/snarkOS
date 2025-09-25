@@ -24,6 +24,7 @@ use crate::{
     helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
+use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
     BlockRequest,
@@ -110,6 +111,9 @@ const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
 /// The amount of time an IP address is prohibited from connecting.
 const IP_BAN_TIME_IN_SECS: u64 = 300;
 
+/// The name of the file containing cached validators.
+const VALIDATOR_CACHE_FILENAME: &str = "cached_gateway_peers";
+
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
 #[async_trait]
@@ -146,6 +150,8 @@ pub struct Gateway<N: Network> {
     sync_sender: Arc<OnceCell<SyncSender<N>>>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// The storage mode.
+    storage_mode: StorageMode,
     /// The development mode.
     dev: Option<u16>,
 }
@@ -164,6 +170,7 @@ impl<N: Network> Gateway<N> {
         ledger: Arc<dyn LedgerService<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        storage_mode: StorageMode,
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway IP.
@@ -175,12 +182,18 @@ impl<N: Network> Gateway<N> {
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
 
-        // Add the trusted validators to the peer pool.
-        let initial_peers = trusted_validators
-            .iter()
-            .copied()
-            .map(|addr| (addr, Peer::new_candidate(addr, true)))
-            .collect::<HashMap<_, _>>();
+        // Prepare the collection of the initial peers.
+        let mut initial_peers = HashMap::new();
+
+        // Load entries from the validator cache (if present).
+        let cached_peers = Self::load_cached_peers(&storage_mode, VALIDATOR_CACHE_FILENAME)?;
+        for addr in cached_peers {
+            initial_peers.insert(addr, Peer::new_candidate(addr, false));
+        }
+
+        // Add the trusted peers to the list of the initial peers; this may promote
+        // some of the cached validators to trusted ones.
+        initial_peers.extend(trusted_validators.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
 
         // Return the gateway.
         Ok(Self {
@@ -197,6 +210,7 @@ impl<N: Network> Gateway<N> {
             worker_senders: Default::default(),
             sync_sender: Default::default(),
             handles: Default::default(),
+            storage_mode,
             dev,
         })
     }
@@ -929,6 +943,10 @@ impl<N: Network> Gateway<N> {
     /// Shuts down the gateway.
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
+        // Save the best peers for future use.
+        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None) {
+            warn!("Failed to persist best validators to disk: {e}");
+        }
         // Abort the tasks.
         self.handles.lock().iter().for_each(|handle| handle.abort());
         // Close the listener.
@@ -1564,6 +1582,7 @@ mod prop_tests {
         gateway::prop_tests::GatewayAddress::{Dev, Prod},
         helpers::{Storage, init_primary_channels, init_worker_channels},
     };
+    use aleo_std::StorageMode;
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
@@ -1637,6 +1656,7 @@ mod prop_tests {
                         storage.ledger().clone(),
                         address.ip(),
                         &[],
+                        StorageMode::new_test(None),
                         address.port(),
                     )
                     .unwrap()
@@ -1682,9 +1702,16 @@ mod prop_tests {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port())
-                .unwrap();
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            storage.ledger().clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.listener_ip, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
         assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
@@ -1699,9 +1726,16 @@ mod prop_tests {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port())
-                .unwrap();
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            storage.ledger().clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
         let tcp_config = gateway.tcp().config();
         if let Some(socket_addr) = dev.ip() {
             assert_eq!(tcp_config.listener_ip, Some(socket_addr.ip()));
@@ -1726,8 +1760,16 @@ mod prop_tests {
         let worker_storage = storage.clone();
         let account = Account::try_from(private_key).unwrap();
 
-        let gateway =
-            Gateway::new(account, storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port()).unwrap();
+        let gateway = Gateway::new(
+            account,
+            storage.clone(),
+            storage.ledger().clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
 
         let (primary_sender, _) = init_primary_channels();
 
@@ -1791,8 +1833,16 @@ mod prop_tests {
         // Initialize the storage.
         let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
         // Initialize the gateway.
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), ledger.clone(), dev.ip(), &[], dev.port()).unwrap();
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            ledger.clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
         // Insert certificate to the storage.
         for certificate in certificates.iter() {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());

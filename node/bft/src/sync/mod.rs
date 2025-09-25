@@ -1173,12 +1173,14 @@ mod tests {
         core_ledger.advance_to_next_block(&block_3)?;
 
         // Initialize the syncing ledger.
+        let storage_mode = StorageMode::new_test(None);
         let syncing_ledger = Arc::new(CoreLedgerService::new(
-            CurrentLedger::load(genesis, StorageMode::new_test(None)).unwrap(),
+            CurrentLedger::load(genesis, storage_mode.clone()).unwrap(),
             Default::default(),
         ));
         // Initialize the gateway.
-        let gateway = Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], None)?;
+        let gateway =
+            Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], storage_mode, None)?;
         // Initialize the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
         // Initialize the sync module.
