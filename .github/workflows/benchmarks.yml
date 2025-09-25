@@ -32,19 +32,20 @@ jobs:
         env:
           GCLOUD_SERVICE_KEY: ${{ secrets.GCLOUD_SERVICE_KEY }}
         run: |
-            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-            sudo apt-get update
-            sudo apt-get install google-cloud-cli -y
-            echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
-            gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          sudo apt-get update
+          sudo apt-get install google-cloud-cli -y
+          echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
+          gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
 
       - name: "Fetch Ledger Data"
         run: |
-            gcloud config set project protocol-development-sandbox
-            # Created with `.ci/generate_ledger.sh 40 250 1`
-            gcloud storage cp gs://ci_testdata/sync-ledger-val40-250.zip ledger.zip
-            unzip ledger.zip
+          gcloud config set project protocol-development-sandbox
+          # Created with `.ci/generate_ledger_snarkvm.sh 40 250`
+          # NOTE: This needs to be updated when the consensu version changes.
+          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-b7401cef1c.zip ledger.zip
+          unzip ledger.zip
  
       - name: Install snarkOS (test_network)
         run:

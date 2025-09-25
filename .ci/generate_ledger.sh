@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ####################################################
-# Runs a network up to a certain height andi stores
+# Runs a network up to a certain height and stores
 # the first node's ledger in a zipfile.
 ####################################################
 
@@ -32,7 +32,7 @@ git_commit=$(git rev-parse --short=10 HEAD)
 echo "On git commit ${git_commit}"
 
 network_name=$(get_network_name "$network_id")
-echo "Network set $network_name with $total_validators validators"
+echo "Network set to $network_name with $total_validators validators"
 
 # Create log directory
 log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
