@@ -401,7 +401,7 @@ impl<N: Network> Primary<N> {
             // Iterate through the non-signers.
             for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
                 // Resolve the address to the peer IP.
-                match self.gateway.resolver().get_peer_ip_for_address(address) {
+                match self.gateway.resolver().read().get_peer_ip_for_address(address) {
                     // Resend the batch proposal to the validator for signing.
                     Some(peer_ip) => {
                         let (gateway, event_, round) = (self.gateway.clone(), event.clone(), proposal.round());
@@ -730,7 +730,7 @@ impl<N: Network> Primary<N> {
         let batch_author = batch_header.author();
 
         // Ensure the batch proposal is from the validator.
-        match self.gateway.resolver().get_address(peer_ip) {
+        match self.gateway.resolver().read().get_address(peer_ip) {
             // If the peer is a validator, then ensure the batch proposal is from the validator.
             Some(address) => {
                 if address != batch_author {
@@ -1004,7 +1004,7 @@ impl<N: Network> Primary<N> {
         let signer = signature.to_address();
 
         // Ensure the batch signature is signed by the validator.
-        if self.gateway.resolver().get_address(peer_ip) != Some(signer) {
+        if self.gateway.resolver().read().get_address(peer_ip) != Some(signer) {
             // Proceed to disconnect the validator.
             self.gateway.disconnect(peer_ip);
             bail!("Malicious peer - batch signature is from a different validator ({signer})");
@@ -1043,7 +1043,7 @@ impl<N: Network> Primary<N> {
                     // Retrieve the committee lookback for the round.
                     let committee_lookback = self_.ledger.get_committee_lookback_for_round(proposal.round())?;
                     // Retrieve the address of the validator.
-                    let Some(signer) = self_.gateway.resolver().get_address(peer_ip) else {
+                    let Some(signer) = self_.gateway.resolver().read().get_address(peer_ip) else {
                         bail!("Signature is from a disconnected validator");
                     };
                     // Add the signature to the batch.
@@ -2229,7 +2229,7 @@ mod tests {
     fn map_account_addresses(primary: &Primary<CurrentNetwork>, accounts: &[(SocketAddr, Account<CurrentNetwork>)]) {
         // First account is primary, which doesn't need to resolve.
         for (addr, acct) in accounts.iter().skip(1) {
-            primary.gateway.resolver().insert_peer(*addr, *addr, acct.address());
+            primary.gateway.resolver().write().insert_peer(*addr, *addr, acct.address());
         }
     }
 
@@ -2426,7 +2426,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2465,7 +2465,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
         // Add a high block locator to indicate we are not synced.
         primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(20)).unwrap();
@@ -2505,7 +2505,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2542,7 +2542,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2587,7 +2587,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2643,7 +2643,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2690,8 +2690,8 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary_v4.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
-        primary_v5.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary_v4.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
         // primary v4 must be considered synced.
         primary_v4.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();

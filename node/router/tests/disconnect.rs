@@ -16,6 +16,7 @@
 mod common;
 use common::*;
 
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_tcp::{
     P2P,
     protocols::{Handshake, OnConnect},

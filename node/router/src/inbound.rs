@@ -15,6 +15,7 @@
 
 use crate::{
     Outbound,
+    PeerPoolHandling,
     messages::{
         BlockRequest,
         BlockResponse,

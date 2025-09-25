@@ -17,7 +17,10 @@
 mod common;
 use common::test_peer::TestPeer;
 
-use snarkos_node_router::messages::{Message, PeerResponse};
+use snarkos_node_router::{
+    PeerPoolHandling,
+    messages::{Message, PeerResponse},
+};
 use snarkos_node_tcp::P2P;
 
 use deadline::deadline;
