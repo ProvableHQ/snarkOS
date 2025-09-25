@@ -100,8 +100,6 @@ const MAX_CONNECTION_ATTEMPTS: usize = 10;
 /// The maximum interval to restrict a peer.
 const RESTRICTED_INTERVAL: i64 = (MAX_CONNECTION_ATTEMPTS as u64 * MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
 
-/// The minimum number of validators to maintain a connection to.
-const MIN_CONNECTED_VALIDATORS: usize = 175;
 /// The maximum number of validators to send in a validators response event.
 const MAX_VALIDATORS_TO_SEND: usize = 200;
 
@@ -848,7 +846,7 @@ impl<N: Network> Gateway<N> {
                 self.cache.decrement_outbound_validators_requests(peer_ip);
 
                 // If the number of connected validators is less than the minimum, connect to more validators.
-                if self.number_of_connected_peers() < MIN_CONNECTED_VALIDATORS {
+                if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
                     // Attempt to connect to any validators that are not already connected.
                     let self_ = self.clone();
                     tokio::spawn(async move {
@@ -1073,9 +1071,15 @@ impl<N: Network> Gateway<N> {
 
     /// This function sends a `ValidatorsRequest` to a random validator,
     /// if the number of connected validators is less than the minimum.
+    /// It also attempts to connect to known unconnected validators.
     fn handle_min_connected_validators(&self) {
         // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
-        if self.number_of_connected_peers() < MIN_CONNECTED_VALIDATORS {
+        if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
+            for candidate_addr in self.candidate_peers() {
+                // Attempt to connect to unconnected validators.
+                self.connect(candidate_addr);
+            }
+
             // Retrieve the connected validators.
             let validators = self.connected_peers();
             // If there are no validator IPs to connect to, return early.

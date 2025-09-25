@@ -214,16 +214,25 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         let mut peer_cache_path = aleo_ledger_dir(N::ID, storage_mode);
         peer_cache_path.push(filename);
 
-        let peers = if let Ok(cached_peers_str) = fs::read_to_string(&peer_cache_path) {
-            let mut cached_peers = Vec::new();
-            for peer_addr_str in cached_peers_str.lines() {
-                if let Ok(addr) = SocketAddr::from_str(peer_addr_str) {
-                    cached_peers.push(addr);
+        let peers = match fs::read_to_string(&peer_cache_path) {
+            Ok(cached_peers_str) => {
+                let mut cached_peers = Vec::new();
+                for peer_addr_str in cached_peers_str.lines() {
+                    match SocketAddr::from_str(peer_addr_str) {
+                        Ok(addr) => cached_peers.push(addr),
+                        Err(error) => warn!("Couldn't parse the cached peer address '{peer_addr_str}': {error}"),
+                    }
                 }
+                cached_peers
             }
-            cached_peers
-        } else {
-            Vec::new()
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // Not an issue - the cache may not exist yet.
+                Vec::new()
+            }
+            Err(error) => {
+                warn!("Couldn't load cached peers at {}: {error}", peer_cache_path.display());
+                Vec::new()
+            }
         };
 
         Ok(peers)
