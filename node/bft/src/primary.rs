@@ -2417,8 +2417,8 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.try_block_sync().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should succeed.
         assert!(
@@ -2456,7 +2456,7 @@ mod tests {
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
         // Add a high block locator to indicate we are not synced.
-        primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
 
         // Try to process the batch proposal from the peer, should fail
         assert!(
@@ -2498,8 +2498,8 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.try_block_sync().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should succeed.
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
@@ -2534,7 +2534,7 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         // The primary must be considered synced.
-        primary.sync.try_block_sync().await;
+        primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2580,7 +2580,7 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         // The primary must be considered synced.
-        primary.sync.try_block_sync().await;
+        primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2637,7 +2637,7 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
         // The primary must be considered synced.
-        primary.sync.try_block_sync().await;
+        primary.sync.testing_only_try_block_sync_testing_only().await;
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2689,12 +2689,12 @@ mod tests {
         primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
 
         // primary v4 must be considered synced.
-        primary_v4.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
-        primary_v4.sync.try_block_sync().await;
+        primary_v4.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary_v4.sync.testing_only_try_block_sync_testing_only().await;
 
         // primary v5 must be ocnsidered synced.
-        primary_v5.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();
-        primary_v5.sync.try_block_sync().await;
+        primary_v5.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary_v5.sync.testing_only_try_block_sync_testing_only().await;
 
         // Check the spend limit is enforced from V5 onwards.
         assert!(

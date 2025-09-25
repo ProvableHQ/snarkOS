@@ -288,7 +288,7 @@ impl<N: Network> Sync<N> {
     /// Test-only method to manually trigger block synchronization.
     /// This combines both request generation and response processing for testing purposes.
     #[cfg(test)]
-    pub(crate) async fn try_block_sync(&self) {
+    pub(crate) async fn testing_only_try_block_sync_testing_only(&self) {
         // First try issuing block requests
         self.try_issuing_block_requests().await;
 
@@ -348,6 +348,16 @@ impl<N: Network> GatewaySyncCallback<N> for Sync<N> {
             // Remove the certificate ID from the pending queue.
             self.pending.remove(certificate.id(), Some(certificate));
         }
+    }
+}
+
+impl<N: Network> Sync<N> {
+    pub fn testing_only_update_peer_locators_testing_only(
+        &self,
+        peer_ip: SocketAddr,
+        locators: BlockLocators<N>,
+    ) -> Result<()> {
+        self.update_peer_locators(peer_ip, locators)
     }
 }
 
