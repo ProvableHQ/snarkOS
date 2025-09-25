@@ -208,7 +208,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             .collect()
     }
 
-    // Save the best peers to disk.
+    /// Preserve the peers who have the greatest known block heights, and the lowest
+    /// number of registered network failures.
     fn save_best_peers(&self, storage_mode: &StorageMode) -> Result<()> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
@@ -456,7 +457,8 @@ impl<N: Network> Router<N> {
         Ok(false)
     }
 
-    /// Disconnects from the given peer IP, if the peer is connected.
+    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
+    /// indicates whether the peer was actually disconnected from, or if this was a noop.
     pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
         let router = self.clone();
         tokio::spawn(async move {

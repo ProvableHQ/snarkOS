@@ -890,7 +890,8 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Disconnects from the given peer IP, if the peer is connected.
+    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
+    /// indicates whether the peer was actually disconnected from, or if this was a noop.
     pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
         let gateway = self.clone();
         tokio::spawn(async move {
