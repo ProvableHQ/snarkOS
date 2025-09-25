@@ -43,7 +43,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver};
+use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -1128,8 +1128,13 @@ impl<N: Network> Disconnect for Gateway<N> {
 
 #[async_trait]
 impl<N: Network> OnConnect for Gateway<N> {
-    async fn on_connect(&self, _peer_addr: SocketAddr) {
-        return;
+    async fn on_connect(&self, peer_addr: SocketAddr) {
+        if let Some(peer) = self.get_connected_peer(peer_addr) {
+            if peer.node_type == NodeType::BootstrapClient {
+                let _ =
+                    <Self as Transport<N>>::send(self, peer_addr, Event::ValidatorsRequest(ValidatorsRequest)).await;
+            }
+        }
     }
 }
 
@@ -1146,7 +1151,7 @@ impl<N: Network> Handshake for Gateway<N> {
         if self.dev().is_none() && peer_side == ConnectionSide::Initiator {
             // If the IP is already banned reject the connection.
             if self.is_ip_banned(peer_addr.ip()) {
-                trace!("{CONTEXT} Gateway rejected a connection request from banned IP '{}'", peer_addr.ip());
+                trace!("{CONTEXT} Rejected a connection request from banned IP '{}'", peer_addr.ip());
                 return Err(error(format!("'{}' is a banned IP address", peer_addr.ip())));
             }
 
@@ -1155,7 +1160,7 @@ impl<N: Network> Handshake for Gateway<N> {
             debug!("Number of connection attempts from '{}': {}", peer_addr.ip(), num_attempts);
             if num_attempts > MAX_CONNECTION_ATTEMPTS {
                 self.update_ip_ban(peer_addr.ip());
-                trace!("{CONTEXT} Gateway rejected a consecutive connection request from IP '{}'", peer_addr.ip());
+                trace!("{CONTEXT} Rejected a consecutive connection request from IP '{}'", peer_addr.ip());
                 return Err(error(format!("'{}' appears to be spamming connections", peer_addr.ip())));
             }
         }
@@ -1165,10 +1170,10 @@ impl<N: Network> Handshake for Gateway<N> {
         // If this is an inbound connection, we log it, but don't know the listening address yet.
         // Otherwise, we can immediately register the listening address.
         let mut listener_addr = if peer_side == ConnectionSide::Initiator {
-            debug!("{CONTEXT} Gateway received a connection request from '{peer_addr}'");
+            debug!("{CONTEXT} Received a connection request from '{peer_addr}'");
             None
         } else {
-            debug!("{CONTEXT} Gateway is connecting to {peer_addr}...");
+            debug!("{CONTEXT} Shaking hands with {peer_addr}...");
             Some(peer_addr)
         };
 
@@ -1185,19 +1190,18 @@ impl<N: Network> Handshake for Gateway<N> {
         if let Some(addr) = listener_addr {
             match handshake_result {
                 Ok(Some(ref cr)) => {
+                    let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                        NodeType::BootstrapClient
+                    } else {
+                        NodeType::Validator
+                    };
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
                         self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
-                        peer.upgrade_to_connected(
-                            peer_addr,
-                            cr.listener_port,
-                            cr.address,
-                            NodeType::Validator,
-                            cr.version,
-                        );
+                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, node_type, cr.version);
                     }
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
-                    info!("{CONTEXT} Gateway is connected to '{addr}'");
+                    info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Ok(None) => {
                     return Err(error("Duplicate handshake attempt with '{addr}'"));
@@ -1222,7 +1226,7 @@ macro_rules! expect_event {
         match $framed.try_next().await? {
             // Received the expected event, proceed.
             Some($event_ty(data)) => {
-                trace!("{CONTEXT} Gateway received '{}' from '{}'", data.name(), $peer_addr);
+                trace!("{CONTEXT} Received '{}' from '{}'", data.name(), $peer_addr);
                 data
             }
             // Received a disconnect event, abort.
@@ -1255,7 +1259,7 @@ async fn send_event<N: Network>(
     peer_addr: SocketAddr,
     event: Event<N>,
 ) -> io::Result<()> {
-    trace!("{CONTEXT} Gateway is sending '{}' to '{peer_addr}'", event.name());
+    trace!("{CONTEXT} Sending '{}' to '{peer_addr}'", event.name());
     framed.send(event).await
 }
 
@@ -1408,17 +1412,19 @@ impl<N: Network> Gateway<N> {
         let &ChallengeRequest { version, listener_port: _, address, nonce: _ } = event;
         // Ensure the event protocol version is not outdated.
         if version < Event::<N>::VERSION {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' on version {version} (outdated)");
+            warn!("{CONTEXT} Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
-        // Ensure the address is a current committee member.
-        if !self.is_authorized_validator_address(address) {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' for being an unauthorized validator ({address})");
-            return Some(DisconnectReason::ProtocolViolation);
+        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&peer_addr) {
+            // Ensure the address is a current committee member.
+            if !self.is_authorized_validator_address(address) {
+                warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
+                return Some(DisconnectReason::ProtocolViolation);
+            }
         }
         // Ensure the address is not already connected.
         if self.is_connected_address(address) {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' for being already connected ({address})");
+            warn!("{CONTEXT} Dropping '{peer_addr}' for being already connected ({address})");
             return Some(DisconnectReason::ProtocolViolation);
         }
         None
@@ -1438,17 +1444,17 @@ impl<N: Network> Gateway<N> {
 
         // Verify the restrictions ID.
         if restrictions_id != expected_restrictions_id {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (incorrect restrictions ID)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (incorrect restrictions ID)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         // Perform the deferred non-blocking deserialization of the signature.
         let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         };
         // Verify the signature.
         if !signature.verify_bytes(&peer_address, &[expected_nonce.to_le_bytes(), nonce.to_le_bytes()].concat()) {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (invalid signature)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (invalid signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         None

@@ -1,0 +1,321 @@
+// Copyright (c) 2019-2025 Provable Inc.
+// This file is part of the snarkOS library.
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::{
+    BootstrapClient,
+    bft::events::{self, Event},
+    bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
+    router::{
+        NodeType,
+        PeerPoolHandling,
+        messages::{self, Message},
+    },
+    tcp::{Connection, ConnectionSide, protocols::*},
+};
+use snarkvm::{
+    ledger::narwhal::Data,
+    prelude::{Address, Network, error},
+};
+
+use futures_util::sink::SinkExt;
+use rand::{Rng, rngs::OsRng};
+use std::{io, net::SocketAddr};
+use tokio::net::TcpStream;
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
+
+#[derive(Debug)]
+enum HandshakeMessageKind {
+    ChallengeRequest,
+    ChallengeResponse,
+}
+
+macro_rules! send_msg {
+    ($msg:expr, $framed:expr, $peer_addr:expr) => {{
+        trace!("Sending '{}' to '{}'", $msg.name(), $peer_addr);
+        $framed.send($msg).await
+    }};
+}
+
+/// A macro handling incoming handshake messages, rejecting unexpected ones.
+macro_rules! expect_handshake_msg {
+    ($msg_ty:expr, $framed:expr, $peer_addr:expr) => {{
+        // Read the message as bytes.
+        let Some(message) = $framed.try_next().await? else {
+            return Err(error(format!(
+                "the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
+                stringify!($msg_ty),
+            )));
+        };
+
+        // Match the expected message type with its expected size or peer type indicator.
+        match $msg_ty {
+            HandshakeMessageKind::ChallengeRequest
+                if matches!(
+                    message,
+                    MessageOrEvent::Message(Message::ChallengeRequest(_))
+                        | MessageOrEvent::Event(Event::ChallengeRequest(_))
+                ) =>
+            {
+                trace!("Received a '{}' from '{}'", stringify!($msg_ty), $peer_addr);
+                message
+            }
+            HandshakeMessageKind::ChallengeResponse
+                if matches!(
+                    message,
+                    MessageOrEvent::Message(Message::ChallengeResponse(_))
+                        | MessageOrEvent::Event(Event::ChallengeResponse(_))
+                ) =>
+            {
+                trace!("Received a '{}' from '{}'", stringify!($msg_ty), $peer_addr);
+                message
+            }
+            _ => {
+                return Err(error(format!(
+                    "'{}' did not follow the handshake protocol: expected {}",
+                    $peer_addr,
+                    stringify!($expected),
+                )));
+            }
+        }
+    }};
+}
+
+#[async_trait]
+impl<N: Network> Handshake for BootstrapClient<N> {
+    async fn perform_handshake(&self, mut connection: Connection) -> io::Result<Connection> {
+        let peer_addr = connection.addr();
+        let peer_side = connection.side();
+        let stream = self.borrow_stream(&mut connection);
+
+        // We don't know the listening address yet, as we don't initiate connections.
+        let mut listener_addr = if peer_side == ConnectionSide::Initiator {
+            debug!("Received a connection request from '{peer_addr}'");
+            None
+        } else {
+            unreachable!("The boostrapper clients don't initiate connections");
+        };
+
+        // Perform the handshake; we pass on a mutable reference to listener_addr in case the process is broken at any point in time.
+        let handshake_result = if peer_side == ConnectionSide::Responder {
+            unreachable!("The boostrapper clients don't initiate connections");
+        } else {
+            self.handshake_inner_responder(peer_addr, &mut listener_addr, stream).await
+        };
+
+        if let Some(addr) = listener_addr {
+            match handshake_result {
+                Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version))) => {
+                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                        self.resolver.write().insert_peer(
+                            peer.listener_addr(),
+                            peer_addr,
+                            if peer_node_type == NodeType::Validator { Some(peer_aleo_addr) } else { None },
+                        );
+                        peer.upgrade_to_connected(peer_addr, peer_port, peer_aleo_addr, peer_node_type, peer_version);
+                    }
+                    debug!("Completed the handshake with '{peer_addr}'");
+                }
+                Ok(None) => {
+                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                }
+                Err(error) => {
+                    debug!("Handshake with '{peer_addr}' failed: {error}");
+                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                        peer.downgrade_to_candidate(addr);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+
+        Ok(connection)
+    }
+}
+
+impl<N: Network> BootstrapClient<N> {
+    /// The connection responder side of the handshake.
+    async fn handshake_inner_responder<'a>(
+        &'a self,
+        peer_addr: SocketAddr,
+        listener_addr: &mut Option<SocketAddr>,
+        stream: &'a mut TcpStream,
+    ) -> io::Result<Option<(u16, Address<N>, NodeType, u32)>> {
+        // Construct the stream.
+        let mut framed = Framed::new(stream, BootstrapClientCodec::<N>::handshake());
+
+        /* Step 1: Receive the challenge request. */
+
+        // Listen for the challenge request message, which can be either from a regular peer, or a validator.
+        let peer_request = expect_handshake_msg!(HandshakeMessageKind::ChallengeRequest, framed, peer_addr);
+        let (peer_port, peer_nonce, peer_aleo_addr, peer_node_type, peer_version) = match peer_request {
+            MessageOrEvent::Message(Message::ChallengeRequest(ref msg)) => {
+                (msg.listener_port, msg.nonce, msg.address, msg.node_type, msg.version)
+            }
+            MessageOrEvent::Event(Event::ChallengeRequest(ref msg)) => {
+                (msg.listener_port, msg.nonce, msg.address, NodeType::Validator, msg.version)
+            }
+            _ => unreachable!(),
+        };
+        let is_validator = peer_node_type == NodeType::Validator;
+        debug!("Handshake mode: {}validator", if is_validator { "" } else { "non-" });
+
+        // Obtain the peer's listening address.
+        *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_port));
+        let listener_addr = listener_addr.unwrap();
+
+        // Introduce the peer into the peer pool.
+        if !self.add_connecting_peer(listener_addr) {
+            // Return early if already being connected to.
+            return Ok(None);
+        }
+
+        // Verify the challenge request.
+        if !self.verify_challenge_request(peer_addr, &mut framed, &peer_request).await? {
+            return Err(error(format!("Handshake with '{peer_addr}' failed: invalid challenge request")));
+        };
+
+        /* Step 2: Send the challenge response followed by own challenge request. */
+
+        // Initialize an RNG.
+        let rng = &mut OsRng;
+
+        // Sign the counterparty nonce.
+        let response_nonce: u64 = rng.r#gen();
+        let data = [peer_nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
+        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+            return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
+        };
+
+        // Send the challenge response.
+        if !is_validator {
+            let our_response = messages::ChallengeResponse {
+                genesis_header: self.genesis_header,
+                restrictions_id: self.restrictions_id,
+                signature: Data::Object(our_signature),
+                nonce: response_nonce,
+            };
+            let msg = Message::ChallengeResponse::<N>(our_response);
+            send_msg!(msg, framed, peer_addr)?;
+        } else {
+            let our_response = events::ChallengeResponse {
+                restrictions_id: self.restrictions_id,
+                signature: Data::Object(our_signature),
+                nonce: response_nonce,
+            };
+            let msg = Event::ChallengeResponse::<N>(our_response);
+            send_msg!(msg, framed, peer_addr)?;
+        }
+
+        // Sample a random nonce.
+        let our_nonce: u64 = rng.r#gen();
+        // Send the challenge request.
+        if !is_validator {
+            let our_request = messages::ChallengeRequest::new(
+                self.local_ip().port(),
+                NodeType::BootstrapClient,
+                self.account.address(),
+                our_nonce,
+            );
+            let msg = Message::ChallengeRequest(our_request);
+            send_msg!(msg, framed, peer_addr)?;
+        } else {
+            let our_request = events::ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce);
+            let msg = Event::ChallengeRequest(our_request);
+            send_msg!(msg, framed, peer_addr)?;
+        }
+
+        /* Step 3: Receive the challenge response. */
+
+        // Listen for the challenge response message.
+        let peer_response = expect_handshake_msg!(HandshakeMessageKind::ChallengeResponse, framed, peer_addr);
+        // Verify the challenge response.
+        if !self.verify_challenge_response(peer_addr, peer_aleo_addr, our_nonce, &peer_response).await {
+            if !is_validator {
+                let msg = Message::Disconnect::<N>(messages::DisconnectReason::InvalidChallengeResponse.into());
+                send_msg!(msg, framed, peer_addr)?;
+            } else {
+                let msg = Event::Disconnect::<N>(events::DisconnectReason::InvalidChallengeResponse.into());
+                send_msg!(msg, framed, peer_addr)?;
+            }
+            return Err(error(format!("Handshake with '{peer_addr}' failed: invalid challenge response")));
+        }
+
+        Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version)))
+    }
+
+    async fn verify_challenge_request(
+        &self,
+        peer_addr: SocketAddr,
+        framed: &mut Framed<&mut TcpStream, BootstrapClientCodec<N>>,
+        request: &MessageOrEvent<N>,
+    ) -> io::Result<bool> {
+        match request {
+            MessageOrEvent::Message(Message::ChallengeRequest(msg)) => {
+                if msg.version < Message::<N>::latest_message_version() {
+                    let msg = Message::Disconnect::<N>(messages::DisconnectReason::OutdatedClientVersion.into());
+                    send_msg!(msg, framed, peer_addr)?;
+                    return Ok(false);
+                }
+            }
+            MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
+                if msg.version < Event::<N>::VERSION {
+                    let msg = Event::Disconnect::<N>(events::DisconnectReason::OutdatedClientVersion.into());
+                    send_msg!(msg, framed, peer_addr)?;
+                    return Ok(false);
+                }
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(true)
+    }
+
+    async fn verify_challenge_response(
+        &self,
+        peer_addr: SocketAddr,
+        peer_aleo_addr: Address<N>,
+        our_nonce: u64,
+        response: &MessageOrEvent<N>,
+    ) -> bool {
+        let (peer_restrictions_id, peer_signature, peer_nonce) = match response {
+            MessageOrEvent::Message(Message::ChallengeResponse(msg)) => {
+                (msg.restrictions_id, msg.signature.clone(), msg.nonce)
+            }
+            MessageOrEvent::Event(Event::ChallengeResponse(msg)) => {
+                (msg.restrictions_id, msg.signature.clone(), msg.nonce)
+            }
+            _ => unreachable!(),
+        };
+
+        // Verify the restrictions ID.
+        if peer_restrictions_id != self.restrictions_id {
+            warn!("{} Handshake with '{peer_addr}' failed (incorrect restrictions ID)", Self::OWNER);
+            return false;
+        }
+        // Perform the deferred non-blocking deserialization of the signature.
+        let Ok(signature) = peer_signature.deserialize().await else {
+            warn!("{} Handshake with '{peer_addr}' failed (cannot deserialize the signature)", Self::OWNER);
+            return false;
+        };
+        // Verify the signature.
+        if !signature.verify_bytes(&peer_aleo_addr, &[our_nonce.to_le_bytes(), peer_nonce.to_le_bytes()].concat()) {
+            warn!("{} Handshake with '{peer_addr}' failed (invalid signature)", Self::OWNER);
+            return false;
+        }
+
+        true
+    }
+}

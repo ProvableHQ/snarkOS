@@ -385,7 +385,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         self.filter_connected_peers(|_| true)
     }
 
-    /// Returns an optionally bounded sorted list of all connected peers sorted by their
+    /// Returns an optionally bounded list of all connected peers sorted by their
     /// block height (highest first) and failure count (lowest first).
     fn get_best_connected_peers(&self, max_entries: Option<usize>) -> Vec<ConnectedPeer<N>> {
         // Get a snapshot of the currently connected peers.
@@ -694,7 +694,7 @@ impl<N: Network> Router<N> {
         // - Validators and clients may accept older versions, depending on their current block height.
         let lowest_accepted_message_version = match self.node_type {
             // Provers should always use the latest version.
-            NodeType::Prover => Message::<N>::latest_message_version(),
+            NodeType::Prover | NodeType::BootstrapClient => Message::<N>::latest_message_version(),
             // Validators and clients accept messages from lower version based on the migration height.
             NodeType::Validator | NodeType::Client => {
                 Message::<N>::lowest_accepted_message_version(self.ledger.latest_block_height())

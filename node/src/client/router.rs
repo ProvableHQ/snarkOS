@@ -17,7 +17,6 @@ use super::*;
 use snarkos_node_router::{
     PeerPoolHandling,
     Routing,
-    bootstrap_peers,
     messages::{
         BlockRequest,
         BlockResponse,
@@ -66,13 +65,15 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
 impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) else { return };
-        // If it's a bootstrap peer, first request its peers.
-        if bootstrap_peers::<N>(self.router.is_dev()).contains(&peer_ip) {
-            self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
+        if let Some(peer) = self.router.get_connected_peer(peer_addr) {
+            // If it's a bootstrap client, only request its peers.
+            if peer.node_type == NodeType::BootstrapClient {
+                self.router().send(peer.listener_addr, Message::PeerRequest(PeerRequest));
+            } else {
+                // Send the first `Ping` message to the peer.
+                self.ping.on_peer_connected(peer.listener_addr);
+            }
         }
-        // Send the first `Ping` message to the peer.
-        self.ping.on_peer_connected(peer_ip);
     }
 }
 

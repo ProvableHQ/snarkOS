@@ -100,7 +100,7 @@ impl<N: Network> Router<N> {
             debug!("Received a connection request from '{peer_addr}'");
             None
         } else {
-            debug!("Connecting to '{peer_addr}'...");
+            debug!("Shaking hands with '{peer_addr}'...");
             Some(peer_addr)
         };
 

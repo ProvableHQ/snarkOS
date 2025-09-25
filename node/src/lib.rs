@@ -31,6 +31,9 @@ pub use snarkos_node_sync as sync;
 pub use snarkos_node_tcp as tcp;
 pub use snarkvm;
 
+mod bootstrap_client;
+pub use bootstrap_client::*;
+
 mod client;
 pub use client::*;
 
