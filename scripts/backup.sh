@@ -8,7 +8,11 @@ NETWORK="mainnet"
 BASE_DIR="${HOME}/snarkOS/aleo_ledger_checkpoints/${NETWORK}/"
 # The node REST endpoint to trigger backup creation from.
 ENDPOINT="http://localhost:3030/${NETWORK}/db_backup"
-# The JWT to authenticate to the endpoint. This can be ignored when running the node with --nojwt
+# The JWT to authenticate to the endpoint. You can either:
+# 1. Run a node with --nojwt, in which case this value will be safely ignored.
+# 2. Run a node with --jwt-secret and --jwt-timestamp, in which case the jwt will be stored in jwt_secret_{address}.txt
+#    You can generate a jwt secret with: dd if=/dev/urandom bs=16 count=1 2>/dev/null | uuencode -m - | sed -n '2p'
+#    You can generate a timestamp with: date +%s
 JWT="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGVvMXJoZ2R1NzdoZ3lxZDN4amo4dWN1M2pqOXIya3J3ejZtbnp5ZDgwZ25jcjVmeGN3bGg1cnN2enA5cHgiLCJpYXQiOjE3NDkxMTYzNDUsImV4cCI6MjA2NDQ3NjM0NX0.LiqFGiQds3OGHGJ5K3xi359g-uTQBZCrAskGj9UWAbM"
 
 post_backup() {
