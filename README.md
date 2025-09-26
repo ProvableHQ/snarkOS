@@ -147,7 +147,7 @@ The following command is recommended when starting a client node that is connect
 
 To start a core client node, you can also run the following command from the `snarkOS` directory:
 ```
-./run-core-client.sh
+./scripts/run-core-client.sh
 ```
 
 ### 3.1.2 Run an Aleo Outer Client
@@ -157,7 +157,7 @@ The following command is recommended when starting a client node that is NOT con
 
 To start an outer client node, you can also run the following command from the `snarkOS` directory:
 ```
-./run-outer-client.sh
+./scripts/run-outer-client.sh
 ```
 
 Outer clients can be bootstrap clients that serve as accessible entry points for new nodes joining the network with publicly known or static IPs.
@@ -174,7 +174,7 @@ Instead of specifying a private key file (`--private-key-file` flag), the privat
 
 To start a validator, you can also run the following command from the `snarkOS` directory:
 ```
-./run-validator.sh
+./scripts/run-validator.sh
 ```
 
 ### 3.2.1 Enable Validator Telemetry Metrics (Optional)
@@ -201,7 +201,7 @@ cargo install --locked --path . --features telemetry
 
 #### 2. Enable via `./run-validator.sh`
 
-Run the `./run-validator.sh` script and enable telemetry when prompted:
+Run the `./scripts/run-validator.sh` script and enable telemetry when prompted:
 ```
 Do you want to enable validator telemetry? (y/n, default: y):
 ```
@@ -227,34 +227,12 @@ This will output a new Aleo account in the terminal.
 
 Next, to start a proving node, from the `snarkOS` directory, run:
 ```
-./run-prover.sh
+./scripts/run-prover.sh
 ```
 When prompted, enter your Aleo private key:
 ```
 Enter the Aleo Prover account private key:
 APrivateKey1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-### 3.3.1 Enable CUDA Acceleration (Optional) <a name="cuda"></a>
-
-If a supported Nvidia GPU is available, CUDA-based acceleration can be enabled using the following command:
-
-```
-./run-prover.sh --cuda
-```
-
-**Note:** If CUDA is not explicitly enabled or a compatible GPU is not detected, the prover will automatically run on the CPU.
-
-#### Requirements for CUDA Acceleration
-To use the `--cuda` flag, ensure your system meets the following requirements:
-
-- SM_70 (Volta) or later
-- [CUDA Toolkit (nvcc)](https://docs.nvidia.com/cuda/index.html#installation-guides)
-
-You can check the respective versions with the following commands:
-```
-nvidia-smi       # Check GPU model and driver
-nvcc --version   # Check installed CUDA version
 ```
 
 ## 4. FAQs
@@ -263,12 +241,12 @@ nvcc --version   # Check installed CUDA version
 
 - Ensure your machine has Rust installed, with at least [this version](rust-toolchain). Instructions to [install Rust can be found here.](https://www.rust-lang.org/tools/install)
 - If large errors appear during compilation, try running `cargo clean`.
-- Ensure `snarkOS` is started using `./run-client.sh` or `./run-prover.sh`.
+- Ensure `snarkOS` is started using `./scripts/run-client.sh` or `./scripts/run-prover.sh`.
 
 ### 2. My node is unable to connect to peers on the network.
 
 - Ensure ports `4130/tcp` and `3030/tcp` are open on your router and OS firewall.
-- Ensure `snarkOS` is started using `./run-client.sh` or `./run-prover.sh`.
+- Ensure `snarkOS` is started using `./scripts/run-client.sh` or `./scripts/run-prover.sh`.
 
 ### 3. I can't generate a new address ### 
 
@@ -419,7 +397,7 @@ sudo apt install tmux
 
 To start a local devnet, run:
 ```
-./devnet.sh
+./scripts/devnet.sh
 ```
 Follow the instructions in the terminal to start the devnet.
 
