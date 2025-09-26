@@ -1,0 +1,45 @@
+#!/bin/sh
+
+set -eu
+
+NETWORK="mainnet"
+BASE_DIR="${HOME}/snarkOS/aleo_ledger_checkpoints/${NETWORK}/"
+ENDPOINT="http://localhost:3030/${NETWORK}/db_backup"
+JWT="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGVvMXJoZ2R1NzdoZ3lxZDN4amo4dWN1M2pqOXIya3J3ejZtbnp5ZDgwZ25jcjVmeGN3bGg1cnN2enA5cHgiLCJpYXQiOjE3NDkxMTYzNDUsImV4cCI6MjA2NDQ3NjM0NX0.LiqFGiQds3OGHGJ5K3xi359g-uTQBZCrAskGj9UWAbM"
+
+post_backup() {
+    slot="$1"
+    slot_path="${BASE_DIR}/${slot}"
+    rm -rf -- "$slot_path" 2>/dev/null || :
+    curl -fsS -X POST -H "Authorization: Bearer ${JWT}" "${ENDPOINT}?path=${slot_path}" >/dev/null 2>&1 || :
+}
+
+# Refresh helper: if missing OR older than N minutes, refresh.
+# Using +N-1 so "older than N minutes" triggers at >= N.
+refresh_if_older_than() {
+    slot="$1"
+    mins="$2"          # e.g. 5, 60, 1440
+    slot_path="${BASE_DIR}/${slot}"
+
+    if [ ! -e "${slot_path}" ]; then
+        post_backup "${slot}"
+        return
+    fi
+
+    # Older than N minutes? (>= N) -> use -mmin +N-1
+    nminus1=$((mins - 1))
+    if find "${slot_path}" -prune -mmin +"${nminus1}" | grep -q .; then
+        post_backup "${slot}"
+    fi
+}
+
+# Ensure base dir exists
+mkdir -p -- "${BASE_DIR}"
+
+# Always overwrite latest
+post_backup "latest"
+
+# Overwrite only if older than thresholds
+refresh_if_older_than "5min" 5
+refresh_if_older_than "1hour" 60
+refresh_if_older_than "1day" 1440
