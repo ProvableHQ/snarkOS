@@ -2,9 +2,13 @@
 
 set -eu
 
+# The network of the node which you're making a backup for.
 NETWORK="mainnet"
+# The directory in which you want backups to be stored.
 BASE_DIR="${HOME}/snarkOS/aleo_ledger_checkpoints/${NETWORK}/"
+# The node REST endpoint to trigger backup creation from.
 ENDPOINT="http://localhost:3030/${NETWORK}/db_backup"
+# The JWT to authenticate to the endpoint. This can be ignored when running the node with --nojwt
 JWT="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGVvMXJoZ2R1NzdoZ3lxZDN4amo4dWN1M2pqOXIya3J3ejZtbnp5ZDgwZ25jcjVmeGN3bGg1cnN2enA5cHgiLCJpYXQiOjE3NDkxMTYzNDUsImV4cCI6MjA2NDQ3NjM0NX0.LiqFGiQds3OGHGJ5K3xi359g-uTQBZCrAskGj9UWAbM"
 
 post_backup() {

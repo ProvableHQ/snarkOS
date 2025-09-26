@@ -95,6 +95,9 @@ impl FromStr for BondedBalances {
 
     // Ensure you cannot set --verbosity and --log-filter flags at the same time.
     group(clap::ArgGroup::new("log_flags").required(false).multiple(false)),
+
+    // Ensure you need to set either --jwt-secret and --jwt-timestamp or --nojwt flags.
+    group(clap::ArgGroup::new("jwt_flags").required(false).multiple(true).conflicts_with("nojwt").conflicts_with("norest")),
 )]
 pub struct Start {
     /// Specify the network ID of this node
@@ -166,16 +169,20 @@ pub struct Start {
     pub rest_rps: u32,
 
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
-    #[clap(long, group = "rest_flags")]
+    #[clap(long, group = "jwt_flags")]
     pub jwt_secret: Option<String>,
 
     /// Specify the JWT creation timestamp; can be any time in the last 10 years.
-    #[clap(long, group = "rest_flags")]
+    #[clap(long, group = "jwt_flags")]
     pub jwt_timestamp: Option<i64>,
 
     /// If the flag is set, the node will not initialize the REST server.
     #[clap(long)]
     pub norest: bool,
+
+    /// If the flag is set, the node will not require JWT authentication for the REST server.
+    #[clap(long, group = "rest_flags")]
+    pub nojwt: bool,
 
     /// Write log message to stdout instead of showing a terminal UI.
     ///
@@ -634,21 +641,23 @@ impl Start {
                 if let Some(rest_ip) = rest_ip {
                     println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
 
-                    let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
-                        if self.jwt_timestamp.is_none() {
-                            bail!("The '--jwt-timestamp' flag must be set if the '--jwt-secret' flag is set");
-                        }
-                        let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
-                        if jwt_bytes.len() != 16 {
-                            bail!("The JWT secret must be 16 bytes long");
-                        }
-                        Some(jwt_bytes)
-                    } else {
-                        None
-                    };
+                    if !self.nojwt {
+                        let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
+                            if self.jwt_timestamp.is_none() {
+                                bail!("The '--jwt-timestamp' flag must be set if the '--jwt-secret' flag is set");
+                            }
+                            let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
+                            if jwt_bytes.len() != 16 {
+                                bail!("The JWT secret must be 16 bytes long");
+                            }
+                            Some(jwt_bytes)
+                        } else {
+                            None
+                        };
 
-                    if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
-                        println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
+                        if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
+                            println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
+                        }
                     }
                 }
             }
