@@ -12,3 +12,4 @@ validator-*
 **proptest-regressions/
 **package-lock.json
 **node_modules/
+jwt_secret*.txt
