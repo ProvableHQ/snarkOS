@@ -57,14 +57,14 @@ common_flags="--nodisplay --nobanner --noupdater --network=$network_id \
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-  snarkos clean --dev $validator_index --network=$network_id
+  snarkos clean --dev $validator_index "--network=${network_id}"
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
-    snarkos start ${common_flags} --dev "$validator_index" \
+    snarkos start "${common_flags[@]}" --dev "$validator_index" \
       --validator --logfile "$log_file" --metrics --no-dev-txs &
   else
-    snarkos start ${common_flags} --dev "$validator_index" \
+    snarkos start "${common_flags[@]}" --dev "$validator_index" \
       --validator --logfile "$log_file" &
   fi
   PIDS[validator_index]=$!
@@ -82,12 +82,12 @@ total_wait=0
 while ! check_heights "$total_validators" 0 "$min_height" "$network_name"; do
   # Continue waiting
   sleep $poll_interval
-  total_wait=$((total_wait + $poll_interval))
+  total_wait=$((total_wait + poll_interval))
   echo "Waited $total_wait seconds so far..."
 done
 
-printf "num_validators=${total_validators}, git_commit=${git_commit}, snapshot_height=${min_height}" > info.txt
+printf "num_validators=%i, git_commit=%s, snapshot_height=%i" "$total_validators" "$git_commit" "$min_height" > info.txt
 
-zipname="sync-ledger-val${num_validators}-${min_height}.zip"
+zipname="sync-ledger-val${total_validators}-${min_height}.zip"
 echo "Done! Generating zipfile \"$zipname\""
-zip $zipname ".ledger-${network_id}-0" info.txt
+zip -r "$zipname" ".ledger-${network_id}-0" info.txt

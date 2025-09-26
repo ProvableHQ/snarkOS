@@ -27,10 +27,10 @@ network_id=1
 git_commit=$(git rev-parse --short=10 HEAD)
 echo "On git commit ${git_commit}"
 
-printf "num_validators=${num_validators}, git_commit=${git_commit}, snapshot_height=${num_blocks}" > info.txt
+printf "num_validators=%i, git_commit=%s, snapshot_height=%i" "$num_blocks" "$git_commit" "$num_blocks" > info.txt
 
 snarkvm-testchain-generator "$num_validators" "$num_blocks"
 
-zipname="sync-ledger-val${num_validators}-${min_height}-${git_commit}.zip"
+zipname="sync-ledger-val${num_validators}-${num_blocks}-${git_commit}.zip"
 echo "Done! Generating zipfile \"$zipname\""
-zip "$zipname" ".ledger-${network_id}-0" info.txt
+zip -r "$zipname" ".ledger-${network_id}-0" info.txt

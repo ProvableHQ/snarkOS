@@ -13,7 +13,7 @@ min_height=250
 num_nodes=1
 
 # Adjust this to show more/less log messages
-log_filter="info,snarkos_node_sync=debug,snarkos_node_bft::primary=warn"
+log_filter="info,snarkos_node_sync=trace,snarkos_node_bft::sync=trace,snarkos_node_bft::primary=warn,snarkos_node_rest=warn"
 
 max_wait=1800 # Wait for up to 30 minutes
 poll_interval=1 # Check block heights every second

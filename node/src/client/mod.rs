@@ -339,6 +339,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Do not attempt to sync if there are not blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
         if !self.sync.can_block_sync() {
+            trace!("Nothing to sync. Will not issue new block requests");
             return;
         }
 

@@ -63,7 +63,7 @@ function check_heights() {
   else
     if (( elapsed > 0 && ((elapsed % 60) == 0) )); then
       elapsed_mins=$((elapsed / 60))
-      echo "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height, elapsed: $elapsed_mins minutes))"
+      echo "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height, elapsed: $elapsed_mins minutes)"
     fi
 
     return 1
