@@ -93,6 +93,15 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
     }
 
+    /// Returns the connected peer aleo address from the listener IP address.
+    fn resolve_to_aleo_addr(&self, listener_addr: SocketAddr) -> Option<Address<N>> {
+        if let Some(Peer::Connected(peer)) = self.peer_pool().read().get(&listener_addr) {
+            Some(peer.aleo_addr)
+        } else {
+            None
+        }
+    }
+
     /// Returns `true` if the node is connecting to the given peer's listener address.
     fn is_connecting(&self, listener_addr: SocketAddr) -> bool {
         self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_connecting())

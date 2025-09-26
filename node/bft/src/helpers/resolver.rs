@@ -19,12 +19,8 @@ use std::{collections::HashMap, net::SocketAddr};
 
 #[derive(Debug)]
 pub struct Resolver<N: Network> {
-    /// The map of the listener address to (ambiguous) peer address.
-    from_listener: HashMap<SocketAddr, SocketAddr>,
     /// The map of the (ambiguous) peer address to listener address.
     to_listener: HashMap<SocketAddr, SocketAddr>,
-    /// A map of `peer IP` to `address`.
-    peer_addresses: HashMap<SocketAddr, Address<N>>,
     /// A map of `address` to `peer IP`.
     address_peers: HashMap<Address<N>, SocketAddr>,
 }
@@ -39,12 +35,7 @@ impl<N: Network> Default for Resolver<N> {
 impl<N: Network> Resolver<N> {
     /// Initializes a new instance of the resolver.
     pub fn new() -> Self {
-        Self {
-            from_listener: Default::default(),
-            to_listener: Default::default(),
-            peer_addresses: Default::default(),
-            address_peers: Default::default(),
-        }
+        Self { to_listener: Default::default(), address_peers: Default::default() }
     }
 }
 
@@ -54,39 +45,23 @@ impl<N: Network> Resolver<N> {
         self.to_listener.get(&peer_addr).copied()
     }
 
-    /// Returns the (ambiguous) peer address for the given listener address, if it exists.
-    pub fn get_ambiguous(&self, peer_ip: SocketAddr) -> Option<SocketAddr> {
-        self.from_listener.get(&peer_ip).copied()
-    }
-
-    /// Returns the address for the given peer IP.
-    pub fn get_address(&self, peer_ip: SocketAddr) -> Option<Address<N>> {
-        self.peer_addresses.get(&peer_ip).copied()
-    }
-
     /// Returns the peer IP for the given address.
     pub fn get_peer_ip_for_address(&self, address: Address<N>) -> Option<SocketAddr> {
         self.address_peers.get(&address).copied()
     }
 
-    /// Inserts a bidirectional mapping of the listener address and the (ambiguous) peer address,
-    /// alongside a bidirectional mapping of the listener address and the Aleo address.
+    /// Inserts a mapping of a peer's connected address to its listener address,
+    /// alongside a mapping of the Aleo address to the listener address.
     pub fn insert_peer(&mut self, listener_ip: SocketAddr, peer_addr: SocketAddr, address: Address<N>) {
-        self.from_listener.insert(listener_ip, peer_addr);
         self.to_listener.insert(peer_addr, listener_ip);
-        self.peer_addresses.insert(listener_ip, address);
         self.address_peers.insert(address, listener_ip);
     }
 
-    /// Removes the bidirectional mapping of the listener address and the (ambiguous) peer address,
-    /// alongside the bidirectional mapping of the listener address and the Aleo address.
-    pub fn remove_peer(&mut self, listener_ip: SocketAddr) {
-        if let Some(peer_addr) = self.from_listener.remove(&listener_ip) {
-            self.to_listener.remove(&peer_addr);
-        }
-        if let Some(address) = self.peer_addresses.remove(&listener_ip) {
-            self.address_peers.remove(&address);
-        }
+    /// Removes the mapping of a peer's connected address to its listener address,
+    /// alongside the mapping of the Aleo address to the listener address.
+    pub fn remove_peer(&mut self, connected_addr: SocketAddr, aleo_addr: Address<N>) {
+        self.to_listener.remove(&connected_addr);
+        self.address_peers.remove(&aleo_addr);
     }
 }
 
@@ -106,22 +81,16 @@ mod tests {
         let address = Address::<CurrentNetwork>::new(rng.r#gen());
 
         assert!(resolver.get_listener(peer_addr).is_none());
-        assert!(resolver.get_address(listener_ip).is_none());
-        assert!(resolver.get_ambiguous(listener_ip).is_none());
         assert!(resolver.get_peer_ip_for_address(address).is_none());
 
         resolver.insert_peer(listener_ip, peer_addr, address);
 
         assert_eq!(resolver.get_listener(peer_addr).unwrap(), listener_ip);
-        assert_eq!(resolver.get_address(listener_ip).unwrap(), address);
-        assert_eq!(resolver.get_ambiguous(listener_ip).unwrap(), peer_addr);
         assert_eq!(resolver.get_peer_ip_for_address(address).unwrap(), listener_ip);
 
-        resolver.remove_peer(listener_ip);
+        resolver.remove_peer(peer_addr, address);
 
         assert!(resolver.get_listener(peer_addr).is_none());
-        assert!(resolver.get_address(listener_ip).is_none());
-        assert!(resolver.get_ambiguous(listener_ip).is_none());
         assert!(resolver.get_peer_ip_for_address(address).is_none());
     }
 }

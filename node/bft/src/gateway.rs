@@ -400,7 +400,7 @@ impl<N: Network> Gateway<N> {
             return true;
         }
         // Retrieve the Aleo address of the peer IP.
-        match self.resolver.read().get_address(ip) {
+        match self.resolve_to_aleo_addr(ip) {
             // Determine if the peer IP is an authorized validator.
             Some(address) => self.is_authorized_validator_address(address),
             None => false,
@@ -557,8 +557,8 @@ impl<N: Network> Gateway<N> {
             });
         }
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            if matches!(peer, Peer::Connected(_)) {
-                self.resolver.write().remove_peer(peer_ip);
+            if let Peer::Connected(connected_peer) = peer {
+                self.resolver.write().remove_peer(peer_ip, connected_peer.aleo_addr);
             }
             peer.downgrade_to_candidate(peer_ip);
         }
@@ -573,7 +573,7 @@ impl<N: Network> Gateway<N> {
     /// which can be used to determine when and whether the event has been delivered.
     fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
-        let Some(peer_addr) = self.resolver.read().get_ambiguous(peer_ip) else {
+        let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
             warn!("Unable to resolve the listener IP address '{peer_ip}'");
             return None;
         };
@@ -823,7 +823,7 @@ impl<N: Network> Gateway<N> {
                     // Iterate over the validators.
                     for validator_ip in connected_peers.into_iter().take(MAX_VALIDATORS_TO_SEND) {
                         // Retrieve the validator address.
-                        if let Some(validator_address) = self_.resolver.read().get_address(validator_ip) {
+                        if let Some(validator_address) = self_.resolve_to_aleo_addr(validator_ip) {
                             // Add the validator to the list of validators.
                             validators.insert(validator_ip, validator_address);
                         }
@@ -999,7 +999,7 @@ impl<N: Network> Gateway<N> {
         // Log the connected validators.
         info!("{connections_msg}");
         for peer_ip in &connected_validators {
-            let address = self.resolver.read().get_address(*peer_ip).map_or("Unknown".to_string(), |a| {
+            let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
