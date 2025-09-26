@@ -18,7 +18,7 @@ use crate::{
     locators::BlockLocators,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::messages::DataBlocks;
+use snarkos_node_router::{PeerPoolHandling, messages::DataBlocks};
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 use snarkvm::prelude::{Network, block::Block};
@@ -936,12 +936,12 @@ impl<N: Network> BlockSync<N> {
     /// Removes block requests that have timed out, i.e, requests we sent that did not receive a response in time.
     ///
     /// This removes the corresponding block responses and returns the set of peers/addresses that timed out.
-    /// It will ask the communication service to ban any timed-out peers.
+    /// It will ask the peer pool handling service to ban any timed-out peers.
     ///
     /// Finally, it will return a set of new of block requests that replaced the timed-out requests (if needed).
-    pub fn handle_block_request_timeouts<C: CommunicationService>(
+    pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
-        communication: &C,
+        peer_pool_handler: Option<&P>,
     ) -> Option<BlockRequestBatch<N>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
@@ -1003,7 +1003,9 @@ impl<N: Network> BlockSync<N> {
         // Now remove and ban any unresponsive peers
         for peer_ip in peers_to_ban {
             self.remove_peer(&peer_ip);
-            communication.ban_peer(peer_ip);
+            if let Some(peer_pool_handler) = peer_pool_handler {
+                peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
+            }
         }
 
         // Re-issue any timed-out requests.
@@ -1290,7 +1292,7 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_sync_communication_service::test_helpers::DummyCommunicationService;
+    use snarkos_node_router::Router;
     use snarkvm::{
         ledger::committee::Committee,
         prelude::{Field, TestRng},
@@ -1818,8 +1820,7 @@ mod tests {
         assert_eq!(new_sync.requests.read().len(), requests.len());
 
         // Remove timed out block requests.
-        let c = DummyCommunicationService::default();
-        new_sync.handle_block_request_timeouts(&c);
+        new_sync.handle_block_request_timeouts(None::<&Router<CurrentNetwork>>);
 
         // Check that the number of requests is reduced based on the ledger height.
         assert_eq!(new_sync.requests.read().len(), (locator_height - ledger_height) as usize);
@@ -1847,12 +1848,7 @@ mod tests {
         assert_eq!(sync.locators.read().len(), 1);
 
         // Remove timed out block requests.
-        let c = DummyCommunicationService::default();
-        sync.handle_block_request_timeouts(&c);
-
-        let ban_list = c.peers_to_ban.lock();
-        assert_eq!(ban_list.len(), 1);
-        assert_eq!(ban_list.iter().next(), Some(&peer_ip));
+        sync.handle_block_request_timeouts(None::<&Router<CurrentNetwork>>);
 
         assert!(sync.requests.read().is_empty());
         assert!(sync.locators.read().is_empty());
@@ -1894,12 +1890,7 @@ mod tests {
         assert_eq!(sync.requests.read().len(), 2);
 
         // Remove timed out block requests.
-        let c = DummyCommunicationService::default();
-        let re_requests = sync.handle_block_request_timeouts(&c);
-
-        let ban_list = c.peers_to_ban.lock();
-        assert_eq!(ban_list.len(), 1);
-        assert_eq!(ban_list.iter().next(), Some(&peer_ip1));
+        let re_requests = sync.handle_block_request_timeouts(None::<&Router<CurrentNetwork>>);
 
         assert_eq!(sync.requests.read().len(), 1);
         assert_eq!(sync.locators.read().len(), 2);

@@ -45,10 +45,11 @@ pub use routing::*;
 mod writing;
 
 pub use crate::messages::NodeType;
-use crate::messages::{Message, MessageCodec};
+use crate::messages::{BlockRequest, Message, MessageCodec};
 
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_tcp::{Config, ConnectionSide, P2P, Tcp, is_bogon_ip, is_unspecified_or_broadcast_ip};
 
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey, error};
@@ -321,6 +322,28 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
         Ok(())
     }
+
+    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
+    /// indicates whether the peer was actually disconnected from, or if this was a noop.
+    fn disconnect(&self, listener_addr: SocketAddr) -> JoinHandle<bool> {
+        let connected_addr = self.resolve_to_ambiguous(listener_addr);
+        let tcp = self.tcp().clone();
+        tokio::spawn(async move {
+            if let Some(connected_addr) = connected_addr { tcp.disconnect(connected_addr).await } else { false }
+        })
+    }
+
+    /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
+    /// optional reason for the ban.
+    fn ip_ban_peer(&self, listener_addr: SocketAddr, reason: Option<&str>) {
+        let ip = listener_addr.ip();
+        debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
+
+        let tcp = self.tcp().clone();
+        tcp.banned_peers().update_ip_ban(ip);
+
+        self.disconnect(listener_addr);
+    }
 }
 
 /// The router keeps track of connected and connecting peers.
@@ -493,20 +516,6 @@ impl<N: Network> Router<N> {
         Ok(false)
     }
 
-    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
-    /// indicates whether the peer was actually disconnected from, or if this was a noop.
-    pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
-        let router = self.clone();
-        tokio::spawn(async move {
-            if let Some(peer) = router.get_connected_peer(peer_ip) {
-                let connected_addr = peer.connected_addr;
-                router.tcp.disconnect(connected_addr).await
-            } else {
-                false
-            }
-        })
-    }
-
     /// Returns the IP address of this node.
     pub fn local_ip(&self) -> SocketAddr {
         self.tcp.listening_addr().expect("The TCP listener is not enabled")
@@ -672,6 +681,31 @@ impl<N: Network> Router<N> {
         self.handles.lock().iter().for_each(|handle| handle.abort());
         // Close the listener.
         self.tcp.shut_down().await;
+    }
+}
+
+#[async_trait]
+impl<N: Network> CommunicationService for Router<N> {
+    /// The message type.
+    type Message = Message<N>;
+
+    /// Prepares a block request to be sent.
+    fn prepare_block_request(start_height: u32, end_height: u32) -> Self::Message {
+        debug_assert!(start_height < end_height, "Invalid block request format");
+        Message::BlockRequest(BlockRequest { start_height, end_height })
+    }
+
+    /// Sends the given message to specified peer.
+    ///
+    /// This function returns as soon as the message is queued to be sent,
+    /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
+    /// which can be used to determine when and whether the message has been delivered.
+    async fn send(
+        &self,
+        peer_ip: SocketAddr,
+        message: Self::Message,
+    ) -> Option<tokio::sync::oneshot::Receiver<io::Result<()>>> {
+        self.send(peer_ip, message)
     }
 }
 

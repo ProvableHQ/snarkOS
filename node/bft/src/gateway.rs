@@ -311,17 +311,6 @@ impl<N: Network> CommunicationService for Gateway<N> {
     async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>> {
         Transport::send(self, peer_ip, message).await
     }
-
-    fn ban_peer(&self, peer_ip: SocketAddr) {
-        trace!("Banning peer {peer_ip} for timing out on block requests");
-
-        let tcp = self.tcp().clone();
-        tcp.banned_peers().update_ip_ban(peer_ip.ip());
-
-        tokio::spawn(async move {
-            tcp.disconnect(peer_ip).await;
-        });
-    }
 }
 
 impl<N: Network> Gateway<N> {
@@ -906,20 +895,6 @@ impl<N: Network> Gateway<N> {
                 Ok(true)
             }
         }
-    }
-
-    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
-    /// indicates whether the peer was actually disconnected from, or if this was a noop.
-    pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
-        let gateway = self.clone();
-        tokio::spawn(async move {
-            if let Some(peer) = gateway.get_connected_peer(peer_ip) {
-                let connected_addr = peer.connected_addr;
-                gateway.tcp.disconnect(connected_addr).await
-            } else {
-                false
-            }
-        })
     }
 
     /// Initialize a new instance of the heartbeat.
