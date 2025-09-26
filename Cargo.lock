@@ -4128,7 +4128,6 @@ name = "snarkos-node-sync-communication-service"
 version = "4.2.1"
 dependencies = [
  "async-trait",
- "parking_lot",
  "tokio",
 ]
 
