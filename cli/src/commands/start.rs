@@ -649,6 +649,8 @@ impl Start {
 
                     if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
                         println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
+                        // Store the JWT secret to a file.
+                        std::fs::write(format!("jwt_secret_{}.txt", account.address()), jwt_token)?;
                     }
                 }
             }
