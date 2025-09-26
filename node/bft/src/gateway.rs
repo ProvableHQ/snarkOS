@@ -385,12 +385,8 @@ impl<N: Network> Gateway<N> {
 
     /// Returns `true` if the node is connected to the given Aleo address.
     pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // Retrieve the peer IP of the given address.
-        match self.resolver.read().get_peer_ip_for_address(address) {
-            // Determine if the peer IP is connected.
-            Some(peer_ip) => self.is_connected(peer_ip),
-            None => false,
-        }
+        // The resolver only contains data on connected peers.
+        self.resolver.read().get_peer_ip_for_address(address).is_some()
     }
 
     /// Returns `true` if the given peer IP is an authorized validator.
