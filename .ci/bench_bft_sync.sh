@@ -9,6 +9,10 @@ set -eo pipefail # error on any command failure
 network_id=1
 min_height=250
 
+# The total number of validators in the beacon committee.
+# This must match the number of validators used when generating the snapshot. 
+num_validators=40
+
 # The number of validators that are syncing
 num_nodes=1
 
@@ -45,8 +49,12 @@ trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" fail
 
 # Shared flags betwen all nodes
 common_flags=(
-  --nobanner --noupdater --nodisplay "--network=$network_id" --nocdn
-  --dev-num-validators=40 --no-dev-txs "--log-filter=$log_filter"
+  --nobanner --noupdater --nodisplay \
+  "--network=$network_id"
+  --nocdn
+  "--dev-num-validators=$num_validators"
+  --no-dev-txs
+  "--log-filter=$log_filter"
 )
 
 # The validator that has the ledger to by synced from.

@@ -9,6 +9,10 @@ set -eo pipefail # error on any command failure
 network_id=1
 min_height=250
 
+# The total number of validators in the beacon committee.
+# This must match the number of validators used when generating the snapshot. 
+num_validators=40
+
 # The number of clients that are syncing
 num_clients=1
 
@@ -106,7 +110,7 @@ function measure_rest_block_height() {
 
 # Measure how long it takes to get a random block.
 function measure_rest_get_block() {
-  local num_warmup_ops=10
+  local num_warmup_/ops=10
   local num_get_ops=500
 
   base_url="http://localhost:3030/v2/$network_name/block"
@@ -152,7 +156,8 @@ common_flags=(
   "--log-filter=$log_filter" # only show the logs we care about
   "--network=$network_id"
   --nocdn # don't sync from CDN, so we only benchmark p2p sync
-  --dev-num-validators=40 --no-dev-txs
+  "--dev-num-validators=$num_validators"
+  --no-dev-txs
   --rest-rps=1000000 # ensure benchmarks don't fail due to rate limiting
 )
 

@@ -44,7 +44,7 @@ jobs:
           gcloud config set project protocol-development-sandbox
           # Created with `.ci/generate_ledger_snarkvm.sh 40 250`
           # NOTE: This needs to be updated when the consensu version changes.
-          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-b7401cef1c.zip ledger.zip
+          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-9ec2291c57.zip ledger.zip
           unzip ledger.zip
  
       - name: Install snarkOS (test_network)
