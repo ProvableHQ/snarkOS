@@ -39,12 +39,9 @@ log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 chmod 755 "$log_dir"
 
-# Array to store PIDs of all processes
-declare -a PIDS
-
 # Define a trap handler that cleans up all processes on exit.
 function exit_handler() {
-  shutdown "${PIDS[@]}"
+  stop_nodes
 }
 trap exit_handler EXIT
 
@@ -77,9 +74,9 @@ done
 # Ensure all nodes are up and running.
 wait_for_nodes "$total_validators" 0
 
-# Wait until all nodes reached the given height.
+# Wait until the first node reaches the given height.
 total_wait=0
-while ! check_heights "$total_validators" 0 "$min_height" "$network_name"; do
+while ! check_heights 0 1 "$min_height" "$network_name"; do
   # Continue waiting
   sleep $poll_interval
   total_wait=$((total_wait + poll_interval))
@@ -88,6 +85,8 @@ done
 
 printf "num_validators=%i, git_commit=%s, snapshot_height=%i" "$total_validators" "$git_commit" "$min_height" > info.txt
 
-zipname="sync-ledger-val${total_validators}-${min_height}.zip"
+zipname="sync-ledger-val${total_validators}-${min_height}-${git_commit}.zip"
 echo "Done! Generating zipfile \"$zipname\""
 zip -r "$zipname" ".ledger-${network_id}-0" info.txt
+
+exit 0
