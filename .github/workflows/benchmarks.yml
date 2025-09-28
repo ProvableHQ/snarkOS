@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - 'staging'
-      - 'ci/sync-variance-benchmark'
   workflow_dispatch:
 
 jobs:
@@ -22,13 +21,22 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.88 # Update this when the MSRV changes.
 
-      - name: Install required Debian pacakges
-        run: sudo apt install -y lld
+      - name: Install required Debian packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lld python3-pip
 
-      - name: Set up Rust build chaching
+      - name: Set up Python virtual environment
+        run: |
+          pip install --upgrade pip
+          python -m venv pyenv
+          source pyenv/bin/activate
+          pip install aiohttp
+
+      - name: Set up Rust build caching
         uses: Swatinem/rust-cache@v2
 
-      - name: "Setup GCP"
+      - name: Set up Google Cloud Integration
         env:
           GCLOUD_SERVICE_KEY: ${{ secrets.GCLOUD_SERVICE_KEY }}
         run: |
@@ -39,16 +47,16 @@ jobs:
           echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
           gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
 
-      - name: "Fetch Ledger Data"
+      - name: Fetch Ledger Data
         run: |
           gcloud config set project protocol-development-sandbox
-          # Created with `.ci/generate_ledger_snarkvm.sh 40 250`
+          # Created with `.ci/generate_ledger.sh 40 250 1`
           # NOTE: This needs to be updated when the consensu version changes.
           gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-9ec2291c57.zip ledger.zip
           unzip ledger.zip
  
       - name: Install snarkOS (test_network)
-        run:
+        run: |
           # use `test_network` flag without snarkVM `dev_println`
           cargo install --path=. --locked --features=test_consensus_heights,test_targets
 
@@ -66,6 +74,12 @@ jobs:
 
           echo "Generated results file:"
           cat results.json
+
+      - name: Run REST API benchmark
+        timeout-minutes: 20
+        run: |
+          source pyenv/bin/activate
+          ./.ci/bench_rest_api.sh
 
       - name: Run P2P sync benchmark
         timeout-minutes: 60
@@ -87,7 +101,11 @@ jobs:
           ./.ci/bench_cdn_sync.sh
 
       - name: Finish results file
-        run: printf "]\n" | tee -a results.json
+        run: |
+          printf "]\n" | tee -a results.json
+          echo "\n\nFile Contents:"
+          cat results.json
+
 
       - name: Generate benchmark results
         uses: benchmark-action/github-action-benchmark@v1
@@ -112,7 +130,7 @@ jobs:
       - name: Push benchmark result
         # Avoid pushing results on pull requests or experimental branches, to reduce noise in the data.
         # The results for all other runs are still accessible through the workflow summary.
-        if: github.ref_name == 'staging' || github.ref_name == 'ci/sync-variance-benchmark'
+        if: github.ref_name == 'staging'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: git push origin gh-pages

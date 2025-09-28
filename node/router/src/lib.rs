@@ -208,9 +208,39 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             .collect()
     }
 
+    /// Loads any previously cached peer addresses so they can be introduced as initial
+    /// candidate peers to connect to.
+    fn load_cached_peers(storage_mode: &StorageMode, filename: &str) -> Result<Vec<SocketAddr>> {
+        let mut peer_cache_path = aleo_ledger_dir(N::ID, storage_mode);
+        peer_cache_path.push(filename);
+
+        let peers = match fs::read_to_string(&peer_cache_path) {
+            Ok(cached_peers_str) => {
+                let mut cached_peers = Vec::new();
+                for peer_addr_str in cached_peers_str.lines() {
+                    match SocketAddr::from_str(peer_addr_str) {
+                        Ok(addr) => cached_peers.push(addr),
+                        Err(error) => warn!("Couldn't parse the cached peer address '{peer_addr_str}': {error}"),
+                    }
+                }
+                cached_peers
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // Not an issue - the cache may not exist yet.
+                Vec::new()
+            }
+            Err(error) => {
+                warn!("Couldn't load cached peers at {}: {error}", peer_cache_path.display());
+                Vec::new()
+            }
+        };
+
+        Ok(peers)
+    }
+
     /// Preserve the peers who have the greatest known block heights, and the lowest
     /// number of registered network failures.
-    fn save_best_peers(&self, storage_mode: &StorageMode) -> Result<()> {
+    fn save_best_peers(&self, storage_mode: &StorageMode, filename: &str, max_entries: Option<usize>) -> Result<()> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
 
@@ -227,11 +257,13 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 (cmp::Reverse(peer.last_height_seen()), 0)
             }
         });
-        peers.truncate(MAX_PEERS_TO_SEND);
+        if let Some(max) = max_entries {
+            peers.truncate(max);
+        }
 
         // Dump the connected peers to a file.
         let mut path = aleo_ledger_dir(N::ID, storage_mode);
-        path.push(PEER_CACHE_FILENAME);
+        path.push(filename);
         let mut file = fs::File::create(path)?;
         for peer in peers {
             writeln!(file, "{}", peer.listener_addr())?;
@@ -361,23 +393,18 @@ impl<N: Network> Router<N> {
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(node_ip, max_peers));
 
-        // Add the trusted peers to the peer pool
-        let mut initial_peers = trusted_peers
-            .iter()
-            .copied()
-            .map(|addr| (addr, Peer::new_candidate(addr, true)))
-            .collect::<HashMap<_, _>>();
+        // Prepare the collection of the initial peers.
+        let mut initial_peers = HashMap::new();
 
-        // Load additional peers from the peer cache (if present).
-        let mut peer_cache_path = aleo_ledger_dir(N::ID, &storage_mode);
-        peer_cache_path.push(PEER_CACHE_FILENAME);
-        if let Ok(cached_peers_str) = fs::read_to_string(&peer_cache_path) {
-            for peer_addr_str in cached_peers_str.lines() {
-                if let Ok(addr) = SocketAddr::from_str(peer_addr_str) {
-                    initial_peers.insert(addr, Peer::new_candidate(addr, false));
-                }
-            }
+        // Load entries from the peer cache (if present).
+        let cached_peers = Self::load_cached_peers(&storage_mode, PEER_CACHE_FILENAME)?;
+        for addr in cached_peers {
+            initial_peers.insert(addr, Peer::new_candidate(addr, false));
         }
+
+        // Add the trusted peers to the list of the initial peers; this may promote
+        // some of the cached peers to trusted ones.
+        initial_peers.extend(trusted_peers.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
 
         // Initialize the router.
         Ok(Self(Arc::new(InnerRouter {
@@ -629,7 +656,7 @@ impl<N: Network> Router<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the router...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.storage_mode) {
+        if let Err(e) = self.save_best_peers(&self.storage_mode, PEER_CACHE_FILENAME, Some(MAX_PEERS_TO_SEND)) {
             warn!("Failed to persist best peers to disk: {e}");
         }
         // Abort the tasks.
