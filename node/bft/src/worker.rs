@@ -563,7 +563,7 @@ mod tests {
             block::Block,
             committee::Committee,
             narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
-            snarkvm_ledger_test_helpers::sample_execution_transaction_with_fee,
+            test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::Address,
     };
