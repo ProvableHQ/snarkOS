@@ -110,7 +110,7 @@ function measure_rest_block_height() {
 
 # Measure how long it takes to get a random block.
 function measure_rest_get_block() {
-  local num_warmup_/ops=10
+  local num_warmup_ops=10
   local num_get_ops=500
 
   base_url="http://localhost:3030/v2/$network_name/block"
