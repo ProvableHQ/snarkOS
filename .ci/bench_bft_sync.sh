@@ -103,7 +103,11 @@ echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block
 # Check heights periodically with a timeout
 SECONDS=0
 while (( SECONDS < max_wait )); do
-  if check_heights 1 $((num_nodes+1)) $min_height "$network_name" "$SECONDS"; then
+  # The last block cannot be fully applied to the ledger yet as there is no next block to confirm it.
+  # However, we know that the sync height of a node is always at least one more than the ledger height.
+  expected_height=$((min_height-1))
+  
+  if check_heights 1 $((num_nodes+1)) $expected_height "$network_name" "$SECONDS"; then
     total_wait=$SECONDS
     throughput=$(compute_throughput "$min_height" "$total_wait")
 
