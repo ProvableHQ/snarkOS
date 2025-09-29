@@ -941,7 +941,7 @@ impl<N: Network> BlockSync<N> {
     /// Finally, it will return a set of new of block requests that replaced the timed-out requests (if needed).
     pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
-        peer_pool_handler: Option<&P>,
+        peer_pool_handler: &P,
     ) -> Option<BlockRequestBatch<N>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
@@ -1003,9 +1003,7 @@ impl<N: Network> BlockSync<N> {
         // Now remove and ban any unresponsive peers
         for peer_ip in peers_to_ban {
             self.remove_peer(&peer_ip);
-            if let Some(peer_pool_handler) = peer_pool_handler {
-                peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
-            }
+            peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
         }
 
         // Re-issue any timed-out requests.
@@ -1292,17 +1290,40 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_router::Router;
+    use snarkos_node_router::Peer;
+    use snarkos_node_tcp::{P2P, Tcp};
     use snarkvm::{
         ledger::committee::Committee,
         prelude::{Field, TestRng},
     };
 
     use indexmap::{IndexSet, indexset};
+    use parking_lot::RwLock;
     use rand::Rng;
     use std::net::{IpAddr, Ipv4Addr};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
+
+    #[derive(Default)]
+    struct DummyPeerPoolHandler {
+        peers_to_ban: RwLock<Vec<SocketAddr>>,
+    }
+
+    impl P2P for DummyPeerPoolHandler {
+        fn tcp(&self) -> &Tcp {
+            unreachable!();
+        }
+    }
+
+    impl<N: Network> PeerPoolHandling<N> for DummyPeerPoolHandler {
+        fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+            unreachable!();
+        }
+
+        fn ip_ban_peer(&self, listener_addr: SocketAddr, _reason: Option<&str>) {
+            self.peers_to_ban.write().push(listener_addr);
+        }
+    }
 
     /// Returns the peer IP for the sync pool.
     fn sample_peer_ip(id: u16) -> SocketAddr {
@@ -1820,7 +1841,8 @@ mod tests {
         assert_eq!(new_sync.requests.read().len(), requests.len());
 
         // Remove timed out block requests.
-        new_sync.handle_block_request_timeouts(None::<&Router<CurrentNetwork>>);
+        let c = DummyPeerPoolHandler::default();
+        new_sync.handle_block_request_timeouts(&c);
 
         // Check that the number of requests is reduced based on the ledger height.
         assert_eq!(new_sync.requests.read().len(), (locator_height - ledger_height) as usize);
@@ -1848,7 +1870,12 @@ mod tests {
         assert_eq!(sync.locators.read().len(), 1);
 
         // Remove timed out block requests.
-        sync.handle_block_request_timeouts(None::<&Router<CurrentNetwork>>);
+        let c = DummyPeerPoolHandler::default();
+        sync.handle_block_request_timeouts(&c);
+
+        let ban_list = c.peers_to_ban.write();
+        assert_eq!(ban_list.len(), 1);
+        assert_eq!(ban_list.iter().next(), Some(&peer_ip));
 
         assert!(sync.requests.read().is_empty());
         assert!(sync.locators.read().is_empty());
@@ -1890,7 +1917,13 @@ mod tests {
         assert_eq!(sync.requests.read().len(), 2);
 
         // Remove timed out block requests.
-        let re_requests = sync.handle_block_request_timeouts(None::<&Router<CurrentNetwork>>);
+        let c = DummyPeerPoolHandler::default();
+
+        let re_requests = sync.handle_block_request_timeouts(&c);
+
+        let ban_list = c.peers_to_ban.write();
+        assert_eq!(ban_list.len(), 1);
+        assert_eq!(ban_list.iter().next(), Some(&peer_ip1));
 
         assert_eq!(sync.requests.read().len(), 1);
         assert_eq!(sync.locators.read().len(), 2);

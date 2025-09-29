@@ -294,7 +294,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.sync.set_sync_height(self.ledger.latest_height());
 
-        let new_requests = self.sync.handle_block_request_timeouts(Some(self.router()));
+        let new_requests = self.sync.handle_block_request_timeouts(self.router());
         if let Some((block_requests, sync_peers)) = new_requests {
             self.send_block_requests(block_requests, sync_peers).await;
         }

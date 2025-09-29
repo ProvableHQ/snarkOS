@@ -291,7 +291,7 @@ impl<N: Network> Sync<N> {
         // Check if any existing requests can be removed.
         // We should do this even if we cannot block sync, to ensure
         // there are no dangling block requests.
-        let new_requests = self.block_sync.handle_block_request_timeouts(Some(&self.gateway));
+        let new_requests = self.block_sync.handle_block_request_timeouts(&self.gateway);
         if let Some((sync_peers, requests)) = new_requests {
             self.send_block_requests(sync_peers, requests).await;
         }
