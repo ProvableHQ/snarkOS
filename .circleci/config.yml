@@ -34,13 +34,15 @@ commands:
       - restore_cache:
           key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
-          name: "Install Rust and run cargo check"
+          name: "Install Rust"
+          timeout: 10m
           command: |
             $ProgressPreference = "SilentlyContinue"
-            # Remove the circleci installed rustc.
-            choco uninstall rust
+            # Remove the version of rustc that (might be) installed already..
+            # Use non-interactive mode and force uninstall to prevent the job from getting stuck.
+            choco uninstall rust -y --force
             # Install llvm (libclang for rocksdb).
-            choco install llvm -y 
+            choco install llvm -y
             refreshenv
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
@@ -52,6 +54,9 @@ commands:
             if (!(Test-Path "Cargo.lock" -PathType Leaf)) {
                 cargo generate-lockfile
             }
+      - run:
+          name: "Run cargo check"
+          command: |
             cd << parameters.workspace_member >>
             cargo check --examples --benches --tests
       - save_cache:
