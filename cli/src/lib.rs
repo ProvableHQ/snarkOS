@@ -41,7 +41,7 @@ pub fn check_parent_permissions<T: AsRef<Path>>(path: T) -> Result<()> {
 
     if let Some(parent) = path.as_ref().parent() {
         let permissions = parent.metadata()?.permissions().mode();
-        ensure!(permissions & 0o777 == 0o700, "The folder {:?} must be readable only by the owner (0700)", parent);
+        ensure!(permissions & 0o777 == 0o700, "The folder {parent:?} must be readable only by the owner (0700)");
     } else {
         let path = path.as_ref();
         bail!("Parent does not exist for path={}", path.display());
