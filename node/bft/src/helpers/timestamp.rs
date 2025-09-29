@@ -20,7 +20,7 @@ use time::OffsetDateTime;
 
 /// Returns the current UTC epoch timestamp.
 pub fn now() -> i64 {
-    OffsetDateTime::now_utc().unix_timestamp()
+    (OffsetDateTime::now_utc().unix_timestamp_nanos() * 1000000i128) as i64 // TODO: look into durability of typesize and forking risk.
 }
 
 /// Sanity checks the timestamp for liveness.

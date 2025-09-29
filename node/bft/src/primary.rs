@@ -17,7 +17,7 @@ use crate::{
     Gateway,
     MAX_BATCH_DELAY_IN_MS,
     MAX_WORKERS,
-    MIN_BATCH_DELAY_IN_SECS,
+    MIN_BATCH_DELAY_IN_MS,
     PRIMARY_PING_IN_MS,
     Sync,
     Transport,
@@ -1602,10 +1602,10 @@ impl<N: Network> Primary<N> {
     fn check_proposal_timestamp(&self, previous_round: u64, author: Address<N>, timestamp: i64) -> Result<()> {
         // Retrieve the timestamp of the previous timestamp to check against.
         let previous_timestamp = match self.storage.get_certificate_for_round_with_author(previous_round, author) {
-            // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
+            // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_MS` seconds ago.
             Some(certificate) => certificate.timestamp(),
             None => match self.gateway.account().address() == author {
-                // If we are the author, then ensure the previous proposal was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
+                // If we are the author, then ensure the previous proposal was created at least `MIN_BATCH_DELAY_IN_MS` seconds ago.
                 true => *self.latest_proposed_batch_timestamp.read(),
                 // If we do not see a previous certificate for the author, then proceed optimistically.
                 false => return Ok(()),
@@ -1616,8 +1616,8 @@ impl<N: Network> Primary<N> {
         let elapsed = timestamp
             .checked_sub(previous_timestamp)
             .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
-        // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
-        match elapsed < MIN_BATCH_DELAY_IN_SECS as i64 {
+        // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_MS` seconds ago.
+        match elapsed < MIN_BATCH_DELAY_IN_MS as i64 {
             true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
             false => Ok(()),
         }
@@ -2278,7 +2278,7 @@ mod tests {
         store_certificate_chain(&primary, &accounts, round, &mut rng);
 
         // Sleep for a while to ensure the primary is ready to propose the next round.
-        tokio::time::sleep(Duration::from_secs(MIN_BATCH_DELAY_IN_SECS)).await;
+        tokio::time::sleep(Duration::from_millis(MIN_BATCH_DELAY_IN_MS)).await;
 
         // Generate a solution and a transaction.
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
@@ -2345,7 +2345,7 @@ mod tests {
         }
 
         // Sleep for a while to ensure the primary is ready to propose the next round.
-        tokio::time::sleep(Duration::from_secs(MIN_BATCH_DELAY_IN_SECS)).await;
+        tokio::time::sleep(Duration::from_millis(MIN_BATCH_DELAY_IN_MS)).await;
 
         // Advance to the next round.
         assert!(primary.storage.increment_to_next_round(round).is_ok());
@@ -2410,7 +2410,7 @@ mod tests {
         let round = 1;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2449,7 +2449,7 @@ mod tests {
         let round = 1;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2489,7 +2489,7 @@ mod tests {
         // Create a valid proposal with an author that isn't the primary.
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2526,7 +2526,7 @@ mod tests {
         let round = 1;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2571,7 +2571,7 @@ mod tests {
         // Create a valid proposal with an author that isn't the primary.
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2621,12 +2621,12 @@ mod tests {
         // Use a timestamp that is too early.
         // Set it to something that is less than the minimum batch delay
         // Note, that the minimum delay is currently 1, so this will be equal to the last timestamp
-        let last_timestamp = primary
+        let last_timestamp = (primary
             .storage
             .get_certificate_for_round_with_author(round - 1, peer_account.1.address())
             .expect("No previous proposal exists")
-            .timestamp();
-        let invalid_timestamp = last_timestamp + (MIN_BATCH_DELAY_IN_SECS as i64) - 1;
+            .timestamp_nanos() * 1000000i128) as i64;
+        let invalid_timestamp = last_timestamp + (MIN_BATCH_DELAY_IN_MS as i64) - 1;
 
         let proposal = create_test_proposal(
             &peer_account.1,
@@ -2679,7 +2679,7 @@ mod tests {
         let peer_account = &accounts[2];
         let peer_ip = peer_account.0;
 
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
 
         let proposal =
             create_test_proposal(&peer_account.1, committee, round, Default::default(), timestamp, 4, &mut rng);
@@ -2789,7 +2789,7 @@ mod tests {
 
         // Create a valid proposal.
         let round = 1;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
             primary.ledger.current_committee().unwrap(),
@@ -2864,7 +2864,7 @@ mod tests {
 
         // Create a valid proposal.
         let round = 1;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
             primary.ledger.current_committee().unwrap(),
@@ -2902,7 +2902,7 @@ mod tests {
         let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
 
         // Create a valid proposal.
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY_IN_MS as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
             primary.ledger.current_committee().unwrap(),
