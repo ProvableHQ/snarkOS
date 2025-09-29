@@ -113,7 +113,7 @@ impl<N: Network> DAG<N> {
                 trace!("Added new certificate for round {round} by author {author} to the DAG");
             } else {
                 #[cfg(debug_assertions)]
-                error!("A certificate for round {round} by author {author} already existed in the DAG");
+                warn!("A certificate for round {round} by author {author} already existed in the DAG");
             }
         }
     }
