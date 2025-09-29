@@ -17,6 +17,9 @@ use snarkvm::prelude::{Address, Network};
 
 use std::{collections::HashMap, net::SocketAddr};
 
+/// The resolver contains some reverse maps for peers which are not available
+/// by default to the implementors of PeerPoolHandling (who already contain
+/// maps from the peer's listening address to their various components).
 #[derive(Debug)]
 pub struct Resolver<N: Network> {
     /// The map of the (ambiguous) peer address to listener address.
