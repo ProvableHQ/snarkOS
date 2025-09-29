@@ -1319,6 +1319,8 @@ mod tests {
     }
 
     impl<N: Network> PeerPoolHandling<N> for DummyPeerPoolHandler {
+        const OWNER: &str = "[DummyPeerPoolHandler]";
+
         fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
             unreachable!();
         }

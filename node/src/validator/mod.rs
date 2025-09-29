@@ -26,6 +26,7 @@ use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
+    PeerPoolHandling,
     Router,
     Routing,
     messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
