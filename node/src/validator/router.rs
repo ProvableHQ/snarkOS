@@ -33,6 +33,8 @@ use snarkvm::{
 
 use std::{io, net::SocketAddr};
 
+const TRANSMISSION_PROPAGATION_RATE: usize = 1; // TODO: look into which % of proposals make it into blocks.
+
 impl<N: Network, C: ConsensusStorage<N>> P2P for Validator<N, C> {
     /// Returns a reference to the TCP instance.
     fn tcp(&self) -> &Tcp {
@@ -237,7 +239,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         }
         let message = Message::UnconfirmedSolution(serialized);
         // Propagate the "UnconfirmedSolution" to the connected validators.
-        self.propagate_to_validators(message, &[peer_ip]);
+        self.propagate_to_validators(message, &[peer_ip], TRANSMISSION_PROPAGATION_RATE);
         true
     }
 
@@ -255,7 +257,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         }
         let message = Message::UnconfirmedTransaction(serialized);
         // Propagate the "UnconfirmedTransaction" to the connected validators.
-        self.propagate_to_validators(message, &[peer_ip]);
+        self.propagate_to_validators(message, &[peer_ip], TRANSMISSION_PROPAGATION_RATE);
         true
     }
 }

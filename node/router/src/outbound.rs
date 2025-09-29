@@ -16,6 +16,7 @@
 use crate::{PeerPoolHandling, Router, messages::Message};
 use snarkvm::prelude::Network;
 
+use rand::{prelude::IteratorRandom, rngs::OsRng};
 use std::net::SocketAddr;
 
 pub trait Outbound<N: Network> {
@@ -61,7 +62,7 @@ pub trait Outbound<N: Network> {
     }
 
     /// Sends the given message to every connected validator, excluding the sender and any specified IPs.
-    fn propagate_to_validators(&self, message: Message<N>, excluded_peers: &[SocketAddr]) {
+    fn propagate_to_validators(&self, message: Message<N>, excluded_peers: &[SocketAddr], propagation_rate: usize) {
         // TODO (howardwu): Serialize large messages once only.
         // // Perform ahead-of-time, non-blocking serialization just once for applicable objects.
         // if let Message::UnconfirmedSolution(ref mut message) = message {
@@ -78,13 +79,18 @@ pub trait Outbound<N: Network> {
         //     }
         // }
 
+        // Initialize an RNG.
+        let rng = &mut OsRng;
+
         // Prepare the peers to send to.
         let connected_validators = self.router().filter_connected_peers(|peer| {
             peer.node_type.is_validator() && !excluded_peers.contains(&peer.listener_addr)
         });
 
         // Iterate through all validators that are not the sender and excluded validators.
-        for listener_addr in connected_validators.iter().map(|peer| peer.listener_addr) {
+        for listener_addr in
+            connected_validators.iter().map(|peer| peer.listener_addr).choose_multiple(rng, propagation_rate)
+        {
             self.router().send(listener_addr, message.clone());
         }
     }
