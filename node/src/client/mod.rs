@@ -265,17 +265,23 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     break;
                 }
 
-                // Make sure we do not sync too often
+                // Compute elapsed time since the last iteration started.
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(last_update);
                 let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
 
+                // Make sure we do not sync too often to prevent spam detection from triggering.
+                // TODO(kaimast): base rate limiting on request/second and distribute requests across multiple peers.
                 if !sleep_time.is_zero() {
                     sleep(sleep_time).await;
                 }
 
                 // Perform the sync routine.
                 self_.try_issuing_block_requests().await;
+
+                // Base the next sleep on how long this update took.
+                // E.g., if it took the entire SYNC_INTERVAL to issue block requests,
+                // do not sleep at all and immediately continue.
                 last_update = now;
             }
 
@@ -285,20 +291,10 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Start the block response processing loop (incoming).
         let self_ = self.clone();
         self.spawn(async move {
-            let mut last_update = Instant::now();
             loop {
                 // If the Ctrl-C handler registered the signal, stop the task.
                 if self_.signal_handler.is_stopped() {
                     break;
-                }
-
-                // Make sure we do not sync too often (rate-limiting).
-                let now = Instant::now();
-                let elapsed = now.saturating_duration_since(last_update);
-                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
-
-                if !sleep_time.is_zero() {
-                    sleep(sleep_time).await;
                 }
 
                 // Wait until there is something to do or until the timeout.
@@ -306,7 +302,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
                 // Perform the sync routine.
                 self_.try_advancing_block_synchronization().await;
-                last_update = now;
+
+                // We perform no additional rate limiting here as
+                // requests are already rate-limited.
             }
 
             debug!("Stopped block response processing");
