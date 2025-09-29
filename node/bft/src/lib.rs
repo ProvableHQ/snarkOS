@@ -52,7 +52,7 @@ pub const CONTEXT: &str = "[MemoryPool]";
 pub const MEMORY_POOL_PORT: u16 = 5000; // port
 
 /// The maximum number of milliseconds to wait before proposing a batch.
-pub const MAX_BATCH_DELAY_IN_MS: u64 = 2500; // ms
+pub const MAX_BATCH_DELAY_IN_MS: u64 = 200; // ms
 /// The minimum number of seconds to wait before proposing a batch.
 pub const MIN_BATCH_DELAY_IN_MS: u64 = 200; // ms // TODO: look into forking risk.
 /// The maximum number of milliseconds to wait before timing out on a fetch.
