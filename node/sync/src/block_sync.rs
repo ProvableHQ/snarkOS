@@ -187,10 +187,17 @@ impl<N: Network> BlockSync<N> {
         }
     }
 
+    /// Blocks until something about a peer changes,
+    /// or block request has been fully processed (either successfully or unsuccessfully).
+    ///
+    /// Used by the outgoing task.
     pub async fn wait_for_peer_update(&self) {
         self.peer_notify.notified().await
     }
 
+    /// Blocks until there is a new response to a block request.
+    ///
+    /// Used by the incoming task.
     pub async fn wait_for_block_responses(&self) {
         self.response_notify.notified().await
     }
@@ -417,8 +424,9 @@ impl<N: Network> BlockSync<N> {
             // If sending fails for any peer, remove the block request from the sync pool.
             if !success {
                 // Remove the entire block request from the sync pool.
+                let mut requests = self.requests.write();
                 for height in start_height..end_height {
-                    self.remove_block_request(height);
+                    requests.remove(&height);
                 }
                 // Break out of the loop.
                 return false;
@@ -895,12 +903,6 @@ impl<N: Network> BlockSync<N> {
         Ok(())
     }
 
-    /// Removes the entire block request for the given height, if it exists.
-    fn remove_block_request(&self, height: u32) {
-        // Remove the request entry for the given height.
-        self.requests.write().remove(&height);
-    }
-
     /// Removes the block request and response for the given height
     /// This may only be called after `peek_next_block`, which checked if the request for the given height was complete.
     ///
@@ -913,8 +915,11 @@ impl<N: Network> BlockSync<N> {
             trace!(
                 "Block request for height {height} was completed in {}ms (sync speed is {})",
                 e.timestamp.elapsed().as_millis(),
-                self.get_sync_speed(),
+                self.get_sync_speed()
             );
+
+            // Notify the sending task that less requests are in-flight.
+            self.peer_notify.notify_one();
         }
     }
 
