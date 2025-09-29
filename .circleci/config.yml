@@ -44,9 +44,12 @@ commands:
             # Install llvm (libclang for rocksdb).
             choco install llvm -y
             refreshenv
+
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.83.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+
+            # Add cargo to PATH
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
             # Verify the installation.
             cargo --version --verbose
@@ -57,6 +60,9 @@ commands:
       - run:
           name: "Run cargo check"
           command: |
+            # Add cargo to PATH
+            $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
+            # Check that the given package compiles
             cd << parameters.workspace_member >>
             cargo check --examples --benches --tests
       - save_cache:
