@@ -282,7 +282,9 @@ pub mod prop_tests {
 
     /// Returns the current UTC epoch timestamp.
     pub fn now() -> i64 {
-        time::OffsetDateTime::now_utc().unix_timestamp()
+        let now = time::OffsetDateTime::now_utc();
+        now.unix_timestamp().saturating_mul(1000)
+            + (now.nanosecond() / 1_000_000) as i64 // TODO: look into durability of typesize and forking risk.
     }
 
     pub fn any_solution_id() -> BoxedStrategy<SolutionID<CurrentNetwork>> {

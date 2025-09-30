@@ -1618,7 +1618,7 @@ impl<N: Network> Primary<N> {
             .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
         // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_MS` seconds ago.
         match elapsed < MIN_BATCH_DELAY_IN_MS as i64 {
-            true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
+            true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}, {timestamp}>={previous_timestamp}+{MIN_BATCH_DELAY_IN_MS}"),
             false => Ok(()),
         }
     }
@@ -2625,7 +2625,7 @@ mod tests {
             .storage
             .get_certificate_for_round_with_author(round - 1, peer_account.1.address())
             .expect("No previous proposal exists")
-            .timestamp_nanos() * 1000000i128) as i64;
+            .timestamp());
         let invalid_timestamp = last_timestamp + (MIN_BATCH_DELAY_IN_MS as i64) - 1;
 
         let proposal = create_test_proposal(
