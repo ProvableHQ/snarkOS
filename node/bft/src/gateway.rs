@@ -51,8 +51,6 @@ use snarkos_node_tcp::{
     ConnectionSide,
     P2P,
     Tcp,
-    is_bogon_ip,
-    is_unspecified_or_broadcast_ip,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
 use snarkvm::{
@@ -165,6 +163,8 @@ pub struct InnerGateway<N: Network> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
+    const OWNER: &str = CONTEXT;
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
@@ -324,22 +324,6 @@ impl<N: Network> Gateway<N> {
         self.dev
     }
 
-    /// Returns the IP address of this node.
-    pub fn local_ip(&self) -> SocketAddr {
-        self.tcp.listening_addr().expect("The TCP listener is not enabled")
-    }
-
-    /// Returns `true` if the given IP is this node.
-    pub fn is_local_ip(&self, ip: SocketAddr) -> bool {
-        ip == self.local_ip()
-            || (ip.ip().is_unspecified() || ip.ip().is_loopback()) && ip.port() == self.local_ip().port()
-    }
-
-    /// Returns `true` if the given IP is not this node, is not a bogon address, and is not unspecified.
-    pub fn is_valid_peer_ip(&self, ip: SocketAddr) -> bool {
-        !self.is_local_ip(ip) && !is_bogon_ip(ip.ip()) && !is_unspecified_or_broadcast_ip(ip.ip())
-    }
-
     /// Returns the resolver.
     pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
@@ -428,57 +412,9 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Returns the maximum number of connected peers.
-    pub fn max_connected_peers(&self) -> usize {
-        self.tcp.config().max_connections as usize
-    }
-
     /// Returns the list of connected addresses.
     pub fn connected_addresses(&self) -> HashSet<Address<N>> {
         self.get_connected_peers().into_iter().map(|peer| peer.aleo_addr).collect()
-    }
-
-    /// Attempts to connect to the given peer IP.
-    pub fn connect(&self, peer_ip: SocketAddr) -> Option<JoinHandle<bool>> {
-        // Return early if the attempt is against the protocol rules.
-        if let Err(forbidden_error) = self.check_connection_attempt(peer_ip) {
-            warn!("{forbidden_error}");
-            return None;
-        }
-
-        let self_ = self.clone();
-        Some(tokio::spawn(async move {
-            debug!("Connecting to validator {peer_ip}...");
-            // Attempt to connect to the peer.
-            match self_.tcp.connect(peer_ip).await {
-                Ok(_) => true,
-                Err(error) => {
-                    warn!("Unable to connect to '{peer_ip}' - {error}");
-                    false
-                }
-            }
-        }))
-    }
-
-    /// Ensure we are allowed to connect to the given peer.
-    fn check_connection_attempt(&self, peer_ip: SocketAddr) -> Result<()> {
-        // Ensure the peer IP is not this node.
-        if self.is_local_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (attempted to self-connect)")
-        }
-        // Ensure the node does not surpass the maximum number of peer connections.
-        if self.number_of_connected_peers() >= self.max_connected_peers() {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (maximum peers reached)")
-        }
-        // Ensure the node is not already connected to this peer.
-        if self.is_connected(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connected)")
-        }
-        // Ensure the node is not already connecting to this peer.
-        if self.is_connecting(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connecting)")
-        }
-        Ok(())
     }
 
     /// Ensure the peer is allowed to connect.
@@ -1571,6 +1507,7 @@ mod prop_tests {
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
+    use snarkos_node_router::PeerPoolHandling;
     use snarkos_node_tcp::P2P;
     use snarkvm::{
         ledger::{

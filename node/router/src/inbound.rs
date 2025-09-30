@@ -322,7 +322,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // In development mode, relax the validity requirements to make operating devnets more flexible.
                 true => ip != peer_ip && !is_bogon_ip(ip.ip()),
                 // In production mode, ensure the peer IPs are valid.
-                false => ip != peer_ip && self.router().is_valid_peer_ip(&ip),
+                false => ip != peer_ip && self.router().is_valid_peer_ip(ip),
             }
         });
         // Get the low-level peer stats.
@@ -359,7 +359,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
             // In development mode, relax the validity requirements to make operating devnets more flexible.
             true => peers.iter().copied().filter(|ip| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
             // In production mode, ensure the peer IPs are valid.
-            false => peers.iter().copied().filter(|ip| self.router().is_valid_peer_ip(ip)).collect(),
+            false => peers.iter().copied().filter(|ip| self.router().is_valid_peer_ip(*ip)).collect(),
         };
         // Adds the given peer IPs to the list of candidate peers.
         self.router().insert_candidate_peers(&peers);

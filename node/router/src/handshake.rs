@@ -306,7 +306,7 @@ impl<N: Network> Router<N> {
     /// Ensure the peer is allowed to connect.
     fn ensure_peer_is_allowed(&self, listener_addr: SocketAddr) -> Result<()> {
         // Ensure that it's not a self-connect attempt.
-        if self.is_local_ip(&listener_addr) {
+        if self.is_local_ip(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)")
         }
         // Unknown peers are untrusted, so check if `allow_external_peers` is true.
