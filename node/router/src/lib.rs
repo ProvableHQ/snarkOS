@@ -60,15 +60,13 @@ use anyhow::{Result, bail};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-#[cfg(not(any(test)))]
-use std::net::IpAddr;
 use std::{
     cmp,
     collections::{HashMap, HashSet, hash_map::Entry},
     fs,
     future::Future,
     io::{self, Write},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::Deref,
     str::FromStr,
     sync::Arc,
@@ -434,6 +432,16 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
         self.disconnect(listener_addr);
     }
+
+    /// Check whether the given IP address is currently banned.
+    fn is_ip_banned(&self, ip: IpAddr) -> bool {
+        self.tcp().banned_peers().is_ip_banned(&ip)
+    }
+
+    /// Insert or update a banned IP.
+    fn update_ip_ban(&self, ip: IpAddr) {
+        self.tcp().banned_peers().update_ip_ban(ip);
+    }
 }
 
 /// The router keeps track of connected and connecting peers.
@@ -487,12 +495,12 @@ pub struct InnerRouter<N: Network> {
 
 impl<N: Network> Router<N> {
     /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
-    #[cfg(not(test))]
+    #[cfg(not(feature = "test"))]
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
     /// The maximum number of candidate peers permitted to be stored in the node.
     const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
     /// The maximum amount of connection attempts within a 10 second threshold
-    #[cfg(not(test))]
+    #[cfg(not(feature = "test"))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
     /// The duration after which a connected peer is considered inactive or
     /// disconnected if no message has been received in the meantime.
@@ -605,18 +613,6 @@ impl<N: Network> Router<N> {
     /// Returns the listener IP address from the (ambiguous) peer address.
     pub fn resolve_to_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
         self.resolver.read().get_listener(connected_addr)
-    }
-
-    /// Check whether the given IP address is currently banned.
-    #[cfg(not(any(test)))]
-    fn is_ip_banned(&self, ip: IpAddr) -> bool {
-        self.tcp.banned_peers().is_ip_banned(&ip)
-    }
-
-    /// Insert or update a banned IP.
-    #[cfg(not(any(test)))]
-    fn update_ip_ban(&self, ip: IpAddr) {
-        self.tcp.banned_peers().update_ip_ban(ip);
     }
 
     /// Returns the list of metrics for the connected peers.

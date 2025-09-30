@@ -70,8 +70,6 @@ use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use rand::seq::{IteratorRandom, SliceRandom};
-#[cfg(not(any(test)))]
-use std::net::IpAddr;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -434,18 +432,6 @@ impl<N: Network> Gateway<N> {
         }
 
         self.add_peer_on_handshake_resp(listener_addr)
-    }
-
-    /// Check whether the given IP address is currently banned.
-    #[cfg(not(any(test)))]
-    fn is_ip_banned(&self, ip: IpAddr) -> bool {
-        self.tcp.banned_peers().is_ip_banned(&ip)
-    }
-
-    /// Insert or update a banned IP.
-    #[cfg(not(any(test)))]
-    fn update_ip_ban(&self, ip: IpAddr) {
-        self.tcp.banned_peers().update_ip_ban(ip);
     }
 
     #[cfg(feature = "metrics")]
