@@ -51,7 +51,8 @@ jobs:
         run: |
           gcloud config set project protocol-development-sandbox
           # Created with `.ci/generate_ledger.sh 40 250 1`
-          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250.zip ledger.zip
+          # NOTE: This needs to be updated when the consensus version changes.
+          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-9ec2291c57.zip ledger.zip
           unzip ledger.zip
  
       - name: Install snarkOS (test_network)
@@ -116,7 +117,9 @@ jobs:
           fail-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Use generic JSON format
-          tool: 'customSmallerIsBetter'
+          # Note: there is no way to set smallerIsBetter for individual benchmarks right now,
+          # but for all, except the sync variance, bigger is indeed better.
+          tool: 'customBiggerIsBetter'
           output-file-path: results.json
           alert-comment-cc-users: '@kaimast'
           # Only push the results on staging (see below)

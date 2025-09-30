@@ -15,7 +15,7 @@ node_stopped=false
 # NOTE: when you update this, update TASKSET1/2 as well.
 CORES_PER_NODE=8
 
-# Tasksets to pin processes to specfic CPUs.
+# Tasksets to pin processes to specific CPUs.
 # This is a no-op on MacOS.
 if [[ "$(uname)" == "Darwin" ]]; then
   TASKSET1=""

@@ -42,7 +42,7 @@ async def make_request(session, worker_id, mode):
     """Make a single async request to the block endpoint"""
 
     if mode == "get-block":
-        block_id = random.randint(MIN_BLOCK, MAX_BLOCK+1)
+        block_id = random.randint(MIN_BLOCK, MAX_BLOCK)
         url = f"{GET_BLOCK_BASE_URL}/{block_id}"
     elif mode == "block-height":
         url = BLOCK_HEIGHT_URL
