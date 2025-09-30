@@ -946,14 +946,8 @@ impl<N: Network> Gateway<N> {
     fn handle_trusted_validators(&self) {
         // Ensure that the trusted nodes are connected.
         for validator_ip in &self.trusted_peers() {
-            // If the trusted_validator is not connected, attempt to connect to it.
-            if !self.is_local_ip(*validator_ip)
-                && !self.is_connecting(*validator_ip)
-                && !self.is_connected(*validator_ip)
-            {
-                // Attempt to connect to the trusted validator.
-                self.connect(*validator_ip);
-            }
+            // Attempt to connect to the trusted validator.
+            self.connect(*validator_ip);
         }
     }
 
@@ -980,11 +974,15 @@ impl<N: Network> Gateway<N> {
     /// if the number of connected validators is less than the minimum.
     /// It also attempts to connect to known unconnected validators.
     fn handle_min_connected_validators(&self) {
-        // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
+        // Attempt to connect to untrusted validators we're not connected to yet.
+        // The trusted ones are already handled by `handle_trusted_validators`.
+        let trusted_validators = self.trusted_peers();
         if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
             for candidate_addr in self.candidate_peers() {
-                // Attempt to connect to unconnected validators.
-                self.connect(candidate_addr);
+                if !trusted_validators.contains(&candidate_addr) {
+                    // Attempt to connect to unconnected validators.
+                    self.connect(candidate_addr);
+                }
             }
 
             // Retrieve the connected validators.
