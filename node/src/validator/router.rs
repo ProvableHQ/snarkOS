@@ -26,11 +26,11 @@ use snarkos_node_router::messages::{
     Pong,
     UnconfirmedTransaction,
 };
-use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
+use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
-    utilities::{flatten_error, io_error},
+    utilities::flatten_error,
 };
 
 use std::{io, net::SocketAddr};
@@ -45,12 +45,12 @@ impl<N: Network, C: ConsensusStorage<N>> P2P for Validator<N, C> {
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Handshake for Validator<N, C> {
     /// Performs the handshake protocol.
-    async fn perform_handshake(&self, mut connection: Connection) -> io::Result<Connection> {
+    async fn perform_handshake(&self, mut connection: Connection) -> Result<Connection, ConnectError> {
         // Perform the handshake.
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
-        let genesis_header = self.ledger.get_header(0).map_err(io_error)?;
+        let genesis_header = self.ledger.get_header(0).map_err(ConnectError::other)?;
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
         self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 

@@ -82,7 +82,7 @@ impl Heartbeat<Network> for HeartbeatTest {
 
 /// Initiate connection to peer and wait until it is fully established
 async fn connect_to(router: &TestRouter<Network>, other: &TestRouter<Network>) {
-    let success = router.connect(other.local_ip()).unwrap().await.unwrap();
+    let success = router.connect(other.local_ip()).unwrap().await.unwrap().is_ok();
     assert!(success, "Connection failed");
 
     while !router.is_connected(other.local_ip()) {

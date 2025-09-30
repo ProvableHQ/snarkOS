@@ -26,6 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 use once_cell::sync::OnceCell;
@@ -74,15 +75,45 @@ pub enum ConnectError {
     AlreadyConnecting { address: SocketAddr },
     #[error("already connected to node at {address:?}")]
     AlreadyConnected { address: SocketAddr },
+    #[error("already connected to the given aleo address")]
+    AlreadyConnectedToAleoAddress,
     #[error("attempt to self-connect (at address {address:?}")]
     SelfConnect { address: SocketAddr },
+    #[error("no external peers allowed")]
+    NoExternalPeersAllowed,
     #[error("I/O error: {0}")]
     IoError(std::io::Error),
+    /// Application-specific error
+    #[error("{0}")]
+    Other(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl ConnectError {
+    /// Create a connection error with custom, application-specific content.
+    pub fn other<E: Into<Box<dyn std::error::Error + Send + Sync>>>(err: E) -> Self {
+        Self::Other(err.into())
+    }
+}
+
+impl From<ConnectError> for std::io::Error {
+    fn from(err: ConnectError) -> Self {
+        match err {
+            ConnectError::IoError(err) => err,
+            ConnectError::Other(err) => std::io::Error::other(err),
+            err => std::io::Error::other(err.to_string()),
+        }
+    }
 }
 
 impl From<std::io::Error> for ConnectError {
-    fn from(inner: std::io::Error) -> Self {
-        Self::IoError(inner)
+    fn from(err: std::io::Error) -> Self {
+        if err.kind() == std::io::ErrorKind::Other {
+            // This unwrap should always succeed.
+            let inner = err.into_inner().unwrap_or_else(|| anyhow!("Unknown error").into());
+            ConnectError::Other(inner)
+        } else {
+            ConnectError::IoError(err)
+        }
     }
 }
 
@@ -252,12 +283,12 @@ impl Tcp {
         }
 
         if self.is_connected(addr) {
-            warn!(parent: self.span(), "Already connected to {addr}");
+            trace!(parent: self.span(), "Already connected to {addr}");
             return Err(ConnectError::AlreadyConnected { address: addr });
         }
 
         if !self.connecting.lock().insert(addr) {
-            warn!(parent: self.span(), "Already connecting to {addr}");
+            debug!(parent: self.span(), "Already connecting to {addr}");
             return Err(ConnectError::AlreadyConnecting { address: addr });
         }
 

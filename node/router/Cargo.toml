@@ -112,6 +112,9 @@ features = [ "codec" ]
 [dependencies.tokio-stream]
 version = "=0.1"
 
+[dependencies.thiserror]
+workspace = true
+
 [dependencies.tracing]
 workspace = true
 
@@ -144,7 +147,3 @@ features = [ "test" ]
 [dev-dependencies.snarkvm]
 workspace = true
 features = [ "test-helpers" ]
-
-[dev-dependencies.tracing-subscriber]
-workspace = true
-features = [ "env-filter", "fmt" ]
