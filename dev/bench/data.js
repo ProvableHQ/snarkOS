@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759228055545,
+  "lastUpdate": 1759235519747,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -2322,6 +2322,66 @@ window.BENCHMARK_DATA = {
             "value": 1.23,
             "unit": "blocks/s",
             "extra": "total_wait=203s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8bd4304e481bebe4fecc7cb684c7056ea1a6162",
+          "message": "Merge pull request #3894 from ljedrz/tweak/improve_peer_cache_connection_setup\n\n[Logs] Reduce the log level when failing to connect to non-trusted/bootstrap peers",
+          "timestamp": "2025-09-30T14:02:22+02:00",
+          "tree_id": "b414b2fb629fd4d231b1b07c8dae20ec8327d895",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/c8bd4304e481bebe4fecc7cb684c7056ea1a6162"
+        },
+        "date": 1759235518720,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.7728006145907176,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=173.11017513275146, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 8022.948867498141,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=9.97139596939087, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.3,
+            "unit": "blocks/s",
+            "extra": "total_wait=192s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.187566,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=187, mean_speed=0.882175, max_speed=2.866667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.17,
+            "unit": "blocks/s",
+            "extra": "total_wait=213s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
           }
         ]
       }
