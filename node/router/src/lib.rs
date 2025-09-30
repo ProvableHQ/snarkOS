@@ -133,6 +133,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             debug!("{{Self::OWNER}} Dropping connection attempt to '{listener_addr}' (already connecting)");
             return Ok(true);
         }
+        // If the IP is already banned, reject the attempt.
+        if self.is_ip_banned(listener_addr.ip()) {
+            bail!("{{Self::OWNER}} Rejected a connection attempt to a banned IP '{}'", listener_addr.ip());
+        }
         Ok(false)
     }
 
