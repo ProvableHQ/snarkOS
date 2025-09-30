@@ -432,6 +432,16 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
         self.disconnect(listener_addr);
     }
+
+    /// Check whether the given IP address is currently banned.
+    fn is_ip_banned(&self, ip: IpAddr) -> bool {
+        self.tcp().banned_peers().is_ip_banned(&ip)
+    }
+
+    /// Insert or update a banned IP.
+    fn update_ip_ban(&self, ip: IpAddr) {
+        self.tcp().banned_peers().update_ip_ban(ip);
+    }
 }
 
 /// The router keeps track of connected and connecting peers.
@@ -603,18 +613,6 @@ impl<N: Network> Router<N> {
     /// Returns the listener IP address from the (ambiguous) peer address.
     pub fn resolve_to_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
         self.resolver.read().get_listener(connected_addr)
-    }
-
-    /// Check whether the given IP address is currently banned.
-    #[cfg(not(any(test)))]
-    fn is_ip_banned(&self, ip: IpAddr) -> bool {
-        self.tcp.banned_peers().is_ip_banned(&ip)
-    }
-
-    /// Insert or update a banned IP.
-    #[cfg(not(any(test)))]
-    fn update_ip_ban(&self, ip: IpAddr) {
-        self.tcp.banned_peers().update_ip_ban(ip);
     }
 
     /// Returns the list of metrics for the connected peers.
