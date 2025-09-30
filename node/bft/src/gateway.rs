@@ -51,8 +51,6 @@ use snarkos_node_tcp::{
     ConnectionSide,
     P2P,
     Tcp,
-    is_bogon_ip,
-    is_unspecified_or_broadcast_ip,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
 use snarkvm::{
@@ -72,8 +70,6 @@ use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use rand::seq::{IteratorRandom, SliceRandom};
-#[cfg(not(any(test)))]
-use std::net::IpAddr;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -165,6 +161,8 @@ pub struct InnerGateway<N: Network> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
+    const OWNER: &str = CONTEXT;
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
@@ -311,17 +309,6 @@ impl<N: Network> CommunicationService for Gateway<N> {
     async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>> {
         Transport::send(self, peer_ip, message).await
     }
-
-    fn ban_peer(&self, peer_ip: SocketAddr) {
-        trace!("Banning peer {peer_ip} for timing out on block requests");
-
-        let tcp = self.tcp().clone();
-        tcp.banned_peers().update_ip_ban(peer_ip.ip());
-
-        tokio::spawn(async move {
-            tcp.disconnect(peer_ip).await;
-        });
-    }
 }
 
 impl<N: Network> Gateway<N> {
@@ -333,22 +320,6 @@ impl<N: Network> Gateway<N> {
     /// Returns the dev identifier of the node.
     pub fn dev(&self) -> Option<u16> {
         self.dev
-    }
-
-    /// Returns the IP address of this node.
-    pub fn local_ip(&self) -> SocketAddr {
-        self.tcp.listening_addr().expect("The TCP listener is not enabled")
-    }
-
-    /// Returns `true` if the given IP is this node.
-    pub fn is_local_ip(&self, ip: SocketAddr) -> bool {
-        ip == self.local_ip()
-            || (ip.ip().is_unspecified() || ip.ip().is_loopback()) && ip.port() == self.local_ip().port()
-    }
-
-    /// Returns `true` if the given IP is not this node, is not a bogon address, and is not unspecified.
-    pub fn is_valid_peer_ip(&self, ip: SocketAddr) -> bool {
-        !self.is_local_ip(ip) && !is_bogon_ip(ip.ip()) && !is_unspecified_or_broadcast_ip(ip.ip())
     }
 
     /// Returns the resolver.
@@ -385,12 +356,8 @@ impl<N: Network> Gateway<N> {
 
     /// Returns `true` if the node is connected to the given Aleo address.
     pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // Retrieve the peer IP of the given address.
-        match self.resolver.read().get_peer_ip_for_address(address) {
-            // Determine if the peer IP is connected.
-            Some(peer_ip) => self.is_connected(peer_ip),
-            None => false,
-        }
+        // The resolver only contains data on connected peers.
+        self.resolver.read().get_peer_ip_for_address(address).is_some()
     }
 
     /// Returns `true` if the given peer IP is an authorized validator.
@@ -400,7 +367,7 @@ impl<N: Network> Gateway<N> {
             return true;
         }
         // Retrieve the Aleo address of the peer IP.
-        match self.resolver.read().get_address(ip) {
+        match self.resolve_to_aleo_addr(ip) {
             // Determine if the peer IP is an authorized validator.
             Some(address) => self.is_authorized_validator_address(address),
             None => false,
@@ -443,57 +410,9 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Returns the maximum number of connected peers.
-    pub fn max_connected_peers(&self) -> usize {
-        self.tcp.config().max_connections as usize
-    }
-
     /// Returns the list of connected addresses.
     pub fn connected_addresses(&self) -> HashSet<Address<N>> {
         self.get_connected_peers().into_iter().map(|peer| peer.aleo_addr).collect()
-    }
-
-    /// Attempts to connect to the given peer IP.
-    pub fn connect(&self, peer_ip: SocketAddr) -> Option<JoinHandle<bool>> {
-        // Return early if the attempt is against the protocol rules.
-        if let Err(forbidden_error) = self.check_connection_attempt(peer_ip) {
-            warn!("{forbidden_error}");
-            return None;
-        }
-
-        let self_ = self.clone();
-        Some(tokio::spawn(async move {
-            debug!("Connecting to validator {peer_ip}...");
-            // Attempt to connect to the peer.
-            match self_.tcp.connect(peer_ip).await {
-                Ok(_) => true,
-                Err(error) => {
-                    warn!("Unable to connect to '{peer_ip}' - {error}");
-                    false
-                }
-            }
-        }))
-    }
-
-    /// Ensure we are allowed to connect to the given peer.
-    fn check_connection_attempt(&self, peer_ip: SocketAddr) -> Result<()> {
-        // Ensure the peer IP is not this node.
-        if self.is_local_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (attempted to self-connect)")
-        }
-        // Ensure the node does not surpass the maximum number of peer connections.
-        if self.number_of_connected_peers() >= self.max_connected_peers() {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (maximum peers reached)")
-        }
-        // Ensure the node is not already connected to this peer.
-        if self.is_connected(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connected)")
-        }
-        // Ensure the node is not already connecting to this peer.
-        if self.is_connecting(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connecting)")
-        }
-        Ok(())
     }
 
     /// Ensure the peer is allowed to connect.
@@ -513,18 +432,6 @@ impl<N: Network> Gateway<N> {
         }
 
         self.add_peer_on_handshake_resp(listener_addr)
-    }
-
-    /// Check whether the given IP address is currently banned.
-    #[cfg(not(any(test)))]
-    fn is_ip_banned(&self, ip: IpAddr) -> bool {
-        self.tcp.banned_peers().is_ip_banned(&ip)
-    }
-
-    /// Insert or update a banned IP.
-    #[cfg(not(any(test)))]
-    fn update_ip_ban(&self, ip: IpAddr) {
-        self.tcp.banned_peers().update_ip_ban(ip);
     }
 
     #[cfg(feature = "metrics")]
@@ -557,8 +464,8 @@ impl<N: Network> Gateway<N> {
             });
         }
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            if matches!(peer, Peer::Connected(_)) {
-                self.resolver.write().remove_peer(peer_ip);
+            if let Peer::Connected(connected_peer) = peer {
+                self.resolver.write().remove_peer(peer_ip, connected_peer.aleo_addr);
             }
             peer.downgrade_to_candidate(peer_ip);
         }
@@ -573,7 +480,7 @@ impl<N: Network> Gateway<N> {
     /// which can be used to determine when and whether the event has been delivered.
     fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
-        let Some(peer_addr) = self.resolver.read().get_ambiguous(peer_ip) else {
+        let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
             warn!("Unable to resolve the listener IP address '{peer_ip}'");
             return None;
         };
@@ -823,7 +730,7 @@ impl<N: Network> Gateway<N> {
                     // Iterate over the validators.
                     for validator_ip in connected_peers.into_iter().take(MAX_VALIDATORS_TO_SEND) {
                         // Retrieve the validator address.
-                        if let Some(validator_address) = self_.resolver.read().get_address(validator_ip) {
+                        if let Some(validator_address) = self_.resolve_to_aleo_addr(validator_ip) {
                             // Add the validator to the list of validators.
                             validators.insert(validator_ip, validator_address);
                         }
@@ -912,20 +819,6 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
-    /// indicates whether the peer was actually disconnected from, or if this was a noop.
-    pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
-        let gateway = self.clone();
-        tokio::spawn(async move {
-            if let Some(peer) = gateway.get_connected_peer(peer_ip) {
-                let connected_addr = peer.connected_addr;
-                gateway.tcp.disconnect(connected_addr).await
-            } else {
-                false
-            }
-        })
-    }
-
     /// Initialize a new instance of the heartbeat.
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
@@ -999,7 +892,7 @@ impl<N: Network> Gateway<N> {
         // Log the connected validators.
         info!("{connections_msg}");
         for peer_ip in &connected_validators {
-            let address = self.resolver.read().get_address(*peer_ip).map_or("Unknown".to_string(), |a| {
+            let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
@@ -1600,6 +1493,7 @@ mod prop_tests {
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
+    use snarkos_node_router::PeerPoolHandling;
     use snarkos_node_tcp::P2P;
     use snarkvm::{
         ledger::{

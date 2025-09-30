@@ -44,6 +44,7 @@ use crate::{
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
 use snarkvm::{
     console::{
@@ -731,7 +732,7 @@ impl<N: Network> Primary<N> {
         let batch_author = batch_header.author();
 
         // Ensure the batch proposal is from the validator.
-        match self.gateway.resolver().read().get_address(peer_ip) {
+        match self.gateway.resolve_to_aleo_addr(peer_ip) {
             // If the peer is a validator, then ensure the batch proposal is from the validator.
             Some(address) => {
                 if address != batch_author {
@@ -1005,7 +1006,7 @@ impl<N: Network> Primary<N> {
         let signer = signature.to_address();
 
         // Ensure the batch signature is signed by the validator.
-        if self.gateway.resolver().read().get_address(peer_ip) != Some(signer) {
+        if self.gateway.resolve_to_aleo_addr(peer_ip) != Some(signer) {
             // Proceed to disconnect the validator.
             self.gateway.disconnect(peer_ip);
             bail!("Malicious peer - batch signature is from a different validator ({signer})");
@@ -1044,7 +1045,7 @@ impl<N: Network> Primary<N> {
                     // Retrieve the committee lookback for the round.
                     let committee_lookback = self_.ledger.get_committee_lookback_for_round(proposal.round())?;
                     // Retrieve the address of the validator.
-                    let Some(signer) = self_.gateway.resolver().read().get_address(peer_ip) else {
+                    let Some(signer) = self_.gateway.resolve_to_aleo_addr(peer_ip) else {
                         bail!("Signature is from a disconnected validator");
                     };
                     // Add the signature to the batch.

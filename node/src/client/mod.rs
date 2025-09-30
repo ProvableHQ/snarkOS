@@ -311,7 +311,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
     async fn try_issuing_block_requests(&self) {
-        let new_requests = self.sync.handle_block_request_timeouts(self);
+        let new_requests = self.sync.handle_block_request_timeouts(&self.router);
         if let Some((block_requests, sync_peers)) = new_requests {
             self.send_block_requests(block_requests, sync_peers).await;
         }
@@ -362,7 +362,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     ) {
         // Issues the block requests in batches.
         for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.sync.send_block_requests(self, &sync_peers, requests).await {
+            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
                 // Stop if we fail to process a batch of requests.
                 break;
             }

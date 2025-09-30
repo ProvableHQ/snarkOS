@@ -31,7 +31,6 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
-use snarkos_node_sync::communication_service::CommunicationService;
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
@@ -131,42 +130,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 self.router().disconnect(peer_ip);
             }
         }
-    }
-}
-
-#[async_trait]
-impl<N: Network, C: ConsensusStorage<N>> CommunicationService for Client<N, C> {
-    /// The message type.
-    type Message = Message<N>;
-
-    /// Prepares a block request to be sent.
-    fn prepare_block_request(start_height: u32, end_height: u32) -> Self::Message {
-        debug_assert!(start_height < end_height, "Invalid block request format");
-        Message::BlockRequest(BlockRequest { start_height, end_height })
-    }
-
-    /// Sends the given message to specified peer.
-    ///
-    /// This function returns as soon as the message is queued to be sent,
-    /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
-    /// which can be used to determine when and whether the message has been delivered.
-    async fn send(
-        &self,
-        peer_ip: SocketAddr,
-        message: Self::Message,
-    ) -> Option<tokio::sync::oneshot::Receiver<io::Result<()>>> {
-        self.router().send(peer_ip, message)
-    }
-
-    fn ban_peer(&self, peer_ip: SocketAddr) {
-        debug!("Banning peer {peer_ip} for timing out on block requests");
-
-        let tcp = self.router.tcp().clone();
-        tcp.banned_peers().update_ip_ban(peer_ip.ip());
-
-        tokio::spawn(async move {
-            tcp.disconnect(peer_ip).await;
-        });
     }
 }
 

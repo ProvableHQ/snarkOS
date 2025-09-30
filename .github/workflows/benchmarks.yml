@@ -51,7 +51,7 @@ jobs:
         run: |
           gcloud config set project protocol-development-sandbox
           # Created with `.ci/generate_ledger.sh 40 250 1`
-          # NOTE: This needs to be updated when the consensu version changes.
+          # NOTE: This needs to be updated when the consensus version changes.
           gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-9ec2291c57.zip ledger.zip
           unzip ledger.zip
  
