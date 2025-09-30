@@ -61,7 +61,11 @@ pub const REDUNDANCY_FACTOR: usize = 1;
 pub const REDUNDANCY_FACTOR: usize = 3;
 
 /// The time nodes wait between issuing batches of block requests to avoid triggering spam detection.
-// TODO (kaimast): Document why 10ms (not 1 or 100)
+///
+/// The current rate limit for all messages is around 160k  per second (see [`Gateway::max_cache_events`]).
+/// This constant limits number of block requests to a much lower 100 per second.
+///
+// TODO(kaimast): base rate limits on how many requests were sent to each peer instead.
 pub const BLOCK_REQUEST_BATCH_DELAY: Duration = Duration::from_millis(10);
 
 const EXTRA_REDUNDANCY_FACTOR: usize = REDUNDANCY_FACTOR * 3;

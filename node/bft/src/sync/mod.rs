@@ -16,7 +16,6 @@
 use crate::{
     Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
-    PRIMARY_PING_IN_MS,
     Transport,
     events::DataBlocks,
     helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
@@ -45,7 +44,7 @@ use std::{
     future::Future,
     net::SocketAddr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
@@ -97,8 +96,9 @@ pub struct Sync<N: Network> {
 }
 
 impl<N: Network> Sync<N> {
-    /// The rate at which the node tries to advance block sync.
-    const SYNC_INTERVAL: Duration = Duration::from_millis(PRIMARY_PING_IN_MS);
+    /// The maximum time to wait for peer updates before timing out and attempting to issue new requests.
+    /// This only exists as a fallback for the (unlikely) case a task does not get notified about updates.
+    const MAX_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
     /// Initializes a new sync instance.
     pub fn new(
@@ -172,29 +172,14 @@ impl<N: Network> Sync<N> {
         // Start the block request generation loop (outgoing).
         let self_ = self.clone();
         self.spawn(async move {
-            let mut last_update = Instant::now();
             loop {
-                // Compute elapsed time since the last iteration started.
-                let now = Instant::now();
-                let elapsed = now.saturating_duration_since(last_update);
-                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
-
-                // Make sure we do not sync too often to prevent spam detection from triggering.
-                // TODO(kaimast): base rate limiting on request/second and distribute requests across multiple peers.
-                if !sleep_time.is_zero() {
-                    tokio::time::sleep(sleep_time).await;
-                }
-
                 // Wait for peer updates or timeout
-                let _ = tokio::time::timeout(Self::SYNC_INTERVAL, self_.block_sync.wait_for_peer_update()).await;
+                let _ = tokio::time::timeout(Self::MAX_SYNC_INTERVAL, self_.block_sync.wait_for_peer_update()).await;
 
                 // Issue block requests to peers.
                 self_.try_issuing_block_requests().await;
 
-                // Base the next sleep on how long this update took.
-                // E.g., if it took the entire SYNC_INTERVAL to issue block requests,
-                // do not sleep at all and immediately continue.
-                last_update = now;
+                // Rate limiting happens in [`Self::send_block_requests`] and no additional sleeps are needed here.
             }
         });
 
@@ -204,7 +189,8 @@ impl<N: Network> Sync<N> {
         self.spawn(async move {
             loop {
                 // Wait until there is something to do or until the timeout.
-                let _ = tokio::time::timeout(Self::SYNC_INTERVAL, self_.block_sync.wait_for_block_responses()).await;
+                let _ =
+                    tokio::time::timeout(Self::MAX_SYNC_INTERVAL, self_.block_sync.wait_for_block_responses()).await;
 
                 self_.try_advancing_block_synchronization(&ping).await;
 

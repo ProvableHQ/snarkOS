@@ -65,7 +65,7 @@ use std::{
             Ordering::{Acquire, Relaxed},
         },
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     task::JoinHandle,
@@ -253,34 +253,20 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
 /// Sync-specific code.
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
-    /// The rate at which the node tries to advance block sync.
-    const SYNC_INTERVAL: Duration = std::time::Duration::from_secs(5);
+    /// The maximum time to wait for peer updates before timing out and attempting to issue new requests.
+    /// This only exists as a fallback for the (unlikely) case a task does not get notified about updates.
+    const MAX_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
     /// Spawns the tasks that performs the syncing logic for this client.
     fn initialize_sync(&self) {
         // Start the block request generation loop (outgoing).
         let self_ = self.clone();
         self.spawn(async move {
-            let mut last_update = Instant::now();
             while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                // Compute elapsed time since the last iteration started.
-                let now = Instant::now();
-                let elapsed = now.saturating_duration_since(last_update);
-                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
-
-                // Make sure we do not sync too often to prevent spam detection from triggering.
-                // TODO(kaimast): base rate limiting on request/second and distribute requests across multiple peers.
-                if !sleep_time.is_zero() {
-                    sleep(sleep_time).await;
-                }
-
                 // Perform the sync routine.
                 self_.try_issuing_block_requests().await;
 
-                // Base the next sleep on how long this update took.
-                // E.g., if it took the entire SYNC_INTERVAL to issue block requests,
-                // do not sleep at all and immediately continue.
-                last_update = now;
+                // Rate limiting happens in [`Self::send_block_requests`] and no additional sleeps are needed here
             }
 
             info!("Stopped block request generation");
@@ -291,7 +277,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.spawn(async move {
             while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
                 // Wait until there is something to do or until the timeout.
-                let _ = timeout(Self::SYNC_INTERVAL, self_.sync.wait_for_block_responses()).await;
+                let _ = timeout(Self::MAX_SYNC_INTERVAL, self_.sync.wait_for_block_responses()).await;
 
                 // Perform the sync routine.
                 self_.try_advancing_block_synchronization().await;
@@ -330,6 +316,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             self.send_block_requests(block_requests, sync_peers).await;
         }
 
+        // Wait for peer updates or timeout
+        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
+
         // For sanity, check that sync height is never below ledger height.
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.sync.set_sync_height(self.ledger.latest_height());
@@ -340,9 +329,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             trace!("Nothing to sync. Will not issue new block requests");
             return;
         }
-
-        // Wait for peer updates or timeout
-        let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
