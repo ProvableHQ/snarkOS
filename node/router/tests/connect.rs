@@ -18,6 +18,7 @@ use common::*;
 
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_tcp::{
+    ConnectError,
     P2P,
     protocols::{Disconnect, Handshake, OnConnect},
 };
@@ -225,10 +226,14 @@ async fn test_validator_connection() {
         });
 
         // Connect node1 to node0.
-        let Ok(res) = node1.connect(node0.local_ip()).unwrap().await else {
-            panic!("Connection failed for the wrong reasons.");
-        };
-        assert!(!res, "Connection was accepted when it should not have been.");
+        let res = node1.connect(node0.local_ip()).unwrap().await.unwrap();
+
+        assert!(
+            matches!(res, Err(ConnectError::Other { .. })),
+            "Connection was accepted or incorrect error was returned"
+        );
+
+        assert!(res.unwrap_err().to_string().contains("no external peers allowed"));
 
         // Check the TCP level - connection was not accepted.
         assert_eq!(node0.tcp().num_connected(), 0);

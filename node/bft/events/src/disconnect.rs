@@ -29,6 +29,14 @@ pub enum DisconnectReason {
     ProtocolViolation = 2,
     /// The peer's client is outdated, judging by its version.
     OutdatedClientVersion = 3,
+    /// The two validators are the same node.
+    SelfConnect = 4,
+    /// No untrusted external peers are allowed.
+    NoExternalPeersAllowed = 5,
+    /// Already connecting to the same node (through another TCP channel).
+    AlreadyConnecting = 6,
+    /// Already connected to the same node (through another TCP channel).
+    AlreadyConnected = 7,
     /// The disconnect reason is not known. This is used for when the peers sends a disconnect reason that is not known to us.
     UnknownReason = u8::MAX,
 }
@@ -40,6 +48,10 @@ impl std::fmt::Display for DisconnectReason {
             Self::NoReasonGiven => write!(f, "no reason given"),
             Self::ProtocolViolation => write!(f, "protocol violation"),
             Self::OutdatedClientVersion => write!(f, "outdated client version"),
+            Self::SelfConnect => write!(f, "self connect"),
+            Self::NoExternalPeersAllowed => write!(f, "no external peers allowed"),
+            Self::AlreadyConnecting => write!(f, "already connecting"),
+            Self::AlreadyConnected => write!(f, "already connected"),
             Self::UnknownReason => write!(f, "unknown"),
         }
     }
@@ -86,6 +98,10 @@ impl FromBytes for Disconnect {
             1 => DisconnectReason::NoReasonGiven,
             2 => DisconnectReason::ProtocolViolation,
             3 => DisconnectReason::OutdatedClientVersion,
+            4 => DisconnectReason::SelfConnect,
+            5 => DisconnectReason::NoExternalPeersAllowed,
+            6 => DisconnectReason::AlreadyConnecting,
+            7 => DisconnectReason::AlreadyConnected,
             val => {
                 warn!("received unknown disconnect reason (id={val})");
                 DisconnectReason::UnknownReason
@@ -111,6 +127,7 @@ mod tests {
             DisconnectReason::NoReasonGiven,
             DisconnectReason::InvalidChallengeResponse,
             DisconnectReason::OutdatedClientVersion,
+            DisconnectReason::SelfConnect,
         ];
 
         for reason in all_reasons.iter() {

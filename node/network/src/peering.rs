@@ -13,12 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver, bootstrap_peers};
+use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver};
 
-use snarkos_node_tcp::{P2P, is_bogon_ip, is_unspecified_or_broadcast_ip};
+use snarkos_node_tcp::{ConnectError, P2P, is_bogon_ip, is_unspecified_or_broadcast_ip};
 use snarkvm::prelude::{Address, Network};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
@@ -38,6 +38,24 @@ use std::{
 };
 use tokio::task;
 use tracing::*;
+
+/// Errors that can occur when adding a peer to the pool.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum AddPeerError {
+    #[error("already connecting")]
+    AlreadyConnected,
+    #[error("already connected")]
+    AlreadyConnecting,
+}
+
+impl AddPeerError {
+    pub fn into_connect_error(self, address: SocketAddr) -> ConnectError {
+        match self {
+            AddPeerError::AlreadyConnected => ConnectError::AlreadyConnected { address },
+            AddPeerError::AlreadyConnecting => ConnectError::AlreadyConnecting { address },
+        }
+    }
+}
 
 pub trait PeerPoolHandling<N: Network>: P2P {
     const OWNER: &str;
@@ -83,77 +101,61 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         self.tcp().config().max_connections as usize
     }
 
-    /// Ensure we are allowed to connect to the given listener address of a peer.
-    ///
-    /// # Return Values
-    /// - `Ok(true)` if already connected (or connecting) to the peer.
-    /// - `Ok(false)` if not connected to the peer but allowed to.
-    /// - `Err(err)` if not allowed to connect to the peer.
-    fn check_connection_attempt(&self, listener_addr: SocketAddr) -> Result<bool> {
+    /// Ensure we can and are allowed to connect to the given listener address of a peer.
+    fn check_connection_attempt(&self, listener_addr: SocketAddr) -> Result<(), ConnectError> {
         // Ensure the peer IP is not this node.
         if self.is_local_ip(listener_addr) {
-            bail!("{} Dropping connection attempt to '{listener_addr}' (attempted to self-connect)", Self::OWNER);
+            return Err(ConnectError::SelfConnect { address: listener_addr });
         }
-        // Ensure the node does not surpass the maximum number of peer connections.
-        if self.number_of_connected_peers() >= self.max_connected_peers() {
-            bail!("{} Dropping connection attempt to '{listener_addr}' (maximum peers reached)", Self::OWNER);
+        // Ensure the peer IP is not banned.
+        if self.is_ip_banned(listener_addr.ip()) {
+            return Err(ConnectError::other(format!(
+                "Rejected a connection attempt to a banned IP '{}'",
+                listener_addr.ip()
+            )));
         }
         // Ensure the node is not already connected to this peer.
         if self.is_connected(listener_addr) {
-            debug!("{} Dropping connection attempt to '{listener_addr}' (already connected)", Self::OWNER);
-            return Ok(true);
+            return Err(ConnectError::AlreadyConnected { address: listener_addr });
         }
         // Ensure the node is not already connecting to this peer.
         if self.is_connecting(listener_addr) {
-            debug!("{} Dropping connection attempt to '{listener_addr}' (already connecting)", Self::OWNER);
-            return Ok(true);
+            return Err(ConnectError::AlreadyConnecting { address: listener_addr });
         }
-        // If the IP is already banned, reject the attempt.
-        if self.is_ip_banned(listener_addr.ip()) {
-            bail!("{} Rejected a connection attempt to a banned IP '{}'", Self::OWNER, listener_addr.ip());
+        // Ensure the node does not surpass the maximum number of peer connections.
+        if self.number_of_connected_peers() >= self.max_connected_peers() {
+            return Err(ConnectError::MaximumConnectionsReached { limit: self.max_connected_peers() as u16 });
         }
         // If the node is in trusted peers only mode, ensure the peer is trusted.
         if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
-            bail!("{} Dropping connection attempt to '{listener_addr}' (untrusted)", Self::OWNER);
+            return Err(ConnectError::other("no untrusted peers allowed"));
         }
-        Ok(false)
+        Ok(())
     }
 
     /// Attempts to connect to the given peer's listener address.
     ///
     /// Returns None if we are already connected to the peer or cannot connect.
     /// Otherwise, it returns a handle to the tokio tasks that sets up the connection.
-    fn connect(&self, listener_addr: SocketAddr) -> Option<task::JoinHandle<bool>> {
+    fn connect(&self, listener_addr: SocketAddr) -> Option<task::JoinHandle<Result<(), ConnectError>>> {
         // Return early if the attempt is against the protocol rules.
         match self.check_connection_attempt(listener_addr) {
-            Ok(true) => return None,
-            Ok(false) => {}
+            Ok(()) => {}
+            Err(error @ ConnectError::AlreadyConnected { .. })
+            | Err(error @ ConnectError::AlreadyConnecting { .. }) => {
+                debug!("{} Dropping connection attempt to {listener_addr}: {error}", Self::OWNER);
+                return None;
+            }
             Err(error) => {
-                warn!("{} {error}", Self::OWNER);
+                warn!("{} Dropping connection attempt to {listener_addr}: {error}", Self::OWNER);
                 return None;
             }
         }
 
-        // Determine whether the peer is trusted or a bootstrap node in order to decide
-        // how problematic any potential connection issues are.
-        let is_trusted_or_bootstrap =
-            self.is_trusted(listener_addr) || bootstrap_peers::<N>(self.is_dev()).contains(&listener_addr);
-
         let tcp = self.tcp().clone();
         Some(tokio::spawn(async move {
             debug!("{} Connecting to {listener_addr}...", Self::OWNER);
-            // Attempt to connect to the peer.
-            match tcp.connect(listener_addr).await {
-                Ok(_) => true,
-                Err(error) => {
-                    if is_trusted_or_bootstrap {
-                        warn!("{} Unable to connect to '{listener_addr}' - {error}", Self::OWNER);
-                    } else {
-                        debug!("{} Unable to connect to '{listener_addr}' - {error}", Self::OWNER);
-                    }
-                    false
-                }
-            }
+            tcp.connect(listener_addr).await
         }))
     }
 
@@ -325,6 +327,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn is_connected_address(&self, aleo_address: Address<N>) -> bool {
         // The resolver only contains data on connected peers.
         self.resolver().read().get_peer_ip_for_address(aleo_address).is_some()
+    }
+
+    /// Returns `true` if the node is connected or connecting to the given peer listener address.
+    fn is_connecting_or_connected(&self, listener_addr: SocketAddr) -> bool {
+        self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_connecting() || peer.is_connected())
     }
 
     /// Returns `true` if the given listener address is trusted.
@@ -531,17 +538,20 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     // a known candidate peer to a connecting one. The returned boolean indicates
     // whether the peer has been added/promoted, or rejected due to already being
     // shaken hands with or connected.
-    fn add_connecting_peer(&self, listener_addr: SocketAddr) -> bool {
+    fn add_connecting_peer(&self, listener_addr: SocketAddr) -> Result<(), AddPeerError> {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
                 entry.insert(Peer::new_connecting(listener_addr, false));
-                true
+                Ok(())
             }
-            Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
-                entry.insert(Peer::new_connecting(listener_addr, entry.get().is_trusted()));
-                true
-            }
-            Entry::Occupied(_) => false,
+            Entry::Occupied(mut entry) => match entry.get() {
+                peer @ Peer::Candidate(_) => {
+                    entry.insert(Peer::new_connecting(listener_addr, peer.is_trusted()));
+                    Ok(())
+                }
+                Peer::Connecting(_) => Err(AddPeerError::AlreadyConnecting),
+                Peer::Connected(_) => Err(AddPeerError::AlreadyConnected),
+            },
         }
     }
 

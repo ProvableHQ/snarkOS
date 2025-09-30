@@ -23,6 +23,9 @@ test = [ ]
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.thiserror]
+workspace = true
+
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]
@@ -42,7 +45,7 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console" ]
+features = [ "console", "utilities" ]
 
 [dependencies.tokio]
 workspace = true

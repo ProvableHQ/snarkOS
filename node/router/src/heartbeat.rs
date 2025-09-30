@@ -24,10 +24,12 @@ use crate::{
 };
 use snarkvm::prelude::Network;
 
-use snarkos_node_tcp::P2P;
+use snarkos_node_tcp::{ConnectError, P2P};
 
 use colored::Colorize;
+use futures::future::join_all;
 use rand::{prelude::IteratorRandom, rngs::OsRng};
+use tokio::task::JoinError;
 
 /// A helper function to compute the maximum of two numbers.
 /// See Rust issue 92391: https://github.com/rust-lang/rust/issues/92391.
@@ -63,7 +65,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Remove the oldest connected peer.
         self.remove_oldest_connected_peer();
         // Keep the number of connected peers within the allowed range.
-        self.handle_connected_peers();
+        self.handle_connected_peers().await;
         // Keep the bootstrap peers within the allowed range.
         self.handle_bootstrap_peers().await;
         // Keep the trusted peers connected.
@@ -161,8 +163,27 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         }
     }
 
+    /// Logs a message with the error and `context` if the connection attempt failed,
+    /// and sets the log level based on the severity of the error.
+    #[inline]
+    fn log_if_connect_error(result: Result<Result<(), ConnectError>, JoinError>, context: &str) {
+        match result {
+            // Success!
+            Ok(Ok(())) => {}
+            Ok(Err(err @ ConnectError::AlreadyConnecting { .. }))
+            | Ok(Err(err @ ConnectError::AlreadyConnected { .. })) => {
+                // Log benign errors at a lower level.
+                debug!("{context}: {err}");
+            }
+            // Print regular connection errors (such as "connection refused" as warnings)
+            Ok(Err(err)) => warn!("{context}: {err}"),
+            // Print join errors as error, as they most likely indicate a crash.
+            Err(err) => error!("{context}: {err}"),
+        }
+    }
+
     /// This function keeps the number of connected peers within the allowed range.
-    fn handle_connected_peers(&self) {
+    async fn handle_connected_peers(&self) {
         // Initialize an RNG.
         let rng = &mut OsRng;
 
@@ -236,11 +257,26 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 .partition(|peer| peer.last_height_seen.map(|h| h > own_height).unwrap_or(false));
             // We may not know of half of `num_deficient` candidates; account for it using `min`.
             let num_higher_peers = num_deficient.div_ceil(2).min(higher_peers.len());
-            for peer in higher_peers.into_iter().choose_multiple(rng, num_higher_peers) {
-                self.router().connect(peer.listener_addr);
-            }
-            for peer in other_peers.into_iter().choose_multiple(rng, num_deficient - num_higher_peers) {
-                self.router().connect(peer.listener_addr);
+
+            let higher_peers = higher_peers.into_iter().choose_multiple(rng, num_higher_peers);
+            let other_peers =
+                other_peers.into_iter().choose_multiple(rng, num_deficient.saturating_sub(num_higher_peers));
+
+            let hdls: Vec<_> = higher_peers
+                .into_iter()
+                .chain(other_peers)
+                .filter_map(|peer| {
+                    let hdl = self.router().connect(peer.listener_addr);
+                    if hdl.is_none() {
+                        trace!("Could not initiate connection to peer at `{}`", peer.listener_addr);
+                    }
+                    hdl
+                })
+                .collect();
+
+            // Wait for all the connection attempts to complete.
+            for result in join_all(hdls).await {
+                Self::log_if_connect_error(result, "Could not connect to peer");
             }
 
             if !self.router().trusted_peers_only() {
@@ -271,16 +307,13 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         if connected_bootstrap.is_empty() {
             // Initialize an RNG.
             let rng = &mut OsRng;
-            // Attempt to connect to a bootstrap peer.
+            // Attempt to connect to a random bootstrap peer.
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.router().connect(peer_ip) {
                     Some(hdl) => {
-                        let result = hdl.await;
-                        if let Err(err) = result {
-                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
-                        }
+                        Self::log_if_connect_error(hdl.await, "Could not connect to bootstrap peer");
                     }
-                    None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
+                    None => warn!("Could not initiate connection to bootstrap peer at {peer_ip}"),
                 }
             }
         }
@@ -316,10 +349,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             })
             .collect();
 
-        for result in futures::future::join_all(handles).await {
-            if let Err(err) = result {
-                warn!("Could not connect to trusted peer: {err}");
-            }
+        // Wait for all the connection attempts to complete.
+        for result in join_all(handles).await {
+            Self::log_if_connect_error(result, "Could not connect to trusted peer");
         }
     }
 
