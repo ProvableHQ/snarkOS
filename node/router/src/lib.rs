@@ -60,15 +60,13 @@ use anyhow::{Result, bail};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-#[cfg(not(any(test)))]
-use std::net::IpAddr;
 use std::{
     cmp,
     collections::{HashMap, HashSet, hash_map::Entry},
     fs,
     future::Future,
     io::{self, Write},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::Deref,
     str::FromStr,
     sync::Arc,
@@ -487,12 +485,12 @@ pub struct InnerRouter<N: Network> {
 
 impl<N: Network> Router<N> {
     /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
-    #[cfg(not(test))]
+    #[cfg(not(feature = "test"))]
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
     /// The maximum number of candidate peers permitted to be stored in the node.
     const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
     /// The maximum amount of connection attempts within a 10 second threshold
-    #[cfg(not(test))]
+    #[cfg(not(feature = "test"))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
     /// The duration after which a connected peer is considered inactive or
     /// disconnected if no message has been received in the meantime.

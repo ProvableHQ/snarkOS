@@ -105,7 +105,7 @@ impl<N: Network> Router<N> {
         };
 
         // Check (or impose) IP-level bans.
-        #[cfg(not(any(test)))]
+        #[cfg(not(feature = "test"))]
         if !self.is_dev() && peer_side == ConnectionSide::Initiator {
             // If the IP is already banned reject the connection.
             if self.is_ip_banned(peer_addr.ip()) {
