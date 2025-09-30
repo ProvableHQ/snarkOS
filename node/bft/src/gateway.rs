@@ -311,17 +311,6 @@ impl<N: Network> CommunicationService for Gateway<N> {
     async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>> {
         Transport::send(self, peer_ip, message).await
     }
-
-    fn ban_peer(&self, peer_ip: SocketAddr) {
-        trace!("Banning peer {peer_ip} for timing out on block requests");
-
-        let tcp = self.tcp().clone();
-        tcp.banned_peers().update_ip_ban(peer_ip.ip());
-
-        tokio::spawn(async move {
-            tcp.disconnect(peer_ip).await;
-        });
-    }
 }
 
 impl<N: Network> Gateway<N> {
@@ -385,12 +374,8 @@ impl<N: Network> Gateway<N> {
 
     /// Returns `true` if the node is connected to the given Aleo address.
     pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // Retrieve the peer IP of the given address.
-        match self.resolver.read().get_peer_ip_for_address(address) {
-            // Determine if the peer IP is connected.
-            Some(peer_ip) => self.is_connected(peer_ip),
-            None => false,
-        }
+        // The resolver only contains data on connected peers.
+        self.resolver.read().get_peer_ip_for_address(address).is_some()
     }
 
     /// Returns `true` if the given peer IP is an authorized validator.
@@ -400,7 +385,7 @@ impl<N: Network> Gateway<N> {
             return true;
         }
         // Retrieve the Aleo address of the peer IP.
-        match self.resolver.read().get_address(ip) {
+        match self.resolve_to_aleo_addr(ip) {
             // Determine if the peer IP is an authorized validator.
             Some(address) => self.is_authorized_validator_address(address),
             None => false,
@@ -557,8 +542,8 @@ impl<N: Network> Gateway<N> {
             });
         }
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            if matches!(peer, Peer::Connected(_)) {
-                self.resolver.write().remove_peer(peer_ip);
+            if let Peer::Connected(connected_peer) = peer {
+                self.resolver.write().remove_peer(peer_ip, connected_peer.aleo_addr);
             }
             peer.downgrade_to_candidate(peer_ip);
         }
@@ -573,7 +558,7 @@ impl<N: Network> Gateway<N> {
     /// which can be used to determine when and whether the event has been delivered.
     fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
-        let Some(peer_addr) = self.resolver.read().get_ambiguous(peer_ip) else {
+        let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
             warn!("Unable to resolve the listener IP address '{peer_ip}'");
             return None;
         };
@@ -823,7 +808,7 @@ impl<N: Network> Gateway<N> {
                     // Iterate over the validators.
                     for validator_ip in connected_peers.into_iter().take(MAX_VALIDATORS_TO_SEND) {
                         // Retrieve the validator address.
-                        if let Some(validator_address) = self_.resolver.read().get_address(validator_ip) {
+                        if let Some(validator_address) = self_.resolve_to_aleo_addr(validator_ip) {
                             // Add the validator to the list of validators.
                             validators.insert(validator_ip, validator_address);
                         }
@@ -912,20 +897,6 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Disconnects from the given peer IP, if the peer is connected. The returned boolean
-    /// indicates whether the peer was actually disconnected from, or if this was a noop.
-    pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<bool> {
-        let gateway = self.clone();
-        tokio::spawn(async move {
-            if let Some(peer) = gateway.get_connected_peer(peer_ip) {
-                let connected_addr = peer.connected_addr;
-                gateway.tcp.disconnect(connected_addr).await
-            } else {
-                false
-            }
-        })
-    }
-
     /// Initialize a new instance of the heartbeat.
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
@@ -999,7 +970,7 @@ impl<N: Network> Gateway<N> {
         // Log the connected validators.
         info!("{connections_msg}");
         for peer_ip in &connected_validators {
-            let address = self.resolver.read().get_address(*peer_ip).map_or("Unknown".to_string(), |a| {
+            let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
