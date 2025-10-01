@@ -501,8 +501,10 @@ impl<N: Network> Consensus<N> {
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_) };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if let Err(e) = &result {
-            error!("Unable to advance to the next block - {e}");
+        if let Err(err) = &result {
+            // We cannot log it the usual way because the result will be used later.
+            // TODO don't log this here once channel indirection is gone.
+            error!("Unable to advance to the next block - {err:?}");
             // On failure, reinsert the transmissions into the memory pool.
             self.reinsert_transmissions(transmissions).await;
         }
