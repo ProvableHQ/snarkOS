@@ -625,6 +625,45 @@ impl Start {
             false => self.rest.or_else(|| Some("0.0.0.0:3030".parse().unwrap())),
         };
 
+        // Initialize the storage mode.
+        let storage_mode = match &self.storage {
+            Some(path) => StorageMode::Custom(path.clone()),
+            None => match self.dev {
+                Some(id) => StorageMode::Development(id),
+                None => StorageMode::Production,
+            },
+        };
+
+        // Helper function to obtain the path to the JWT secret.
+        let jwt_secret_path = |network: u16, storage_mode: &StorageMode, address: &Address<N>| {
+            let mut jwt_secret_path = aleo_std::aleo_ledger_dir(network, storage_mode);
+            jwt_secret_path.push(format!("jwt_secret_{address}.txt"));
+            jwt_secret_path
+        };
+        // Compute the optional REST server JWT.
+        let jwt_token = if self.nojwt {
+            None
+        } else if let Some(jwt_b64) = &self.jwt_secret {
+            // Decode the JWT secret.
+            let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
+            if jwt_bytes.len() != 16 {
+                bail!("The JWT secret must be 16 bytes long");
+            }
+            // Create the JWT token based on the given secret.
+            let jwt_token = snarkos_node_rest::Claims::new(account.address(), Some(jwt_bytes), self.jwt_timestamp).to_jwt_string()?;
+            // Store the JWT secret to a file.
+            std::fs::write(jwt_secret_path(self.network, &storage_mode, &account.address()), jwt_token.clone())?;
+            // Return the JWT token for optional printing.
+            Some(jwt_token)
+        } else {
+            // Create a random JWT token.
+            let jwt_token = snarkos_node_rest::Claims::new(account.address(), None, self.jwt_timestamp).to_jwt_string()?;
+            // Store the JWT secret to a file.
+            std::fs::write(jwt_secret_path(self.network, &storage_mode, &account.address()), jwt_token.clone())?;
+            // Return the JWT token for optional printing.
+            Some(jwt_token)
+        };
+
         if !self.nobanner {
             // Print the Aleo address.
             println!("👛 Your Aleo address is {}.\n", account.address().to_string().bold());
@@ -635,32 +674,11 @@ impl Start {
                 N::NAME.bold(),
                 node_ip.to_string().bold()
             );
-
-            // If the node is running a REST server, print the REST IP and JWT.
-            if node_type.is_validator() || node_type.is_client() {
-                if let Some(rest_ip) = rest_ip {
-                    println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
-
-                    if !self.nojwt {
-                        let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
-                            if self.jwt_timestamp.is_none() {
-                                bail!("The '--jwt-timestamp' flag must be set if the '--jwt-secret' flag is set");
-                            }
-                            let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
-                            if jwt_bytes.len() != 16 {
-                                bail!("The JWT secret must be 16 bytes long");
-                            }
-                            Some(jwt_bytes)
-                        } else {
-                            None
-                        };
-
-                        if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
-                            println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
-                            // Store the JWT secret to a file.
-                            std::fs::write(format!("jwt_secret_{}.txt", account.address()), jwt_token)?;
-                        }
-                    }
+            // If the node is running a REST server, determine the JWT.
+            if let Some(rest_ip) = rest_ip {
+                println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
+                if let Some(jwt_token) = jwt_token {
+                    println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
                 }
             }
         }
@@ -678,15 +696,6 @@ impl Start {
         if self.metrics {
             metrics::initialize_metrics(self.metrics_ip);
         }
-
-        // Initialize the storage mode.
-        let storage_mode = match &self.storage {
-            Some(path) => StorageMode::Custom(path.clone()),
-            None => match self.dev {
-                Some(id) => StorageMode::Development(id),
-                None => StorageMode::Production,
-            },
-        };
 
         // Determine whether to generate background transactions in dev mode.
         let dev_txs = match self.dev {
