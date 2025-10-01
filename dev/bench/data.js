@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759314470677,
+  "lastUpdate": 1759340754685,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -2496,6 +2496,66 @@ window.BENCHMARK_DATA = {
             "value": 1.17,
             "unit": "blocks/s",
             "extra": "total_wait=212s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=203s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b086093d48105c154fa331a1e5ffe4ccc67c15b",
+          "message": "Merge pull request #3900 from ljedrz/fix/dedup_validator_heartbeat_conns\n\n[Fix] Dedup validator heartbeat conns & don't downgrade peers on connection duplicates",
+          "timestamp": "2025-10-01T12:16:18-05:00",
+          "tree_id": "ed3f50f09af9941d63510a2dc6ab9d80ef82c973",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/2b086093d48105c154fa331a1e5ffe4ccc67c15b"
+        },
+        "date": 1759340753699,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.5853778304016237,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=185.659517288208, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7893.360970013213,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.135099649429321, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.3,
+            "unit": "blocks/s",
+            "extra": "total_wait=192s, target_height=250, connect_time=22s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.862365,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=187, mean_speed=0.759447, max_speed=2.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
