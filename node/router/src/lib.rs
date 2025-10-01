@@ -195,6 +195,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
     }
 
+    /// Completely removes an entry from the peer pool.
+    fn remove_peer(&self, listener_addr: SocketAddr) {
+        self.peer_pool().write().remove(&listener_addr);
+    }
+
     /// Returns the connected peer address from the listener IP address.
     fn resolve_to_ambiguous(&self, listener_addr: SocketAddr) -> Option<SocketAddr> {
         if let Some(Peer::Connected(peer)) = self.peer_pool().read().get(&listener_addr) {
@@ -434,15 +439,19 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
-    /// optional reason for the ban.
+    /// optional reason for the ban. This also removes the peer from the candidate pool.
     fn ip_ban_peer(&self, listener_addr: SocketAddr, reason: Option<&str>) {
         let ip = listener_addr.ip();
         debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
 
+        // Insert/update the low-level IP ban list.
         let tcp = self.tcp().clone();
         tcp.banned_peers().update_ip_ban(ip);
 
+        // Disconnect from the peer.
         self.disconnect(listener_addr);
+        // Remove the peer from the pool.
+        self.remove_peer(listener_addr);
     }
 
     /// Check whether the given IP address is currently banned.
