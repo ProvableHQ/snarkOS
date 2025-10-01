@@ -163,12 +163,19 @@ pub struct InnerGateway<N: Network> {
 impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
     const OWNER: &str = CONTEXT;
 
+    /// The maximum number of Gateway peers.
+    const MAXIMUM_PEERS: usize = 200;
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
 
     fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
+    }
+
+    fn is_dev(&self) -> bool {
+        self.dev.is_some()
     }
 }
 
@@ -735,37 +742,22 @@ impl<N: Network> Gateway<N> {
                 // Decrement the number of validators requests for this peer.
                 self.cache.decrement_outbound_validators_requests(peer_ip);
 
-                // If the number of connected validators is less than the minimum, connect to more validators.
-                if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
-                    // Attempt to connect to any validators that are not already connected.
-                    let self_ = self.clone();
-                    tokio::spawn(async move {
-                        for (validator_ip, validator_address) in validators {
-                            // Ensure the validator IP is not this node and is well-formed.
-                            if self_.dev.is_none() && !self_.is_valid_peer_ip(validator_ip) {
-                                continue;
-                            }
-                            // Ensure the validator is not IP-banned.
-                            if self_.is_ip_banned(validator_ip.ip()) {
-                                continue;
-                            }
-                            // Ensure the validator address is not this node.
-                            if self_.account.address() == validator_address {
-                                continue;
-                            }
-                            // Ensure the validator address is not already connected.
-                            if self_.is_connected_address(validator_address) {
-                                continue;
-                            }
-                            // Ensure the validator address is an authorized validator.
-                            if !self_.is_authorized_validator_address(validator_address) {
-                                continue;
-                            }
-                            // Attempt to connect to the validator.
-                            self_.connect(validator_ip);
-                        }
-                    });
-                }
+                // Add valid validators as candidates to the peer pool; only validator-related
+                // filters need to be applied, the rest is handled by `PeerPoolHandling`.
+                let valid_addrs = validators
+                    .into_iter()
+                    .filter_map(|(listener_addr, aleo_addr)| {
+                        (self.account.address() != aleo_addr
+                            && !self.is_connected_address(aleo_addr)
+                            && self.is_authorized_validator_address(aleo_addr))
+                        .then_some(listener_addr)
+                    })
+                    .collect::<Vec<_>>();
+                self.insert_candidate_peers(valid_addrs);
+
+                #[cfg(feature = "metrics")]
+                self.update_metrics();
+
                 Ok(true)
             }
             Event::WorkerPing(ping) => {

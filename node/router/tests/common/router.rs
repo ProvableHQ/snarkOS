@@ -90,6 +90,10 @@ impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
     fn resolver(&self) -> &RwLock<Resolver<N>> {
         self.router().resolver()
     }
+
+    fn is_dev(&self) -> bool {
+        true
+    }
 }
 
 #[async_trait]

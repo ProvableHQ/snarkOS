@@ -83,9 +83,15 @@ const PEER_CACHE_FILENAME: &str = "cached_router_peers";
 pub trait PeerPoolHandling<N: Network>: P2P {
     const OWNER: &str;
 
+    /// The maximum number of peers permitted to be stored in the peer pool.
+    const MAXIMUM_PEERS: usize = 1_000;
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
 
     fn resolver(&self) -> &RwLock<Resolver<N>>;
+
+    /// Returns `true` if the node is in development mode.
+    fn is_dev(&self) -> bool;
 
     /// Returns the listener address of this node.
     fn local_ip(&self) -> SocketAddr {
@@ -196,6 +202,24 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 self.resolver().write().remove_peer(peer.connected_addr, peer.aleo_addr);
             }
             peer.downgrade_to_candidate(listener_addr);
+        }
+    }
+
+    /// Adds a new candidate peer to the peer pool.
+    fn insert_candidate_peers(&self, mut listener_addrs: Vec<SocketAddr>) {
+        let mut peer_pool = self.peer_pool().write();
+        // Perform additional filtering to ensure candidate quality.
+        listener_addrs.retain(|&addr| {
+            !peer_pool.contains_key(&addr)
+                && !self.is_ip_banned(addr.ip())
+                && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
+        });
+        if peer_pool.len() + listener_addrs.len() <= Self::MAXIMUM_PEERS {
+            for addr in listener_addrs {
+                peer_pool.insert(addr, Peer::new_candidate(addr, false));
+            }
+        } else {
+            todo!("slashing");
         }
     }
 
@@ -493,6 +517,10 @@ impl<N: Network> PeerPoolHandling<N> for Router<N> {
     fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
     }
+
+    fn is_dev(&self) -> bool {
+        self.is_dev
+    }
 }
 
 pub struct InnerRouter<N: Network> {
@@ -526,8 +554,6 @@ impl<N: Network> Router<N> {
     /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
     #[cfg(not(feature = "test"))]
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
-    /// The maximum number of candidate peers permitted to be stored in the node.
-    const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
     /// The maximum amount of connection attempts within a 10 second threshold
     #[cfg(not(feature = "test"))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
@@ -629,11 +655,6 @@ impl<N: Network> Router<N> {
         &self.cache
     }
 
-    /// Returns `true` if the node is in development mode.
-    pub fn is_dev(&self) -> bool {
-        self.is_dev
-    }
-
     /// Returns `true` if the node is periodically evicting more external peers.
     pub fn rotate_external_peers(&self) -> bool {
         self.rotate_external_peers
@@ -658,33 +679,6 @@ impl<N: Network> Router<N> {
     pub fn update_metrics(&self) {
         metrics::gauge(metrics::router::CONNECTED, self.number_of_connected_peers() as f64);
         metrics::gauge(metrics::router::CANDIDATE, self.number_of_candidate_peers() as f64);
-    }
-
-    /// Inserts the given peer IPs to the set of candidate peers.
-    ///
-    /// This method skips adding any given peers if the combined size exceeds the threshold,
-    /// as the peer providing this list could be subverting the protocol.
-    pub fn insert_candidate_peers(&self, peers: &[SocketAddr]) {
-        // Compute the maximum number of candidate peers.
-        let max_candidate_peers = Self::MAXIMUM_CANDIDATE_PEERS.saturating_sub(self.number_of_candidate_peers());
-        {
-            let mut peer_pool = self.peer_pool.write();
-            // Ensure the combined number of peers does not surpass the threshold.
-            let eligible_peers = peers
-                .iter()
-                .filter(|&peer_ip| {
-                    // Ensure the peer is not itself, is not already known, and isn't banned.
-                    !self.is_local_ip(*peer_ip) && !peer_pool.contains_key(peer_ip) && !self.is_ip_banned(peer_ip.ip())
-                })
-                .take(max_candidate_peers)
-                .map(|addr| (*addr, Peer::new_candidate(*addr, false)))
-                .collect::<Vec<_>>();
-
-            // Proceed to insert the eligible candidate peer IPs.
-            peer_pool.extend(eligible_peers);
-        }
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
     }
 
     pub fn update_last_seen_for_connected_peer(&self, peer_ip: SocketAddr) {

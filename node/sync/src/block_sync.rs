@@ -1329,6 +1329,10 @@ mod tests {
             unreachable!();
         }
 
+        fn is_dev(&self) -> bool {
+            true
+        }
+
         fn ip_ban_peer(&self, listener_addr: SocketAddr, _reason: Option<&str>) {
             self.peers_to_ban.write().push(listener_addr);
         }
