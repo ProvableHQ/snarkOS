@@ -21,7 +21,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use aleo_std::StorageMode;
@@ -43,7 +43,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{NodeType, Peer, PeerPoolHandling};
+use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,

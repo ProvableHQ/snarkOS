@@ -114,7 +114,7 @@ impl<N: Network> OnConnect for TestRouter<N> {
 impl<N: Network> Disconnect for TestRouter<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
-        if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
+        if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
             self.router().remove_connected_peer(peer_ip);
         }
     }

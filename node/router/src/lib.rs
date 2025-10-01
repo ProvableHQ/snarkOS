@@ -478,7 +478,7 @@ pub struct InnerRouter<N: Network> {
     /// The cache.
     cache: Cache<N>,
     /// The resolver.
-    resolver: RwLock<Resolver>,
+    resolver: RwLock<Resolver<N>>,
     /// The collection of both candidate and connected peers.
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     /// The spawned handles.
@@ -611,7 +611,7 @@ impl<N: Network> Router<N> {
     }
 
     /// Returns the listener IP address from the (ambiguous) peer address.
-    pub fn resolve_to_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
+    pub fn resolve_to_listener(&self, connected_addr: SocketAddr) -> Option<SocketAddr> {
         self.resolver.read().get_listener(connected_addr)
     }
 
@@ -663,7 +663,7 @@ impl<N: Network> Router<N> {
     pub fn remove_connected_peer(&self, peer_ip: SocketAddr) {
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             if let Peer::Connected(peer) = peer {
-                self.resolver.write().remove_peer(&peer.connected_addr);
+                self.resolver.write().remove_peer(peer.connected_addr, peer.aleo_addr);
             }
             peer.downgrade_to_candidate(peer_ip);
         }

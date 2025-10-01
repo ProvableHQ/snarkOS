@@ -78,7 +78,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     /// propagated to the caller.
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
-        let peer_ip = match self.router().resolve_to_listener(&peer_addr) {
+        let peer_ip = match self.router().resolve_to_listener(peer_addr) {
             Some(peer_ip) => peer_ip,
             None => {
                 // No longer connected to the peer.
