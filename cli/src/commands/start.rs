@@ -634,11 +634,12 @@ impl Start {
             },
         };
 
-        // Helper function to obtain the path to the JWT secret.
-        let jwt_secret_path = |network: u16, storage_mode: &StorageMode, address: &Address<N>| {
+        // Helper function to store the JWT secret.
+        let store_jwt_secret = |network: u16, storage_mode: &StorageMode, address: &Address<N>, token: String| -> Result<()> {
             let mut jwt_secret_path = aleo_std::aleo_ledger_dir(network, storage_mode);
+            std::fs::create_dir_all(&jwt_secret_path)?;
             jwt_secret_path.push(format!("jwt_secret_{address}.txt"));
-            jwt_secret_path
+            Ok(std::fs::write(jwt_secret_path, token)?)
         };
         // Compute the optional REST server JWT.
         let jwt_token = if self.nojwt {
@@ -652,14 +653,14 @@ impl Start {
             // Create the JWT token based on the given secret.
             let jwt_token = snarkos_node_rest::Claims::new(account.address(), Some(jwt_bytes), self.jwt_timestamp).to_jwt_string()?;
             // Store the JWT secret to a file.
-            std::fs::write(jwt_secret_path(self.network, &storage_mode, &account.address()), jwt_token.clone())?;
+            store_jwt_secret(self.network, &storage_mode, &account.address(), jwt_token.clone())?;
             // Return the JWT token for optional printing.
             Some(jwt_token)
         } else {
             // Create a random JWT token.
             let jwt_token = snarkos_node_rest::Claims::new(account.address(), None, self.jwt_timestamp).to_jwt_string()?;
             // Store the JWT secret to a file.
-            std::fs::write(jwt_secret_path(self.network, &storage_mode, &account.address()), jwt_token.clone())?;
+            store_jwt_secret(self.network, &storage_mode, &account.address(), jwt_token.clone())?;
             // Return the JWT token for optional printing.
             Some(jwt_token)
         };
