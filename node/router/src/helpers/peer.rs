@@ -29,7 +29,7 @@ pub enum Peer<N: Network> {
     Connected(ConnectedPeer<N>),
 }
 
-/// A candidate peer.
+/// A connecting peer.
 #[derive(Clone)]
 pub struct ConnectingPeer {
     /// The listening address of a connecting peer.
@@ -90,11 +90,14 @@ impl<N: Network> Peer<N> {
         node_type: NodeType,
         node_version: u32,
     ) {
-        // Logic check: this can only happen during the handshake.
-        assert!(matches!(self, Self::Connecting(_)));
-
         let timestamp = Instant::now();
         let listener_addr = SocketAddr::from((connected_addr.ip(), listener_port));
+
+        // Logic check: this can only happen during the handshake. This isn't a fatal
+        // error, but should not be triggered.
+        if !matches!(self, Self::Connecting(_)) {
+            warn!("Peer '{listener_addr}' is being upgraded to Connected, but isn't Connecting");
+        }
 
         *self = Self::Connected(ConnectedPeer {
             listener_addr,
