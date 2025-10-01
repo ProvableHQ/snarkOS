@@ -350,8 +350,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
     /// Handles a `PeerResponse` message.
     fn peer_response(&self, _peer_ip: SocketAddr, peers: Vec<SocketAddr>) -> bool {
-        // Check if the number of peers received is less than MAX_PEERS_TO_SEND.
-        if peers.len() > MAX_PEERS_TO_SEND {
+        // Check if the number of peers received is less than MAX_PEERS_TO_SEND or empty.
+        if peers.len() > MAX_PEERS_TO_SEND || peers.is_empty() {
             return false;
         }
         // Adds the given peer IPs to the list of candidate peers.

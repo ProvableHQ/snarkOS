@@ -70,7 +70,7 @@ use std::{
     ops::Deref,
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::task::JoinHandle;
 
@@ -84,13 +84,17 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     const OWNER: &str;
 
     /// The maximum number of peers permitted to be stored in the peer pool.
-    const MAXIMUM_PEERS: usize = 1_000;
+    const MAXIMUM_POOL_SIZE: usize = 1_000;
+
+    /// The number of candidate peers to be removed from the pool once `MAXIMUM_POOL_SIZE` is reached.
+    /// It must be lower than `MAXIMUM_POOL_SIZE`.
+    const PEER_SLASHING_COUNT: usize = 0;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
 
     fn resolver(&self) -> &RwLock<Resolver<N>>;
 
-    /// Returns `true` if the node is in development mode.
+    /// Returns `true` if the owning node is in development mode.
     fn is_dev(&self) -> bool;
 
     /// Returns the listener address of this node.
@@ -205,21 +209,61 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
     }
 
-    /// Adds a new candidate peer to the peer pool.
+    /// Adds new candidate peers to the peer pool, ensuring their validity and following the
+    /// limit on the number of peers in the pool.
     fn insert_candidate_peers(&self, mut listener_addrs: Vec<SocketAddr>) {
+        // Perform filtering to ensure candidate validity.
+        {
+            let peer_pool = self.peer_pool().read();
+            listener_addrs.retain(|&addr| {
+                !peer_pool.contains_key(&addr)
+                    && !self.is_ip_banned(addr.ip())
+                    && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
+            });
+        }
+
+        // If we've managed to filter out every entry, there's nothing to do.
+        if listener_addrs.is_empty() {
+            return;
+        }
+
+        // If we're about to exceed the peer pool size limit, apply candidate slashing.
+        if self.number_of_peers() + listener_addrs.len() >= Self::MAXIMUM_POOL_SIZE && Self::PEER_SLASHING_COUNT != 0 {
+            // Collect the addresses of prospect peers.
+            let mut peers_to_slash = self.candidate_peers();
+
+            // Get the low-level peer stats.
+            let known_peers = self.tcp().known_peers().snapshot();
+
+            // Sort the list of candidate peers by failure count (descending) and timestamp (ascending).
+            let default_value = (0, Instant::now());
+            peers_to_slash.sort_unstable_by_key(|addr| {
+                let (num_failures, last_seen) = known_peers
+                    .get(&addr.ip())
+                    .map(|stats| (stats.failures(), stats.timestamp()))
+                    .unwrap_or(default_value);
+                (cmp::Reverse(num_failures), last_seen)
+            });
+
+            // Retain the candidate peers with the most failures and oldest timestamps.
+            peers_to_slash.truncate(Self::PEER_SLASHING_COUNT);
+
+            // Remove the peers to slash from the pool.
+            self.peer_pool().write().retain(|addr, _| !peers_to_slash.contains(addr));
+        }
+
+        // Make sure that we won't breach the pool size limit in case the slashing didn't suffice.
+        listener_addrs.truncate(Self::MAXIMUM_POOL_SIZE.saturating_sub(self.number_of_peers()));
+
+        // If we've managed to truncate to 0, exit.
+        if listener_addrs.is_empty() {
+            return;
+        }
+
+        // Insert new candidate peers.
         let mut peer_pool = self.peer_pool().write();
-        // Perform additional filtering to ensure candidate quality.
-        listener_addrs.retain(|&addr| {
-            !peer_pool.contains_key(&addr)
-                && !self.is_ip_banned(addr.ip())
-                && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
-        });
-        if peer_pool.len() + listener_addrs.len() <= Self::MAXIMUM_PEERS {
-            for addr in listener_addrs {
-                peer_pool.insert(addr, Peer::new_candidate(addr, false));
-            }
-        } else {
-            todo!("slashing");
+        for addr in listener_addrs {
+            peer_pool.insert(addr, Peer::new_candidate(addr, false));
         }
     }
 
@@ -259,6 +303,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Returns `true` if the given listener address is trusted.
     fn is_trusted(&self, listener_addr: SocketAddr) -> bool {
         self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_trusted())
+    }
+
+    /// Returns the number of all peers.
+    fn number_of_peers(&self) -> usize {
+        self.peer_pool().read().len()
     }
 
     /// Returns the number of connected peers.
@@ -339,7 +388,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of candidate peers.
-    fn candidate_peers(&self) -> HashSet<SocketAddr> {
+    fn candidate_peers(&self) -> Vec<SocketAddr> {
         let banned_ips = self.tcp().banned_peers().get_banned_ips();
         self.peer_pool()
             .read()
@@ -509,6 +558,7 @@ impl<N: Network> Deref for Router<N> {
 
 impl<N: Network> PeerPoolHandling<N> for Router<N> {
     const OWNER: &str = "[Router]";
+    const PEER_SLASHING_COUNT: usize = 200;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool

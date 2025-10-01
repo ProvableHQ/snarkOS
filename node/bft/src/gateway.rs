@@ -161,10 +161,9 @@ pub struct InnerGateway<N: Network> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
+    const MAXIMUM_POOL_SIZE: usize = 200;
     const OWNER: &str = CONTEXT;
-
-    /// The maximum number of Gateway peers.
-    const MAXIMUM_PEERS: usize = 200;
+    const PEER_SLASHING_COUNT: usize = 40;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
@@ -753,7 +752,9 @@ impl<N: Network> Gateway<N> {
                         .then_some(listener_addr)
                     })
                     .collect::<Vec<_>>();
-                self.insert_candidate_peers(valid_addrs);
+                if !valid_addrs.is_empty() {
+                    self.insert_candidate_peers(valid_addrs);
+                }
 
                 #[cfg(feature = "metrics")]
                 self.update_metrics();
