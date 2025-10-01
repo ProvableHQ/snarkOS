@@ -741,24 +741,16 @@ impl<N: Network> Gateway<N> {
                     let self_ = self.clone();
                     tokio::spawn(async move {
                         for (validator_ip, validator_address) in validators {
-                            if self_.dev.is_some() {
-                                // Ensure the validator IP is not this node.
-                                if self_.is_local_ip(validator_ip) {
-                                    continue;
-                                }
-                            } else {
-                                // Ensure the validator IP is not this node and is well-formed.
-                                if !self_.is_valid_peer_ip(validator_ip) {
-                                    continue;
-                                }
-                            }
-
-                            // Ensure the validator address is not this node.
-                            if self_.account.address() == validator_address {
+                            // Ensure the validator IP is not this node and is well-formed.
+                            if self_.dev.is_none() && !self_.is_valid_peer_ip(validator_ip) {
                                 continue;
                             }
-                            // Ensure the validator IP is not already connected or connecting.
-                            if self_.is_connected(validator_ip) || self_.is_connecting(validator_ip) {
+                            // Ensure the validator is not IP-banned.
+                            if self_.is_ip_banned(validator_ip.ip()) {
+                                continue;
+                            }
+                            // Ensure the validator address is not this node.
+                            if self_.account.address() == validator_address {
                                 continue;
                             }
                             // Ensure the validator address is not already connected.

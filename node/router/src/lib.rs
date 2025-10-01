@@ -673,8 +673,8 @@ impl<N: Network> Router<N> {
             let eligible_peers = peers
                 .iter()
                 .filter(|&peer_ip| {
-                    // Ensure the peer is not itself, and is not already known.
-                    !self.is_local_ip(*peer_ip) && !peer_pool.contains_key(peer_ip)
+                    // Ensure the peer is not itself, is not already known, and isn't banned.
+                    !self.is_local_ip(*peer_ip) && !peer_pool.contains_key(peer_ip) && !self.is_ip_banned(peer_ip.ip())
                 })
                 .take(max_candidate_peers)
                 .map(|addr| (*addr, Peer::new_candidate(*addr, false)))
