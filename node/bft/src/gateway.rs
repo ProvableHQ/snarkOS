@@ -166,6 +166,10 @@ impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
+
+    fn resolver(&self) -> &RwLock<Resolver<N>> {
+        &self.resolver
+    }
 }
 
 impl<N: Network> Gateway<N> {
@@ -450,27 +454,6 @@ impl<N: Network> Gateway<N> {
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             peer.upgrade_to_connected(peer_addr, peer_ip.port(), address, NodeType::Validator, 0);
         }
-    }
-
-    /// Removes the connected peer and adds them to the candidate peers.
-    fn remove_connected_peer(&self, peer_ip: SocketAddr) {
-        // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-        if let Some(sync_sender) = self.sync_sender.get() {
-            let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-            tokio::spawn(async move {
-                if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                    warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
-                }
-            });
-        }
-        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            if let Peer::Connected(connected_peer) = peer {
-                self.resolver.write().remove_peer(peer_ip, connected_peer.aleo_addr);
-            }
-            peer.downgrade_to_candidate(peer_ip);
-        }
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
     }
 
     /// Sends the given event to specified peer.
@@ -1150,13 +1133,23 @@ impl<N: Network> Disconnect for Gateway<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
-            self.remove_connected_peer(peer_ip);
-
+            self.downgrade_peer_to_candidate(peer_ip);
+            // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
+            if let Some(sync_sender) = self.sync_sender.get() {
+                let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
+                        warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
+                    }
+                });
+            }
             // We don't clear this map based on time but only on peer disconnect.
             // This is sufficient to avoid infinite growth as the committee has a fixed number
             // of members.
             self.cache.clear_outbound_validators_requests(peer_ip);
             self.cache.clear_outbound_block_requests(peer_ip);
+            #[cfg(feature = "metrics")]
+            self.update_metrics();
         }
     }
 }

@@ -1290,7 +1290,7 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_router::Peer;
+    use snarkos_node_router::{Peer, Resolver};
     use snarkos_node_tcp::{P2P, Tcp};
     use snarkvm::{
         ledger::committee::Committee,
@@ -1322,6 +1322,10 @@ mod tests {
         const OWNER: &str = "[DummyPeerPoolHandler]";
 
         fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+            unreachable!();
+        }
+
+        fn resolver(&self) -> &RwLock<Resolver<N>> {
             unreachable!();
         }
 

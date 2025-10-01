@@ -85,6 +85,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
 
+    fn resolver(&self) -> &RwLock<Resolver<N>>;
+
     /// Returns the listener address of this node.
     fn local_ip(&self) -> SocketAddr {
         self.tcp().listening_addr().expect("The TCP listener is not enabled")
@@ -180,6 +182,16 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             tokio::spawn(async move { tcp.disconnect(connected_addr).await })
         } else {
             tokio::spawn(async { false })
+        }
+    }
+
+    /// Downgrades a connected peer to candidate status.
+    fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) {
+        if let Some(peer) = self.peer_pool().write().get_mut(&listener_addr) {
+            if let Peer::Connected(peer) = peer {
+                self.resolver().write().remove_peer(peer.connected_addr, peer.aleo_addr);
+            }
+            peer.downgrade_to_candidate(listener_addr);
         }
     }
 
@@ -464,6 +476,10 @@ impl<N: Network> PeerPoolHandling<N> for Router<N> {
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
+
+    fn resolver(&self) -> &RwLock<Resolver<N>> {
+        &self.resolver
+    }
 }
 
 pub struct InnerRouter<N: Network> {
@@ -595,6 +611,11 @@ impl<N: Network> Router<N> {
         self.account.address()
     }
 
+    /// Returns a reference to the cache.
+    pub fn cache(&self) -> &Cache<N> {
+        &self.cache
+    }
+
     /// Returns `true` if the node is in development mode.
     pub fn is_dev(&self) -> bool {
         self.is_dev
@@ -621,7 +642,7 @@ impl<N: Network> Router<N> {
     }
 
     #[cfg(feature = "metrics")]
-    fn update_metrics(&self) {
+    pub fn update_metrics(&self) {
         metrics::gauge(metrics::router::CONNECTED, self.number_of_connected_peers() as f64);
         metrics::gauge(metrics::router::CANDIDATE, self.number_of_candidate_peers() as f64);
     }
@@ -657,20 +678,6 @@ impl<N: Network> Router<N> {
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             peer.update_last_seen();
         }
-    }
-
-    /// Removes the connected peer and adds them to the candidate peers.
-    pub fn remove_connected_peer(&self, peer_ip: SocketAddr) {
-        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            if let Peer::Connected(peer) = peer {
-                self.resolver.write().remove_peer(peer.connected_addr, peer.aleo_addr);
-            }
-            peer.downgrade_to_candidate(peer_ip);
-        }
-        // Clear cached entries applicable to the peer.
-        self.cache.clear_peer_entries(peer_ip);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
