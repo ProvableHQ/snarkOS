@@ -52,7 +52,7 @@ use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_tcp::{Config, ConnectionSide, P2P, Tcp, is_bogon_ip, is_unspecified_or_broadcast_ip};
 
-use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey, error};
+use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 
 use aleo_std::{StorageMode, aleo_ledger_dir};
 use anyhow::{Result, bail};
@@ -381,44 +381,21 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     // Introduces a new connecting peer into the peer pool if unknown, or promotes
-    // a known candidate peer to a connecting one, at the beginning of handshake
-    // when initiating it.
-    fn add_peer_on_handshake_init(&self, listener_addr: SocketAddr) -> io::Result<()> {
+    // a known candidate peer to a connecting one. The returned boolean indicates
+    // whether the peer has been added/promoted, or rejected due to already being
+    // shaken hands with or connected.
+    fn add_connecting_peer(&self, listener_addr: SocketAddr) -> bool {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
                 entry.insert(Peer::new_connecting(listener_addr, false));
+                true
             }
             Entry::Occupied(mut entry) if matches!(entry.get(), Peer::Candidate(_)) => {
                 entry.insert(Peer::new_connecting(listener_addr, entry.get().is_trusted()));
+                true
             }
-            Entry::Occupied(_) => {
-                return Err(error(format!("Duplicate connection attempt with '{listener_addr}'")));
-            }
+            Entry::Occupied(_) => false,
         }
-        Ok(())
-    }
-
-    // Introduces a new connecting peer into the peer pool if unknown, or promotes
-    // a known candidate peer to a connecting one, during the handshake when responding
-    // to it, once the peer's listener address is known.
-    fn add_peer_on_handshake_resp(&self, listener_addr: SocketAddr) -> anyhow::Result<()> {
-        match self.peer_pool().write().entry(listener_addr) {
-            Entry::Vacant(entry) => {
-                entry.insert(Peer::new_connecting(listener_addr, false));
-            }
-            Entry::Occupied(mut entry) => match entry.get_mut() {
-                peer @ Peer::Candidate(_) => {
-                    *peer = Peer::new_connecting(listener_addr, peer.is_trusted());
-                }
-                Peer::Connecting(_) => {
-                    bail!("Dropping connection request from '{listener_addr}' (already connecting)");
-                }
-                Peer::Connected(_) => {
-                    bail!("Dropping connection request from '{listener_addr}' (already connected)");
-                }
-            },
-        }
-        Ok(())
     }
 
     /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
