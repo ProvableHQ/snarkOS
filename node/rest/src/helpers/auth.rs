@@ -74,6 +74,11 @@ impl Claims {
 }
 
 pub async fn auth_middleware(request: Request<Body>, next: Next) -> Result<Response, Response> {
+    // If the JWT secret is not set, skip authentication.
+    if JWT_SECRET.get().is_none() {
+        return Ok(next.run(request).await);
+    }
+
     // Deconstruct the request to extract the auth token.
     let (mut parts, body) = request.into_parts();
     let auth: TypedHeader<Authorization<Bearer>> =

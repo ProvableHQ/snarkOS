@@ -147,7 +147,7 @@ The following command is recommended when starting a client node that is connect
 
 To start a core client node, you can also run the following command from the `snarkOS` directory:
 ```
-./run-core-client.sh
+./scripts/run-core-client.sh
 ```
 
 ### 3.1.2 Run an Aleo Outer Client
@@ -157,7 +157,7 @@ The following command is recommended when starting a client node that is NOT con
 
 To start an outer client node, you can also run the following command from the `snarkOS` directory:
 ```
-./run-outer-client.sh
+./scripts/run-outer-client.sh
 ```
 
 Outer clients can be bootstrap clients that serve as accessible entry points for new nodes joining the network with publicly known or static IPs.
@@ -174,7 +174,7 @@ Instead of specifying a private key file (`--private-key-file` flag), the privat
 
 To start a validator, you can also run the following command from the `snarkOS` directory:
 ```
-./run-validator.sh
+./scripts/run-validator.sh
 ```
 
 ### 3.2.1 Enable Validator Telemetry Metrics (Optional)
@@ -201,7 +201,7 @@ cargo install --locked --path . --features telemetry
 
 #### 2. Enable via `./run-validator.sh`
 
-Run the `./run-validator.sh` script and enable telemetry when prompted:
+Run the `./scripts/run-validator.sh` script and enable telemetry when prompted:
 ```
 Do you want to enable validator telemetry? (y/n, default: y):
 ```
@@ -227,34 +227,12 @@ This will output a new Aleo account in the terminal.
 
 Next, to start a proving node, from the `snarkOS` directory, run:
 ```
-./run-prover.sh
+./scripts/run-prover.sh
 ```
 When prompted, enter your Aleo private key:
 ```
 Enter the Aleo Prover account private key:
 APrivateKey1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-### 3.3.1 Enable CUDA Acceleration (Optional) <a name="cuda"></a>
-
-If a supported Nvidia GPU is available, CUDA-based acceleration can be enabled using the following command:
-
-```
-./run-prover.sh --cuda
-```
-
-**Note:** If CUDA is not explicitly enabled or a compatible GPU is not detected, the prover will automatically run on the CPU.
-
-#### Requirements for CUDA Acceleration
-To use the `--cuda` flag, ensure your system meets the following requirements:
-
-- SM_70 (Volta) or later
-- [CUDA Toolkit (nvcc)](https://docs.nvidia.com/cuda/index.html#installation-guides)
-
-You can check the respective versions with the following commands:
-```
-nvidia-smi       # Check GPU model and driver
-nvcc --version   # Check installed CUDA version
 ```
 
 ## 4. FAQs
@@ -263,12 +241,12 @@ nvcc --version   # Check installed CUDA version
 
 - Ensure your machine has Rust installed, with at least [this version](rust-toolchain). Instructions to [install Rust can be found here.](https://www.rust-lang.org/tools/install)
 - If large errors appear during compilation, try running `cargo clean`.
-- Ensure `snarkOS` is started using `./run-client.sh` or `./run-prover.sh`.
+- Ensure `snarkOS` is started using `./scripts/run-client.sh` or `./scripts/run-prover.sh`.
 
 ### 2. My node is unable to connect to peers on the network.
 
 - Ensure ports `4130/tcp` and `3030/tcp` are open on your router and OS firewall.
-- Ensure `snarkOS` is started using `./run-client.sh` or `./run-prover.sh`.
+- Ensure `snarkOS` is started using `./scripts/run-client.sh` or `./scripts/run-prover.sh`.
 
 ### 3. I can't generate a new address ### 
 
@@ -419,7 +397,7 @@ sudo apt install tmux
 
 To start a local devnet, run:
 ```
-./devnet.sh
+./scripts/devnet.sh
 ```
 Follow the instructions in the terminal to start the devnet.
 
@@ -482,6 +460,18 @@ By default, the metrics feature is turned on for some internal crates.
   This feature turns on code for detecting deadlocks.
 * **test_targets** -
   This feature allows the lowering of coinbase and proof targets for testing.
+
+## 6.5 Local backups
+
+The snarkOS node implementation uses rocksdb under the hood. By using its native checkpointing mechanism, you can create backups locally and efficiently. The backups leverage hard links on your filesystem, thereby incurring only a marginal amount of extra space. The aim of these local backups is for you to be able to recover quickly in case your node were to halt.
+
+You can find a basic sample script in `scripts/backup.sh` which you can run as a cron-job e.g. every minute. Each run of the script creates a new backup folder with a timestamp postfix. It will ensure a backup is kept which is 1 minute old, 5 minutes old, 1 hour old and 1 day old. In more detail, on each run it will:
+- always overwrite the latest backup
+- only overwrite the 5 minute backup if it is older than 5 minutes
+- only overwrite the 1 hour backup if it is older than 1 hour
+- only overwrite the 1 day backup if it is older than 1 day
+
+You may want to change the `NETWORK`, `BASE_DIR`, `ENDPOINT` and `JWT` variables.
 
 ## 7. Contributors
 Thank you for helping make snarkOS better!  
