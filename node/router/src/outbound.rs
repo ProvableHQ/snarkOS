@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Router, messages::Message};
+use crate::{PeerPoolHandling, Router, messages::Message};
 use snarkvm::prelude::Network;
 
 use std::net::SocketAddr;
@@ -28,6 +28,9 @@ pub trait Outbound<N: Network> {
     /// Returns the number of blocks this node is behind the greatest peer height,
     /// or `None` if not connected to peers yet.
     fn num_blocks_behind(&self) -> Option<u32>;
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64;
 
     /// Sends the given message to every connected peer, excluding the sender and any specified peer IPs.
     fn propagate(&self, message: Message<N>, excluded_peers: &[SocketAddr]) {

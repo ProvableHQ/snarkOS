@@ -163,6 +163,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
+            storage_mode.clone(),
             dev.is_some(),
         )
         .await?;
@@ -293,7 +294,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.sync.set_sync_height(self.ledger.latest_height());
 
-        let new_requests = self.sync.handle_block_request_timeouts(self);
+        let new_requests = self.sync.handle_block_request_timeouts(self.router());
         if let Some((block_requests, sync_peers)) = new_requests {
             self.send_block_requests(block_requests, sync_peers).await;
         }
@@ -353,7 +354,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     ) {
         // Issues the block requests in batches.
         for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.sync.send_block_requests(self, &sync_peers, requests).await {
+            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
                 // Stop if we fail to process a batch of requests.
                 break;
             }

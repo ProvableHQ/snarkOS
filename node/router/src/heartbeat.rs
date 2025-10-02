@@ -16,7 +16,9 @@
 use crate::{
     ConnectedPeer,
     Outbound,
+    PeerPoolHandling,
     Router,
+    bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
 };
 use snarkvm::prelude::Network;
@@ -118,7 +120,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
         // The hardcoded bootstrap nodes.
-        let bootstrap = self.router().bootstrap_peers();
+        let bootstrap = bootstrap_peers::<N>(self.router().is_dev());
         // Are we synced already? (cache this here, so it does not need to be recomputed)
         let is_block_synced = self.is_block_synced();
 
@@ -195,7 +197,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             );
 
             // Retrieve the bootstrap peers.
-            let bootstrap = self.router().bootstrap_peers();
+            let bootstrap = bootstrap_peers::<N>(self.router().is_dev());
 
             // Determine the provers to disconnect from.
             let provers_to_disconnect = self
@@ -257,7 +259,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let mut connected_bootstrap = Vec::new();
         let mut candidate_bootstrap = Vec::new();
         let connected_peers = self.router().connected_peers();
-        for bootstrap_ip in self.router().bootstrap_peers() {
+        for bootstrap_ip in bootstrap_peers::<N>(self.router().is_dev()) {
             match connected_peers.contains(&bootstrap_ip) {
                 true => connected_bootstrap.push(bootstrap_ip),
                 false => candidate_bootstrap.push(bootstrap_ip),

@@ -15,7 +15,7 @@
 
 use crate::{Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
-use snarkos_node_router::{Router, messages::NodeType};
+use snarkos_node_router::{Outbound, Router, messages::NodeType};
 use snarkvm::prelude::{
     Address,
     Ledger,
@@ -33,6 +33,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[derive(Clone)]
 pub enum Node<N: Network> {
     /// A validator is a full node, capable of validating blocks.
     Validator(Arc<Validator<N, ConsensusDB<N>>>),
@@ -87,10 +88,13 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
+        storage_mode: StorageMode,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, dev, shutdown).await?)))
+        Ok(Self::Prover(Arc::new(
+            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, shutdown).await?,
+        )))
     }
 
     /// Initializes a new client node.
@@ -185,6 +189,44 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => Some(node.ledger()),
             Self::Prover(_) => None,
             Self::Client(node) => Some(node.ledger()),
+        }
+    }
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    pub fn is_block_synced(&self) -> bool {
+        match self {
+            Self::Validator(node) => node.is_block_synced(),
+            Self::Prover(node) => node.is_block_synced(),
+            Self::Client(node) => node.is_block_synced(),
+        }
+    }
+
+    /// Returns the number of blocks this node is behind the greatest peer height,
+    /// or `None` if not connected to peers yet.
+    pub fn num_blocks_behind(&self) -> Option<u32> {
+        match self {
+            Self::Validator(node) => node.num_blocks_behind(),
+            Self::Prover(node) => node.num_blocks_behind(),
+            Self::Client(node) => node.num_blocks_behind(),
+        }
+    }
+
+    /// Calculates the current sync speed in blocks per second.
+    /// Returns None if sync speed cannot be calculated (e.g., not syncing or insufficient data).
+    pub fn get_sync_speed(&self) -> f64 {
+        match self {
+            Self::Validator(node) => node.get_sync_speed(),
+            Self::Prover(node) => node.get_sync_speed(),
+            Self::Client(node) => node.get_sync_speed(),
+        }
+    }
+
+    /// Shuts down the node.
+    pub async fn shut_down(&self) {
+        match self {
+            Self::Validator(node) => node.shut_down().await,
+            Self::Prover(node) => node.shut_down().await,
+            Self::Client(node) => node.shut_down().await,
         }
     }
 }

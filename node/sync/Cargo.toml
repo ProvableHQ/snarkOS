@@ -90,6 +90,9 @@ features = [ "test" ]
 workspace = true
 features = [ "test" ]
 
+[dev-dependencies.snarkos-node-tcp]
+workspace = true
+
 [dev-dependencies.snarkos-node-sync-communication-service]
 workspace = true
 features = [ "test-helpers" ]

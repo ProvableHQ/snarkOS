@@ -24,6 +24,7 @@ use crate::{
 };
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 use snarkvm::{
     console::{network::Network, types::Field},
@@ -336,7 +337,7 @@ impl<N: Network> Sync<N> {
 
     /// We received new peer locators during a Ping.
     fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()> {
-        self.block_sync.update_peer_locators(peer_ip, locators)
+        self.block_sync.update_peer_locators(peer_ip, &locators)
     }
 
     /// A peer disconnected.
@@ -567,6 +568,7 @@ impl<N: Network> Sync<N> {
                     Ok(_) => {
                         // Update the current height if sync succeeds.
                         current_height = next_height;
+                        self.block_sync.count_request_completed();
                     }
                     Err(err) => {
                         // Mark the current height as processed in block_sync.
@@ -1171,12 +1173,14 @@ mod tests {
         core_ledger.advance_to_next_block(&block_3)?;
 
         // Initialize the syncing ledger.
+        let storage_mode = StorageMode::new_test(None);
         let syncing_ledger = Arc::new(CoreLedgerService::new(
-            CurrentLedger::load(genesis, StorageMode::new_test(None)).unwrap(),
+            CurrentLedger::load(genesis, storage_mode.clone()).unwrap(),
             Default::default(),
         ));
         // Initialize the gateway.
-        let gateway = Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], None)?;
+        let gateway =
+            Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], storage_mode, None)?;
         // Initialize the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
         // Initialize the sync module.

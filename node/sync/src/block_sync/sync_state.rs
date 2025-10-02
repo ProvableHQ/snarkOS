@@ -46,6 +46,12 @@ impl Default for SyncState {
 }
 
 impl SyncState {
+    /// Initialize the sync state at the given height.
+    /// Useful, when starting a node that already has blocks in its local storage.
+    pub fn new_with_height(height: u32) -> Self {
+        Self { sync_height: height, ..Default::default() }
+    }
+
     /// Did we catch up with the greatest known peer height?
     /// This will return false if we never synced from a peer.
     pub fn is_block_synced(&self) -> bool {
@@ -53,13 +59,14 @@ impl SyncState {
     }
 
     /// Returns `true` if there a blocks to sync from other nodes.
+    /// Returns `false` if the node has fully caught up with the rest of the network.
     pub fn can_block_sync(&self) -> bool {
         // Return true if sync state is false even if we there are no known blocks to fetch,
         // because otherwise nodes will never  switch to synced at startup.
         if let Some(num_behind) = self.num_blocks_behind() {
             num_behind > 0
         } else {
-            debug!("Cannot block sync. No peer locators yet");
+            debug!("Cannot block sync: the node has not received block locators yet");
             false
         }
     }

@@ -22,6 +22,7 @@ use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
+    PeerPoolHandling,
     Router,
     Routing,
     messages::{Message, NodeType, UnconfirmedSolution},
@@ -42,6 +43,7 @@ use snarkvm::{
     synthesizer::VM,
 };
 
+use aleo_std::StorageMode;
 use anyhow::Result;
 use colored::Colorize;
 use core::{marker::PhantomData, time::Duration};
@@ -96,6 +98,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
+        storage_mode: StorageMode,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
@@ -119,6 +122,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
+            storage_mode,
             dev.is_some(),
         )
         .await?;

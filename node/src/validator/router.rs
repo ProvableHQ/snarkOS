@@ -14,16 +14,19 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_router::messages::{
-    BlockRequest,
-    BlockResponse,
-    DataBlocks,
-    DisconnectReason,
-    Message,
-    MessageCodec,
-    Ping,
-    Pong,
-    UnconfirmedTransaction,
+use snarkos_node_router::{
+    PeerPoolHandling,
+    messages::{
+        BlockRequest,
+        BlockResponse,
+        DataBlocks,
+        DisconnectReason,
+        Message,
+        MessageCodec,
+        Ping,
+        Pong,
+        UnconfirmedTransaction,
+    },
 };
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
@@ -146,6 +149,11 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Validator<N, C> {
     /// or `None` if not connected to peers yet.
     fn num_blocks_behind(&self) -> Option<u32> {
         self.sync.num_blocks_behind()
+    }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        self.sync.get_sync_speed()
     }
 }
 

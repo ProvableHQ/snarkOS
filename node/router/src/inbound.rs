@@ -15,6 +15,7 @@
 
 use crate::{
     Outbound,
+    PeerPoolHandling,
     messages::{
         BlockRequest,
         BlockResponse,
@@ -36,11 +37,11 @@ use snarkvm::prelude::{
 
 use anyhow::{Result, anyhow, bail};
 use snarkos_node_tcp::is_bogon_ip;
-use std::net::SocketAddr;
+use std::{cmp, net::SocketAddr};
 use tokio::task::spawn_blocking;
 
 /// The max number of peers to send in a `PeerResponse` message.
-const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
+pub(crate) const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
 
 #[async_trait]
 pub trait Inbound<N: Network>: Reading + Outbound<N> {
@@ -73,7 +74,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles the inbound message from the peer. The returned value indicates whether
-    /// the connection is still active, and errors causing a disconnect once they are
+    /// the connection is still active, and errors cause a disconnect once they are
     /// propagated to the caller.
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
@@ -196,7 +197,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
                 // If the peer is a prover, ensure there are no block locators.
                 else if message.node_type.is_prover() && message.block_locators.is_some() {
-                    bail!("Peer '{peer_ip}' is a prover or client, but block locators were provided");
+                    bail!("Peer '{peer_ip}' is a prover, but block locators were provided");
                 }
 
                 // Process the ping message.
@@ -314,21 +315,34 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
     /// Handles a `PeerRequest` message.
     fn peer_request(&self, peer_ip: SocketAddr) -> bool {
-        // Retrieve the connected peers.
-        let peers = self.router().connected_peers();
-        // Filter out invalid addresses.
-        let peers = match self.router().is_dev() {
-            // In development mode, relax the validity requirements to make operating devnets more flexible.
-            true => {
-                peers.into_iter().filter(|ip| *ip != peer_ip && !is_bogon_ip(ip.ip())).take(MAX_PEERS_TO_SEND).collect()
+        // Retrieve the connected peers, filtering out invalid addresses.
+        let mut peers = self.router().filter_connected_peers(|peer| {
+            let ip = peer.listener_addr;
+            match self.router().is_dev() {
+                // In development mode, relax the validity requirements to make operating devnets more flexible.
+                true => ip != peer_ip && !is_bogon_ip(ip.ip()),
+                // In production mode, ensure the peer IPs are valid.
+                false => ip != peer_ip && self.router().is_valid_peer_ip(ip),
             }
-            // In production mode, ensure the peer IPs are valid.
-            false => peers
-                .into_iter()
-                .filter(|ip| *ip != peer_ip && self.router().is_valid_peer_ip(ip))
-                .take(MAX_PEERS_TO_SEND)
-                .collect(),
-        };
+        });
+        // Get the low-level peer stats.
+        let known_peers = self.tcp().known_peers().snapshot();
+
+        // Sort the prospect peers.
+        peers.sort_unstable_by_key(|peer| {
+            if let Some(peer_stats) = known_peers.get(&peer.listener_addr.ip()) {
+                // Prioritize greatest height, then lowest failure count.
+                (cmp::Reverse(peer.last_height_seen), peer_stats.failures())
+            } else {
+                // Unreachable; use an else-compatible dummy.
+                (cmp::Reverse(peer.last_height_seen), 0)
+            }
+        });
+
+        // Truncate and convert to socket addrs.
+        peers.truncate(MAX_PEERS_TO_SEND);
+        let peers = peers.into_iter().map(|peer| peer.listener_addr).collect();
+
         // Send a `PeerResponse` message to the peer.
         self.router().send(peer_ip, Message::PeerResponse(PeerResponse { peers }));
         true
@@ -345,7 +359,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
             // In development mode, relax the validity requirements to make operating devnets more flexible.
             true => peers.iter().copied().filter(|ip| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
             // In production mode, ensure the peer IPs are valid.
-            false => peers.iter().copied().filter(|ip| self.router().is_valid_peer_ip(ip)).collect(),
+            false => peers.iter().copied().filter(|ip| self.router().is_valid_peer_ip(*ip)).collect(),
         };
         // Adds the given peer IPs to the list of candidate peers.
         self.router().insert_candidate_peers(&peers);

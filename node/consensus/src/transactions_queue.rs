@@ -199,8 +199,10 @@ impl<N: Network> PriorityQueue<N> {
 mod tests {
     use super::*;
 
-    use snarkvm::prelude::{MainnetV0, TestRng};
-    use snarkvm_ledger_test_helpers::{sample_deployment_transaction, sample_execution_transaction_with_fee};
+    use snarkvm::{
+        ledger::test_helpers::{sample_deployment_transaction, sample_execution_transaction_with_fee},
+        prelude::{MainnetV0, TestRng},
+    };
 
     type CurrentNetwork = MainnetV0;
 

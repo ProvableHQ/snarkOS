@@ -18,6 +18,8 @@ use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
+    Peer,
+    PeerPoolHandling,
     Router,
     Routing,
     messages::{
@@ -46,7 +48,11 @@ use snarkvm::prelude::{
 };
 
 use async_trait::async_trait;
-use std::{io, net::SocketAddr, str::FromStr};
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
+use std::{collections::HashMap, io, net::SocketAddr, str::FromStr};
 use tracing::*;
 
 #[derive(Clone)]
@@ -70,6 +76,14 @@ impl<N: Network> P2P for TestRouter<N> {
     /// Returns a reference to the TCP instance.
     fn tcp(&self) -> &Tcp {
         self.router().tcp()
+    }
+}
+
+impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
+    const OWNER: &str = "[TestRouter]";
+
+    fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+        self.router().peer_pool()
     }
 }
 
@@ -161,6 +175,11 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
     /// Returns the number of blocks this node is behind the greatest peer height.
     fn num_blocks_behind(&self) -> Option<u32> {
         None
+    }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        0.0
     }
 }
 

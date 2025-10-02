@@ -23,6 +23,9 @@ metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
 
+[dependencies.aleo-std]
+workspace = true
+
 [dependencies.anyhow]
 workspace = true
 
@@ -63,6 +66,9 @@ workspace = true
 [dependencies.snarkos-node-bft-ledger-service]
 workspace = true
 features = [ "ledger", "prover" ]
+
+[dependencies.snarkos-node-sync-communication-service]
+workspace = true
 
 [dependencies.snarkos-node-sync-locators]
 workspace = true

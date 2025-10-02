@@ -18,7 +18,7 @@ use common::*;
 
 use deadline::deadline;
 use peak_alloc::PeakAlloc;
-use snarkos_node_router::{Outbound, Routing};
+use snarkos_node_router::{Outbound, PeerPoolHandling, Routing};
 use snarkos_node_tcp::protocols::{Disconnect, Handshake, OnConnect};
 use snarkvm::{prelude::Rng, utilities::TestRng};
 

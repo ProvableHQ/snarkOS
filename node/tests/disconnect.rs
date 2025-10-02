@@ -19,6 +19,7 @@
 mod common;
 use common::{node::*, test_peer::TestPeer};
 
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_tcp::P2P;
 
 use deadline::deadline;
@@ -37,6 +38,7 @@ macro_rules! test_disconnect {
         async fn $peer_type() {
             use deadline::deadline;
             use pea2pea::Pea2Pea;
+            use snarkos_node_router::PeerPoolHandling;
             use snarkos_node_tcp::P2P;
             use std::time::Duration;
 

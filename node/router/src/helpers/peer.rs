@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{NodeType, Router, messages::ChallengeRequest};
+use crate::NodeType;
 use snarkvm::prelude::{Address, Network};
 
 use std::{net::SocketAddr, time::Instant};
@@ -29,7 +29,7 @@ pub enum Peer<N: Network> {
     Connected(ConnectedPeer<N>),
 }
 
-/// A candidate peer.
+/// A connecting peer.
 #[derive(Clone)]
 pub struct ConnectingPeer {
     /// The listening address of a connecting peer.
@@ -62,12 +62,12 @@ pub struct ConnectedPeer<N: Network> {
     pub node_type: NodeType,
     /// The message version of the peer.
     pub version: u32,
+    /// The latest block height known to be associated with the peer.
+    pub last_height_seen: Option<u32>,
     /// The timestamp of the first message received from the peer.
     pub first_seen: Instant,
     /// The timestamp of the last message received from this peer.
     pub last_seen: Instant,
-    /// A reference to the associated `Router` object.
-    pub router: Router<N>,
 }
 
 impl<N: Network> Peer<N> {
@@ -77,43 +77,44 @@ impl<N: Network> Peer<N> {
     }
 
     /// Create a connecting peer.
-    pub const fn new_connecting(trusted: bool, listener_addr: SocketAddr) -> Self {
-        Self::Connecting(ConnectingPeer { trusted, listener_addr })
+    pub const fn new_connecting(listener_addr: SocketAddr, trusted: bool) -> Self {
+        Self::Connecting(ConnectingPeer { listener_addr, trusted })
     }
 
     /// Promote a connecting peer to a fully connected one.
-    pub fn upgrade_to_connected(&mut self, connected_addr: SocketAddr, cr: &ChallengeRequest<N>, router: Router<N>) {
-        // Logic check: this can only happen during the handshake.
-        assert!(matches!(self, Self::Connecting(_)));
-
+    pub fn upgrade_to_connected(
+        &mut self,
+        connected_addr: SocketAddr,
+        listener_port: u16,
+        aleo_address: Address<N>,
+        node_type: NodeType,
+        node_version: u32,
+    ) {
         let timestamp = Instant::now();
-        let listener_addr = SocketAddr::from((connected_addr.ip(), cr.listener_port));
+        let listener_addr = SocketAddr::from((connected_addr.ip(), listener_port));
 
-        // Introduce the peer in the resolver.
-        router.resolver.write().insert_peer(listener_addr, connected_addr);
+        // Logic check: this can only happen during the handshake. This isn't a fatal
+        // error, but should not be triggered.
+        if !matches!(self, Self::Connecting(_)) {
+            warn!("Peer '{listener_addr}' is being upgraded to Connected, but isn't Connecting");
+        }
 
         *self = Self::Connected(ConnectedPeer {
             listener_addr,
             connected_addr,
-            aleo_addr: cr.address,
-            node_type: cr.node_type,
+            aleo_addr: aleo_address,
+            node_type,
             trusted: self.is_trusted(),
-            version: cr.version,
+            version: node_version,
+            last_height_seen: None,
             first_seen: timestamp,
             last_seen: timestamp,
-            router,
         });
     }
 
     /// Demote a peer to candidate status, marking it as disconnected.
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
-        // Connecting peers are not in the resolver.
-        if let Self::Connected(peer) = self {
-            // Remove the peer from the resolver.
-            peer.router.resolver.write().remove_peer(&peer.connected_addr);
-        };
-
-        *self = Self::Candidate(CandidatePeer { listener_addr, trusted: self.is_trusted() });
+        *self = Self::new_candidate(listener_addr, self.is_trusted());
     }
 
     /// Returns the type of the node (only applicable to connected peers).
@@ -126,11 +127,20 @@ impl<N: Network> Peer<N> {
     }
 
     /// The listener (public) address of this peer.
-    pub fn listener_addr(&self) -> &SocketAddr {
+    pub fn listener_addr(&self) -> SocketAddr {
         match self {
-            Self::Candidate(p) => &p.listener_addr,
-            Self::Connecting(p) => &p.listener_addr,
-            Self::Connected(p) => &p.listener_addr,
+            Self::Candidate(p) => p.listener_addr,
+            Self::Connecting(p) => p.listener_addr,
+            Self::Connected(p) => p.listener_addr,
+        }
+    }
+
+    /// The listener (public) address of this peer.
+    pub fn last_height_seen(&self) -> Option<u32> {
+        match self {
+            Self::Candidate(_) => None,
+            Self::Connecting(_) => None,
+            Self::Connected(peer) => peer.last_height_seen,
         }
     }
 
