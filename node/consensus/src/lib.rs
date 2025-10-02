@@ -43,7 +43,7 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
     },
     prelude::*,
-    utilities::task,
+    utilities::{LoggableError, task},
 };
 
 use aleo_std::StorageMode;
@@ -323,15 +323,17 @@ impl<N: Network> Consensus<N> {
         for solution in solutions.into_iter() {
             let solution_id = solution.id();
             trace!("Adding unconfirmed solution '{}' to the memory pool...", fmt_id(solution_id));
-            // Send the unconfirmed solution to the primary.
-            if let Err(e) = self.bft.primary().process_unconfirmed_solution(solution_id, Data::Object(solution)).await {
-                // If the BFT is synced, then log the warning.
-                if self.bft.is_synced() {
-                    // If error occurs after the first 10 blocks of the epoch, log it as a warning, otherwise ignore.
-                    if self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
-                        warn!("Failed to add unconfirmed solution '{}' to the memory pool - {e}", fmt_id(solution_id))
-                    };
-                }
+
+            // Send the unconfirmed solution to the primary
+            // and logs errors as warnings when the BFT is synced and there was a recent epoch change.
+            if let Err(err) = self.bft.primary().process_unconfirmed_solution(solution_id, Data::Object(solution)).await
+                && self.bft.is_synced()
+                && self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10
+            {
+                err.log_warning(format!(
+                    "Failed to add unconfirmed solution '{}' to the memory pool",
+                    fmt_id(solution_id)
+                ));
             }
         }
         Ok(())
@@ -422,17 +424,17 @@ impl<N: Network> Consensus<N> {
                 Transaction::Fee(..) => "fee",
             };
             trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
+
             // Send the unconfirmed transaction to the primary.
-            if let Err(e) =
+            // If it fails while the BFT is synced, it logs a warnings.
+            if let Err(err) =
                 self.bft.primary().process_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await
+                && self.bft.is_synced()
             {
-                // If the BFT is synced, then log the warning.
-                if self.bft.is_synced() {
-                    warn!(
-                        "Failed to add unconfirmed {tx_type_str} transaction '{}' to the memory pool - {e}",
-                        fmt_id(transaction_id)
-                    );
-                }
+                err.log_warning(format!(
+                    "Failed to add unconfirmed {tx_type_str} transaction '{}' to the memory pool",
+                    fmt_id(transaction_id)
+                ));
             }
         }
         Ok(())
@@ -454,12 +456,12 @@ impl<N: Network> Consensus<N> {
                 // Sleep briefly.
                 tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
                 // Process the unconfirmed transactions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_transactions().await {
-                    warn!("Cannot process unconfirmed transactions - {e}");
+                if let Err(err) = self_.process_unconfirmed_transactions().await {
+                    err.log_warning("Cannot process unconfirmed transactions");
                 }
                 // Process the unconfirmed solutions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_solutions().await {
-                    warn!("Cannot process unconfirmed solutions - {e}");
+                if let Err(err) = self_.process_unconfirmed_solutions().await {
+                    err.log_warning("Cannot process unconfirmed solutions");
                 }
             }
         });
