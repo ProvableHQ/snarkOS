@@ -453,7 +453,7 @@ impl<N: Network> Gateway<N> {
     #[cfg(test)]
     pub fn insert_connected_peer(&self, peer_ip: SocketAddr, peer_addr: SocketAddr, address: Address<N>) {
         // Adds a bidirectional map between the listener address and (ambiguous) peer address.
-        self.resolver.write().insert_peer(peer_ip, peer_addr, address);
+        self.resolver.write().insert_peer(peer_ip, peer_addr, Some(address));
         // Add a transmission for this peer in the connected peers.
         self.peer_pool.write().insert(peer_ip, Peer::new_connecting(peer_ip, false));
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
@@ -1196,7 +1196,7 @@ impl<N: Network> Handshake for Gateway<N> {
             match handshake_result {
                 Ok(Some(ref cr)) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(addr, peer_addr, cr.address);
+                        self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
                         peer.upgrade_to_connected(
                             peer_addr,
                             cr.listener_port,

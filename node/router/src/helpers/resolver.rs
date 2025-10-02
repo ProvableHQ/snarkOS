@@ -55,16 +55,20 @@ impl<N: Network> Resolver<N> {
 
     /// Inserts a mapping of a peer's connected address to its listener address,
     /// alongside a mapping of the Aleo address to the listener address.
-    pub fn insert_peer(&mut self, listener_ip: SocketAddr, peer_addr: SocketAddr, address: Address<N>) {
+    pub fn insert_peer(&mut self, listener_ip: SocketAddr, peer_addr: SocketAddr, aleo_addr: Option<Address<N>>) {
         self.to_listener.insert(peer_addr, listener_ip);
-        self.address_peers.insert(address, listener_ip);
+        if let Some(addr) = aleo_addr {
+            self.address_peers.insert(addr, listener_ip);
+        }
     }
 
     /// Removes the mapping of a peer's connected address to its listener address,
     /// alongside the mapping of the Aleo address to the listener address.
-    pub fn remove_peer(&mut self, connected_addr: SocketAddr, aleo_addr: Address<N>) {
+    pub fn remove_peer(&mut self, connected_addr: SocketAddr, aleo_addr: Option<Address<N>>) {
         self.to_listener.remove(&connected_addr);
-        self.address_peers.remove(&aleo_addr);
+        if let Some(addr) = aleo_addr {
+            self.address_peers.remove(&addr);
+        }
     }
 }
 
@@ -86,12 +90,12 @@ mod tests {
         assert!(resolver.get_listener(peer_addr).is_none());
         assert!(resolver.get_peer_ip_for_address(address).is_none());
 
-        resolver.insert_peer(listener_ip, peer_addr, address);
+        resolver.insert_peer(listener_ip, peer_addr, Some(address));
 
         assert_eq!(resolver.get_listener(peer_addr).unwrap(), listener_ip);
         assert_eq!(resolver.get_peer_ip_for_address(address).unwrap(), listener_ip);
 
-        resolver.remove_peer(peer_addr, address);
+        resolver.remove_peer(peer_addr, Some(address));
 
         assert!(resolver.get_listener(peer_addr).is_none());
         assert!(resolver.get_peer_ip_for_address(address).is_none());

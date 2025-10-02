@@ -135,7 +135,7 @@ impl<N: Network> Router<N> {
             match handshake_result {
                 Ok(Some(ref cr)) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, cr.address);
+                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, None);
                         peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, cr.node_type, cr.version);
                     }
                     #[cfg(feature = "metrics")]

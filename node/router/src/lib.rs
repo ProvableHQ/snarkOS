@@ -203,7 +203,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) {
         if let Some(peer) = self.peer_pool().write().get_mut(&listener_addr) {
             if let Peer::Connected(peer) = peer {
-                self.resolver().write().remove_peer(peer.connected_addr, peer.aleo_addr);
+                // Only validators get their aleo address registered with the resolver.
+                let aleo_addr = if peer.node_type == NodeType::Validator { Some(peer.aleo_addr) } else { None };
+                self.resolver().write().remove_peer(peer.connected_addr, aleo_addr);
             }
             peer.downgrade_to_candidate(listener_addr);
         }
