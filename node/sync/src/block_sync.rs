@@ -887,6 +887,8 @@ impl<N: Network> BlockSync<N> {
             entry.response = Some(block.clone());
         }
 
+        trace!("Received a new and valid block response for height {height}");
+
         // Notify the sync loop that something changed.
         self.response_notify.notify_one();
 
@@ -1070,7 +1072,7 @@ impl<N: Network> BlockSync<N> {
     /// Returns `None` if there are no peers to sync from.
     ///
     /// # Locking
-    /// This function will read-lock `common_ancstors`.
+    /// This function will read-lock `common_ancestors`.
     fn find_sync_peers_inner(&self, current_height: u32) -> Option<(IndexMap<SocketAddr, BlockLocators<N>>, u32)> {
         // Retrieve the latest ledger height.
         let latest_ledger_height = self.ledger.latest_block_height();

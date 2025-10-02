@@ -47,6 +47,7 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
+    utilities::LoggableError,
 };
 
 use aleo_std::StorageMode;
@@ -290,7 +291,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
             Ok(val) => val,
             Err(err) => {
-                error!("Block synchronization failed - {err}");
+                err.log_error("Block synchronization failed");
                 return;
             }
         };
@@ -299,7 +300,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         if has_new_blocks {
             match self.sync.get_block_locators() {
                 Ok(locators) => self.ping.update_block_locators(locators),
-                Err(err) => error!("Failed to get block locators: {err}"),
+                Err(err) => err.log_error("Failed to get block locators"),
             }
         }
     }
@@ -331,7 +332,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() {
+        if !block_requests.is_empty() {
             let total_requests = self.sync.num_total_block_requests();
             let num_outstanding = self.sync.num_outstanding_block_requests();
             if total_requests > 0 {

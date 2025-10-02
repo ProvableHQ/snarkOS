@@ -29,6 +29,7 @@ use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
     utilities::{
+        LoggableError,
         cfg_into_iter,
         cfg_iter,
         ensure_equals,
@@ -194,7 +195,17 @@ impl<N: Network> Sync<N> {
                 let _ =
                     tokio::time::timeout(Self::MAX_SYNC_INTERVAL, self_.block_sync.wait_for_block_responses()).await;
 
-                self_.try_advancing_block_synchronization(&ping).await;
+                let ping = ping.clone();
+                let self_ = self_.clone();
+                let hdl = tokio::spawn(async move {
+                    self_.try_advancing_block_synchronization(&ping).await;
+                });
+
+                if let Err(err) = hdl.await
+                    && let Ok(panic) = err.try_into_panic()
+                {
+                    error!("Sync block advancement panicked: {panic:?}");
+                }
 
                 // We perform no additional rate limiting here as
                 // requests are already rate-limited.
@@ -237,7 +248,13 @@ impl<N: Network> Sync<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, blocks, callback)) = rx_block_sync_insert_block_response.recv().await {
-                callback.send(self_.insert_block_response(peer_ip, blocks).await).ok();
+                let result = self_.insert_block_response(peer_ip, blocks).await;
+                //TODO remove this once channels are gone
+                if let Err(err) = &result {
+                    warn!("Failed to insret block response: {err:?}");
+                }
+
+                callback.send(result).ok();
             }
         });
 
@@ -487,7 +504,7 @@ impl<N: Network> Sync<N> {
         let new_blocks = match self.try_advancing_block_synchronization_inner().await {
             Ok(new_blocks) => new_blocks,
             Err(err) => {
-                error!("Block synchronization failed - {err}");
+                err.log_error("Block synchronization failed");
                 false
             }
         };
@@ -497,7 +514,7 @@ impl<N: Network> Sync<N> {
         {
             match self.get_block_locators() {
                 Ok(locators) => ping.update_block_locators(locators),
-                Err(err) => error!("Failed to update block locators: {err}"),
+                Err(err) => err.log_error("Failed to update block locators"),
             }
         }
     }
@@ -561,10 +578,6 @@ impl<N: Network> Sync<N> {
             // (unconfirmed) blocks that are already queued up.
             let start_height = self.compute_sync_height().await;
 
-            // For sanity, update the sync height before starting.
-            // (if this is lower or equal to the current sync height, this is a noop)
-            self.block_sync.set_sync_height(start_height);
-
             // The height is incremented as blocks are added.
             let mut current_height = start_height;
             trace!("Try advancing with block responses (at block {current_height})");
@@ -598,10 +611,6 @@ impl<N: Network> Sync<N> {
             // added to it and not queue up in `latest_block_responses`.
             let start_height = ledger_height;
             let mut current_height = start_height;
-
-            // For sanity, update the sync height before starting.
-            // (if this is lower or equal to the current sync height, this is a noop)
-            self.block_sync.set_sync_height(start_height);
 
             // Try to advance the ledger *to tip* without updating the BFT.
             // TODO(kaimast): why to tip and not to tip-GC?
@@ -783,6 +792,19 @@ impl<N: Network> Sync<N> {
         // Acquire the pending blocks lock.
         let mut pending_blocks = self.pending_blocks.lock().await;
 
+        // Fetch the latest block height.
+        let ledger_block_height = self.ledger.latest_block_height();
+
+        // First, clear any older pending blocks.
+        // TODO(kaimast): ensure there are no dangling block requests
+        while let Some(pending_block) = pending_blocks.front() {
+            if pending_block.height() > ledger_block_height {
+                break;
+            }
+
+            pending_blocks.pop_front();
+        }
+
         if let Some(tail) = pending_blocks.back() {
             if tail.height() >= new_block.height() {
                 debug!(
@@ -796,21 +818,12 @@ impl<N: Network> Sync<N> {
             ensure_equals!(tail.height() + 1, new_block.height(), "Got an out-of-order block");
         }
 
-        // Fetch the latest block height.
-        let ledger_block_height = self.ledger.latest_block_height();
-
-        // Clear any older pending blocks.
-        // TODO(kaimast): ensure there are no dangling block requests
-        while let Some(pending_block) = pending_blocks.front() {
-            if pending_block.height() > ledger_block_height {
-                break;
-            }
-
-            pending_blocks.pop_front();
-        }
-
         // Check the block against the chain of pending blocks and append it on success.
-        let new_block = self.ledger.check_block_subdag(new_block, pending_blocks.make_contiguous())?;
+        // TODO(kaimast): handle the case where the ledger already advance better
+        let new_block = self
+            .ledger
+            .check_block_subdag(new_block, pending_blocks.make_contiguous())
+            .with_context(|| "SubDAG check failed")?;
         pending_blocks.push_back(new_block);
 
         // Now, figure out if and which pending block we can commit.
@@ -821,7 +834,10 @@ impl<N: Network> Sync<N> {
         // the availability threshold for the new block could also be reached.
         let mut commit_height = None;
         for block in pending_blocks.iter().rev() {
-            if self.is_block_availability_threshold_reached(block)? {
+            if self
+                .is_block_availability_threshold_reached(block)
+                .with_context(|| "Availability threshold check failed")?
+            {
                 commit_height = Some(block.height());
                 break;
             }
