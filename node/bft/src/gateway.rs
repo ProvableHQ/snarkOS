@@ -429,7 +429,7 @@ impl<N: Network> Gateway<N> {
     fn ensure_peer_is_allowed(&self, listener_addr: SocketAddr) -> Result<()> {
         // Ensure the peer IP is not this node.
         if self.is_local_ip(listener_addr) {
-            bail!("{CONTEXT} Dropping connection request from '{listener_addr}' (attempted to self-connect)")
+            bail!("{CONTEXT} Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
         // Ensure the peer is not spamming connection attempts.
         if !listener_addr.ip().is_loopback() {
@@ -437,11 +437,10 @@ impl<N: Network> Gateway<N> {
             let num_attempts = self.cache.insert_inbound_connection(listener_addr.ip(), RESTRICTED_INTERVAL);
             // Ensure the connecting peer has not surpassed the connection attempt limit.
             if num_attempts > MAX_CONNECTION_ATTEMPTS {
-                bail!("Dropping connection request from '{listener_addr}' (tried {num_attempts} times)")
+                bail!("Dropping connection request from '{listener_addr}' (tried {num_attempts} times)");
             }
         }
-
-        self.add_peer_on_handshake_resp(listener_addr)
+        Ok(())
     }
 
     #[cfg(feature = "metrics")]
@@ -900,14 +899,8 @@ impl<N: Network> Gateway<N> {
     fn handle_trusted_validators(&self) {
         // Ensure that the trusted nodes are connected.
         for validator_ip in &self.trusted_peers() {
-            // If the trusted_validator is not connected, attempt to connect to it.
-            if !self.is_local_ip(*validator_ip)
-                && !self.is_connecting(*validator_ip)
-                && !self.is_connected(*validator_ip)
-            {
-                // Attempt to connect to the trusted validator.
-                self.connect(*validator_ip);
-            }
+            // Attempt to connect to the trusted validator.
+            self.connect(*validator_ip);
         }
     }
 
@@ -934,11 +927,15 @@ impl<N: Network> Gateway<N> {
     /// if the number of connected validators is less than the minimum.
     /// It also attempts to connect to known unconnected validators.
     fn handle_min_connected_validators(&self) {
-        // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
+        // Attempt to connect to untrusted validators we're not connected to yet.
+        // The trusted ones are already handled by `handle_trusted_validators`.
+        let trusted_validators = self.trusted_peers();
         if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
             for candidate_addr in self.candidate_peers() {
-                // Attempt to connect to unconnected validators.
-                self.connect(candidate_addr);
+                if !trusted_validators.contains(&candidate_addr) {
+                    // Attempt to connect to unconnected validators.
+                    self.connect(candidate_addr);
+                }
             }
 
             // Retrieve the connected validators.
@@ -1197,7 +1194,7 @@ impl<N: Network> Handshake for Gateway<N> {
 
         if let Some(addr) = listener_addr {
             match handshake_result {
-                Ok(ref cr) => {
+                Ok(Some(ref cr)) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
                         self.resolver.write().insert_peer(addr, peer_addr, cr.address);
                         peer.upgrade_to_connected(
@@ -1211,6 +1208,9 @@ impl<N: Network> Handshake for Gateway<N> {
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
                     info!("{CONTEXT} Gateway is connected to '{addr}'");
+                }
+                Ok(None) => {
+                    return Err(error("Duplicate handshake attempt with '{addr}'"));
                 }
                 Err(error) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
@@ -1276,9 +1276,11 @@ impl<N: Network> Gateway<N> {
         peer_addr: SocketAddr,
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
-    ) -> io::Result<ChallengeRequest<N>> {
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
         // Introduce the peer into the peer pool.
-        self.add_peer_on_handshake_init(peer_addr)?;
+        if !self.add_connecting_peer(peer_addr) {
+            return Ok(None);
+        }
 
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
@@ -1328,7 +1330,7 @@ impl<N: Network> Gateway<N> {
             ChallengeResponse { restrictions_id, signature: Data::Object(our_signature), nonce: response_nonce };
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
-        Ok(peer_request)
+        Ok(Some(peer_request))
     }
 
     /// The connection responder side of the handshake.
@@ -1338,7 +1340,7 @@ impl<N: Network> Gateway<N> {
         peer_ip: &mut Option<SocketAddr>,
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
-    ) -> io::Result<ChallengeRequest<N>> {
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
 
@@ -1360,6 +1362,12 @@ impl<N: Network> Gateway<N> {
         if let Err(forbidden_message) = self.ensure_peer_is_allowed(peer_ip) {
             return Err(error(format!("{forbidden_message}")));
         }
+
+        // Introduce the peer into the peer pool.
+        if !self.add_connecting_peer(peer_ip) {
+            return Ok(None);
+        }
+
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
@@ -1401,7 +1409,7 @@ impl<N: Network> Gateway<N> {
             return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
         }
 
-        Ok(peer_request)
+        Ok(Some(peer_request))
     }
 
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.
