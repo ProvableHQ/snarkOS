@@ -870,40 +870,82 @@ impl<N: Network> BFT<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((current_round, callback)) = rx_primary_round.recv().await {
-                callback.send(self_.update_to_next_round(current_round)).ok();
+                let self_ = self_.clone();
+                let hdl = tokio::spawn(async move {
+                    callback.send(self_.update_to_next_round(current_round)).ok();
+                });
+
+                if let Err(err) = hdl.await
+                    && let Ok(panic) = err.try_into_panic()
+                {
+                    error!("Updating to next round failed: {panic:?}");
+                }
             }
+            debug!("rx_primary_round task ended");
         });
 
         // Process the certificate from the primary.
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((certificate, callback)) = rx_primary_certificate.recv().await {
-                // Update the DAG with the certificate.
-                let result = self_.update_dag::<true, false>(certificate).await;
-                // Send the callback **after** updating the DAG.
-                // Note: We must await the DAG update before proceeding.
-                callback.send(result).ok();
+                let self_ = self_.clone();
+                let hdl = tokio::spawn(async move {
+                    // Update the DAG with the certificate.
+                    let result = self_.update_dag::<true, false>(certificate).await;
+
+                    // Send the callback **after** updating the DAG.
+                    // Note: We must await the DAG update before proceeding.
+                    callback.send(result).ok();
+                });
+
+                if let Err(err) = hdl.await
+                    && let Ok(panic) = err.try_into_panic()
+                {
+                    error!("Updating DAG (from sync) failed: {panic:?}");
+                }
             }
+            debug!("rx_primary_certificate task ended");
         });
 
         // Process the request to sync the BFT DAG at bootup.
         let self_ = self.clone();
         self.spawn(async move {
             while let Some(certificates) = rx_sync_bft_dag_at_bootup.recv().await {
-                self_.sync_bft_dag_at_bootup(certificates).await;
+                let self_ = self_.clone();
+                let hdl = tokio::spawn(async move {
+                    self_.sync_bft_dag_at_bootup(certificates).await;
+                });
+
+                if let Err(err) = hdl.await
+                    && let Ok(panic) = err.try_into_panic()
+                {
+                    error!("Updating BFT DAGT at bootup failed: {panic:?}");
+                }
             }
+            debug!("rx_sync_bft_dag_at_bootup task ended");
         });
 
         // Handler for new certificates that were fetched by the sync module.
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((certificate, callback)) = rx_sync_bft.recv().await {
-                // Update the DAG with the certificate.
-                let result = self_.update_dag::<true, true>(certificate).await;
-                // Send the callback **after** updating the DAG.
-                // Note: We must await the DAG update before proceeding.
-                callback.send(result).ok();
+                let self_ = self_.clone();
+                let hdl = tokio::spawn(async move {
+                    // Update the DAG with the certificate.
+                    let result = self_.update_dag::<true, true>(certificate).await;
+
+                    // Send the callback **after** updating the DAG.
+                    // Note: We must await the DAG update before proceeding.
+                    callback.send(result).ok();
+                });
+
+                if let Err(err) = hdl.await
+                    && let Ok(panic) = err.try_into_panic()
+                {
+                    error!("Updating DAG (from sync) failed: {panic:?}");
+                }
             }
+            debug!("rx_sync_bft task ended");
         });
     }
 

@@ -210,6 +210,7 @@ impl<N: Network> Sync<N> {
 
                 let ping = ping.clone();
                 let self_ = self_.clone();
+
                 let hdl = tokio::spawn(async move {
                     self_.try_advancing_block_synchronization(&ping).await;
                 });
