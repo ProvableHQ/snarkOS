@@ -234,6 +234,16 @@ impl<N: Network> Worker<N> {
         false
     }
 
+    /// Reinserts the specified transmission at the front of the ready queue.
+    pub(crate) fn reinsert_front(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
+        // Check if the transmission ID exists.
+        if !self.contains_transmission(transmission_id) {
+            // Insert the transmission at the front of the ready queue.
+            return self.ready.write().insert_front(transmission_id, transmission);
+        }
+        false
+    }
+
     /// Broadcasts a worker ping event.
     pub(crate) fn broadcast_ping(&self) {
         // Retrieve the transmission IDs.

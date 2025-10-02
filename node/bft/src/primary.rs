@@ -510,6 +510,10 @@ impl<N: Network> Primary<N> {
 
         // Initialize the map of transmissions.
         let mut transmissions: IndexMap<_, _> = Default::default();
+        // Transmissions that caused proposal cost to overflow the spend limit budget in the current batch.
+        // These transmissions will be skipped in this batch and will be prioritzed in the next batch.
+        let mut overflowed_transmissions: IndexMap<_, _> = Default::default();
+
         // Track the total execution costs of the batch proposal as it is being constructed.
         let mut proposal_cost = 0u64;
         // Note: worker draining and transaction inclusion needs to be thought
@@ -640,9 +644,9 @@ impl<N: Network> Primary<N> {
                                 batch_spend_limit
                             );
 
-                            // Reinsert the transmission into the worker.
-                            worker.insert_front(id, transmission);
-                            break 'outer;
+                            // Collect this transmission and do not update the proposal cost for it.
+                            overflowed_transmissions.insert(id, transmission);
+                            continue;
                         }
 
                         // Update the proposal cost.
@@ -661,6 +665,19 @@ impl<N: Network> Primary<N> {
                 num_worker_transmissions = num_worker_transmissions.saturating_add(1);
             }
         }
+
+        // Re-insert the transmissions into the workers at the front of their ready queue.
+        if let Err(e) = assign_to_workers(
+            &self.workers,
+            overflowed_transmissions.clone().into_iter(),
+            |worker, transmission_id, transmission| {
+                worker.reinsert_front(transmission_id, transmission);
+            },
+        ) {
+            // Log the transmissions and the error so atleast these transmissions are in the logs on failure to re-insert.
+            error!("Failed to reinsert transmissions: {overflowed_transmissions:?}, recieved error: {e:?}");
+            Err(e)?;
+        };
 
         // Determine the current timestamp.
         let current_timestamp = now();
