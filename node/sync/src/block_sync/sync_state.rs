@@ -138,7 +138,7 @@ impl SyncState {
 
             if new_sync_val {
                 let elapsed =
-                    if elapsed < 60 { format!("{elapsed} seconds") } else { format!("{} minutes", elapsed / 60) };
+                    if elapsed < 60 { format!("{elapsed} second(s)") } else { format!("{} minute(s)", elapsed / 60) };
 
                 debug!("Block sync state changed to \"synced\". It took {elapsed} to catch up with the network.");
             } else {
