@@ -1319,7 +1319,9 @@ mod tests {
     }
 
     impl<N: Network> PeerPoolHandling<N> for DummyPeerPoolHandler {
+        const MAXIMUM_POOL_SIZE: usize = 10;
         const OWNER: &str = "[DummyPeerPoolHandler]";
+        const PEER_SLASHING_COUNT: usize = 0;
 
         fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
             unreachable!();

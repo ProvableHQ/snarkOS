@@ -163,7 +163,7 @@ pub struct InnerGateway<N: Network> {
 impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
     const MAXIMUM_POOL_SIZE: usize = 200;
     const OWNER: &str = CONTEXT;
-    const PEER_SLASHING_COUNT: usize = 40;
+    const PEER_SLASHING_COUNT: usize = 20;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool

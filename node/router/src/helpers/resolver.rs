@@ -17,14 +17,15 @@ use snarkvm::prelude::{Address, Network};
 
 use std::{collections::HashMap, net::SocketAddr};
 
-/// The resolver contains some reverse maps for peers which are not available
-/// by default to the implementors of PeerPoolHandling (who already contain
+/// The resolver contains additional reverse maps for peers which are not available
+/// by default to the implementors of PeerPoolHandling (which already contains
 /// maps from the peer's listening address to their various components).
 #[derive(Debug)]
 pub struct Resolver<N: Network> {
-    /// The map of the (ambiguous) peer address to listener address.
+    /// The map of peers' connected addresses to the corresponding listener addresses.
     to_listener: HashMap<SocketAddr, SocketAddr>,
-    /// A map of `address` to `peer IP`.
+    /// A map of peers' Aleo addresses to the corresponding listener addresses.
+    /// It is currently only used for the validators.
     address_peers: HashMap<Address<N>, SocketAddr>,
 }
 
@@ -43,27 +44,32 @@ impl<N: Network> Resolver<N> {
 }
 
 impl<N: Network> Resolver<N> {
-    /// Returns the listener address for the given (ambiguous) peer address, if it exists.
-    pub fn get_listener(&self, peer_addr: SocketAddr) -> Option<SocketAddr> {
-        self.to_listener.get(&peer_addr).copied()
+    /// Returns the listener address for the given connected peer address, if it exists.
+    pub fn get_listener(&self, connected_addr: SocketAddr) -> Option<SocketAddr> {
+        self.to_listener.get(&connected_addr).copied()
     }
 
-    /// Returns the peer IP for the given address.
-    pub fn get_peer_ip_for_address(&self, address: Address<N>) -> Option<SocketAddr> {
-        self.address_peers.get(&address).copied()
+    /// Returns the listener address for the peer with the given Aleo address.
+    pub fn get_peer_ip_for_address(&self, aleo_addr: Address<N>) -> Option<SocketAddr> {
+        self.address_peers.get(&aleo_addr).copied()
     }
 
     /// Inserts a mapping of a peer's connected address to its listener address,
-    /// alongside a mapping of the Aleo address to the listener address.
-    pub fn insert_peer(&mut self, listener_ip: SocketAddr, peer_addr: SocketAddr, aleo_addr: Option<Address<N>>) {
-        self.to_listener.insert(peer_addr, listener_ip);
+    /// alongside an optional mapping of the Aleo address to the listener address.
+    pub fn insert_peer(
+        &mut self,
+        listener_addr: SocketAddr,
+        connected_addr: SocketAddr,
+        aleo_addr: Option<Address<N>>,
+    ) {
+        self.to_listener.insert(connected_addr, listener_addr);
         if let Some(addr) = aleo_addr {
-            self.address_peers.insert(addr, listener_ip);
+            self.address_peers.insert(addr, listener_addr);
         }
     }
 
     /// Removes the mapping of a peer's connected address to its listener address,
-    /// alongside the mapping of the Aleo address to the listener address.
+    /// alongside the optional mapping of the Aleo address to the listener address.
     pub fn remove_peer(&mut self, connected_addr: SocketAddr, aleo_addr: Option<Address<N>>) {
         self.to_listener.remove(&connected_addr);
         if let Some(addr) = aleo_addr {
@@ -79,6 +85,7 @@ mod tests {
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
+    // Test the basic functionalities of the resolver.
     #[test]
     fn test_resolver() {
         let mut resolver = Resolver::<CurrentNetwork>::new();

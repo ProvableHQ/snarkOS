@@ -81,7 +81,9 @@ impl<N: Network> P2P for TestRouter<N> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
+    const MAXIMUM_POOL_SIZE: usize = 1_000;
     const OWNER: &str = "[TestRouter]";
+    const PEER_SLASHING_COUNT: usize = 0;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         self.router().peer_pool()

@@ -84,11 +84,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     const OWNER: &str;
 
     /// The maximum number of peers permitted to be stored in the peer pool.
-    const MAXIMUM_POOL_SIZE: usize = 1_000;
+    const MAXIMUM_POOL_SIZE: usize;
 
     /// The number of candidate peers to be removed from the pool once `MAXIMUM_POOL_SIZE` is reached.
     /// It must be lower than `MAXIMUM_POOL_SIZE`.
-    const PEER_SLASHING_COUNT: usize = 0;
+    const PEER_SLASHING_COUNT: usize;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
 
@@ -506,8 +506,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
 
         // Insert/update the low-level IP ban list.
-        let tcp = self.tcp().clone();
-        tcp.banned_peers().update_ip_ban(ip);
+        self.tcp().banned_peers().update_ip_ban(ip);
 
         // Disconnect from the peer.
         self.disconnect(listener_addr);
@@ -541,6 +540,7 @@ impl<N: Network> Deref for Router<N> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for Router<N> {
+    const MAXIMUM_POOL_SIZE: usize = 10_000;
     const OWNER: &str = "[Router]";
     const PEER_SLASHING_COUNT: usize = 200;
 
