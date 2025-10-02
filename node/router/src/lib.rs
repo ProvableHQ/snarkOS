@@ -230,9 +230,15 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // If we're about to exceed the peer pool size limit, apply candidate slashing.
+        // Hold a write guard from now on, so as not to accidentally slash multiple times
+        // based on multiple batches of candidate peers.
+        let mut peer_pool = self.peer_pool().write();
         if self.number_of_peers() + listener_addrs.len() >= Self::MAXIMUM_POOL_SIZE && Self::PEER_SLASHING_COUNT != 0 {
             // Collect the addresses of prospect peers.
-            let mut peers_to_slash = self.candidate_peers();
+            let mut peers_to_slash = peer_pool
+                .iter()
+                .filter_map(|(addr, peer)| (matches!(peer, Peer::Candidate(_))).then_some(*addr))
+                .collect::<Vec<_>>();
 
             // Get the low-level peer stats.
             let known_peers = self.tcp().known_peers().snapshot();
@@ -251,7 +257,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             peers_to_slash.truncate(Self::PEER_SLASHING_COUNT);
 
             // Remove the peers to slash from the pool.
-            self.peer_pool().write().retain(|addr, _| !peers_to_slash.contains(addr));
+            peer_pool.retain(|addr, _| !peers_to_slash.contains(addr));
         }
 
         // Make sure that we won't breach the pool size limit in case the slashing didn't suffice.
@@ -263,7 +269,6 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // Insert new candidate peers.
-        let mut peer_pool = self.peer_pool().write();
         for addr in listener_addrs {
             peer_pool.insert(addr, Peer::new_candidate(addr, false));
         }
