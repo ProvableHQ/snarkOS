@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759490112398,
+  "lastUpdate": 1759504716699,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -2622,6 +2622,66 @@ window.BENCHMARK_DATA = {
             "value": 1.23,
             "unit": "blocks/s",
             "extra": "total_wait=203s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ace50270fbdb7501317e21d357c7c101420ffc54",
+          "message": "Merge pull request #3912 from ljedrz/logs/fix_owner_printing\n\n[Logs] Correctly print the PeerPoolHandler owner",
+          "timestamp": "2025-10-03T16:48:51+02:00",
+          "tree_id": "2a62d5b5739c3851ee1f487c555040c28ad96849",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/ace50270fbdb7501317e21d357c7c101420ffc54"
+        },
+        "date": 1759504715905,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.7017679080644843,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=177.66144847869873, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 8011.243195998412,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=9.985965728759766, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.32,
+            "unit": "blocks/s",
+            "extra": "total_wait=188s, target_height=250, connect_time=22s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.302848,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=183, mean_speed=0.889982, max_speed=3.250000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.21,
+            "unit": "blocks/s",
+            "extra": "total_wait=206s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
           }
         ]
       }
