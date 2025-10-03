@@ -37,7 +37,6 @@ use snarkos_node_bft::{
         init_consensus_channels,
         init_primary_channels,
     },
-    spawn_blocking,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_bft_storage_service::BFTPersistentStorage;
@@ -469,6 +468,7 @@ impl<N: Network> Consensus<N> {
             while let Some((committed_subdag, transmissions, callback)) = rx_consensus_subdag.recv().await {
                 self_.process_bft_subdag(committed_subdag, transmissions, callback).await;
             }
+            debug!("rx_consensus_subdag task ended");
         });
 
         // Process the unconfirmed transactions in the memory pool.
@@ -502,7 +502,27 @@ impl<N: Network> Consensus<N> {
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
-        let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_) };
+
+        let hdl = tokio::task::spawn_blocking(move || self_.try_advance_to_next_block(subdag, transmissions_));
+
+        let result = match hdl.await {
+            Ok(result) => result,
+            Err(err) => {
+                let err = match err.try_into_panic() {
+                    Ok(panic) => {
+                        error!("Updating to next round failed: {panic:?}");
+                        anyhow!("Update failed due to panic")
+                    }
+                    Err(err) => {
+                        let err: anyhow::Error = err.into();
+                        err.context("Unexpected tokio error")
+                    }
+                };
+
+                callback.send(Err(err)).ok();
+                return;
+            }
+        };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
         if let Err(err) = &result {
