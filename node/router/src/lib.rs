@@ -54,7 +54,10 @@ use snarkos_node_tcp::{Config, ConnectionSide, P2P, Tcp, is_bogon_ip, is_unspeci
 
 use snarkvm::{
     prelude::{Address, Network, PrivateKey, ViewKey},
-    utilities::task::{self, JoinHandle},
+    utilities::{
+        LoggableError,
+        task::{self, JoinHandle},
+    },
 };
 
 use aleo_std::{StorageMode, aleo_ledger_dir};
@@ -118,20 +121,20 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn check_connection_attempt(&self, listener_addr: SocketAddr) -> Result<bool> {
         // Ensure the peer IP is not this node.
         if self.is_local_ip(listener_addr) {
-            bail!("{{Self::OWNER}} Dropping connection attempt to '{listener_addr}' (attempted to self-connect)");
+            bail!("{} Dropping connection attempt to '{listener_addr}' (attempted to self-connect)", Self::OWNER);
         }
         // Ensure the node does not surpass the maximum number of peer connections.
         if self.number_of_connected_peers() >= self.max_connected_peers() {
-            bail!("{{Self::OWNER}} Dropping connection attempt to '{listener_addr}' (maximum peers reached)");
+            bail!("{} Dropping connection attempt to '{listener_addr}' (maximum peers reached)", Self::OWNER);
         }
         // Ensure the node is not already connected to this peer.
         if self.is_connected(listener_addr) {
-            debug!("{{Self::OWNER}} Dropping connection attempt to '{listener_addr}' (already connected)");
+            debug!("{} Dropping connection attempt to '{listener_addr}' (already connected)", Self::OWNER);
             return Ok(true);
         }
         // Ensure the node is not already connecting to this peer.
         if self.is_connecting(listener_addr) {
-            debug!("{{Self::OWNER}} Dropping connection attempt to '{listener_addr}' (already connecting)");
+            debug!("{} Dropping connection attempt to '{listener_addr}' (already connecting)", Self::OWNER);
             return Ok(true);
         }
         Ok(false)
@@ -159,15 +162,15 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
         let tcp = self.tcp().clone();
         Some(task::spawn(async move {
-            debug!("{{Self::OWNER}} Connecting to {listener_addr}...");
+            debug!("{} Connecting to {listener_addr}...", Self::OWNER);
             // Attempt to connect to the peer.
             match tcp.connect(listener_addr).await {
                 Ok(_) => true,
                 Err(error) => {
                     if is_trusted_or_bootstrap {
-                        warn!("{{Self::OWNER}} Unable to connect to '{listener_addr}' - {error}");
+                        error.log_error(format!("{} Unable to connect to '{listener_addr}'", Self::OWNER));
                     } else {
-                        debug!("{{Self::OWNER}} Unable to connect to '{listener_addr}' - {error}");
+                        error.log_warning(format!("{} Unable to connect to '{listener_addr}'", Self::OWNER));
                     }
                     false
                 }
@@ -331,7 +334,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 for peer_addr_str in cached_peers_str.lines() {
                     match SocketAddr::from_str(peer_addr_str) {
                         Ok(addr) => cached_peers.push(addr),
-                        Err(error) => warn!("Couldn't parse the cached peer address '{peer_addr_str}': {error}"),
+                        Err(error) => {
+                            error.log_warning(format!("Couldn't parse the cached peer address '{peer_addr_str}'"))
+                        }
                     }
                 }
                 cached_peers
@@ -341,7 +346,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 Vec::new()
             }
             Err(error) => {
-                warn!("{{Self::OWNER}} Couldn't load cached peers at {}: {error}", peer_cache_path.display());
+                warn!("{} Couldn't load cached peers at {}: {error}", Self::OWNER, peer_cache_path.display());
                 Vec::new()
             }
         };
