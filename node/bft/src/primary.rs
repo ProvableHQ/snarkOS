@@ -1985,7 +1985,7 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, Some(any_addr), &[], StorageMode::Test(None), None)
+            Primary::new(account, storage, ledger, block_sync, Some(any_addr), &[], StorageMode::new_test(None), None)
                 .await
                 .unwrap();
 
