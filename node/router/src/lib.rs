@@ -145,7 +145,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
         // If the IP is already banned, reject the attempt.
         if self.is_ip_banned(listener_addr.ip()) {
-            bail!("{{Self::OWNER}} Rejected a connection attempt to a banned IP '{}'", listener_addr.ip());
+            bail!("{} Rejected a connection attempt to a banned IP '{}'", Self::OWNER, listener_addr.ip());
         }
         Ok(false)
     }
