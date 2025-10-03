@@ -14,6 +14,8 @@
 // limitations under the License.
 
 use snarkos_cli::{commands::CLI, helpers::Updater};
+use snarkos_utilities::{print_error, show_panic};
+
 use snarkvm::utilities::{
     display_error,
     errors::{catch_unwind, set_panic_hook},
@@ -36,17 +38,6 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 // Obtain information on the build.
 include!(concat!(env!("OUT_DIR"), "/built.rs"));
-
-/// Prints a message using `tracing::error` if logging is enabled, otherwise uses `eprintln`.
-macro_rules! print_error {
-    ($($arg:tt)*) => {
-        if tracing::log::log_enabled!(tracing::log::Level::Error) {
-            tracing::error!($($arg)*);
-        } else {
-            eprintln!($($arg)*);
-        }
-    };
-}
 
 /// Stops the process with the given exit code.
 fn exit(exitcode: i32) -> ! {
@@ -129,28 +120,8 @@ fn main() {
             exit(1);
         }
         Err((msg, backtrace)) => {
-            print_error!("⚠️ {}\n", msg.replace("panicked at", "snarkOS encountered an unexpected error at"));
+            show_panic(&msg.replace("panicked at", "snarkOS encountered an unexpected error at"), backtrace);
 
-            // Always show backtraces.
-            let mut msg = "Backtrace:\n".to_string();
-            msg.push_str("      [...]\n");
-
-            // Remove all the low level frames.
-            // This can be done more cleanly once the `backtrace_frames` feature is stabilized.
-            let backtrace = backtrace.to_string();
-            let lines = backtrace.lines().skip_while(|line| !line.contains("core::panicking"));
-
-            for line in lines {
-                // Stop printing once we hit the panic handler.
-                if line.contains("snarkos::main") {
-                    break;
-                }
-
-                msg.push_str(&format!("{line}\n"));
-            }
-
-            // Print the entire backtrace as a single log message.
-            print_error!("{msg}");
             // Print some information for the end-user.
             print_error!(
                 "This is most likely a bug!\n\

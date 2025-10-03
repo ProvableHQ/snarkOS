@@ -285,13 +285,16 @@ workspace = true
 features = [ "derive" ]
 
 [dependencies.locktick]
-version = "0.3"
+workspace = true
 optional = true
 
 [dependencies.snarkos-account]
 workspace = true
 
 [dependencies.snarkos-cli]
+workspace = true
+
+[dependencies.snarkos-utilities]
 workspace = true
 
 [dependencies.snarkos-node]

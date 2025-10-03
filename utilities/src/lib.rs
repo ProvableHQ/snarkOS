@@ -15,3 +15,44 @@
 
 pub mod signals;
 pub use signals::*;
+
+use std::backtrace::Backtrace;
+
+/// Prints a message using `tracing::error` if logging is enabled, otherwise uses `eprintln`.
+#[macro_export]
+macro_rules! print_error {
+    ($($arg:tt)*) => {
+        if tracing::log::log_enabled!(tracing::log::Level::Error) {
+            tracing::error!($($arg)*);
+        } else {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
+#[track_caller]
+#[inline]
+pub fn show_panic(msg: &str, backtrace: Backtrace) {
+    print_error!("⚠️ {msg}\n");
+
+    // Always show backtraces.
+    let mut msg = "Backtrace:\n".to_string();
+    msg.push_str("      [...]\n");
+
+    // Remove all the low level frames.
+    // This can be done more cleanly once the `backtrace_frames` feature is stabilized.
+    let backtrace = backtrace.to_string();
+    let lines = backtrace.lines().skip_while(|line| !line.contains("core::panicking"));
+
+    for line in lines {
+        // Stop printing once we hit the panic handler.
+        if line.contains("snarkos::main") {
+            break;
+        }
+
+        msg.push_str(&format!("{line}\n"));
+    }
+
+    // Print the entire backtrace as a single log message.
+    print_error!("{msg}");
+}

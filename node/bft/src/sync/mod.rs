@@ -24,6 +24,7 @@ use crate::{
 
 use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+use snarkos_utilities::show_panic;
 
 use snarkvm::{
     console::{network::Network, types::Field},
@@ -223,14 +224,13 @@ impl<N: Network> Sync<N> {
 
                 let ping = ping.clone();
                 let self_ = self_.clone();
-                let hdl = tokio::spawn(async move {
-                    self_.try_advancing_block_synchronization(&ping).await;
-                });
+                let hdl = task::spawn(async move { self_.try_advancing_block_synchronization(&ping).await });
 
-                if let Err(err) = hdl.await
-                    && let Ok(panic) = err.try_into_panic()
-                {
-                    error!("Sync block advancement panicked: {panic:?}");
+                // Abort if block sync panicked.
+                if let Err((msg, backtrace)) = hdl.join_unwind().await {
+                    let msg = msg.replace("panicked at", "BlockSync encountered an unexpected error at");
+                    show_panic(&msg, backtrace);
+                    std::process::exit(1);
                 }
 
                 // We perform no additional rate limiting here as
