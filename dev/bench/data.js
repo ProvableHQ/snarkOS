@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759561574135,
+  "lastUpdate": 1759565291792,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -2736,6 +2736,66 @@ window.BENCHMARK_DATA = {
             "value": 1.23,
             "unit": "blocks/s",
             "extra": "total_wait=203s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f3329a17c2abfd568dbe40ce1457a830eabb26d4",
+          "message": "Merge pull request #3814 from ProvableHQ/copilot/fix-3813\n\n[Feature] Add GitHub Actions workflow to automatically update snarkVM dependency from multiple branches with PR creation",
+          "timestamp": "2025-10-04T09:37:27+02:00",
+          "tree_id": "4478dc9adb89d264b2556f4797130c14c798eb3e",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f3329a17c2abfd568dbe40ce1457a830eabb26d4"
+        },
+        "date": 1759565290746,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.606360295041044,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=184.16486811637878, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7637.382111921783,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.474793434143066, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.32,
+            "unit": "blocks/s",
+            "extra": "total_wait=188s, target_height=250, connect_time=23s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.133114,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=183, mean_speed=0.833515, max_speed=3.000000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.2,
+            "unit": "blocks/s",
+            "extra": "total_wait=207s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
