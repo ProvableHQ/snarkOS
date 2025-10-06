@@ -154,10 +154,9 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         node.initialize_routing().await;
         // Initialize the puzzle.
         node.initialize_puzzle().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
         // Pass the node to the signal handler.
         let _ = signal_node.set(node.clone());
+
         // Return the node.
         Ok(node)
     }
