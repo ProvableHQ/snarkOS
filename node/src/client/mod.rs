@@ -219,6 +219,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Initialize the routing.
         node.initialize_routing().await;
+        // Pass the node to the signal handler.
+        let _ = signal_node.set(node.clone());
         // Initialize the sync module.
         node.initialize_sync();
         // Initialize solution verification.
@@ -227,10 +229,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node.initialize_deploy_verification();
         // Initialize execution verification.
         node.initialize_execute_verification();
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
+
         // Return the node.
         Ok(node)
     }
