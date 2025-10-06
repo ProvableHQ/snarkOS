@@ -153,8 +153,6 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         node.initialize_routing().await;
         // Initialize the puzzle.
         node.initialize_puzzle().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
 
         // Return the node.
         Ok(node)
