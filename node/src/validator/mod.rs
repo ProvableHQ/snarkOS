@@ -182,8 +182,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Initialize the routing.
         node.initialize_routing().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
 
         // Return the node.
         Ok(node)

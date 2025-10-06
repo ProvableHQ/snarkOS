@@ -231,8 +231,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node.initialize_deploy_verification();
         // Initialize execution verification.
         node.initialize_execute_verification();
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
         // Return the node.
         Ok(node)
     }
