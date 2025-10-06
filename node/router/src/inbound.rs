@@ -354,7 +354,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
         if peers.len() > MAX_PEERS_TO_SEND {
             return false;
         }
-        // Filter out invalid addresses and peers with a lower known block height.
+        // Filter out invalid addresses.
         let peers = match self.router().is_dev() {
             // In development mode, relax the validity requirements to make operating devnets more flexible.
             true => peers.iter().copied().filter(|(ip, _)| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
