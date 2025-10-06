@@ -698,8 +698,14 @@ impl<N: Network> CommunicationService for Router<N> {
 #[allow(clippy::if_same_then_else)]
 pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
     if cfg!(feature = "test") || is_dev {
-        // Development testing contains no bootstrap peers.
-        vec![]
+        // Development testing contains optional bootstrap peers loaded from the environment.
+        match std::env::var("TEST_BOOTSTRAP_PEERS") {
+            Ok(peers) => peers.split(',').map(|peer| SocketAddr::from_str(peer).unwrap()).collect(),
+            Err(err) => {
+                warn!("Failed to load bootstrap peers from environment: {err}");
+                vec![]
+            }
+        }
     } else if N::ID == snarkvm::console::network::MainnetV0::ID {
         // Mainnet contains the following bootstrap peers.
         vec![
