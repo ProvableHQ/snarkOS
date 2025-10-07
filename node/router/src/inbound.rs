@@ -78,7 +78,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     /// propagated to the caller.
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
-        let peer_ip = match self.router().resolve_to_listener(&peer_addr) {
+        let peer_ip = match self.router().resolve_to_listener(peer_addr) {
             Some(peer_ip) => peer_ip,
             None => {
                 // No longer connected to the peer.
@@ -179,7 +179,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     bail!("Not accepting peer response from '{peer_ip}' (validator gossip is disabled)");
                 }
 
-                match self.peer_response(peer_ip, &message.peers) {
+                match self.peer_response(peer_ip, message.peers) {
                     true => Ok(true),
                     false => bail!("Peer '{peer_ip}' sent an invalid peer response"),
                 }
@@ -354,15 +354,14 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
         if peers.len() > MAX_PEERS_TO_SEND {
             return false;
         }
-        // Filter out invalid addresses.
-        let peers = match self.router().is_dev() {
-            // In development mode, relax the validity requirements to make operating devnets more flexible.
-            true => peers.iter().copied().filter(|(ip, _)| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
-            // In production mode, ensure the peer IPs are valid.
-            false => peers.iter().copied().filter(|(ip, _)| self.router().is_valid_peer_ip(*ip)).collect(),
-        };
         // Adds the given peer IPs to the list of candidate peers.
-        self.router().insert_candidate_peers(&peers);
+        if !peers.is_empty() {
+            self.router().insert_candidate_peers(peers);
+        }
+
+        #[cfg(feature = "metrics")]
+        self.router().update_metrics();
+
         true
     }
 

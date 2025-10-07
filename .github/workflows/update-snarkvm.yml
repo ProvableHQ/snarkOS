@@ -1,0 +1,163 @@
+name: Update snarkVM dependency
+
+on:
+  schedule:
+    # Run every hour to check for new commits in snarkVM staging
+    - cron: '0 * * * *'
+  push:
+    branches:
+      - 'ci/snarkvm-update'
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  update-snarkvm-staging:
+    name: Update snarkVM to latest staging
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout snarkOS
+        uses: actions/checkout@v5
+        with:
+          ref: staging
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get latest snarkVM staging commit
+        id: snarkvm-commit
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get the latest commit hash from snarkVM staging branch
+            const { data: branch } = await github.rest.repos.getBranch({
+              owner: 'ProvableHQ',
+              repo: 'snarkVM',
+              branch: 'staging'
+            });
+            
+            const latestCommit = branch.commit.sha;
+            console.log('Latest snarkVM staging commit:', latestCommit);
+            core.setOutput('latest_commit', latestCommit);
+            
+            // Get current commit from Cargo.toml snarkvm dependency section
+            const fs = require('fs');
+            const cargoToml = fs.readFileSync('Cargo.toml', 'utf8');
+            
+            // Find the snarkvm workspace dependency section and extract the rev
+            const snarkVmSection = cargoToml.match(/\[workspace\.dependencies\.snarkvm\]([\s\S]*?)(?=\n\[|$)/);
+            if (!snarkVmSection) {
+              throw new Error('Could not find snarkvm dependency section in Cargo.toml');
+            }
+            
+            const revMatch = snarkVmSection[1].match(/rev = "([^"]+)"/);
+            const currentCommit = revMatch ? revMatch[1] : '';
+            console.log('Current snarkVM commit:', currentCommit);
+            core.setOutput('current_commit', currentCommit);
+            
+            // Check if update is needed
+            if (latestCommit !== currentCommit) {
+              console.log('Update needed');
+              core.setOutput('update_needed', 'true');
+            } else {
+              console.log('No update needed');
+              core.setOutput('update_needed', 'false');
+            }
+
+      - name: Setup Git
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create new update-snarkvm-staging branch from staging
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        run: |
+          # Always create a fresh branch from staging
+          echo "Creating new update-snarkvm-staging branch from staging"
+          git checkout -B update-snarkvm-staging staging
+          echo "Created fresh update-snarkvm-staging branch from staging"
+
+      - name: Update snarkVM dependency
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        run: |
+          # Validate the commit hash format (should be 40 chars hex or 7+ chars)
+          LATEST_COMMIT="${{ steps.snarkvm-commit.outputs.latest_commit }}"
+          if [[ ! "$LATEST_COMMIT" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "Error: Invalid commit hash format: $LATEST_COMMIT"
+            exit 1
+          fi
+          
+          # First, update the rev in Cargo.toml to point to the new commit
+          sed -i 's/rev = "[^"]*"/rev = "'$LATEST_COMMIT'"/' Cargo.toml
+          
+          # Then use cargo update to properly update the lockfile and validate the change
+          echo "Updating snarkvm dependency to $LATEST_COMMIT using cargo update..."
+          cargo update --precise "$LATEST_COMMIT" snarkvm
+          
+          # Verify the change was made in Cargo.toml
+          echo "Updated Cargo.toml snarkvm dependency:"
+          grep -A 5 -B 2 "\[workspace\.dependencies\.snarkvm\]" Cargo.toml
+          
+          # Verify the new commit hash is correctly set
+          NEW_REV=$(grep -A 5 "\[workspace\.dependencies\.snarkvm\]" Cargo.toml | grep -E '^\s*rev = ' | sed 's/.*rev = "\(.*\)".*/\1/')
+          if [ "$NEW_REV" != "$LATEST_COMMIT" ]; then
+            echo "Error: Failed to update rev correctly. Expected: $LATEST_COMMIT, Got: $NEW_REV"
+            exit 1
+          fi
+          echo "✅ Successfully updated snarkVM dependency to $LATEST_COMMIT"
+
+      - name: Commit and push changes
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        run: |
+          git add Cargo.toml Cargo.lock
+          git commit --no-verify -m "Update snarkVM to latest staging commit ${{ steps.snarkvm-commit.outputs.latest_commit }}
+
+          Previous commit: ${{ steps.snarkvm-commit.outputs.current_commit }}
+          Latest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}
+          
+          This update was performed automatically by the snarkVM update workflow."
+          git push --force-with-lease origin update-snarkvm-staging
+
+      - name: Create or update PR
+        if: steps.snarkvm-commit.outputs.update_needed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if a PR already exists from update-snarkvm-staging to staging
+            const { data: prs } = await github.rest.pulls.list({
+              owner: 'ProvableHQ',
+              repo: 'snarkOS',
+              head: 'ProvableHQ:update-snarkvm-staging',
+              base: 'staging',
+              state: 'open'
+            });
+            
+            if (prs.length === 0) {
+              // No PR exists, create one
+              const { data: pr } = await github.rest.pulls.create({
+                owner: 'ProvableHQ',
+                repo: 'snarkOS',
+                title: 'Update snarkVM to latest staging commit',
+                head: 'update-snarkvm-staging',
+                base: 'staging',
+                body: 'This PR updates the snarkVM dependency to track the latest staging commit.\n\nLatest commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}\nPrevious commit: ${{ steps.snarkvm-commit.outputs.current_commit }}\n\nThis PR was created automatically by the snarkVM update workflow.'
+              });
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              console.log(`PR already exists: ${prs[0].html_url}`);
+            }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Workflow Summary (staging)" >> $GITHUB_STEP_SUMMARY
+          echo "- Current snarkVM commit: ${{ steps.snarkvm-commit.outputs.current_commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Latest snarkVM commit: ${{ steps.snarkvm-commit.outputs.latest_commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Update needed: ${{ steps.snarkvm-commit.outputs.update_needed }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.snarkvm-commit.outputs.update_needed }}" = "true" ]; then
+            echo "- ✅ snarkVM dependency updated successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ℹ️ No update required" >> $GITHUB_STEP_SUMMARY
+          fi

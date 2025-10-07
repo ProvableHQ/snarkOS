@@ -1290,7 +1290,7 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_router::Peer;
+    use snarkos_node_router::{Peer, Resolver};
     use snarkos_node_tcp::{P2P, Tcp};
     use snarkvm::{
         ledger::committee::Committee,
@@ -1319,10 +1319,20 @@ mod tests {
     }
 
     impl<N: Network> PeerPoolHandling<N> for DummyPeerPoolHandler {
+        const MAXIMUM_POOL_SIZE: usize = 10;
         const OWNER: &str = "[DummyPeerPoolHandler]";
+        const PEER_SLASHING_COUNT: usize = 0;
 
         fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
             unreachable!();
+        }
+
+        fn resolver(&self) -> &RwLock<Resolver<N>> {
+            unreachable!();
+        }
+
+        fn is_dev(&self) -> bool {
+            true
         }
 
         fn ip_ban_peer(&self, listener_addr: SocketAddr, _reason: Option<&str>) {
