@@ -15,18 +15,9 @@
 
 use crate::{
     MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
-    Primary,
-    helpers::{
-        BFTReceiver,
-        ConsensusSender,
-        DAG,
-        PrimaryReceiver,
-        PrimarySender,
-        Storage,
-        fmt_id,
-        init_bft_channels,
-        now,
-    },
+    helpers::{CallbackHandle, DAG, Storage, fmt_id, now},
+    primary::{Primary, PrimaryCallback},
+    sync::SyncCallback,
 };
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -40,21 +31,19 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
     },
     prelude::{Field, Network, Result, bail, ensure},
+    utilities::LoggableError,
 };
 
 use aleo_std::StorageMode;
+use anyhow::Context;
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
-use locktick::{
-    parking_lot::{Mutex, RwLock},
-    tokio::Mutex as TMutex,
-};
+use locktick::{parking_lot::RwLock, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashSet},
-    future::Future,
     net::SocketAddr,
     sync::{
         Arc,
@@ -63,10 +52,16 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{
-    sync::{OnceCell, oneshot},
-    task::JoinHandle,
-};
+
+#[async_trait::async_trait]
+pub trait BftCallback<N: Network>: Send + std::marker::Sync {
+    /// Attempts to build a new block from the given subDAG, and (tries to) advance the legder to it.
+    async fn process_bft_subdag(
+        &self,
+        subdag: Subdag<N>,
+        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+    ) -> Result<()>;
+}
 
 #[derive(Clone)]
 pub struct BFT<N: Network> {
@@ -78,10 +73,8 @@ pub struct BFT<N: Network> {
     leader_certificate: Arc<RwLock<Option<BatchCertificate<N>>>>,
     /// The timer for the leader certificate to be received.
     leader_certificate_timer: Arc<AtomicI64>,
-    /// The consensus sender.
-    consensus_sender: Arc<OnceCell<ConsensusSender<N>>>,
-    /// Handles for all spawned tasks.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// The BFT callback (used by `Consensus`).
+    bft_callback: Arc<CallbackHandle<Arc<dyn BftCallback<N>>>>,
     /// The BFT lock.
     lock: Arc<TMutex<()>>,
 }
@@ -89,7 +82,7 @@ pub struct BFT<N: Network> {
 impl<N: Network> BFT<N> {
     /// Initializes a new instance of the BFT.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         account: Account<N>,
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
@@ -100,12 +93,12 @@ impl<N: Network> BFT<N> {
         dev: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
-            primary: Primary::new(account, storage, ledger, block_sync, ip, trusted_validators, storage_mode, dev)?,
+            primary: Primary::new(account, storage, ledger, block_sync, ip, trusted_validators, storage_mode, dev)
+                .await?,
             dag: Default::default(),
             leader_certificate: Default::default(),
             leader_certificate_timer: Default::default(),
-            consensus_sender: Default::default(),
-            handles: Default::default(),
+            bft_callback: Default::default(),
             lock: Default::default(),
         })
     }
@@ -114,24 +107,19 @@ impl<N: Network> BFT<N> {
     ///
     /// This will return as soon as all required tasks are spawned.
     /// The function must not be called more than once per instance.
-    pub async fn run(
-        &mut self,
-        ping: Option<Arc<Ping<N>>>,
-        consensus_sender: Option<ConsensusSender<N>>,
-        primary_sender: PrimarySender<N>,
-        primary_receiver: PrimaryReceiver<N>,
-    ) -> Result<()> {
+    pub async fn run(&self, ping: Option<Arc<Ping<N>>>, bft_callback: Option<Arc<dyn BftCallback<N>>>) -> Result<()> {
         info!("Starting the BFT instance...");
-        // Initialize the BFT channels.
-        let (bft_sender, bft_receiver) = init_bft_channels::<N>();
-        // First, start the BFT handlers.
-        self.start_handlers(bft_receiver);
+        // Set up callbacks to pass to the primary.
+        let primary_callback = Some(Arc::new(self.clone()) as Arc<dyn PrimaryCallback<N>>);
+        let sync_callback = Some(Arc::new(self.clone()) as Arc<dyn SyncCallback<N>>);
+
         // Next, run the primary instance.
-        self.primary.run(ping, Some(bft_sender), primary_sender, primary_receiver).await?;
-        // Lastly, set the consensus sender.
-        // Note: This ensures during initial syncing, that the BFT does not advance the ledger.
-        if let Some(consensus_sender) = consensus_sender {
-            self.consensus_sender.set(consensus_sender).expect("Consensus sender already set");
+        self.primary.run(ping, primary_callback, sync_callback).await?;
+
+        // Lastly, set up callbacks for BFT itself.
+        // Note: This ensures that, during initial syncing, the BFT does not advance the ledger.
+        if let Some(callback) = bft_callback {
+            self.bft_callback.set(callback)?;
         }
         Ok(())
     }
@@ -211,8 +199,9 @@ impl<N: Network> BFT<N> {
     }
 }
 
-impl<N: Network> BFT<N> {
-    /// Stores the certificate in the DAG, and attempts to commit one or more anchors.
+#[async_trait::async_trait]
+impl<N: Network> PrimaryCallback<N> for BFT<N> {
+    /// Notification that a new round has started.
     fn update_to_next_round(&self, current_round: u64) -> bool {
         // Ensure the current round is at least the storage round (this is a sanity check).
         let storage_round = self.storage().current_round();
@@ -269,8 +258,8 @@ impl<N: Network> BFT<N> {
         // If the BFT is ready, then update to the next round.
         if is_ready {
             // Update to the next round in storage.
-            if let Err(e) = self.storage().increment_to_next_round(current_round) {
-                warn!("BFT failed to increment to the next round from round {current_round} - {e}");
+            if let Err(err) = self.storage().increment_to_next_round(current_round) {
+                err.log_warning(format!("BFT failed to increment to the next round from round {current_round}"));
                 return false;
             }
             // Update the timer for the leader certificate.
@@ -280,6 +269,41 @@ impl<N: Network> BFT<N> {
         is_ready
     }
 
+    /// Notification about a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()> {
+        // Update the DAG with the certificate.
+        self.update_dag::<true, false>(certificate).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<N: Network> SyncCallback<N> for BFT<N> {
+    /// Syncs the BFT DAG with the given batch certificates. These batch certificates **must**
+    /// already exist in the ledger.
+    ///
+    /// This method commits all the certificates into the DAG.
+    /// Note that there is no need to insert the certificates into the DAG, because these certificates
+    /// already exist in the ledger and therefore do not need to be re-ordered into future committed subdags.
+    async fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>) -> Result<()> {
+        // Acquire the BFT write lock.
+        let mut dag = self.dag.write();
+
+        // Commit all the certificates.
+        for certificate in certificates {
+            dag.commit(&certificate, self.storage().max_gc_rounds());
+        }
+
+        Ok(())
+    }
+
+    /// Sends a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()> {
+        // Update the DAG with the certificate.
+        self.update_dag::<true, true>(certificate).await
+    }
+}
+
+impl<N: Network> BFT<N> {
     /// Updates the leader certificate to the current even round,
     /// returning `true` if the BFT is ready to update to the next round.
     ///
@@ -312,8 +336,10 @@ impl<N: Network> BFT<N> {
         // Retrieve the committee lookback of the current round.
         let committee_lookback = match self.ledger().get_committee_lookback_for_round(current_round) {
             Ok(committee) => committee,
-            Err(e) => {
-                error!("BFT failed to retrieve the committee lookback for the even round {current_round} - {e}");
+            Err(err) => {
+                err.log_error(format!(
+                    "BFT failed to retrieve the committee lookback for the even round {current_round}"
+                ));
                 return false;
             }
         };
@@ -324,8 +350,8 @@ impl<N: Network> BFT<N> {
                 // Compute the leader for the current round.
                 let computed_leader = match committee_lookback.get_leader(current_round) {
                     Ok(leader) => leader,
-                    Err(e) => {
-                        error!("BFT failed to compute the leader for the even round {current_round} - {e}");
+                    Err(err) => {
+                        err.log_error(format!("BFT failed to compute the leader for the even round {current_round}"));
                         return false;
                     }
                 };
@@ -403,8 +429,10 @@ impl<N: Network> BFT<N> {
         // Retrieve the committee lookback for the current round.
         let committee_lookback = match self.ledger().get_committee_lookback_for_round(current_round) {
             Ok(committee) => committee,
-            Err(e) => {
-                error!("BFT failed to retrieve the committee lookback for the odd round {current_round} - {e}");
+            Err(err) => {
+                err.log_error(format!(
+                    "BFT failed to retrieve the committee lookback for the odd round {current_round}"
+                ));
                 return false;
             }
         };
@@ -498,7 +526,7 @@ impl<N: Network> BFT<N> {
 
         // Retrieve the committee lookback for the commit round.
         let Ok(committee_lookback) = self.ledger().get_committee_lookback_for_round(commit_round) else {
-            bail!("BFT failed to retrieve the committee with lag for commit round {commit_round}");
+            bail!("BFT failed to retrieve the committee lookback for commit round {commit_round}");
         };
 
         // Either retrieve the cached leader or compute it.
@@ -573,23 +601,19 @@ impl<N: Network> BFT<N> {
             for round in (self.dag.read().last_committed_round() + 2..=leader_round.saturating_sub(2)).rev().step_by(2)
             {
                 // Retrieve the previous committee for the leader round.
-                let previous_committee_lookback = match self.ledger().get_committee_lookback_for_round(round) {
-                    Ok(committee) => committee,
-                    Err(e) => {
-                        bail!("BFT failed to retrieve a previous committee lookback for the even round {round} - {e}");
-                    }
-                };
+                let previous_committee_lookback =
+                    self.ledger().get_committee_lookback_for_round(round).with_context(|| {
+                        format!("BFT failed to retrieve a previous committee lookback for the even round {round}")
+                    })?;
+
                 // Either retrieve the cached leader or compute it.
                 let leader = match self.ledger().latest_leader() {
                     Some((cached_round, cached_leader)) if cached_round == round => cached_leader,
                     _ => {
                         // Compute the leader for the commit round.
-                        let computed_leader = match previous_committee_lookback.get_leader(round) {
-                            Ok(leader) => leader,
-                            Err(e) => {
-                                bail!("BFT failed to compute the leader for the even round {round} - {e}");
-                            }
-                        };
+                        let computed_leader = previous_committee_lookback
+                            .get_leader(round)
+                            .with_context(|| format!("BFT failed to compute the leader for the even round {round}"))?;
 
                         // Cache the computed leader.
                         self.ledger().update_latest_leader(round, computed_leader);
@@ -701,23 +725,12 @@ impl<N: Network> BFT<N> {
                     "BFT failed to commit - the subdag anchor round {anchor_round} does not match the leader round {leader_round}",
                 );
 
-                // Trigger consensus.
-                if let Some(consensus_sender) = self.consensus_sender.get() {
-                    // Initialize a callback sender and receiver.
-                    let (callback_sender, callback_receiver) = oneshot::channel();
+                // Trigger the callback (if any).
+                if let Some(cb) = self.bft_callback.get() {
                     // Send the subdag and transmissions to consensus.
-                    consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
-                    // Await the callback to continue.
-                    match callback_receiver.await {
-                        Ok(Ok(())) => (), // continue
-                        Ok(Err(e)) => {
-                            error!("BFT failed to advance the subdag for round {anchor_round} - {e}");
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            error!("BFT failed to receive the callback for round {anchor_round} - {e}");
-                            return Ok(());
-                        }
+                    if let Err(err) = cb.process_bft_subdag(subdag, transmissions).await {
+                        err.log_error("BFT failed to advance the subdag for round {anchor_round}");
+                        return Ok(());
                     }
                 }
 
@@ -855,92 +868,21 @@ impl<N: Network> BFT<N> {
 }
 
 impl<N: Network> BFT<N> {
-    /// Starts the BFT handlers.
-    fn start_handlers(&self, bft_receiver: BFTReceiver<N>) {
-        let BFTReceiver {
-            mut rx_primary_round,
-            mut rx_primary_certificate,
-            mut rx_sync_bft_dag_at_bootup,
-            mut rx_sync_bft,
-        } = bft_receiver;
-
-        // Process the current round from the primary.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((current_round, callback)) = rx_primary_round.recv().await {
-                callback.send(self_.update_to_next_round(current_round)).ok();
-            }
-        });
-
-        // Process the certificate from the primary.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((certificate, callback)) = rx_primary_certificate.recv().await {
-                // Update the DAG with the certificate.
-                let result = self_.update_dag::<true, false>(certificate).await;
-                // Send the callback **after** updating the DAG.
-                // Note: We must await the DAG update before proceeding.
-                callback.send(result).ok();
-            }
-        });
-
-        // Process the request to sync the BFT DAG at bootup.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some(certificates) = rx_sync_bft_dag_at_bootup.recv().await {
-                self_.sync_bft_dag_at_bootup(certificates).await;
-            }
-        });
-
-        // Handler for new certificates that were fetched by the sync module.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((certificate, callback)) = rx_sync_bft.recv().await {
-                // Update the DAG with the certificate.
-                let result = self_.update_dag::<true, true>(certificate).await;
-                // Send the callback **after** updating the DAG.
-                // Note: We must await the DAG update before proceeding.
-                callback.send(result).ok();
-            }
-        });
-    }
-
-    /// Syncs the BFT DAG with the given batch certificates. These batch certificates **must**
-    /// already exist in the ledger.
-    ///
-    /// This method commits all the certificates into the DAG.
-    /// Note that there is no need to insert the certificates into the DAG, because these certificates
-    /// already exist in the ledger and therefore do not need to be re-ordered into future committed subdags.
-    async fn sync_bft_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>) {
-        // Acquire the BFT write lock.
-        let mut dag = self.dag.write();
-
-        // Commit all the certificates.
-        for certificate in certificates {
-            dag.commit(&certificate, self.storage().max_gc_rounds());
-        }
-    }
-
-    /// Spawns a task with the given future; it should only be used for long-running tasks.
-    fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
-    }
-
     /// Shuts down the BFT.
     pub async fn shut_down(&self) {
         info!("Shutting down the BFT...");
+        // Remove the callback.
+        self.bft_callback.clear();
         // Acquire the lock.
         let _lock = self.lock.lock().await;
         // Shut down the primary.
         self.primary.shut_down().await;
-        // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{BFT, MAX_LEADER_CERTIFICATE_DELAY_IN_SECS, helpers::Storage};
+    use crate::{BFT, MAX_LEADER_CERTIFICATE_DELAY_IN_SECS, helpers::Storage, sync::SyncCallback};
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
@@ -957,7 +899,10 @@ mod tests {
     use aleo_std::StorageMode;
     use anyhow::Result;
     use indexmap::{IndexMap, IndexSet};
-    use std::sync::Arc;
+    use std::{
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        sync::Arc,
+    };
 
     type CurrentNetwork = snarkvm::console::network::MainnetV0;
 
@@ -985,29 +930,34 @@ mod tests {
     }
 
     // Helper function to set up BFT for testing.
-    fn initialize_bft(
+    async fn initialize_bft(
         account: Account<CurrentNetwork>,
         storage: Storage<CurrentNetwork>,
         ledger: Arc<MockLedgerService<CurrentNetwork>>,
     ) -> anyhow::Result<BFT<CurrentNetwork>> {
         // Create the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+
+        // Pick a random port so we can run tests concurrently.
+        let any_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+
         // Initialize the BFT.
         BFT::new(
             account.clone(),
             storage.clone(),
             ledger.clone(),
             block_sync,
-            None,
+            Some(any_addr),
             &[],
             StorageMode::new_test(None),
             None,
         )
+        .await
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_is_leader_quorum_odd() -> Result<()> {
+    async fn test_is_leader_quorum_odd() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample batch certificates.
@@ -1036,7 +986,7 @@ mod tests {
         // Initialize the account.
         let account = Account::new(rng)?;
         // Initialize the BFT.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
         assert!(bft.is_timer_expired());
         // Ensure this call succeeds on an odd round.
         let result = bft.is_leader_quorum_or_nonleaders_available(1);
@@ -1059,9 +1009,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_is_leader_quorum_even_out_of_sync() -> Result<()> {
+    async fn test_is_leader_quorum_even_out_of_sync() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample the test instance.
@@ -1071,7 +1021,7 @@ mod tests {
         assert_eq!(storage.max_gc_rounds(), 10);
 
         // Set up the BFT logic.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
         assert!(bft.is_timer_expired());
 
         // Store is at round 1, and we are checking for round 2.
@@ -1081,9 +1031,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_is_leader_quorum_even() -> Result<()> {
+    async fn test_is_leader_quorum_even() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample the test instance.
@@ -1093,7 +1043,7 @@ mod tests {
         assert_eq!(storage.max_gc_rounds(), 10);
 
         // Set up the BFT logic.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
         assert!(bft.is_timer_expired());
 
         // Ensure this call fails on an even round.
@@ -1102,9 +1052,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_is_even_round_ready() -> Result<()> {
+    async fn test_is_even_round_ready() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample batch certificates.
@@ -1134,7 +1084,7 @@ mod tests {
         let account = Account::new(rng)?;
 
         // Set up the BFT logic.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
         assert!(bft.is_timer_expired());
 
         // Set the leader certificate.
@@ -1148,7 +1098,7 @@ mod tests {
         assert!(result);
 
         // Initialize a new BFT.
-        let bft_timer = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft_timer = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
         // If the leader certificate is not set and the timer has not expired, we are not ready for the next round.
         let result = bft_timer.is_even_round_ready_for_next_round(certificates.clone(), committee.clone(), 2);
         if !bft_timer.is_timer_expired() {
@@ -1169,9 +1119,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_update_leader_certificate_odd() -> Result<()> {
+    async fn test_update_leader_certificate_odd() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample the test instance.
@@ -1179,7 +1129,7 @@ mod tests {
         assert_eq!(storage.max_gc_rounds(), 10);
 
         // Initialize the BFT.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
         assert!(bft.is_timer_expired());
 
         // Ensure this call fails on an odd round.
@@ -1188,9 +1138,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_update_leader_certificate_bad_round() -> Result<()> {
+    async fn test_update_leader_certificate_bad_round() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample the test instance.
@@ -1198,7 +1148,7 @@ mod tests {
         assert_eq!(storage.max_gc_rounds(), 10);
 
         // Initialize the BFT.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         // Ensure this call succeeds on an even round.
         let result = bft.update_leader_certificate_to_even_round(6);
@@ -1206,9 +1156,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_update_leader_certificate_even() -> Result<()> {
+    async fn test_update_leader_certificate_even() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Set the current round.
@@ -1250,7 +1200,7 @@ mod tests {
 
         // Initialize the BFT.
         let account = Account::new(rng)?;
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         // Set the leader certificate.
         *bft.leader_certificate.write() = Some(leader_certificate);
@@ -1288,7 +1238,7 @@ mod tests {
             // Initialize the storage.
             let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
             // Initialize the BFT.
-            let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+            let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
             // Insert a mock DAG in the BFT.
             *bft.dag.write() = crate::helpers::dag::test_helpers::mock_dag_with_modified_last_committed_round(3);
@@ -1318,7 +1268,7 @@ mod tests {
             // Initialize the storage.
             let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
             // Initialize the BFT.
-            let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+            let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
             // Insert a mock DAG in the BFT.
             *bft.dag.write() = crate::helpers::dag::test_helpers::mock_dag_with_modified_last_committed_round(2);
@@ -1350,9 +1300,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[tracing_test::traced_test]
-    fn test_order_dag_with_dfs_fails_on_missing_previous_certificate() -> Result<()> {
+    async fn test_order_dag_with_dfs_fails_on_missing_previous_certificate() -> Result<()> {
         let rng = &mut TestRng::default();
 
         // Sample the test instance.
@@ -1376,7 +1326,7 @@ mod tests {
         /* Test missing previous certificate. */
 
         // Initialize the BFT.
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         // The expected error message.
         let error_msg = format!(
@@ -1437,7 +1387,7 @@ mod tests {
 
         // Initialize the BFT.
         let account = Account::new(rng)?;
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         *bft.dag.write() = crate::helpers::dag::test_helpers::mock_dag_with_modified_last_committed_round(commit_round);
 
@@ -1503,7 +1453,7 @@ mod tests {
 
         // Initialize the BFT.
         let account = Account::new(rng)?;
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         // Insert a mock DAG in the BFT.
         *bft.dag.write() = crate::helpers::dag::test_helpers::mock_dag_with_modified_last_committed_round(commit_round);
@@ -1521,10 +1471,10 @@ mod tests {
         // Initialize a new instance of storage.
         let storage_2 = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
         // Initialize a new instance of BFT.
-        let bootup_bft = initialize_bft(account.clone(), storage_2, ledger)?;
+        let bootup_bft = initialize_bft(account.clone(), storage_2, ledger).await?;
 
         // Sync the BFT DAG at bootup.
-        bootup_bft.sync_bft_dag_at_bootup(certificates.clone()).await;
+        bootup_bft.sync_dag_at_bootup(certificates.clone()).await.unwrap();
 
         // Check that the BFT starts from the same last committed round.
         assert_eq!(bft.dag.read().last_committed_round(), bootup_bft.dag.read().last_committed_round());
@@ -1675,7 +1625,7 @@ mod tests {
 
         // Initialize the BFT without bootup.
         let account = Account::new(rng)?;
-        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         // Insert a mock DAG in the BFT without bootup.
         *bft.dag.write() = crate::helpers::dag::test_helpers::mock_dag_with_modified_last_committed_round(0);
@@ -1700,10 +1650,10 @@ mod tests {
         let bootup_storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
 
         // Initialize a new instance of BFT with bootup.
-        let bootup_bft = initialize_bft(account.clone(), bootup_storage.clone(), ledger.clone())?;
+        let bootup_bft = initialize_bft(account.clone(), bootup_storage.clone(), ledger.clone()).await?;
 
         // Sync the BFT DAG at bootup.
-        bootup_bft.sync_bft_dag_at_bootup(pre_shutdown_certificates.clone()).await;
+        bootup_bft.sync_dag_at_bootup(pre_shutdown_certificates.clone()).await.unwrap();
 
         // Insert the post shutdown certificates to the storage and BFT with bootup.
         for certificate in post_shutdown_certificates.iter() {
@@ -1878,12 +1828,12 @@ mod tests {
         }
         // Initialize the bootup BFT.
         let account = Account::new(rng)?;
-        let bootup_bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
+        let bootup_bft = initialize_bft(account.clone(), storage.clone(), ledger.clone()).await?;
 
         // Insert a mock DAG in the BFT without bootup.
         *bootup_bft.dag.write() = crate::helpers::dag::test_helpers::mock_dag_with_modified_last_committed_round(0);
         // Sync the BFT DAG at bootup.
-        bootup_bft.sync_bft_dag_at_bootup(pre_shutdown_certificates.clone()).await;
+        bootup_bft.sync_dag_at_bootup(pre_shutdown_certificates.clone()).await.unwrap();
 
         // Insert the post shutdown certificates into the storage.
         let mut post_shutdown_certificates: Vec<snarkvm::ledger::narwhal::BatchCertificate<CurrentNetwork>> =

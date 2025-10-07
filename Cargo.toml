@@ -36,7 +36,8 @@ members = [
   "node/sync",
   "node/sync/communication-service",
   "node/sync/locators",
-  "node/tcp"
+  "node/tcp",
+  "utilities",
 ]
 
 [workspace.dependencies.aleo-std]
@@ -46,10 +47,10 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "619464c8edf75636809d0bfb8e8404de78a62c97"
+#rev = "e873e69b458"
+branch = "feat/track-error"
 #version = "=4.2.1"
 default-features = false
-#features = [ "circuit", "console", "rocks" ]
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -94,7 +95,7 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.3"
+version = "0.4"
 
 [workspace.dependencies.lru]
 version = "0.16"
@@ -239,6 +240,10 @@ version = "=4.2.2"
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
 version = "=4.2.2"
+
+[workspace.dependencies.snarkos-utilities]
+path = "utilities"
+version = "=4.2.1"
 
 [[bin]]
 name = "snarkos"

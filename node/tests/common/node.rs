@@ -14,17 +14,26 @@
 // limitations under the License.
 
 use crate::common::test_peer::sample_genesis_block;
+
 use snarkos_account::Account;
 use snarkos_node::{Client, Prover, Validator};
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 
 use aleo_std::StorageMode;
-use std::str::FromStr;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
+};
+
+/// Bind to a random port to avoid conflicts during testing.
+const ANY_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
 pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
     Client::new(
-        "127.0.0.1:0".parse().unwrap(),
-        None,
+        ANY_ADDR,
+        Some(ANY_ADDR),
         10,
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
@@ -33,7 +42,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         StorageMode::new_test(None),
         false, // No extra peer rotation.
         None,
-        Default::default(),
+        SignalHandler::new(),
     )
     .await
     .expect("couldn't create client instance")
@@ -41,13 +50,13 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
 
 pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
     Prover::new(
-        "127.0.0.1:0".parse().unwrap(),
+        ANY_ADDR,
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
         StorageMode::new_test(None),
         None,
-        Default::default(),
+        SignalHandler::new(),
     )
     .await
     .expect("couldn't create prover instance")
@@ -55,9 +64,9 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
 
 pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
     Validator::new(
-        "127.0.0.1:0".parse().unwrap(),
-        None,
-        None,
+        ANY_ADDR,
+        Some(ANY_ADDR),
+        Some(ANY_ADDR),
         10,
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
@@ -68,7 +77,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         true,  // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
-        Default::default(),
+        SignalHandler::new(),
     )
     .await
     .expect("couldn't create validator instance")

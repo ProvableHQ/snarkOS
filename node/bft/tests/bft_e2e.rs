@@ -39,7 +39,8 @@ async fn test_state_coherence() {
         // Set this to Some(0..=4) to see the logs.
         log_level: Some(0),
         log_connections: true,
-    });
+    })
+    .await;
 
     network.start().await;
 
@@ -60,7 +61,8 @@ async fn test_resync() {
         // Set this to Some(0..=4) to see the logs.
         log_level: Some(0),
         log_connections: false,
-    });
+    })
+    .await;
     network.start().await;
 
     // Let the nodes advance through the rounds.
@@ -77,7 +79,8 @@ async fn test_resync() {
         fire_transmissions: None,
         log_level: None,
         log_connections: false,
-    });
+    })
+    .await;
     spare_network.start().await;
 
     for i in 1..N {
@@ -92,6 +95,7 @@ async fn test_resync() {
     deadline!(Duration::from_secs(20), move || { network_clone.is_round_reached(RECOVERY_ROUND) });
 }
 
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_quorum_threshold() {
     // Start N nodes but don't connect them.
@@ -106,7 +110,8 @@ async fn test_quorum_threshold() {
         // Set this to Some(0..=4) to see the logs.
         log_level: None,
         log_connections: true,
-    });
+    })
+    .await;
     network.start().await;
 
     // Check each node is at round 1 (0 is genesis).
@@ -145,6 +150,7 @@ async fn test_quorum_threshold() {
     deadline!(Duration::from_secs(20), move || { network.is_round_reached(TARGET_ROUND) });
 }
 
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_quorum_break() {
     // Start N nodes, connect them and start the cannons for each.
@@ -158,7 +164,8 @@ async fn test_quorum_break() {
         // Set this to Some(0..=4) to see the logs.
         log_level: None,
         log_connections: true,
-    });
+    })
+    .await;
     network.start().await;
 
     // Check the nodes have started advancing through the rounds.
@@ -194,7 +201,8 @@ async fn test_leader_election_consistency() {
         // Set this to Some(0..=4) to see the logs.
         log_level: None,
         log_connections: true,
-    });
+    })
+    .await;
     network.start().await;
 
     // Wait for starting round to be reached
@@ -246,7 +254,8 @@ async fn test_transient_break() {
         // Set this to Some(0..=4) to see the logs.
         log_level: Some(6),
         log_connections: false,
-    });
+    })
+    .await;
     network.start().await;
 
     // Check the nodes have started advancing through the rounds.

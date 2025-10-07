@@ -27,20 +27,13 @@ extern crate snarkos_node_metrics as metrics;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
+    BftCallback,
     MAX_BATCH_DELAY_IN_MS,
     Primary,
-    helpers::{
-        ConsensusReceiver,
-        PrimarySender,
-        Storage as NarwhalStorage,
-        fmt_id,
-        init_consensus_channels,
-        init_primary_channels,
-    },
-    spawn_blocking,
+    helpers::{Storage as NarwhalStorage, fmt_id},
+    ledger_service::LedgerService,
+    storage_service::BFTPersistentStorage,
 };
-use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_bft_storage_service::BFTPersistentStorage;
 use snarkos_node_sync::{BlockSync, Ping};
 
 use snarkvm::{
@@ -50,10 +43,11 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
     },
     prelude::*,
+    utilities::task,
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -62,7 +56,7 @@ use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -84,7 +78,7 @@ const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
 ///
 /// Consensus acts as a rate limiter to prevents workers in BFT from being overloaded.
 /// Each worker maintains a ready queue (which is essentially also a mempool), but verifies transactions/solutions
-/// before enquing them.
+/// before enqueuing them.
 /// Consensus only passes more transactions/solutions to the BFT layer if its ready queues are not already full.
 #[derive(Clone)]
 pub struct Consensus<N: Network> {
@@ -92,8 +86,6 @@ pub struct Consensus<N: Network> {
     ledger: Arc<dyn LedgerService<N>>,
     /// The BFT.
     bft: BFT<N>,
-    /// The primary sender.
-    primary_sender: PrimarySender<N>,
     /// The unconfirmed solutions queue.
     solutions_queue: Arc<Mutex<LruCache<SolutionID<N>, Solution<N>>>>,
     /// The unconfirmed transactions queue.
@@ -125,21 +117,19 @@ impl<N: Network> Consensus<N> {
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
     ) -> Result<Self> {
-        // Initialize the primary channels.
-        let (primary_sender, primary_receiver) = init_primary_channels::<N>();
         // Initialize the Narwhal transmissions.
         let transmissions = Arc::new(BFTPersistentStorage::open(storage_mode.clone())?);
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         // Initialize the BFT.
         let bft =
-            BFT::new(account, storage, ledger.clone(), block_sync.clone(), ip, trusted_validators, storage_mode, dev)?;
+            BFT::new(account, storage, ledger.clone(), block_sync.clone(), ip, trusted_validators, storage_mode, dev)
+                .await?;
         // Create a new instance of Consensus.
         let mut _self = Self {
             ledger,
             bft,
             block_sync,
-            primary_sender,
             solutions_queue: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(CAPACITY_FOR_SOLUTIONS).unwrap()))),
             transactions_queue: Default::default(),
             seen_solutions: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1 << 16).unwrap()))),
@@ -152,12 +142,9 @@ impl<N: Network> Consensus<N> {
 
         info!("Starting the consensus instance...");
 
-        // First, initialize the consensus channels.
-        let (consensus_sender, consensus_receiver) = init_consensus_channels();
-        // Then, start the consensus handlers.
-        _self.start_handlers(consensus_receiver);
+        _self.start_handlers();
         // Lastly, also start BFTs handlers.
-        _self.bft.run(Some(ping), Some(consensus_sender), _self.primary_sender.clone(), primary_receiver).await?;
+        _self.bft.run(Some(ping), Some(Arc::new(_self.clone()))).await?;
 
         Ok(_self)
     }
@@ -337,7 +324,7 @@ impl<N: Network> Consensus<N> {
             let solution_id = solution.id();
             trace!("Adding unconfirmed solution '{}' to the memory pool...", fmt_id(solution_id));
             // Send the unconfirmed solution to the primary.
-            if let Err(e) = self.primary_sender.send_unconfirmed_solution(solution_id, Data::Object(solution)).await {
+            if let Err(e) = self.bft.primary().process_unconfirmed_solution(solution_id, Data::Object(solution)).await {
                 // If the BFT is synced, then log the warning.
                 if self.bft.is_synced() {
                     // If error occurs after the first 10 blocks of the epoch, log it as a warning, otherwise ignore.
@@ -437,7 +424,7 @@ impl<N: Network> Consensus<N> {
             trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
             // Send the unconfirmed transaction to the primary.
             if let Err(e) =
-                self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await
+                self.bft.primary().process_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await
             {
                 // If the BFT is synced, then log the warning.
                 if self.bft.is_synced() {
@@ -456,17 +443,7 @@ impl<N: Network> Consensus<N> {
     /// Starts the consensus handlers.
     ///
     /// This is only invoked once, in the constructor.
-    fn start_handlers(&self, consensus_receiver: ConsensusReceiver<N>) {
-        let ConsensusReceiver { mut rx_consensus_subdag } = consensus_receiver;
-
-        // Process the committed subdag and transmissions from the BFT.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((committed_subdag, transmissions, callback)) = rx_consensus_subdag.recv().await {
-                self_.process_bft_subdag(committed_subdag, transmissions, callback).await;
-            }
-        });
-
+    fn start_handlers(&self) {
         // Process the unconfirmed transactions in the memory pool.
         //
         // TODO (kaimast): This shouldn't happen periodically but only when new batches/blocks are accepted
@@ -487,36 +464,39 @@ impl<N: Network> Consensus<N> {
             }
         });
     }
+}
 
+#[async_trait::async_trait]
+impl<N: Network> BftCallback<N> for Consensus<N> {
     /// Attempts to build a new block from the given subDAG, and (tries to) advance the legder to it.
     async fn process_bft_subdag(
         &self,
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-        callback: oneshot::Sender<Result<()>>,
-    ) {
+    ) -> Result<()> {
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
-        let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_) };
+        let result = task::spawn_blocking(move || self_.try_advance_to_next_block(subdag, transmissions_)).await;
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if let Err(e) = &result {
-            error!("Unable to advance to the next block - {e}");
-            // On failure, reinsert the transmissions into the memory pool.
+        if result.is_err() {
             self.reinsert_transmissions(transmissions).await;
         }
-        // Send the callback **after** advancing to the next block.
-        // Note: We must await the block to be advanced before sending the callback.
-        callback.send(result).ok();
-    }
 
+        result
+    }
+}
+
+impl<N: Network> Consensus<N> {
     /// Attempts to advance the ledger to the next block, and updates the metrics (if enabled) accordingly.
     fn try_advance_to_next_block(
         &self,
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<()> {
+        trace!("Trying to advance to new subdag anchored at round {}", subdag.anchor_round());
+
         #[cfg(feature = "metrics")]
         let start = subdag.leader_certificate().batch_header().timestamp();
         #[cfg(feature = "metrics")]
@@ -525,14 +505,20 @@ impl<N: Network> Consensus<N> {
         let current_block_timestamp = self.ledger.latest_block().header().metadata().timestamp();
 
         // Create the candidate next block.
-        let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+        let next_block = self
+            .ledger
+            .prepare_advance_to_next_quorum_block(subdag, transmissions)
+            .with_context(|| "Ledger preparation for advancement to next block failed")?;
         // Check that the block is well-formed.
-        self.ledger.check_next_block(&next_block)?;
+        self.ledger.check_next_block(&next_block).with_context(|| "Check for new block failed")?;
         // Advance to the next block.
-        self.ledger.advance_to_next_block(&next_block)?;
+        self.ledger.advance_to_next_block(&next_block).with_context(|| "Ledger advancement to new block failed")?;
+
+        // Note: Do not return failure after this point, as the ledger already advanced.
+
         #[cfg(feature = "telemetry")]
         // Fetch the latest committee
-        let latest_committee = self.ledger.current_committee()?;
+        let latest_committee = self.ledger.current_committee();
 
         // If the next block starts a new epoch, clear the existing solutions.
         if next_block.height() % N::NUM_BLOCKS_PER_EPOCH == 0 {
@@ -543,8 +529,10 @@ impl<N: Network> Consensus<N> {
         }
 
         // Notify peers that we have a new block.
-        let locators = self.block_sync.get_block_locators()?;
-        self.ping.update_block_locators(locators);
+        match self.block_sync.get_block_locators() {
+            Ok(locators) => self.ping.update_block_locators(locators),
+            Err(err) => warn!("Failed to generate new block locators after block advancement: {err:?}"),
+        }
 
         // Make block sync aware of the new block.
         self.block_sync.set_sync_height(next_block.height());
@@ -571,7 +559,7 @@ impl<N: Network> Consensus<N> {
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);
 
             #[cfg(feature = "telemetry")]
-            {
+            if let Ok(latest_committee) = latest_committee {
                 // Retrieve the latest participation scores.
                 let participation_scores =
                     self.bft().primary().gateway().validator_telemetry().get_participation_scores(&latest_committee);
@@ -611,23 +599,19 @@ impl<N: Network> Consensus<N> {
         transmission_id: TransmissionID<N>,
         transmission: Transmission<N>,
     ) -> Result<()> {
-        // Initialize a callback sender and receiver.
-        let (callback, callback_receiver) = oneshot::channel();
         // Send the transmission to the primary.
         match (transmission_id, transmission) {
-            (TransmissionID::Ratification, Transmission::Ratification) => return Ok(()),
+            (TransmissionID::Ratification, Transmission::Ratification) => Ok(()),
             (TransmissionID::Solution(solution_id, _), Transmission::Solution(solution)) => {
                 // Send the solution to the primary.
-                self.primary_sender.tx_unconfirmed_solution.send((solution_id, solution, callback)).await?;
+                self.bft.primary().process_unconfirmed_solution(solution_id, solution).await
             }
             (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(transaction)) => {
                 // Send the transaction to the primary.
-                self.primary_sender.tx_unconfirmed_transaction.send((transaction_id, transaction, callback)).await?;
+                self.bft.primary().process_unconfirmed_transaction(transaction_id, transaction).await
             }
             _ => bail!("Mismatching `(transmission_id, transmission)` pair in consensus"),
         }
-        // Await the callback.
-        callback_receiver.await?
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.

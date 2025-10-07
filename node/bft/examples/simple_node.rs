@@ -19,17 +19,14 @@ extern crate tracing;
 #[cfg(feature = "metrics")]
 extern crate snarkos_node_metrics as metrics;
 
-use aleo_std::StorageMode;
 use snarkos_account::Account;
-use snarkos_node_bft::{
-    BFT,
-    MEMORY_POOL_PORT,
-    Primary,
-    helpers::{ConsensusReceiver, PrimarySender, Storage, init_consensus_channels, init_primary_channels},
-};
+use snarkos_node_bft::{BFT, BftCallback, MEMORY_POOL_PORT, Primary, helpers::Storage};
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_sync::BlockSync;
+use snarkos_utilities::SimpleStoppable;
+
+use aleo_std::StorageMode;
 use snarkvm::{
     console::{account::PrivateKey, algorithms::BHP256, types::Address},
     ledger::{
@@ -37,7 +34,7 @@ use snarkvm::{
         Ledger,
         block::Transaction,
         committee::{Committee, MIN_VALIDATOR_STAKE},
-        narwhal::{BatchHeader, Data},
+        narwhal::{BatchHeader, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
@@ -64,9 +61,9 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
+    sync::{Arc, Mutex, OnceLock},
 };
-use tokio::{net::TcpListener, sync::oneshot};
+use tokio::net::TcpListener;
 use tracing_subscriber::{
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
@@ -116,13 +113,7 @@ pub fn initialize_logger(verbosity: u8) {
 /**************************************************************************************************/
 
 /// Starts the BFT instance.
-pub async fn start_bft(
-    node_id: u16,
-    num_nodes: u16,
-    peers: HashMap<u16, SocketAddr>,
-) -> Result<(BFT<CurrentNetwork>, PrimarySender<CurrentNetwork>)> {
-    // Initialize the primary channels.
-    let (sender, receiver) = init_primary_channels();
+pub async fn start_bft(node_id: u16, num_nodes: u16, peers: HashMap<u16, SocketAddr>) -> Result<BFT<CurrentNetwork>> {
     // Initialize the components.
     let (committee, account) = initialize_components(node_id, num_nodes)?;
     // Initialize the translucent ledger service.
@@ -142,21 +133,20 @@ pub async fn start_bft(
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     // Initialize the consensus channels.
-    let (consensus_sender, consensus_receiver) = init_consensus_channels::<CurrentNetwork>();
-    // Initialize the consensus receiver handler.
-    consensus_handler(consensus_receiver);
+    let consensus_handler = Arc::new(ConsensusHandler {});
     // Initialize the BFT instance.
     let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-    let mut bft =
-        BFT::<CurrentNetwork>::new(account, storage, ledger, block_sync, ip, &trusted_validators, storage_mode, None)?;
+    let bft =
+        BFT::<CurrentNetwork>::new(account, storage, ledger, block_sync, ip, &trusted_validators, storage_mode, None)
+            .await?;
     // Run the BFT instance.
-    bft.run(None, Some(consensus_sender), sender.clone(), receiver).await?;
+    bft.run(None, Some(consensus_handler)).await?;
     // Retrieve the BFT's primary.
     let primary = bft.primary();
     // Handle OS signals.
     handle_signals(primary);
     // Return the BFT instance.
-    Ok((bft, sender))
+    Ok(bft)
 }
 
 /// Starts the primary instance.
@@ -164,9 +154,7 @@ pub async fn start_primary(
     node_id: u16,
     num_nodes: u16,
     peers: HashMap<u16, SocketAddr>,
-) -> Result<(Primary<CurrentNetwork>, PrimarySender<CurrentNetwork>)> {
-    // Initialize the primary channels.
-    let (sender, receiver) = init_primary_channels();
+) -> Result<Primary<CurrentNetwork>> {
     // Initialize the components.
     let (committee, account) = initialize_components(node_id, num_nodes)?;
     // Initialize the translucent ledger service.
@@ -187,7 +175,7 @@ pub async fn start_primary(
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     // Initialize the primary instance.
     let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-    let mut primary = Primary::<CurrentNetwork>::new(
+    let primary = Primary::<CurrentNetwork>::new(
         account,
         storage,
         ledger,
@@ -196,13 +184,14 @@ pub async fn start_primary(
         &trusted_validators,
         storage_mode,
         None,
-    )?;
+    )
+    .await?;
     // Run the primary instance.
-    primary.run(None, None, sender.clone(), receiver).await?;
+    primary.run(None, None, None).await?;
     // Handle OS signals.
     handle_signals(&primary);
     // Return the primary instance.
-    Ok((primary, sender))
+    Ok(primary)
 }
 
 /// Initialize the translucent ledger service.
@@ -221,7 +210,7 @@ fn create_ledger(
     }
     let mut rng = TestRng::default();
     let gen_ledger = genesis_ledger(*gen_key, committee.clone(), balances.clone(), node_id, &mut rng);
-    Arc::new(TranslucentLedgerService::new(gen_ledger, Arc::new(AtomicBool::new(false))))
+    Arc::new(TranslucentLedgerService::new(gen_ledger, SimpleStoppable::new()))
 }
 
 pub type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
@@ -308,25 +297,28 @@ fn initialize_components(node_id: u16, num_nodes: u16) -> Result<(Committee<Curr
 }
 
 /// Handles the consensus receiver.
-fn consensus_handler(receiver: ConsensusReceiver<CurrentNetwork>) {
-    let ConsensusReceiver { mut rx_consensus_subdag } = receiver;
+struct ConsensusHandler {}
 
-    tokio::task::spawn(async move {
-        while let Some((subdag, transmissions, callback)) = rx_consensus_subdag.recv().await {
-            // Determine the amount of time to sleep for the subdag.
-            let subdag_ms = subdag.values().flatten().count();
-            // Determine the amount of time to sleep for the transmissions.
-            let transmissions_ms = transmissions.len() * 25;
-            // Add a constant delay.
-            let constant_ms = 100;
-            // Compute the total amount of time to sleep.
-            let sleep_ms = (subdag_ms + transmissions_ms + constant_ms) as u64;
-            // Sleep for the determined amount of time.
-            tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
-            // Call the callback.
-            callback.send(Ok(())).ok();
-        }
-    });
+#[async_trait::async_trait]
+impl BftCallback<CurrentNetwork> for ConsensusHandler {
+    async fn process_bft_subdag(
+        &self,
+        subdag: Subdag<CurrentNetwork>,
+        transmissions: IndexMap<TransmissionID<CurrentNetwork>, Transmission<CurrentNetwork>>,
+    ) -> Result<()> {
+        // Determine the amount of time to sleep for the subdag.
+        let subdag_ms = subdag.values().flatten().count();
+        // Determine the amount of time to sleep for the transmissions.
+        let transmissions_ms = transmissions.len() * 25;
+        // Add a constant delay.
+        let constant_ms = 100;
+        // Compute the total amount of time to sleep.
+        let sleep_ms = (subdag_ms + transmissions_ms + constant_ms) as u64;
+        // Sleep for the determined amount of time.
+        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+
+        Ok(())
+    }
 }
 
 /// Returns the trusted validators.
@@ -367,8 +359,7 @@ fn handle_signals(primary: &Primary<CurrentNetwork>) {
 /**************************************************************************************************/
 
 /// Fires *fake* unconfirmed solutions at the node.
-fn fire_unconfirmed_solutions(sender: &PrimarySender<CurrentNetwork>, node_id: u16, interval_ms: u64) {
-    let tx_unconfirmed_solution = sender.tx_unconfirmed_solution.clone();
+fn fire_unconfirmed_solutions(primary: Primary<CurrentNetwork>, node_id: u16, interval_ms: u64) {
     tokio::task::spawn(async move {
         // This RNG samples the *same* fake solutions for all nodes.
         let mut shared_rng = rand_chacha::ChaChaRng::seed_from_u64(123456789);
@@ -392,13 +383,8 @@ fn fire_unconfirmed_solutions(sender: &PrimarySender<CurrentNetwork>, node_id: u
             // Sample a random fake solution ID and solution.
             let (solution_id, solution) =
                 if counter % 2 == 0 { sample(&mut shared_rng) } else { sample(&mut unique_rng) };
-            // Initialize a callback sender and receiver.
-            let (callback, callback_receiver) = oneshot::channel();
             // Send the fake solution.
-            if let Err(e) = tx_unconfirmed_solution.send((solution_id, solution, callback)).await {
-                error!("Failed to send unconfirmed solution: {e}");
-            }
-            let _ = callback_receiver.await;
+            let _ = primary.process_unconfirmed_solution(solution_id, solution).await;
             // Increment the counter.
             counter += 1;
             // Sleep briefly.
@@ -408,8 +394,7 @@ fn fire_unconfirmed_solutions(sender: &PrimarySender<CurrentNetwork>, node_id: u
 }
 
 /// Fires *fake* unconfirmed transactions at the node.
-fn fire_unconfirmed_transactions(sender: &PrimarySender<CurrentNetwork>, node_id: u16, interval_ms: u64) {
-    let tx_unconfirmed_transaction = sender.tx_unconfirmed_transaction.clone();
+fn fire_unconfirmed_transactions(primary: Primary<CurrentNetwork>, node_id: u16, interval_ms: u64) {
     tokio::task::spawn(async move {
         // This RNG samples the *same* fake transactions for all nodes.
         let mut shared_rng = rand_chacha::ChaChaRng::seed_from_u64(123456789);
@@ -434,13 +419,8 @@ fn fire_unconfirmed_transactions(sender: &PrimarySender<CurrentNetwork>, node_id
         loop {
             // Sample a random fake transaction ID and transaction.
             let (id, transaction) = if counter % 2 == 0 { sample(&mut shared_rng) } else { sample(&mut unique_rng) };
-            // Initialize a callback sender and receiver.
-            let (callback, callback_receiver) = oneshot::channel();
             // Send the fake transaction.
-            if let Err(e) = tx_unconfirmed_transaction.send((id, transaction, callback)).await {
-                error!("Failed to send unconfirmed transaction: {e}");
-            }
-            let _ = callback_receiver.await;
+            let _ = primary.process_unconfirmed_transaction(id, transaction).await;
             // Increment the counter.
             counter += 1;
             // Sleep briefly.
@@ -579,14 +559,14 @@ async fn main() -> Result<()> {
     let mut bft_holder = None;
 
     // Start the node.
-    let (primary, sender) = match args.mode {
+    let primary = match args.mode {
         Mode::Bft => {
             // Start the BFT.
-            let (bft, sender) = start_bft(args.id, args.num_nodes, peers).await?;
+            let bft = start_bft(args.id, args.num_nodes, peers).await?;
             // Set the BFT holder.
             bft_holder = Some(bft.clone());
             // Return the primary and sender.
-            (bft.primary().clone(), sender)
+            bft.primary().clone()
         }
         Mode::Narwhal => start_primary(args.id, args.num_nodes, peers).await?,
     };
@@ -598,7 +578,7 @@ async fn main() -> Result<()> {
     match (args.fire_transmissions, args.fire_solutions) {
         // Note: We allow the user to overload the solutions rate, even when the 'fire-transmissions' flag is enabled.
         (Some(rate), _) | (_, Some(rate)) => {
-            fire_unconfirmed_solutions(&sender, args.id, rate.unwrap_or(DEFAULT_INTERVAL_MS));
+            fire_unconfirmed_solutions(primary.clone(), args.id, rate.unwrap_or(DEFAULT_INTERVAL_MS));
         }
         _ => (),
     };
@@ -607,7 +587,7 @@ async fn main() -> Result<()> {
     match (args.fire_transmissions, args.fire_transactions) {
         // Note: We allow the user to overload the transactions rate, even when the 'fire-transmissions' flag is enabled.
         (Some(rate), _) | (_, Some(rate)) => {
-            fire_unconfirmed_transactions(&sender, args.id, rate.unwrap_or(DEFAULT_INTERVAL_MS));
+            fire_unconfirmed_transactions(primary.clone(), args.id, rate.unwrap_or(DEFAULT_INTERVAL_MS));
         }
         _ => (),
     };

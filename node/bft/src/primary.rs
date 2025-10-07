@@ -14,20 +14,16 @@
 // limitations under the License.
 
 use crate::{
-    Gateway,
     MAX_BATCH_DELAY_IN_MS,
     MAX_WORKERS,
     MIN_BATCH_DELAY_IN_SECS,
     PRIMARY_PING_IN_MS,
-    Sync,
-    Transport,
     WORKER_PING_IN_MS,
     Worker,
-    events::{BatchPropose, BatchSignature, Event},
+    events::{BatchPropose, BatchSignature, Event, PrimaryPing},
+    gateway::{Gateway, GatewayPrimaryCallback, Transport},
     helpers::{
-        BFTSender,
-        PrimaryReceiver,
-        PrimarySender,
+        CallbackHandle,
         Proposal,
         ProposalCache,
         SignedProposals,
@@ -35,31 +31,35 @@ use crate::{
         assign_to_worker,
         assign_to_workers,
         fmt_id,
-        init_sync_channels,
         init_worker_channels,
         now,
     },
-    spawn_blocking,
+    ledger_service::LedgerService,
+    sync::{Sync, SyncCallback},
 };
+
 use snarkos_account::Account;
-use snarkos_node_bft_events::PrimaryPing;
-use snarkos_node_bft_ledger_service::LedgerService;
+
 use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
+
 use snarkvm::{
     console::{
+        network::ConsensusVersion,
         prelude::*,
         types::{Address, Field},
     },
     ledger::{
         block::Transaction,
+        committee::Committee,
         narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{ConsensusVersion, committee::Committee},
+    utilities::task::{self, JoinHandle},
 };
 
 use aleo_std::StorageMode;
+use anyhow::Context;
 use colored::Colorize;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::{IndexMap, IndexSet};
@@ -81,10 +81,20 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{sync::OnceCell, task::JoinHandle};
 
 /// A helper type for an optional proposed batch.
 pub type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
+
+/// This callback trait allows listening to changes in the Primary, such as round advancement.
+/// This is currently used by BFT.
+#[async_trait::async_trait]
+pub trait PrimaryCallback<N: Network>: Send + std::marker::Sync {
+    /// Notifies that a new round has started.
+    fn update_to_next_round(&self, current_round: u64) -> bool;
+
+    /// Sends a new certificate.
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
+}
 
 /// The primary logic of a node.
 /// AleoBFT adopts a primary-worker architecture as described in the Narwhal and Tusk paper (Section 4.2).
@@ -100,8 +110,8 @@ pub struct Primary<N: Network> {
     ledger: Arc<dyn LedgerService<N>>,
     /// The workers.
     workers: Arc<[Worker<N>]>,
-    /// The BFT sender.
-    bft_sender: Arc<OnceCell<BFTSender<N>>>,
+    /// The primary callback (used by [`BFT`]).
+    primary_callback: Arc<CallbackHandle<Arc<dyn PrimaryCallback<N>>>>,
     /// The batch proposal, if the primary is currently proposing a batch.
     proposed_batch: Arc<ProposedBatch<N>>,
     /// The timestamp of the most recent proposed batch.
@@ -120,9 +130,9 @@ impl<N: Network> Primary<N> {
     /// The maximum number of unconfirmed transmissions to send to the primary.
     pub const MAX_TRANSMISSIONS_TOLERANCE: usize = BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH * 2;
 
-    /// Initializes a new primary instance.
+    /// Initializes a new primary instance and starts the gateway.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         account: Account<N>,
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
@@ -137,22 +147,77 @@ impl<N: Network> Primary<N> {
             Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, storage_mode.clone(), dev)?;
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), ledger.clone(), block_sync);
+        let proposed_batch = Arc::new(ProposedBatch::default());
+
+        // Construct a map of the worker senders.
+        let mut worker_senders = IndexMap::new();
+
+        // Initialize the workers.
+        let mut workers = Vec::new();
+        for id in 0..MAX_WORKERS {
+            // Construct the worker channels.
+            let (tx_worker, rx_worker) = init_worker_channels();
+            // Construct the worker instance.
+            let worker =
+                Worker::new(id, Arc::new(gateway.clone()), storage.clone(), ledger.clone(), proposed_batch.clone())
+                    .with_context(|| "Failed to initialize worker")?;
+            // Run the worker instance.
+            worker.run(rx_worker);
+            // Add the worker to the list of workers.
+            workers.push(worker);
+            // Add the worker sender to the map.
+            worker_senders.insert(id, tx_worker);
+        }
 
         // Initialize the primary instance.
-        Ok(Self {
+        let obj = Self {
             sync,
-            gateway,
+            gateway: gateway.clone(),
             storage,
             ledger,
-            workers: Arc::from(vec![]),
-            bft_sender: Default::default(),
-            proposed_batch: Default::default(),
+            workers: Arc::from(workers),
+            primary_callback: Default::default(),
+            proposed_batch,
             latest_proposed_batch_timestamp: Default::default(),
             signed_proposals: Default::default(),
             handles: Default::default(),
             propose_lock: Default::default(),
             storage_mode,
-        })
+        };
+
+        // Next, initialize the gateway.
+        let gateway_primary_callback = Arc::new(obj.clone()) as Arc<dyn GatewayPrimaryCallback<N>>;
+        let gateway_sync_callback = Arc::new(obj.sync.clone());
+        obj.gateway.run(worker_senders, gateway_primary_callback, Some(gateway_sync_callback)).await;
+
+        Ok(obj)
+    }
+
+    /// Starts all remaining (background) tasks needed for the primary instance.
+    pub async fn run(
+        &self,
+        ping: Option<Arc<Ping<N>>>,
+        primary_callback: Option<Arc<dyn PrimaryCallback<N>>>,
+        sync_callback: Option<Arc<dyn SyncCallback<N>>>,
+    ) -> Result<()> {
+        info!("Starting the primary instance of the memory pool...");
+
+        // Set the BFT sender.
+        if let Some(callback) = primary_callback {
+            self.primary_callback.set(callback)?;
+        }
+
+        // Next, initialize the sync module and sync the storage from ledger.
+        self.sync.initialize(sync_callback).await?;
+        // Next, load and process the proposal cache before running the sync module.
+        self.load_proposal_cache().await?;
+        // Next, run the sync module.
+        self.sync.run(ping).await?;
+        // Lastly, start the primary handlers.
+        // Note: This ensures the primary does not start communicating before syncing is complete.
+        self.start_handlers();
+
+        Ok(())
     }
 
     /// Load the proposal cache file and update the Primary state with the stored data.
@@ -193,65 +258,6 @@ impl<N: Network> Primary<N> {
             // If the proposal cache does not exist, then return early.
             false => Ok(()),
         }
-    }
-
-    /// Run the primary instance.
-    pub async fn run(
-        &mut self,
-        ping: Option<Arc<Ping<N>>>,
-        bft_sender: Option<BFTSender<N>>,
-        primary_sender: PrimarySender<N>,
-        primary_receiver: PrimaryReceiver<N>,
-    ) -> Result<()> {
-        info!("Starting the primary instance of the memory pool...");
-
-        // Set the BFT sender.
-        if let Some(bft_sender) = &bft_sender {
-            // Set the BFT sender in the primary.
-            self.bft_sender.set(bft_sender.clone()).expect("BFT sender already set");
-        }
-
-        // Construct a map of the worker senders.
-        let mut worker_senders = IndexMap::new();
-        // Construct a map for the workers.
-        let mut workers = Vec::new();
-        // Initialize the workers.
-        for id in 0..MAX_WORKERS {
-            // Construct the worker channels.
-            let (tx_worker, rx_worker) = init_worker_channels();
-            // Construct the worker instance.
-            let worker = Worker::new(
-                id,
-                Arc::new(self.gateway.clone()),
-                self.storage.clone(),
-                self.ledger.clone(),
-                self.proposed_batch.clone(),
-            )?;
-            // Run the worker instance.
-            worker.run(rx_worker);
-            // Add the worker to the list of workers.
-            workers.push(worker);
-            // Add the worker sender to the map.
-            worker_senders.insert(id, tx_worker);
-        }
-        // Set the workers.
-        self.workers = Arc::from(workers);
-
-        // First, initialize the sync channels.
-        let (sync_sender, sync_receiver) = init_sync_channels();
-        // Next, initialize the sync module and sync the storage from ledger.
-        self.sync.initialize(bft_sender).await?;
-        // Next, load and process the proposal cache before running the sync module.
-        self.load_proposal_cache().await?;
-        // Next, run the sync module.
-        self.sync.run(ping, sync_receiver).await?;
-        // Next, initialize the gateway.
-        self.gateway.run(primary_sender, worker_senders, Some(sync_sender)).await;
-        // Lastly, start the primary handlers.
-        // Note: This ensures the primary does not start communicating before syncing is complete.
-        self.start_handlers(primary_receiver);
-
-        Ok(())
     }
 
     /// Returns the current round.
@@ -407,7 +413,7 @@ impl<N: Network> Primary<N> {
                     // Resend the batch proposal to the validator for signing.
                     Some(peer_ip) => {
                         let (gateway, event_, round) = (self.gateway.clone(), event.clone(), proposal.round());
-                        tokio::spawn(async move {
+                        task::spawn(async move {
                             debug!("Resending batch proposal for round {round} to peer '{peer_ip}'");
                             // Resend the batch proposal to the peer.
                             if gateway.send(peer_ip, event_).await.is_none() {
@@ -434,17 +440,12 @@ impl<N: Network> Primary<N> {
         // Ensure the primary has not proposed a batch for this round before.
         if self.storage.contains_certificate_in_round_from(round, self.gateway.account().address()) {
             // If a BFT sender was provided, attempt to advance the current round.
-            if let Some(bft_sender) = self.bft_sender.get() {
-                match bft_sender.send_primary_round_to_bft(self.current_round()).await {
+            if let Some(cb) = &*self.primary_callback.get_ref() {
+                match cb.update_to_next_round(self.current_round()) {
                     // 'is_ready' is true if the primary is ready to propose a batch for the next round.
-                    Ok(true) => (), // continue,
+                    true => (), // continue,
                     // 'is_ready' is false if the primary is not ready to propose a batch for the next round.
-                    Ok(false) => return Ok(()),
-                    // An error occurred while attempting to advance the current round.
-                    Err(e) => {
-                        warn!("Failed to update the BFT to the next round - {e}");
-                        return Err(e);
-                    }
+                    false => return Ok(()),
                 }
             }
             debug!("Primary is safely skipping {}", format!("(round {round} was already certified)").dimmed());
@@ -573,14 +574,13 @@ impl<N: Network> Primary<N> {
                         }
 
                         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!({
-                            match transaction {
-                                Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => {
-                                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                                }
+                        let transaction = task::spawn_blocking(|| match transaction {
+                            Data::Object(transaction) => Ok(transaction),
+                            Data::Buffer(bytes) => {
+                                Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))
                             }
-                        })?;
+                        })
+                        .await?;
 
                         // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                         // ConsensusVersion V8 Migration logic -
@@ -679,15 +679,18 @@ impl<N: Network> Primary<N> {
         // Prepare the previous batch certificate IDs.
         let previous_certificate_ids = previous_certificates.into_iter().map(|c| c.id()).collect();
         // Sign the batch header and construct the proposal.
-        let (batch_header, proposal) = spawn_blocking!(BatchHeader::new(
-            &private_key,
-            round,
-            current_timestamp,
-            committee_id,
-            transmission_ids,
-            previous_certificate_ids,
-            &mut rand::thread_rng()
-        ))
+        let (batch_header, proposal) = task::spawn_blocking(move || {
+            BatchHeader::new(
+                &private_key,
+                round,
+                current_timestamp,
+                committee_id,
+                transmission_ids,
+                previous_certificate_ids,
+                &mut rand::thread_rng(),
+            )
+        })
+        .await
         .and_then(|batch_header| {
             Proposal::new(committee_lookback, batch_header.clone(), transmissions.clone())
                 .map(|proposal| (batch_header, proposal))
@@ -720,7 +723,7 @@ impl<N: Network> Primary<N> {
         let BatchPropose { round: batch_round, batch_header } = batch_propose;
 
         // Deserialize the batch header.
-        let batch_header = spawn_blocking!(batch_header.deserialize_blocking())?;
+        let batch_header = task::spawn_blocking(|| batch_header.deserialize_blocking()).await?;
         // Ensure the round matches in the batch header.
         if batch_round != batch_header.round() {
             // Proceed to disconnect the validator.
@@ -786,7 +789,7 @@ impl<N: Network> Primary<N> {
             // Instead, rebroadcast the cached signature to the peer.
             if signed_round == batch_header.round() && signed_batch_id == batch_header.batch_id() {
                 let gateway = self.gateway.clone();
-                tokio::spawn(async move {
+                task::spawn(async move {
                     debug!("Resending a signature for a batch in round {batch_round} from '{peer_ip}'");
                     let event = Event::BatchSignature(BatchSignature::new(batch_header.batch_id(), signature));
                     // Resend the batch signature to the peer.
@@ -850,8 +853,10 @@ impl<N: Network> Primary<N> {
 
         // Ensure the batch header from the peer is valid.
         let (storage, header) = (self.storage.clone(), batch_header.clone());
-        let missing_transmissions =
-            spawn_blocking!(storage.check_batch_header(&header, missing_transmissions, Default::default()))?;
+        let missing_transmissions = task::spawn_blocking(move || {
+            storage.check_batch_header(&header, missing_transmissions, Default::default())
+        })
+        .await?;
         // Inserts the missing transmissions into the workers.
         self.insert_missing_transmissions_into_workers(peer_ip, missing_transmissions.into_iter())?;
 
@@ -876,14 +881,13 @@ impl<N: Network> Primary<N> {
                     (transmission_id, transmission)
                 {
                     // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                    let transaction = spawn_blocking!({
-                        match transaction {
-                            Data::Object(transaction) => Ok(transaction),
-                            Data::Buffer(bytes) => {
-                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                            }
+                    let transaction = task::spawn_blocking(|| match transaction {
+                        Data::Object(transaction) => Ok(transaction),
+                        Data::Buffer(bytes) => {
+                            Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))
                         }
-                    })?;
+                    })
+                    .await?;
 
                     // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
                     // ConsensusVersion V8 Migration logic -
@@ -944,7 +948,7 @@ impl<N: Network> Primary<N> {
         let batch_id = batch_header.batch_id();
         // Sign the batch ID.
         let account = self.gateway.account().clone();
-        let signature = spawn_blocking!(account.sign(&[batch_id], &mut rand::thread_rng()))?;
+        let signature = task::spawn_blocking(move || account.sign(&[batch_id], &mut rand::thread_rng())).await?;
 
         // Ensure the proposal has not already been signed.
         //
@@ -972,7 +976,7 @@ impl<N: Network> Primary<N> {
 
         // Broadcast the signature back to the validator.
         let self_ = self.clone();
-        tokio::spawn(async move {
+        task::spawn(async move {
             let event = Event::BatchSignature(BatchSignature::new(batch_id, signature));
             // Send the batch signature to the peer.
             if self_.gateway.send(peer_ip, event).await.is_some() {
@@ -1017,7 +1021,7 @@ impl<N: Network> Primary<N> {
         }
 
         let self_ = self.clone();
-        let Some(proposal) = spawn_blocking!({
+        let Some(proposal) = task::spawn_blocking(move || {
             // Acquire the write lock.
             let mut proposed_batch = self_.proposed_batch.write();
             // Add the signature to the batch, and determine if the batch is ready to be certified.
@@ -1065,7 +1069,7 @@ impl<N: Network> Primary<N> {
                 Some(proposal) => Ok(Some(proposal)),
                 None => Ok(None),
             }
-        })?
+        }).await?
         else {
             return Ok(());
         };
@@ -1192,16 +1196,7 @@ impl<N: Network> Primary<N> {
     /// tries to move the the next round of batches.
     ///
     /// This function is called exactly once, in `Self::run()`.
-    fn start_handlers(&self, primary_receiver: PrimaryReceiver<N>) {
-        let PrimaryReceiver {
-            mut rx_batch_propose,
-            mut rx_batch_signature,
-            mut rx_batch_certified,
-            mut rx_primary_ping,
-            mut rx_unconfirmed_solution,
-            mut rx_unconfirmed_transaction,
-        } = primary_receiver;
-
+    fn start_handlers(&self) {
         // Start the primary ping sender.
         let self_ = self.clone();
         self.spawn(async move {
@@ -1211,7 +1206,7 @@ impl<N: Network> Primary<N> {
 
                 // Retrieve the block locators.
                 let self__ = self_.clone();
-                let block_locators = match spawn_blocking!(self__.sync.get_block_locators()) {
+                let block_locators = match task::spawn_blocking(move || self__.sync.get_block_locators()).await {
                     Ok(block_locators) => block_locators,
                     Err(e) => {
                         warn!("Failed to retrieve block locators - {e}");
@@ -1255,39 +1250,6 @@ impl<N: Network> Primary<N> {
                 let primary_ping = PrimaryPing::from((<Event<N>>::VERSION, block_locators, primary_certificate));
                 // Broadcast the event.
                 self_.gateway.broadcast(Event::PrimaryPing(primary_ping));
-            }
-        });
-
-        // Start the primary ping handler.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, primary_certificate)) = rx_primary_ping.recv().await {
-                // If the primary is not synced, then do not process the primary ping.
-                if self_.sync.is_synced() {
-                    trace!("Processing new primary ping from '{peer_ip}'");
-                } else {
-                    trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-
-                // Spawn a task to process the primary certificate.
-                {
-                    let self_ = self_.clone();
-                    tokio::spawn(async move {
-                        // Deserialize the primary certificate in the primary ping.
-                        let Ok(primary_certificate) = spawn_blocking!(primary_certificate.deserialize_blocking())
-                        else {
-                            warn!("Failed to deserialize primary certificate in 'PrimaryPing' from '{peer_ip}'");
-                            return;
-                        };
-                        // Process the primary certificate.
-                        let id = fmt_id(primary_certificate.id());
-                        let round = primary_certificate.round();
-                        if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, primary_certificate).await {
-                            warn!("Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}");
-                        }
-                    });
-                }
             }
         });
 
@@ -1338,75 +1300,6 @@ impl<N: Network> Primary<N> {
             }
         });
 
-        // Start the proposed batch handler.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, batch_propose)) = rx_batch_propose.recv().await {
-                // If the primary is not synced, then do not sign the batch.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a batch proposal from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-                // Spawn a task to process the proposed batch.
-                let self_ = self_.clone();
-                tokio::spawn(async move {
-                    // Process the batch proposal.
-                    let round = batch_propose.round;
-                    if let Err(e) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
-                        warn!("Cannot sign a batch at round {round} from '{peer_ip}' - {e}");
-                    }
-                });
-            }
-        });
-
-        // Start the batch signature handler.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, batch_signature)) = rx_batch_signature.recv().await {
-                // If the primary is not synced, then do not store the signature.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a batch signature from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-                // Process the batch signature.
-                // Note: Do NOT spawn a task around this function call. Processing signatures from peers
-                // is a critical path, and we should only store the minimum required number of signatures.
-                // In addition, spawning a task can cause concurrent processing of signatures (even with a lock),
-                // which means the RwLock for the proposed batch must become a 'tokio::sync' to be safe.
-                let id = fmt_id(batch_signature.batch_id);
-                if let Err(e) = self_.process_batch_signature_from_peer(peer_ip, batch_signature).await {
-                    warn!("Cannot store a signature for batch '{id}' from '{peer_ip}' - {e}");
-                }
-            }
-        });
-
-        // Start the certified batch handler.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((peer_ip, batch_certificate)) = rx_batch_certified.recv().await {
-                // If the primary is not synced, then do not store the certificate.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a certified batch from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-                // Spawn a task to process the batch certificate.
-                let self_ = self_.clone();
-                tokio::spawn(async move {
-                    // Deserialize the batch certificate.
-                    let Ok(batch_certificate) = spawn_blocking!(batch_certificate.deserialize_blocking()) else {
-                        warn!("Failed to deserialize the batch certificate from '{peer_ip}'");
-                        return;
-                    };
-                    // Process the batch certificate.
-                    let id = fmt_id(batch_certificate.id());
-                    let round = batch_certificate.round();
-                    if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, batch_certificate).await {
-                        warn!("Cannot store a certificate '{id}' for round {round} from '{peer_ip}' - {e}");
-                    }
-                });
-            }
-        });
-
         // This task periodically tries to move to the next round.
         //
         // Note: This is necessary to ensure that the primary is not stuck on a previous round
@@ -1449,59 +1342,6 @@ impl<N: Network> Primary<N> {
                 }
             }
         });
-
-        // Start a handler to process new unconfirmed solutions.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((solution_id, solution, callback)) = rx_unconfirmed_solution.recv().await {
-                // Compute the checksum for the solution.
-                let Ok(checksum) = solution.to_checksum::<N>() else {
-                    error!("Failed to compute the checksum for the unconfirmed solution");
-                    continue;
-                };
-                // Compute the worker ID.
-                let Ok(worker_id) = assign_to_worker((solution_id, checksum), self_.num_workers()) else {
-                    error!("Unable to determine the worker ID for the unconfirmed solution");
-                    continue;
-                };
-                let self_ = self_.clone();
-                tokio::spawn(async move {
-                    // Retrieve the worker.
-                    let worker = &self_.workers[worker_id as usize];
-                    // Process the unconfirmed solution.
-                    let result = worker.process_unconfirmed_solution(solution_id, solution).await;
-                    // Send the result to the callback.
-                    callback.send(result).ok();
-                });
-            }
-        });
-
-        // Start a handler to process new unconfirmed transactions.
-        let self_ = self.clone();
-        self.spawn(async move {
-            while let Some((transaction_id, transaction, callback)) = rx_unconfirmed_transaction.recv().await {
-                trace!("Primary - Received an unconfirmed transaction '{}'", fmt_id(transaction_id));
-                // Compute the checksum for the transaction.
-                let Ok(checksum) = transaction.to_checksum::<N>() else {
-                    error!("Failed to compute the checksum for the unconfirmed transaction");
-                    continue;
-                };
-                // Compute the worker ID.
-                let Ok(worker_id) = assign_to_worker::<N>((&transaction_id, &checksum), self_.num_workers()) else {
-                    error!("Unable to determine the worker ID for the unconfirmed transaction");
-                    continue;
-                };
-                let self_ = self_.clone();
-                tokio::spawn(async move {
-                    // Retrieve the worker.
-                    let worker = &self_.workers[worker_id as usize];
-                    // Process the unconfirmed transaction.
-                    let result = worker.process_unconfirmed_transaction(transaction_id, transaction).await;
-                    // Send the result to the callback.
-                    callback.send(result).ok();
-                });
-            }
-        });
     }
 
     /// Checks if the proposed batch is expired, and clears the proposed batch if it has expired.
@@ -1542,14 +1382,8 @@ impl<N: Network> Primary<N> {
         // Attempt to advance to the next round.
         if current_round < next_round {
             // If a BFT sender was provided, send the current round to the BFT.
-            let is_ready = if let Some(bft_sender) = self.bft_sender.get() {
-                match bft_sender.send_primary_round_to_bft(current_round).await {
-                    Ok(is_ready) => is_ready,
-                    Err(e) => {
-                        warn!("Failed to update the BFT to the next round - {e}");
-                        return Err(e);
-                    }
-                }
+            let is_ready = if let Some(cb) = self.primary_callback.get() {
+                cb.update_to_next_round(current_round)
             }
             // Otherwise, handle the Narwhal case.
             else {
@@ -1633,15 +1467,15 @@ impl<N: Network> Primary<N> {
         let transmissions = transmissions.into_iter().collect::<HashMap<_, _>>();
         // Store the certified batch.
         let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-        spawn_blocking!(storage.insert_certificate(certificate_, transmissions, Default::default()))?;
+        task::spawn_blocking(move || storage.insert_certificate(certificate_, transmissions, Default::default()))
+            .await?;
         debug!("Stored a batch certificate for round {}", certificate.round());
         // If a BFT sender was provided, send the certificate to the BFT.
-        if let Some(bft_sender) = self.bft_sender.get() {
+        if let Some(cb) = self.primary_callback.get() {
             // Await the callback to continue.
-            if let Err(e) = bft_sender.send_primary_certificate_to_bft(certificate.clone()).await {
-                warn!("Failed to update the BFT DAG from primary - {e}");
-                return Err(e);
-            };
+            cb.add_new_certificate(certificate.clone())
+                .await
+                .with_context(|| "Failed to add new certificate from primary")?;
         }
         // Broadcast the certified batch to all validators.
         self.gateway.broadcast(Event::BatchCertified(certificate.clone().into()));
@@ -1720,15 +1554,14 @@ impl<N: Network> Primary<N> {
         if !self.storage.contains_certificate(certificate.id()) {
             // Store the batch certificate.
             let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-            spawn_blocking!(storage.insert_certificate(certificate_, missing_transmissions, Default::default()))?;
+            task::spawn_blocking(move || {
+                storage.insert_certificate(certificate_, missing_transmissions, Default::default())
+            })
+            .await?;
             debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
             // If a BFT sender was provided, send the round and certificate to the BFT.
-            if let Some(bft_sender) = self.bft_sender.get() {
-                // Send the certificate to the BFT.
-                if let Err(e) = bft_sender.send_primary_certificate_to_bft(certificate).await {
-                    warn!("Failed to update the BFT DAG from sync: {e}");
-                    return Err(e);
-                };
+            if let Some(cb) = self.primary_callback.get() {
+                cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
             }
         }
         Ok(())
@@ -1933,16 +1766,20 @@ impl<N: Network> Primary<N> {
 impl<N: Network> Primary<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the primary.
     pub async fn shut_down(&self) {
         info!("Shutting down the primary...");
+        // Remove the callback.
+        self.primary_callback.clear();
+        // Stop syncing.
+        self.sync.shut_down().await;
         // Shut down the workers.
         self.workers.iter().for_each(|worker| worker.shut_down());
         // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
         // Save the current proposal cache to disk.
         let proposal_cache = {
             let proposal = self.proposed_batch.write().take();
@@ -1959,8 +1796,143 @@ impl<N: Network> Primary<N> {
     }
 }
 
+/// Handle events from the Gateway
+#[async_trait::async_trait]
+impl<N: Network> GatewayPrimaryCallback<N> for Primary<N> {
+    async fn process_incoming_ping(&self, peer_ip: SocketAddr, primary_certificate: Data<BatchCertificate<N>>) {
+        // If the primary is not synced, then do not process the primary ping.
+        if self.sync.is_synced() {
+            trace!("Processing new primary ping from '{peer_ip}'");
+        } else {
+            trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
+            return;
+        }
+
+        // Spawn a task to process the primary certificate.
+        {
+            let self_ = self.clone();
+            tokio::spawn(async move {
+                // Deserialize the primary certificate in the primary ping.
+                let Ok(primary_certificate) = task::spawn_blocking(|| primary_certificate.deserialize_blocking()).await
+                else {
+                    warn!("Failed to deserialize primary certificate in 'PrimaryPing' from '{peer_ip}'");
+                    return;
+                };
+                // Process the primary certificate.
+                let id = fmt_id(primary_certificate.id());
+                let round = primary_certificate.round();
+                if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, primary_certificate).await {
+                    warn!(
+                        "Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}"
+                    );
+                }
+            });
+        }
+    }
+
+    async fn process_batch_propose(&self, peer_ip: SocketAddr, batch_propose: BatchPropose<N>) {
+        // If the primary is not synced, then do not sign the batch.
+        if !self.sync.is_synced() {
+            trace!("Skipping a batch proposal from '{peer_ip}' {}", "(node is syncing)".dimmed());
+            return;
+        }
+        // Spawn a task to process the proposed batch.
+        let self_ = self.clone();
+        tokio::spawn(async move {
+            // Process the batch proposal.
+            let round = batch_propose.round;
+            if let Err(e) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
+                warn!("Cannot sign a batch at round {round} from '{peer_ip}' - {e}");
+            }
+        });
+    }
+
+    async fn process_batch_signature(&self, peer_ip: SocketAddr, batch_signature: BatchSignature<N>) {
+        // If the primary is not synced, then do not store the signature.
+        if !self.sync.is_synced() {
+            trace!("Skipping a batch signature from '{peer_ip}' {}", "(node is syncing)".dimmed());
+            return;
+        }
+        // Process the batch signature.
+        // Note: Do NOT spawn a task around this function call. Processing signatures from peers
+        // is a critical path, and we should only store the minimum required number of signatures.
+        // In addition, spawning a task can cause concurrent processing of signatures (even with a lock),
+        // which means the RwLock for the proposed batch must become a 'tokio::sync' to be safe.
+        let id = fmt_id(batch_signature.batch_id);
+        if let Err(e) = self.process_batch_signature_from_peer(peer_ip, batch_signature).await {
+            warn!("Cannot store a signature for batch '{id}' from '{peer_ip}' - {e}");
+        }
+    }
+
+    async fn process_batch_certified(&self, peer_ip: SocketAddr, batch_certificate: Data<BatchCertificate<N>>) {
+        // If the primary is not synced, then do not store the certificate.
+        if !self.sync.is_synced() {
+            trace!("Skipping a certified batch from '{peer_ip}' {}", "(node is syncing)".dimmed());
+            return;
+        }
+        // Spawn a task to process the batch certificate.
+        let self_ = self.clone();
+        tokio::spawn(async move {
+            // Deserialize the batch certificate.
+            let Ok(batch_certificate) = task::spawn_blocking(|| batch_certificate.deserialize_blocking()).await else {
+                warn!("Failed to deserialize the batch certificate from '{peer_ip}'");
+                return;
+            };
+            // Process the batch certificate.
+            let id = fmt_id(batch_certificate.id());
+            let round = batch_certificate.round();
+            if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, batch_certificate).await {
+                warn!("Cannot store a certificate '{id}' for round {round} from '{peer_ip}' - {e}");
+            }
+        });
+    }
+}
+
+/// Invoked by the mempool ("Consensus").
+impl<N: Network> Primary<N> {
+    pub async fn process_unconfirmed_solution(
+        &self,
+        solution_id: SolutionID<N>,
+        solution: Data<Solution<N>>,
+    ) -> Result<()> {
+        // Compute the checksum for the solution.
+        let Ok(checksum) = solution.to_checksum::<N>() else {
+            bail!("Failed to compute the checksum for the unconfirmed solution");
+        };
+
+        // Compute the worker ID.
+        let Ok(worker_id) = assign_to_worker((solution_id, checksum), self.num_workers()) else {
+            bail!("Unable to determine the worker ID for the unconfirmed solution");
+        };
+
+        // Wait for the worker to process the unconfirmed solution.
+        self.workers[worker_id as usize].process_unconfirmed_solution(solution_id, solution).await
+    }
+
+    pub async fn process_unconfirmed_transaction(
+        &self,
+        transaction_id: N::TransactionID,
+        transaction: Data<Transaction<N>>,
+    ) -> Result<()> {
+        trace!("Primary - Received an unconfirmed transaction '{}'", fmt_id(transaction_id));
+        // Compute the checksum for the transaction.
+        let Ok(checksum) = transaction.to_checksum::<N>() else {
+            bail!("Failed to compute the checksum for the unconfirmed transaction");
+        };
+        // Compute the worker ID.
+        let Ok(worker_id) = assign_to_worker::<N>((&transaction_id, &checksum), self.num_workers()) else {
+            bail!("Unable to determine the worker ID for the unconfirmed transaction");
+        };
+
+        // Wait for the worker to process the unconfirmed transaction.
+        self.workers[worker_id as usize].process_unconfirmed_transaction(transaction_id, transaction).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
     use super::*;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
@@ -1997,7 +1969,7 @@ mod tests {
     }
 
     // Returns a primary and a list of accounts in the configured committee.
-    fn primary_with_committee(
+    async fn primary_with_committee(
         account_index: usize,
         accounts: &[(SocketAddr, Account<CurrentNetwork>)],
         committee: Committee<CurrentNetwork>,
@@ -2006,11 +1978,16 @@ mod tests {
         let ledger = Arc::new(MockLedgerService::new_at_height(committee, height));
         let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10);
 
+        // Pick a random port so we can run tests concurrently.
+        let any_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+
         // Initialize the primary.
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::new_test(None), None).unwrap();
+            Primary::new(account, storage, ledger, block_sync, Some(any_addr), &[], StorageMode::Test(None), None)
+                .await
+                .unwrap();
 
         // Construct a worker instance.
         primary.workers = Arc::from([Worker::new(
@@ -2028,7 +2005,7 @@ mod tests {
         primary
     }
 
-    fn primary_without_handlers(
+    async fn primary_without_handlers(
         rng: &mut TestRng,
     ) -> (Primary<CurrentNetwork>, Vec<(SocketAddr, Account<CurrentNetwork>)>) {
         let (accounts, committee) = sample_committee(rng);
@@ -2037,7 +2014,8 @@ mod tests {
             &accounts,
             committee,
             CurrentNetwork::CONSENSUS_HEIGHT(ConsensusVersion::V1).unwrap(),
-        );
+        )
+        .await;
 
         (primary, accounts)
     }
@@ -2235,10 +2213,11 @@ mod tests {
         }
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch() {
         let mut rng = TestRng::default();
-        let (primary, _) = primary_without_handlers(&mut rng);
+        let (primary, _) = primary_without_handlers(&mut rng).await;
 
         // Check there is no batch currently proposed.
         assert!(primary.proposed_batch.read().is_none());
@@ -2256,10 +2235,11 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_with_no_transmissions() {
         let mut rng = TestRng::default();
-        let (primary, _) = primary_without_handlers(&mut rng);
+        let (primary, _) = primary_without_handlers(&mut rng).await;
 
         // Check there is no batch currently proposed.
         assert!(primary.proposed_batch.read().is_none());
@@ -2269,11 +2249,12 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_in_round() {
         let round = 3;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Fill primary storage.
         store_certificate_chain(&primary, &accounts, round, &mut rng);
@@ -2294,12 +2275,13 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_skip_transmissions_from_previous_certificates() {
         let round = 3;
         let prev_round = round - 1;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
 
@@ -2366,6 +2348,7 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_over_spend_limit() {
         let mut rng = TestRng::default();
@@ -2377,7 +2360,8 @@ mod tests {
             &accounts,
             committee.clone(),
             CurrentNetwork::CONSENSUS_HEIGHT(ConsensusVersion::V4).unwrap(),
-        );
+        )
+        .await;
 
         // Check there is no batch currently proposed.
         assert!(primary.proposed_batch.read().is_none());
@@ -2402,10 +2386,11 @@ mod tests {
         assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 3);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer() {
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Create a valid proposal with an author that isn't the primary.
         let round = 1;
@@ -2441,10 +2426,11 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_when_not_synced() {
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Create a valid proposal with an author that isn't the primary.
         let round = 1;
@@ -2478,11 +2464,12 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_in_round() {
         let round = 2;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Generate certificates.
         let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
@@ -2518,10 +2505,11 @@ mod tests {
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_wrong_round() {
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Create a valid proposal with an author that isn't the primary.
         let round = 1;
@@ -2560,11 +2548,12 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_in_round_wrong_round() {
         let round = 4;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Generate certificates.
         let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
@@ -2606,11 +2595,12 @@ mod tests {
     }
 
     /// Tests that the minimum batch delay is enforced as expected, i.e., that proposals with timestamps that are too close to the previous proposal are rejected.
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_with_past_timestamp() {
         let round = 2;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Generate certificates.
         let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
@@ -2656,6 +2646,7 @@ mod tests {
     }
 
     /// Check that proposals rejected that have timestamps older than the previous proposal.
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_propose_from_peer_over_spend_limit() {
         let mut rng = TestRng::default();
@@ -2667,13 +2658,15 @@ mod tests {
             &accounts,
             committee.clone(),
             CurrentNetwork::CONSENSUS_HEIGHT(ConsensusVersion::V4).unwrap(),
-        );
+        )
+        .await;
         let primary_v5 = primary_with_committee(
             1,
             &accounts,
             committee.clone(),
             CurrentNetwork::CONSENSUS_HEIGHT(ConsensusVersion::V5).unwrap(),
-        );
+        )
+        .await;
 
         // Create a valid proposal with an author that isn't the primary.
         let round = 1;
@@ -2719,11 +2712,12 @@ mod tests {
         );
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_with_storage_round_behind_proposal_lock() {
         let round = 3;
         let mut rng = TestRng::default();
-        let (primary, _) = primary_without_handlers(&mut rng);
+        let (primary, _) = primary_without_handlers(&mut rng).await;
 
         // Check there is no batch currently proposed.
         assert!(primary.proposed_batch.read().is_none());
@@ -2752,11 +2746,12 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_propose_batch_with_storage_round_behind_proposal() {
         let round = 5;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
 
         // Generate previous certificates.
         let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
@@ -2782,10 +2777,11 @@ mod tests {
         assert!(primary.proposed_batch.read().as_ref().unwrap().round() > primary.current_round());
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_batch_signature_from_peer() {
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
         map_account_addresses(&primary, &accounts);
 
         // Create a valid proposal.
@@ -2818,11 +2814,12 @@ mod tests {
         assert_eq!(primary.current_round(), round + 1);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_batch_signature_from_peer_in_round() {
         let round = 5;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
         map_account_addresses(&primary, &accounts);
 
         // Generate certificates.
@@ -2857,10 +2854,11 @@ mod tests {
         assert_eq!(primary.current_round(), round + 1);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_signature_from_peer_no_quorum() {
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
         map_account_addresses(&primary, &accounts);
 
         // Create a valid proposal.
@@ -2892,11 +2890,12 @@ mod tests {
         assert_eq!(primary.current_round(), round);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_batch_signature_from_peer_in_round_no_quorum() {
         let round = 7;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
         map_account_addresses(&primary, &accounts);
 
         // Generate certificates.
@@ -2930,12 +2929,13 @@ mod tests {
         assert_eq!(primary.current_round(), round);
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_insert_certificate_with_aborted_transmissions() {
         let round = 3;
         let prev_round = round - 1;
         let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let (primary, accounts) = primary_without_handlers(&mut rng).await;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
 

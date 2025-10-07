@@ -21,15 +21,15 @@ default = [ ]
 locktick = [
   "dep:locktick",
   "snarkos-node-bft/locktick",
-  "snarkos-node-bft-ledger-service/locktick",
-  "snarkos-node-bft-storage-service/locktick",
   "snarkvm/locktick"
 ]
 metrics = [ "dep:snarkos-node-metrics" ]
 telemetry = [ "snarkos-node-bft/telemetry" ]
-cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
-serial = [ "snarkos-node-bft-ledger-service/serial" ]
+cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
+serial = [ ]
 
+[dependencies.async-trait]
+workspace = true
 
 [dependencies.aleo-std]
 workspace = true
@@ -64,14 +64,7 @@ workspace = true
 
 [dependencies.snarkos-node-bft]
 workspace = true
-
-[dependencies.snarkos-node-bft-ledger-service]
-workspace = true
-features = [ "ledger", "ledger-write" ]
-
-[dependencies.snarkos-node-bft-storage-service]
-workspace = true
-features = [ "persistent" ]
+features = [ "persistent-storage" ]
 
 [dependencies.snarkos-node-sync]
 workspace = true

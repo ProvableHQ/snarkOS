@@ -20,31 +20,33 @@ use crate::{
     MAX_BATCH_DELAY_IN_MS,
     MEMORY_POOL_PORT,
     Worker,
-    events::{EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
-    spawn_blocking,
+    events::{
+        BatchPropose,
+        BatchSignature,
+        BlockRequest,
+        BlockResponse,
+        CertificateRequest,
+        CertificateResponse,
+        ChallengeRequest,
+        ChallengeResponse,
+        DataBlocks,
+        DisconnectReason,
+        Event,
+        EventCodec,
+        EventTrait,
+        PrimaryPing,
+        TransmissionRequest,
+        TransmissionResponse,
+        ValidatorsRequest,
+        ValidatorsResponse,
+    },
+    helpers::{Cache, CallbackHandle, Resolver, Storage, WorkerSender, assign_to_worker},
+    ledger_service::LedgerService,
 };
-use aleo_std::StorageMode;
+
 use snarkos_account::Account;
-use snarkos_node_bft_events::{
-    BlockRequest,
-    BlockResponse,
-    CertificateRequest,
-    CertificateResponse,
-    ChallengeRequest,
-    ChallengeResponse,
-    DataBlocks,
-    DisconnectReason,
-    Event,
-    EventTrait,
-    TransmissionRequest,
-    TransmissionResponse,
-    ValidatorsRequest,
-    ValidatorsResponse,
-};
-use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_router::{NodeType, Peer, PeerPoolHandling};
-use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService, locators::BlockLocators};
 use snarkos_node_tcp::{
     Config,
     Connection,
@@ -53,13 +55,17 @@ use snarkos_node_tcp::{
     Tcp,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
+
+use aleo_std::StorageMode;
 use snarkvm::{
     console::prelude::*,
     ledger::{
+        Block,
         committee::Committee,
-        narwhal::{BatchHeader, Data},
+        narwhal::{BatchCertificate, BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::task::{self, JoinHandle},
 };
 
 use colored::Colorize;
@@ -81,7 +87,6 @@ use std::{
 use tokio::{
     net::TcpStream,
     sync::{OnceCell, oneshot},
-    task::{self, JoinHandle},
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -116,6 +121,35 @@ pub trait Transport<N: Network>: Send + Sync {
     fn broadcast(&self, event: Event<N>);
 }
 
+/// Callback for events specific to BlockSync.
+pub trait GatewaySyncCallback<N: Network>: Send + Sync {
+    /// We received a block response and can (possibly) advance synchronization.
+    fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()>;
+
+    /// We received new peer locators during a Ping.
+    fn update_peer_locators(&self, peer_ip: SocketAddr, locators: BlockLocators<N>) -> Result<()>;
+
+    /// A peer disconnected.
+    fn remove_peer(&self, peer_ip: SocketAddr);
+
+    /// Handles the incoming certificate request.
+    fn send_certificate_response(&self, peer_ip: SocketAddr, request: CertificateRequest<N>);
+
+    fn finish_certificate_request(&self, peer_ip: SocketAddr, response: CertificateResponse<N>);
+}
+
+/// Callback for primary-specific events
+#[async_trait::async_trait]
+pub trait GatewayPrimaryCallback<N: Network>: Send + Sync {
+    async fn process_incoming_ping(&self, peer_ip: SocketAddr, primary_certificate: Data<BatchCertificate<N>>);
+
+    async fn process_batch_propose(&self, peer_ip: SocketAddr, batch_propose: BatchPropose<N>);
+
+    async fn process_batch_signature(&self, peer_ip: SocketAddr, batch_signature: BatchSignature<N>);
+
+    async fn process_batch_certified(&self, peer_ip: SocketAddr, batch_certificate: Data<BatchCertificate<N>>);
+}
+
 /// The gateway maintains connections to other validators.
 /// For connections with clients and provers, the Router logic is used.
 #[derive(Clone)]
@@ -146,12 +180,12 @@ pub struct InnerGateway<N: Network> {
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     #[cfg(feature = "telemetry")]
     validator_telemetry: Telemetry<N>,
-    /// The primary sender.
-    primary_sender: OnceCell<PrimarySender<N>>,
     /// The worker senders.
-    worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
-    /// The sync sender.
-    sync_sender: OnceCell<SyncSender<N>>,
+    worker_senders: Arc<OnceCell<IndexMap<u8, WorkerSender<N>>>>,
+    /// The callback for sync messages.
+    sync_callback: Arc<CallbackHandle<Arc<dyn GatewaySyncCallback<N>>>>,
+    /// The callback for bft/primary messages.
+    primary_callback: Arc<CallbackHandle<Arc<dyn GatewayPrimaryCallback<N>>>>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
@@ -185,8 +219,14 @@ impl<N: Network> Gateway<N> {
             (None, None) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MEMORY_POOL_PORT)),
             (Some(ip), _) => ip,
         };
+
+        // Allow at most as many connections as the maximum committe size.
+        // and fail if the chosen port is not available.
+        let mut tcp_config = Config::new(ip, Committee::<N>::max_committee_size()?);
+        tcp_config.allow_random_port = false;
+
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(tcp_config);
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
@@ -212,9 +252,9 @@ impl<N: Network> Gateway<N> {
             peer_pool: RwLock::new(initial_peers),
             #[cfg(feature = "telemetry")]
             validator_telemetry: Default::default(),
-            primary_sender: Default::default(),
+            primary_callback: Default::default(),
             worker_senders: Default::default(),
-            sync_sender: Default::default(),
+            sync_callback: Default::default(),
             handles: Default::default(),
             storage_mode,
             dev,
@@ -224,21 +264,18 @@ impl<N: Network> Gateway<N> {
     /// Run the gateway.
     pub async fn run(
         &self,
-        primary_sender: PrimarySender<N>,
         worker_senders: IndexMap<u8, WorkerSender<N>>,
-        sync_sender: Option<SyncSender<N>>,
+        primary_callback: Arc<dyn GatewayPrimaryCallback<N>>,
+        sync_callback: Option<Arc<dyn GatewaySyncCallback<N>>>,
     ) {
         debug!("Starting the gateway for the memory pool...");
 
-        // Set the primary sender.
-        self.primary_sender.set(primary_sender).expect("Primary sender already set in gateway");
-
-        // Set the worker senders.
         self.worker_senders.set(worker_senders).expect("The worker senders are already set");
 
-        // If the sync sender was provided, set the sync sender.
-        if let Some(sync_sender) = sync_sender {
-            self.sync_sender.set(sync_sender).expect("Sync sender already set in gateway");
+        self.primary_callback.set(primary_callback).expect("The primary callback is already set");
+
+        if let Some(sync_callback) = sync_callback {
+            self.sync_callback.set(sync_callback).unwrap();
         }
 
         // Enable the TCP protocols.
@@ -336,11 +373,6 @@ impl<N: Network> Gateway<N> {
     #[cfg(feature = "telemetry")]
     pub fn validator_telemetry(&self) -> &Telemetry<N> {
         &self.validator_telemetry
-    }
-
-    /// Returns the primary sender.
-    pub fn primary_sender(&self) -> &PrimarySender<N> {
-        self.primary_sender.get().expect("Primary sender not set in gateway")
     }
 
     /// Returns the number of workers.
@@ -454,13 +486,8 @@ impl<N: Network> Gateway<N> {
     /// Removes the connected peer and adds them to the candidate peers.
     fn remove_connected_peer(&self, peer_ip: SocketAddr) {
         // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-        if let Some(sync_sender) = self.sync_sender.get() {
-            let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-            tokio::spawn(async move {
-                if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                    warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
-                }
-            });
+        if let Some(cb) = &*self.sync_callback.get_ref() {
+            cb.remove_peer(peer_ip);
         }
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             if let Peer::Connected(connected_peer) = peer {
@@ -554,18 +581,30 @@ impl<N: Network> Gateway<N> {
         match event {
             Event::BatchPropose(batch_propose) => {
                 // Send the batch propose to the primary.
-                let _ = self.primary_sender().tx_batch_propose.send((peer_ip, batch_propose)).await;
-                Ok(true)
+                if let Some(cb) = self.primary_callback.get() {
+                    cb.process_batch_propose(peer_ip, batch_propose).await;
+                    Ok(true)
+                } else {
+                    bail!("No callback set");
+                }
             }
             Event::BatchSignature(batch_signature) => {
-                // Send the batch signature to the primary.
-                let _ = self.primary_sender().tx_batch_signature.send((peer_ip, batch_signature)).await;
-                Ok(true)
+                // Send the batch propose to the primary.
+                if let Some(cb) = self.primary_callback.get() {
+                    cb.process_batch_signature(peer_ip, batch_signature).await;
+                    Ok(true)
+                } else {
+                    bail!("No calback set");
+                }
             }
             Event::BatchCertified(batch_certified) => {
                 // Send the batch certificate to the primary.
-                let _ = self.primary_sender().tx_batch_certified.send((peer_ip, batch_certified.certificate)).await;
-                Ok(true)
+                if let Some(cb) = self.primary_callback.get() {
+                    cb.process_batch_certified(peer_ip, batch_certified.certificate).await;
+                    Ok(true)
+                } else {
+                    bail!("No calback set");
+                }
             }
             Event::BlockRequest(block_request) => {
                 let BlockRequest { start_height, end_height } = block_request;
@@ -580,19 +619,14 @@ impl<N: Network> Gateway<N> {
                 }
 
                 let self_ = self.clone();
-                let blocks = match task::spawn_blocking(move || {
+                let blocks = task::spawn_blocking(move || {
                     // Retrieve the blocks within the requested range.
                     match self_.ledger.get_blocks(start_height..end_height) {
                         Ok(blocks) => Ok(Data::Object(DataBlocks(blocks))),
                         Err(error) => bail!("Missing blocks {start_height} to {end_height} from ledger - {error}"),
                     }
                 })
-                .await
-                {
-                    Ok(Ok(blocks)) => blocks,
-                    Ok(Err(error)) => return Err(error),
-                    Err(error) => return Err(anyhow!("[BlockRequest] {error}")),
-                };
+                .await?;
 
                 let self_ = self.clone();
                 tokio::spawn(async move {
@@ -604,7 +638,7 @@ impl<N: Network> Gateway<N> {
             }
             Event::BlockResponse(block_response) => {
                 // Process the block response. Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = self.sync_callback.get() {
                     // Retrieve the block response.
                     let BlockResponse { request, blocks } = block_response;
 
@@ -630,8 +664,8 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(e) = sync_sender.advance_with_sync_blocks(peer_ip, blocks.0).await {
-                        warn!("Unable to process block response from '{peer_ip}' - {e}");
+                    if let Err(err) = cb.insert_block_response(peer_ip, blocks.0) {
+                        warn!("Unable to process block response from '{peer_ip}': {err}");
                     }
                 }
                 Ok(true)
@@ -639,18 +673,18 @@ impl<N: Network> Gateway<N> {
             Event::CertificateRequest(certificate_request) => {
                 // Send the certificate request to the sync module.
                 // Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.get_ref() {
                     // Send the certificate request to the sync module.
-                    let _ = sync_sender.tx_certificate_request.send((peer_ip, certificate_request)).await;
+                    cb.send_certificate_response(peer_ip, certificate_request);
                 }
                 Ok(true)
             }
             Event::CertificateResponse(certificate_response) => {
                 // Send the certificate response to the sync module.
                 // Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.get_ref() {
                     // Send the certificate response to the sync module.
-                    let _ = sync_sender.tx_certificate_response.send((peer_ip, certificate_response)).await;
+                    cb.finish_certificate_request(peer_ip, certificate_response);
                 }
                 Ok(true)
             }
@@ -673,15 +707,19 @@ impl<N: Network> Gateway<N> {
                 }
 
                 // Update the peer locators. Except for some tests, there is always a sync sender.
-                if let Some(sync_sender) = self.sync_sender.get() {
+                if let Some(cb) = &*self.sync_callback.get_ref() {
                     // Check the block locators are valid, and update the validators in the sync module.
-                    if let Err(error) = sync_sender.update_peer_locators(peer_ip, block_locators).await {
+                    if let Err(error) = cb.update_peer_locators(peer_ip, block_locators) {
                         bail!("Validator '{peer_ip}' sent invalid block locators - {error}");
                     }
                 }
 
                 // Send the batch certificates to the primary.
-                let _ = self.primary_sender().tx_primary_ping.send((peer_ip, primary_certificate)).await;
+                if let Some(cb) = self.primary_callback.get() {
+                    cb.process_incoming_ping(peer_ip, primary_certificate).await;
+                } else {
+                    bail!("No callback set");
+                }
                 Ok(true)
             }
             Event::TransmissionRequest(request) => {
@@ -837,7 +875,7 @@ impl<N: Network> Gateway<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     #[allow(dead_code)]
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 
     /// Shuts down the gateway.
@@ -848,9 +886,12 @@ impl<N: Network> Gateway<N> {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
-        self.handles.lock().iter().for_each(|handle| handle.abort());
+        self.handles.lock().drain(..).for_each(|handle| handle.abort());
         // Close the listener.
         self.tcp.shut_down().await;
+        // Remove the sync and primary callback (so they can be dropped).
+        self.sync_callback.clear();
+        self.primary_callback.clear();
     }
 }
 
@@ -1474,7 +1515,7 @@ impl<N: Network> Gateway<N> {
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         // Perform the deferred non-blocking deserialization of the signature.
-        let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
+        let Ok(signature) = task::spawn_blocking(|| signature.deserialize_blocking()).await else {
             warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         };
@@ -1487,15 +1528,55 @@ impl<N: Network> Gateway<N> {
     }
 }
 
+#[cfg(any(test, feature = "test"))]
+pub mod test_helpers {
+    use super::*;
+
+    type CurrentNetwork = MainnetV0;
+
+    #[derive(Default)]
+    pub struct DummyGatewayPrimaryCallback {}
+
+    #[async_trait::async_trait]
+    impl GatewayPrimaryCallback<CurrentNetwork> for DummyGatewayPrimaryCallback {
+        async fn process_incoming_ping(
+            &self,
+            _peer_ip: SocketAddr,
+            _primary_certificate: Data<BatchCertificate<CurrentNetwork>>,
+        ) {
+        }
+
+        async fn process_batch_propose(&self, _peer_ip: SocketAddr, _batch_propose: BatchPropose<CurrentNetwork>) {}
+
+        async fn process_batch_signature(
+            &self,
+            _peer_ip: SocketAddr,
+            _batch_signature: BatchSignature<CurrentNetwork>,
+        ) {
+        }
+
+        async fn process_batch_certified(
+            &self,
+            _peer_ip: SocketAddr,
+            _batch_certificate: Data<BatchCertificate<CurrentNetwork>>,
+        ) {
+        }
+    }
+}
+
 #[cfg(test)]
 mod prop_tests {
-    use crate::{
+    use super::{
         Gateway,
+        prop_tests::GatewayAddress::{Dev, Prod},
+        test_helpers::DummyGatewayPrimaryCallback,
+    };
+
+    use crate::{
         MAX_WORKERS,
         MEMORY_POOL_PORT,
         Worker,
-        gateway::prop_tests::GatewayAddress::{Dev, Prod},
-        helpers::{Storage, init_primary_channels, init_worker_channels},
+        helpers::{Storage, init_worker_channels},
     };
     use aleo_std::StorageMode;
     use snarkos_account::Account;
@@ -1545,17 +1626,11 @@ mod prop_tests {
 
     impl GatewayAddress {
         fn ip(&self) -> Option<SocketAddr> {
-            if let GatewayAddress::Prod(ip) = self {
-                return *ip;
-            }
-            None
+            if let GatewayAddress::Prod(ip) = self { *ip } else { None }
         }
 
         fn port(&self) -> Option<u16> {
-            if let GatewayAddress::Dev(port) = self {
-                return Some(*port as u16);
-            }
-            None
+            if let GatewayAddress::Dev(port) = self { Some(*port as u16) } else { None }
         }
     }
 
@@ -1613,8 +1688,8 @@ mod prop_tests {
             .boxed()
     }
 
-    #[proptest]
-    fn gateway_dev_initialization(#[strategy(any_valid_dev_gateway())] input: GatewayInput) {
+    #[proptest(async = "tokio")]
+    async fn gateway_dev_initialization(#[strategy(any_valid_dev_gateway())] input: GatewayInput) {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
@@ -1635,10 +1710,13 @@ mod prop_tests {
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
         assert_eq!(gateway.account().address(), account.address());
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
-    #[proptest]
-    fn gateway_prod_initialization(#[strategy(any_valid_prod_gateway())] input: GatewayInput) {
+    #[proptest(async = "tokio")]
+    async fn gateway_prod_initialization(#[strategy(any_valid_prod_gateway())] input: GatewayInput) {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
@@ -1664,6 +1742,9 @@ mod prop_tests {
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
         assert_eq!(gateway.account().address(), account.address());
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
     #[proptest(async = "tokio")]
@@ -1686,8 +1767,6 @@ mod prop_tests {
             dev.port(),
         )
         .unwrap();
-
-        let (primary_sender, _) = init_primary_channels();
 
         let (workers, worker_senders) = {
             // Construct a map of the worker senders.
@@ -1713,12 +1792,15 @@ mod prop_tests {
             (workers, tx_workers)
         };
 
-        gateway.run(primary_sender, worker_senders, None).await;
+        gateway.run(worker_senders, Arc::new(DummyGatewayPrimaryCallback::default()), None).await;
         assert_eq!(
             gateway.local_ip(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + dev.port().unwrap())
         );
         assert_eq!(gateway.num_workers(), workers.len() as u8);
+
+        // Ensure the gateway shuts down and unbinds the TCP port.
+        gateway.shut_down().await;
     }
 
     #[proptest]

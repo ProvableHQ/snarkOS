@@ -14,8 +14,9 @@
 // limitations under the License.
 
 use crate::{CoreLedgerService, LedgerService};
-use async_trait::async_trait;
-use indexmap::IndexMap;
+
+use snarkos_utilities::Stoppable;
+
 use snarkvm::{
     ledger::{
         Ledger,
@@ -27,11 +28,10 @@ use snarkvm::{
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result, narwhal::BatchCertificate},
 };
-use std::{
-    fmt,
-    ops::Range,
-    sync::{Arc, atomic::AtomicBool},
-};
+
+use async_trait::async_trait;
+use indexmap::IndexMap;
+use std::{fmt, ops::Range, sync::Arc};
 
 pub struct TranslucentLedgerService<N: Network, C: ConsensusStorage<N>> {
     inner: CoreLedgerService<N, C>,
@@ -46,8 +46,8 @@ impl<N: Network, C: ConsensusStorage<N>> fmt::Debug for TranslucentLedgerService
 
 impl<N: Network, C: ConsensusStorage<N>> TranslucentLedgerService<N, C> {
     /// Initializes a new ledger service wrapper.
-    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
-        Self { inner: CoreLedgerService::new(ledger, shutdown) }
+    pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
+        Self { inner: CoreLedgerService::new(ledger, stoppable) }
     }
 }
 
