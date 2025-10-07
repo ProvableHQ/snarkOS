@@ -43,6 +43,7 @@ use ratatui::{
 };
 use std::{
     io,
+    io::Write,
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -94,10 +95,19 @@ impl<N: Network> Display<N> {
         execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
         terminal.show_cursor()?;
 
-        // Exit.
+        // Print any error that may have occurred.
         if let Err(err) = res {
-            println!("{err:?}")
+            eprintln!("{err:?}");
         }
+
+        // Write any remaining log output to stdout while the node is shutting down.
+        let mut log_receiver = display.logs.into_log_receiver();
+        tokio::spawn(async move {
+            let mut stdout = io::stdout();
+            while let Some(log) = log_receiver.recv().await {
+                let _ = write!(stdout, "{}", String::from_utf8(log).unwrap_or_default());
+            }
+        });
 
         Ok(())
     }
