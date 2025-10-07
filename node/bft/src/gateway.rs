@@ -748,7 +748,7 @@ impl<N: Network> Gateway<N> {
                         (self.account.address() != aleo_addr
                             && !self.is_connected_address(aleo_addr)
                             && self.is_authorized_validator_address(aleo_addr))
-                        .then_some(listener_addr)
+                        .then_some((listener_addr, None))
                     })
                     .collect::<Vec<_>>();
                 if !valid_addrs.is_empty() {
@@ -931,10 +931,10 @@ impl<N: Network> Gateway<N> {
         // The trusted ones are already handled by `handle_trusted_validators`.
         let trusted_validators = self.trusted_peers();
         if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
-            for candidate_addr in self.candidate_peers() {
-                if !trusted_validators.contains(&candidate_addr) {
+            for peer in self.get_candidate_peers() {
+                if !trusted_validators.contains(&peer.listener_addr) {
                     // Attempt to connect to unconnected validators.
-                    self.connect(candidate_addr);
+                    self.connect(peer.listener_addr);
                 }
             }
 

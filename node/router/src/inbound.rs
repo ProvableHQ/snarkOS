@@ -341,7 +341,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
         // Truncate and convert to socket addrs.
         peers.truncate(MAX_PEERS_TO_SEND);
-        let peers = peers.into_iter().map(|peer| peer.listener_addr).collect();
+        let peers = peers.into_iter().map(|peer| (peer.listener_addr, peer.last_height_seen)).collect();
 
         // Send a `PeerResponse` message to the peer.
         self.router().send(peer_ip, Message::PeerResponse(PeerResponse { peers }));
@@ -349,7 +349,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles a `PeerResponse` message.
-    fn peer_response(&self, _peer_ip: SocketAddr, peers: Vec<SocketAddr>) -> bool {
+    fn peer_response(&self, _peer_ip: SocketAddr, peers: Vec<(SocketAddr, Option<u32>)>) -> bool {
         // Check if the number of peers received is less than MAX_PEERS_TO_SEND.
         if peers.len() > MAX_PEERS_TO_SEND {
             return false;
