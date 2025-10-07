@@ -26,7 +26,7 @@ use snarkvm::prelude::Network;
 use snarkos_node_tcp::P2P;
 
 use colored::Colorize;
-use rand::{Rng, prelude::IteratorRandom, rngs::OsRng};
+use rand::{prelude::IteratorRandom, rngs::OsRng};
 
 /// A helper function to compute the maximum of two numbers.
 /// See Rust issue 92391: https://github.com/rust-lang/rust/issues/92391.
@@ -179,10 +179,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Obtain the number of connected provers.
         let num_connected_provers = self.router().filter_connected_peers(|peer| peer.node_type.is_prover()).len();
 
-        // Consider rotating more external peers every ~10 heartbeats.
-        let reduce_peers = self.router().rotate_external_peers() && rng.gen_range(0..10) == 0;
         // Determine the maximum number of peers and provers to keep.
-        let (max_peers, max_provers) = if reduce_peers {
+        let (max_peers, max_provers) = if self.router().rotate_external_peers() {
             (Self::MEDIAN_NUMBER_OF_PEERS, 0)
         } else {
             (Self::MAXIMUM_NUMBER_OF_PEERS, Self::MAXIMUM_NUMBER_OF_PROVERS)
