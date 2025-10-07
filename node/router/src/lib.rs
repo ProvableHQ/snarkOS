@@ -214,15 +214,16 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Adds new candidate peers to the peer pool, ensuring their validity and following the
     /// limit on the number of peers in the pool.
     fn insert_candidate_peers(&self, mut listener_addrs: Vec<SocketAddr>) {
+        // Hold a write guard from now on, so as not to accidentally slash multiple times
+        // based on multiple batches of candidate peers, and to not overwrite any entries.
+        let mut peer_pool = self.peer_pool().write();
+
         // Perform filtering to ensure candidate validity.
-        {
-            let peer_pool = self.peer_pool().read();
-            listener_addrs.retain(|&addr| {
-                !peer_pool.contains_key(&addr)
-                    && !self.is_ip_banned(addr.ip())
-                    && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
-            });
-        }
+        listener_addrs.retain(|&addr| {
+            !peer_pool.contains_key(&addr)
+                && !self.is_ip_banned(addr.ip())
+                && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
+        });
 
         // If we've managed to filter out every entry, there's nothing to do.
         if listener_addrs.is_empty() {
@@ -230,9 +231,6 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // If we're about to exceed the peer pool size limit, apply candidate slashing.
-        // Hold a write guard from now on, so as not to accidentally slash multiple times
-        // based on multiple batches of candidate peers.
-        let mut peer_pool = self.peer_pool().write();
         if self.number_of_peers() + listener_addrs.len() >= Self::MAXIMUM_POOL_SIZE && Self::PEER_SLASHING_COUNT != 0 {
             // Collect the addresses of prospect peers.
             let mut peers_to_slash = peer_pool
