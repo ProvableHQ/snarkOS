@@ -19,8 +19,6 @@ use snarkos_utilities::SignalHandler;
 
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 
-use std::time::Duration;
-
 #[async_trait]
 pub trait NodeInterface<N: Network>: Routing<N> {
     /// Returns the node type.
@@ -61,9 +59,6 @@ pub trait NodeInterface<N: Network>: Routing<N> {
 
         // If the node is already initialized, then shut it down.
         self.shut_down().await;
-
-        // A best-effort attempt to let any ongoing activity conclude.
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
     /// Shuts down the node.
