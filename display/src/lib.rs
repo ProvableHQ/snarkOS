@@ -236,12 +236,14 @@ impl<N: Network> Display<N> {
 
         // Update sync metrics data regardless of which tab is selected
         self.sync_metrics.update_data(&self.node);
+        // Update IO metrics data regardless of which tab is selected
+        self.io_metrics.update_data(&self.node);
 
         // Initialize the page.
         match self.tabs.index {
             0 => self.overview.draw(f, chunks[1], &self.node, &mut self.previous_peer_stats),
-            1 => self.io_metrics.draw(f, chunks[1], &self.node),
-            2 => self.sync_metrics.draw(f, chunks[1], &self.node),
+            1 => self.io_metrics.draw(f, chunks[1]),
+            2 => self.sync_metrics.draw(f, chunks[1]),
             3 => self.logs.draw(f, chunks[1]),
             _ => unreachable!(),
         };

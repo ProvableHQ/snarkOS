@@ -140,10 +140,7 @@ impl IoMetrics {
         }
     }
 
-    pub(crate) fn draw<N: Network>(&mut self, f: &mut Frame, area: Rect, node: &Node<N>) {
-        // Update data before drawing
-        self.update_data(node);
-
+    pub(crate) fn draw(&mut self, f: &mut Frame, area: Rect) {
         // Initialize the layout of the page.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -266,7 +263,7 @@ impl IoMetrics {
                 Line::from(format!("{y_max:.1}")),
             ]))
             .hidden_legend_constraints((Constraint::Min(0), Constraint::Min(0))) // Ensure the legend is always shown.
-            .legend_position(Some(LegendPosition::TopRight));
+            .legend_position(Some(LegendPosition::TopLeft));
 
         f.render_widget(chart, area);
     }

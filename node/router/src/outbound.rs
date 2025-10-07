@@ -32,6 +32,13 @@ pub trait Outbound<N: Network> {
     /// Returns the current sync speed in blocks per second.
     fn get_sync_speed(&self) -> f64;
 
+    /// Returns the greatest peer block height from any connected peer,
+    /// or `None` if not connected to peers yet.
+    fn greatest_peer_block_height(&self) -> Option<u32>;
+
+    /// Returns the number of outstanding block requests.
+    fn num_outstanding_block_requests(&self) -> usize;
+
     /// Sends the given message to every connected peer, excluding the sender and any specified peer IPs.
     fn propagate(&self, message: Message<N>, excluded_peers: &[SocketAddr]) {
         // TODO (howardwu): Serialize large messages once only.

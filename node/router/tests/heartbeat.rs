@@ -72,6 +72,14 @@ impl Outbound<Network> for HeartbeatTest {
     fn get_sync_speed(&self) -> f64 {
         0.0
     }
+
+    fn greatest_peer_block_height(&self) -> Option<u32> {
+        None
+    }
+
+    fn num_outstanding_block_requests(&self) -> usize {
+        0
+    }
 }
 
 impl Heartbeat<Network> for HeartbeatTest {

@@ -367,7 +367,7 @@ version = "2"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "off" # "thin"
 incremental = true
 # uncomment the 2 lines below when building with the locktick feature
 # debug = "line-tables-only"

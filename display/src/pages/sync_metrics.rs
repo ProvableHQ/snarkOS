@@ -32,6 +32,7 @@ pub struct SyncDataPoint {
     pub blocks_per_second: f64,
     pub local_block_height: u32,
     pub peer_block_height: u32,
+    pub outstanding_block_requests: usize,
 }
 
 pub(crate) struct SyncMetrics {
@@ -71,44 +72,44 @@ impl SyncMetrics {
         let now = Instant::now();
         let timestamp = now.duration_since(self.start_time).as_secs_f64();
 
-        // Get current block height
+        // Get current block height and other metrics.
         let local_height = node.ledger().map(|l| l.latest_height()).unwrap_or(0);
-        let blocks_behind = node.num_blocks_behind().unwrap_or(0);
         let sync_speed = node.get_sync_speed();
-        let peer_height = local_height + blocks_behind;
+        let peer_height = node.greatest_peer_block_height().unwrap_or(local_height);
+        let outstanding_requests = node.num_outstanding_block_requests();
 
-        // Create new data point
-        let data_point = SyncDataPoint {
+        // Create new data point.
+        self.data_points.push_back(SyncDataPoint {
             timestamp,
             local_block_height: local_height,
             peer_block_height: peer_height,
             blocks_per_second: sync_speed,
-        };
+            outstanding_block_requests: outstanding_requests,
+        });
 
-        // Add data point
-        self.data_points.push_back(data_point);
-
-        // Remove old data points
+        // Remove old data points (if needed).
         while self.data_points.len() > self.max_data_points {
             self.data_points.pop_front();
         }
 
-        // Update last values
+        // Update last values.
         self.last_block_height = Some(local_height);
         self.last_peer_height = Some(peer_height);
         self.last_update_time = Some(now);
     }
 
-    pub fn draw<N: Network>(&mut self, f: &mut Frame, area: Rect, _node: &Node<N>) {
+    pub fn draw(&mut self, f: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .constraints([
-                Constraint::Min(15), // Blocks per second chart
-                Constraint::Min(15), // Block height chart
+                Constraint::Min(12), // Blocks per second chart
+                Constraint::Min(12), // Block height chart
+                Constraint::Min(12), // Outstanding block requests chart
             ])
             .split(area);
 
         self.draw_sync_speed_chart(f, chunks[0]);
         self.draw_block_height_chart(f, chunks[1]);
+        self.draw_outstanding_requests_chart(f, chunks[2]);
     }
 
     fn draw_sync_speed_chart(&self, f: &mut Frame, area: Rect) {
@@ -162,7 +163,7 @@ impl SyncMetrics {
                 Line::from(format!("{:.1}", y_max / 2.0)),
                 Line::from(format!("{y_max:.1}")),
             ]))
-            .legend_position(Some(LegendPosition::TopRight));
+            .legend_position(None);
 
         f.render_widget(chart, area);
     }
@@ -214,7 +215,7 @@ impl SyncMetrics {
                 .graph_type(GraphType::Line)
                 .data(&local_height_data),
             Dataset::default()
-                .name("Network Height")
+                .name("Peer Height")
                 .marker(symbols::Marker::Dot)
                 .style(Style::default().fg(Color::Magenta))
                 .graph_type(GraphType::Line)
@@ -233,7 +234,66 @@ impl SyncMetrics {
                 Line::from(format!("{:.0}", y_max / 2.0)),
                 Line::from(format!("{y_max:.0}")),
             ]))
-            .legend_position(Some(LegendPosition::TopRight));
+            .hidden_legend_constraints((Constraint::Min(0), Constraint::Min(0))) // Ensure the legend is always shown.
+            .legend_position(Some(LegendPosition::TopLeft));
+
+        f.render_widget(chart, area);
+    }
+
+    /// Draws outstanding block requests chart.
+    fn draw_outstanding_requests_chart(&self, f: &mut Frame, area: Rect) {
+        let block = Block::default().borders(Borders::ALL).style(header_style()).title("Outstanding Block Requests");
+
+        if self.data_points.is_empty() {
+            let placeholder = Paragraph::new("Collecting data...").style(content_style()).block(block);
+            f.render_widget(placeholder, area);
+            return;
+        }
+
+        // Calculate bounds based on time scale
+        let current_time = self.data_points.back().map(|p| p.timestamp).unwrap_or(0.0);
+        let x_max = current_time;
+        let x_min = current_time - self.time_scale_seconds;
+
+        // Prepare data for chart, filtered by time scale
+        let data: Vec<(f64, f64)> = self
+            .data_points
+            .iter()
+            .filter(|p| p.timestamp >= x_min)
+            .map(|p| (p.timestamp, p.outstanding_block_requests as f64))
+            .collect();
+
+        let y_max = self
+            .data_points
+            .iter()
+            .filter(|p| p.timestamp >= x_min)
+            .map(|p| p.outstanding_block_requests)
+            .max()
+            .unwrap_or(1)
+            .max(1) as f64; // Minimum scale of 1
+
+        let datasets = vec![
+            Dataset::default()
+                .name("Outstanding Requests")
+                .marker(symbols::Marker::Dot)
+                .style(Style::default().fg(Color::Yellow))
+                .graph_type(GraphType::Line)
+                .data(&data),
+        ];
+
+        let chart = Chart::new(datasets)
+            .block(block)
+            .x_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([x_min, x_max]).labels(vec![
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds)),
+                Line::from(format!("{:.0}s ago", self.time_scale_seconds / 2.0)),
+                Line::from("now"),
+            ]))
+            .y_axis(Axis::default().style(Style::default().fg(Color::Gray)).bounds([0.0, y_max]).labels(vec![
+                Line::from("0"),
+                Line::from(format!("{:.0}", y_max / 2.0)),
+                Line::from(format!("{y_max:.0}")),
+            ]))
+            .legend_position(None);
 
         f.render_widget(chart, area);
     }
