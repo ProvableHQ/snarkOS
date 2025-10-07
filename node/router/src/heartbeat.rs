@@ -119,8 +119,14 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     ///     - Validators are considered higher priority than provers or clients.
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
+        // Are we rotating external peers? Just return all connected peers.
+        if self.router().rotate_external_peers() {
+            return self.router().get_connected_peers();
+        }
+
         // The hardcoded bootstrap nodes.
         let bootstrap = bootstrap_peers::<N>(self.router().is_dev());
+
         // Are we synced already? (cache this here, so it does not need to be recomputed)
         let is_block_synced = self.is_block_synced();
 
