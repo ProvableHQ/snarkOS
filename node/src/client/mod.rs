@@ -15,11 +15,13 @@
 
 mod router;
 
-use crate::traits::NodeInterface;
+use crate::{
+    bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService},
+    cdn::CdnBlockSync,
+    traits::NodeInterface,
+};
 
 use snarkos_account::Account;
-use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService};
-use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -34,6 +36,8 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
+use snarkos_utilities::{SignalHandler, Stoppable};
+
 use snarkvm::{
     console::network::Network,
     ledger::{
@@ -60,7 +64,6 @@ use std::{
     sync::{
         Arc,
         atomic::{
-            AtomicBool,
             AtomicUsize,
             Ordering::{Acquire, Relaxed},
         },
@@ -121,10 +124,10 @@ pub struct Client<N: Network, C: ConsensusStorage<N>> {
     num_verifying_executions: Arc<AtomicUsize>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The shutdown signal.
-    shutdown: Arc<AtomicBool>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
+    /// The signal handling logic.
+    signal_handler: Arc<SignalHandler>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
@@ -140,16 +143,13 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         storage_mode: StorageMode,
         rotate_external_peers: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
-
         // Initialize the ledger.
         let ledger = Ledger::<N, C>::load(genesis.clone(), storage_mode.clone())?;
 
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
+        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
         // Determine if the client should allow external peers.
         let allow_external_peers = true;
 
@@ -191,13 +191,13 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             num_verifying_deploys: Default::default(),
             num_verifying_executions: Default::default(),
             handles: Default::default(),
-            shutdown: shutdown.clone(),
+            signal_handler: signal_handler.clone(),
         };
 
         // Perform sync with CDN (if enabled).
         let cdn_sync = cdn.map(|base_url| {
             trace!("CDN sync is enabled");
-            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown))
+            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler))
         });
 
         // Initialize the REST server.
@@ -219,8 +219,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Initialize the routing.
         node.initialize_routing().await;
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
         // Initialize the sync module.
         node.initialize_sync();
         // Initialize solution verification.
@@ -263,8 +261,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.handles.lock().push(tokio::spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if _self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                    info!("Shutting down block production");
+                if _self.signal_handler.is_stopped() {
+                    info!("Shutting down sync task");
                     break;
                 }
 
@@ -370,7 +368,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.handles.lock().push(tokio::spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if node.shutdown.load(Acquire) {
+                if node.signal_handler.is_stopped() {
                     info!("Shutting down solution verification");
                     break;
                 }
@@ -444,7 +442,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.handles.lock().push(tokio::spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if node.shutdown.load(Acquire) {
+                if node.signal_handler.is_stopped() {
                     info!("Shutting down deployment verification");
                     break;
                 }
@@ -512,7 +510,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.handles.lock().push(tokio::spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if node.shutdown.load(Acquire) {
+                if node.signal_handler.is_stopped() {
                     info!("Shutting down execution verification");
                     break;
                 }
@@ -590,7 +588,6 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
-        self.shutdown.store(true, std::sync::atomic::Ordering::Release);
 
         // Abort the tasks.
         trace!("Shutting down the client...");

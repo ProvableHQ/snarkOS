@@ -3820,6 +3820,7 @@ dependencies = [
  "snarkos-node-cdn",
  "snarkos-node-metrics",
  "snarkos-node-rest",
+ "snarkos-utilities",
  "snarkvm",
  "sys-info",
  "tempfile",
@@ -3840,6 +3841,7 @@ dependencies = [
  "crossterm 0.29.0",
  "ratatui",
  "snarkos-node",
+ "snarkos-utilities",
  "snarkvm",
  "tokio",
 ]
@@ -3859,7 +3861,6 @@ dependencies = [
  "locktick",
  "lru 0.16.1",
  "num_cpus",
- "once_cell",
  "parking_lot",
  "paste",
  "pea2pea",
@@ -3874,6 +3875,7 @@ dependencies = [
  "snarkos-node-router",
  "snarkos-node-sync",
  "snarkos-node-tcp",
+ "snarkos-utilities",
  "snarkvm",
  "time",
  "tokio",
@@ -3921,6 +3923,7 @@ dependencies = [
  "snarkos-node-router",
  "snarkos-node-sync",
  "snarkos-node-tcp",
+ "snarkos-utilities",
  "snarkvm",
  "test-strategy 0.4.3",
  "time",
@@ -3962,6 +3965,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "snarkos-node-metrics",
+ "snarkos-utilities",
  "snarkvm",
  "tokio",
  "tracing",
@@ -3996,6 +4000,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snarkos-node-metrics",
+ "snarkos-utilities",
  "snarkvm",
  "tokio",
  "tokio-test",
@@ -4179,6 +4184,14 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "snarkos-utilities"
+version = "4.2.1"
+dependencies = [
+ "tokio",
  "tracing",
 ]
 

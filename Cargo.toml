@@ -36,7 +36,8 @@ members = [
   "node/sync",
   "node/sync/communication-service",
   "node/sync/locators",
-  "node/tcp"
+  "node/tcp",
+  "utilities",
 ]
 
 [workspace.dependencies.aleo-std]
@@ -239,6 +240,10 @@ version = "=4.2.2"
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
 version = "=4.2.2"
+
+[workspace.dependencies.snarkos-utilities]
+path = "utilities"
+version = "=4.2.1"
 
 [[bin]]
 name = "snarkos"

@@ -14,8 +14,11 @@
 // limitations under the License.
 
 use crate::common::test_peer::sample_genesis_block;
+
 use snarkos_account::Account;
 use snarkos_node::{Client, Prover, Validator};
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 
 use aleo_std::StorageMode;
@@ -33,7 +36,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         StorageMode::new_test(None),
         false, // No extra peer rotation.
         None,
-        Default::default(),
+        SignalHandler::new(),
     )
     .await
     .expect("couldn't create client instance")
@@ -47,7 +50,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         sample_genesis_block(),
         StorageMode::new_test(None),
         None,
-        Default::default(),
+        SignalHandler::new(),
     )
     .await
     .expect("couldn't create prover instance")
@@ -68,7 +71,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         true,  // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
-        Default::default(),
+        SignalHandler::new(),
     )
     .await
     .expect("couldn't create validator instance")

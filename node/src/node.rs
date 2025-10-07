@@ -13,9 +13,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Client, Prover, Validator, traits::NodeInterface};
+use crate::{
+    Client,
+    Prover,
+    Validator,
+    router::{Outbound, Router, messages::NodeType},
+    traits::NodeInterface,
+};
+
 use snarkos_account::Account;
-use snarkos_node_router::{Outbound, Router, messages::NodeType};
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::prelude::{
     Address,
     Ledger,
@@ -28,10 +36,7 @@ use snarkvm::prelude::{
 
 use aleo_std::StorageMode;
 use anyhow::Result;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::{net::SocketAddr, sync::Arc};
 
 #[derive(Clone)]
 pub enum Node<N: Network> {
@@ -59,7 +64,7 @@ impl<N: Network> Node<N> {
         allow_external_peers: bool,
         dev_txs: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
             Validator::new(
@@ -76,7 +81,7 @@ impl<N: Network> Node<N> {
                 allow_external_peers,
                 dev_txs,
                 dev,
-                shutdown,
+                signal_handler,
             )
             .await?,
         )))
@@ -90,10 +95,10 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         storage_mode: StorageMode,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         Ok(Self::Prover(Arc::new(
-            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, shutdown).await?,
+            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, signal_handler).await?,
         )))
     }
 
@@ -109,7 +114,7 @@ impl<N: Network> Node<N> {
         storage_mode: StorageMode,
         rotate_external_peers: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
             Client::new(
@@ -123,7 +128,7 @@ impl<N: Network> Node<N> {
                 storage_mode,
                 rotate_external_peers,
                 dev,
-                shutdown,
+                signal_handler,
             )
             .await?,
         )))
@@ -227,6 +232,15 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.shut_down().await,
             Self::Prover(node) => node.shut_down().await,
             Self::Client(node) => node.shut_down().await,
+        }
+    }
+
+    /// Waits until the node receives a signal.
+    pub async fn wait_for_signals(&self, signal_handler: &SignalHandler) {
+        match self {
+            Self::Validator(node) => node.wait_for_signals(signal_handler).await,
+            Self::Prover(node) => node.wait_for_signals(signal_handler).await,
+            Self::Client(node) => node.wait_for_signals(signal_handler).await,
         }
     }
 }
