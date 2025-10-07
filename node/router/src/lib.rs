@@ -219,11 +219,20 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // based on multiple batches of candidate peers, and to not overwrite any entries.
         let mut peer_pool = self.peer_pool().write();
 
-        // Perform filtering to ensure candidate validity.
-        listener_addrs.retain(|&(addr, _)| {
-            peer_pool.get(&addr).map(|peer| peer.is_candidate()).unwrap_or(true)
-                && !self.is_ip_banned(addr.ip())
+        // Perform filtering to ensure candidate validity. Also count how many entries are updates.
+        let mut num_updates: usize = 0;
+        listener_addrs.retain(|&(addr, height)| {
+            !self.is_ip_banned(addr.ip())
                 && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
+                && peer_pool
+                    .get(&addr)
+                    .map(|peer| peer.is_candidate() && height.is_some())
+                    .inspect(|is_valid_update| {
+                        if *is_valid_update {
+                            num_updates += 1
+                        }
+                    })
+                    .unwrap_or(true)
         });
 
         // If we've managed to filter out every entry, there's nothing to do.
@@ -232,7 +241,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // If we're about to exceed the peer pool size limit, apply candidate slashing.
-        if self.number_of_peers() + listener_addrs.len() >= Self::MAXIMUM_POOL_SIZE && Self::PEER_SLASHING_COUNT != 0 {
+        if self.number_of_peers() + listener_addrs.len() - num_updates >= Self::MAXIMUM_POOL_SIZE
+            && Self::PEER_SLASHING_COUNT != 0
+        {
             // Collect the addresses of prospect peers.
             let mut peers_to_slash = peer_pool
                 .iter()
@@ -274,10 +285,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                     entry.insert(Peer::new_candidate(addr, false));
                 }
                 Entry::Occupied(mut entry) => {
-                    if height.is_some() {
-                        if let Peer::Candidate(peer) = entry.get_mut() {
-                            peer.last_height_seen = height;
-                        }
+                    if let Peer::Candidate(peer) = entry.get_mut() {
+                        peer.last_height_seen = height;
                     }
                 }
             }
@@ -406,19 +415,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Returns the list of candidate peers.
     fn get_candidate_peers(&self) -> Vec<CandidatePeer> {
-        let banned_ips = self.tcp().banned_peers().get_banned_ips();
         self.peer_pool()
             .read()
-            .iter()
-            .filter_map(|(addr, peer)| {
-                if let Peer::Candidate(peer) = peer
-                    && !banned_ips.contains(&addr.ip())
-                {
-                    Some(peer.clone())
-                } else {
-                    None
-                }
-            })
+            .values()
+            .filter_map(|peer| if let Peer::Candidate(peer) = peer { Some(peer.clone()) } else { None })
             .collect()
     }
 
