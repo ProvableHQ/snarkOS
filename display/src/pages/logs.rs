@@ -72,4 +72,8 @@ impl Logs {
             .block(Block::default().borders(Borders::ALL).style(header_style()).title("Logs"));
         f.render_widget(combined_logs, chunks[0]);
     }
+
+    pub fn into_log_receiver(self) -> mpsc::Receiver<Vec<u8>> {
+        self.log_receiver
+    }
 }
