@@ -20,6 +20,7 @@ use snarkos_node_router::{
     Outbound,
     Peer,
     PeerPoolHandling,
+    Resolver,
     Router,
     Routing,
     messages::{
@@ -80,10 +81,20 @@ impl<N: Network> P2P for TestRouter<N> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
+    const MAXIMUM_POOL_SIZE: usize = 1_000;
     const OWNER: &str = "[TestRouter]";
+    const PEER_SLASHING_COUNT: usize = 0;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         self.router().peer_pool()
+    }
+
+    fn resolver(&self) -> &RwLock<Resolver<N>> {
+        self.router().resolver()
+    }
+
+    fn is_dev(&self) -> bool {
+        true
     }
 }
 
@@ -114,8 +125,8 @@ impl<N: Network> OnConnect for TestRouter<N> {
 impl<N: Network> Disconnect for TestRouter<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
-        if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
-            self.router().remove_connected_peer(peer_ip);
+        if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
+            self.router().downgrade_peer_to_candidate(peer_ip);
         }
     }
 }

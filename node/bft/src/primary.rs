@@ -2231,7 +2231,7 @@ mod tests {
     fn map_account_addresses(primary: &Primary<CurrentNetwork>, accounts: &[(SocketAddr, Account<CurrentNetwork>)]) {
         // First account is primary, which doesn't need to resolve.
         for (addr, acct) in accounts.iter().skip(1) {
-            primary.gateway.resolver().write().insert_peer(*addr, *addr, acct.address());
+            primary.gateway.resolver().write().insert_peer(*addr, *addr, Some(acct.address()));
         }
     }
 
@@ -2428,7 +2428,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2467,7 +2467,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // Add a high block locator to indicate we are not synced.
         primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(20)).unwrap();
@@ -2507,7 +2507,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2544,7 +2544,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2589,7 +2589,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2645,7 +2645,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2692,8 +2692,8 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary_v4.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
-        primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary_v4.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
+        primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // primary v4 must be considered synced.
         primary_v4.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();

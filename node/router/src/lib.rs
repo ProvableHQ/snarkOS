@@ -70,7 +70,7 @@ use std::{
     ops::Deref,
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::task::JoinHandle;
 
@@ -83,7 +83,19 @@ const PEER_CACHE_FILENAME: &str = "cached_router_peers";
 pub trait PeerPoolHandling<N: Network>: P2P {
     const OWNER: &str;
 
+    /// The maximum number of peers permitted to be stored in the peer pool.
+    const MAXIMUM_POOL_SIZE: usize;
+
+    /// The number of candidate peers to be removed from the pool once `MAXIMUM_POOL_SIZE` is reached.
+    /// It must be lower than `MAXIMUM_POOL_SIZE`.
+    const PEER_SLASHING_COUNT: usize;
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
+
+    fn resolver(&self) -> &RwLock<Resolver<N>>;
+
+    /// Returns `true` if the owning node is in development mode.
+    fn is_dev(&self) -> bool;
 
     /// Returns the listener address of this node.
     fn local_ip(&self) -> SocketAddr {
@@ -130,6 +142,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         if self.is_connecting(listener_addr) {
             debug!("{} Dropping connection attempt to '{listener_addr}' (already connecting)", Self::OWNER);
             return Ok(true);
+        }
+        // If the IP is already banned, reject the attempt.
+        if self.is_ip_banned(listener_addr.ip()) {
+            bail!("{} Rejected a connection attempt to a banned IP '{}'", Self::OWNER, listener_addr.ip());
         }
         Ok(false)
     }
@@ -183,6 +199,84 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
     }
 
+    /// Downgrades a connected peer to candidate status.
+    fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) {
+        if let Some(peer) = self.peer_pool().write().get_mut(&listener_addr) {
+            if let Peer::Connected(peer) = peer {
+                // Only validators get their aleo address registered with the resolver.
+                let aleo_addr = if peer.node_type == NodeType::Validator { Some(peer.aleo_addr) } else { None };
+                self.resolver().write().remove_peer(peer.connected_addr, aleo_addr);
+            }
+            peer.downgrade_to_candidate(listener_addr);
+        }
+    }
+
+    /// Adds new candidate peers to the peer pool, ensuring their validity and following the
+    /// limit on the number of peers in the pool.
+    fn insert_candidate_peers(&self, mut listener_addrs: Vec<SocketAddr>) {
+        // Hold a write guard from now on, so as not to accidentally slash multiple times
+        // based on multiple batches of candidate peers, and to not overwrite any entries.
+        let mut peer_pool = self.peer_pool().write();
+
+        // Perform filtering to ensure candidate validity.
+        listener_addrs.retain(|&addr| {
+            !peer_pool.contains_key(&addr)
+                && !self.is_ip_banned(addr.ip())
+                && if self.is_dev() { !is_bogon_ip(addr.ip()) } else { self.is_valid_peer_ip(addr) }
+        });
+
+        // If we've managed to filter out every entry, there's nothing to do.
+        if listener_addrs.is_empty() {
+            return;
+        }
+
+        // If we're about to exceed the peer pool size limit, apply candidate slashing.
+        if self.number_of_peers() + listener_addrs.len() >= Self::MAXIMUM_POOL_SIZE && Self::PEER_SLASHING_COUNT != 0 {
+            // Collect the addresses of prospect peers.
+            let mut peers_to_slash = peer_pool
+                .iter()
+                .filter_map(|(addr, peer)| (matches!(peer, Peer::Candidate(_))).then_some(*addr))
+                .collect::<Vec<_>>();
+
+            // Get the low-level peer stats.
+            let known_peers = self.tcp().known_peers().snapshot();
+
+            // Sort the list of candidate peers by failure count (descending) and timestamp (ascending).
+            let default_value = (0, Instant::now());
+            peers_to_slash.sort_unstable_by_key(|addr| {
+                let (num_failures, last_seen) = known_peers
+                    .get(&addr.ip())
+                    .map(|stats| (stats.failures(), stats.timestamp()))
+                    .unwrap_or(default_value);
+                (cmp::Reverse(num_failures), last_seen)
+            });
+
+            // Retain the candidate peers with the most failures and oldest timestamps.
+            peers_to_slash.truncate(Self::PEER_SLASHING_COUNT);
+
+            // Remove the peers to slash from the pool.
+            peer_pool.retain(|addr, _| !peers_to_slash.contains(addr));
+        }
+
+        // Make sure that we won't breach the pool size limit in case the slashing didn't suffice.
+        listener_addrs.truncate(Self::MAXIMUM_POOL_SIZE.saturating_sub(self.number_of_peers()));
+
+        // If we've managed to truncate to 0, exit.
+        if listener_addrs.is_empty() {
+            return;
+        }
+
+        // Insert new candidate peers.
+        for addr in listener_addrs {
+            peer_pool.insert(addr, Peer::new_candidate(addr, false));
+        }
+    }
+
+    /// Completely removes an entry from the peer pool.
+    fn remove_peer(&self, listener_addr: SocketAddr) {
+        self.peer_pool().write().remove(&listener_addr);
+    }
+
     /// Returns the connected peer address from the listener IP address.
     fn resolve_to_ambiguous(&self, listener_addr: SocketAddr) -> Option<SocketAddr> {
         if let Some(Peer::Connected(peer)) = self.peer_pool().read().get(&listener_addr) {
@@ -214,6 +308,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Returns `true` if the given listener address is trusted.
     fn is_trusted(&self, listener_addr: SocketAddr) -> bool {
         self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_trusted())
+    }
+
+    /// Returns the number of all peers.
+    fn number_of_peers(&self) -> usize {
+        self.peer_pool().read().len()
     }
 
     /// Returns the number of connected peers.
@@ -294,7 +393,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of candidate peers.
-    fn candidate_peers(&self) -> HashSet<SocketAddr> {
+    fn candidate_peers(&self) -> Vec<SocketAddr> {
         let banned_ips = self.tcp().banned_peers().get_banned_ips();
         self.peer_pool()
             .read()
@@ -399,15 +498,18 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
-    /// optional reason for the ban.
+    /// optional reason for the ban. This also removes the peer from the candidate pool.
     fn ip_ban_peer(&self, listener_addr: SocketAddr, reason: Option<&str>) {
         let ip = listener_addr.ip();
         debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
 
-        let tcp = self.tcp().clone();
-        tcp.banned_peers().update_ip_ban(ip);
+        // Insert/update the low-level IP ban list.
+        self.tcp().banned_peers().update_ip_ban(ip);
 
+        // Disconnect from the peer.
         self.disconnect(listener_addr);
+        // Remove the peer from the pool.
+        self.remove_peer(listener_addr);
     }
 
     /// Check whether the given IP address is currently banned.
@@ -436,10 +538,20 @@ impl<N: Network> Deref for Router<N> {
 }
 
 impl<N: Network> PeerPoolHandling<N> for Router<N> {
+    const MAXIMUM_POOL_SIZE: usize = 10_000;
     const OWNER: &str = "[Router]";
+    const PEER_SLASHING_COUNT: usize = 200;
 
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
+    }
+
+    fn resolver(&self) -> &RwLock<Resolver<N>> {
+        &self.resolver
+    }
+
+    fn is_dev(&self) -> bool {
+        self.is_dev
     }
 }
 
@@ -455,7 +567,7 @@ pub struct InnerRouter<N: Network> {
     /// The cache.
     cache: Cache<N>,
     /// The resolver.
-    resolver: RwLock<Resolver>,
+    resolver: RwLock<Resolver<N>>,
     /// The collection of both candidate and connected peers.
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     /// The spawned handles.
@@ -474,8 +586,6 @@ impl<N: Network> Router<N> {
     /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
     #[cfg(not(feature = "test"))]
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
-    /// The maximum number of candidate peers permitted to be stored in the node.
-    const MAXIMUM_CANDIDATE_PEERS: usize = 10_000;
     /// The maximum amount of connection attempts within a 10 second threshold
     #[cfg(not(feature = "test"))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
@@ -572,9 +682,9 @@ impl<N: Network> Router<N> {
         self.account.address()
     }
 
-    /// Returns `true` if the node is in development mode.
-    pub fn is_dev(&self) -> bool {
-        self.is_dev
+    /// Returns a reference to the cache.
+    pub fn cache(&self) -> &Cache<N> {
+        &self.cache
     }
 
     /// Returns `true` if the node is periodically evicting more external peers.
@@ -588,7 +698,7 @@ impl<N: Network> Router<N> {
     }
 
     /// Returns the listener IP address from the (ambiguous) peer address.
-    pub fn resolve_to_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
+    pub fn resolve_to_listener(&self, connected_addr: SocketAddr) -> Option<SocketAddr> {
         self.resolver.read().get_listener(connected_addr)
     }
 
@@ -598,56 +708,15 @@ impl<N: Network> Router<N> {
     }
 
     #[cfg(feature = "metrics")]
-    fn update_metrics(&self) {
+    pub fn update_metrics(&self) {
         metrics::gauge(metrics::router::CONNECTED, self.number_of_connected_peers() as f64);
         metrics::gauge(metrics::router::CANDIDATE, self.number_of_candidate_peers() as f64);
-    }
-
-    /// Inserts the given peer IPs to the set of candidate peers.
-    ///
-    /// This method skips adding any given peers if the combined size exceeds the threshold,
-    /// as the peer providing this list could be subverting the protocol.
-    pub fn insert_candidate_peers(&self, peers: &[SocketAddr]) {
-        // Compute the maximum number of candidate peers.
-        let max_candidate_peers = Self::MAXIMUM_CANDIDATE_PEERS.saturating_sub(self.number_of_candidate_peers());
-        {
-            let mut peer_pool = self.peer_pool.write();
-            // Ensure the combined number of peers does not surpass the threshold.
-            let eligible_peers = peers
-                .iter()
-                .filter(|&peer_ip| {
-                    // Ensure the peer is not itself, and is not already known.
-                    !self.is_local_ip(*peer_ip) && !peer_pool.contains_key(peer_ip)
-                })
-                .take(max_candidate_peers)
-                .map(|addr| (*addr, Peer::new_candidate(*addr, false)))
-                .collect::<Vec<_>>();
-
-            // Proceed to insert the eligible candidate peer IPs.
-            peer_pool.extend(eligible_peers);
-        }
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
     }
 
     pub fn update_last_seen_for_connected_peer(&self, peer_ip: SocketAddr) {
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
             peer.update_last_seen();
         }
-    }
-
-    /// Removes the connected peer and adds them to the candidate peers.
-    pub fn remove_connected_peer(&self, peer_ip: SocketAddr) {
-        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            if let Peer::Connected(peer) = peer {
-                self.resolver.write().remove_peer(&peer.connected_addr);
-            }
-            peer.downgrade_to_candidate(peer_ip);
-        }
-        // Clear cached entries applicable to the peer.
-        self.cache.clear_peer_entries(peer_ip);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
