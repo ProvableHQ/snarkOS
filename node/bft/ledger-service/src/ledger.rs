@@ -14,6 +14,9 @@
 // limitations under the License.
 
 use crate::{LedgerService, fmt_id, spawn_blocking};
+
+use snarkos_utilities::Stoppable;
+
 use snarkvm::{
     ledger::{
         Ledger,
@@ -49,16 +52,7 @@ use parking_lot::RwLock;
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 
-use std::{
-    collections::BTreeMap,
-    fmt,
-    io::Read,
-    ops::Range,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{collections::BTreeMap, fmt, io::Read, ops::Range, sync::Arc};
 
 /// The capacity of the cache holding the highest blocks.
 const BLOCK_CACHE_SIZE: usize = 10;
@@ -69,14 +63,14 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
     block_cache: Arc<RwLock<BTreeMap<u32, Block<N>>>>,
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
-    shutdown: Arc<AtomicBool>,
+    stoppable: Arc<dyn Stoppable>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
-    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
+    pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
         let block_cache = Arc::new(RwLock::new(BTreeMap::new()));
-        Self { ledger, block_cache, latest_leader: Default::default(), shutdown }
+        Self { ledger, block_cache, latest_leader: Default::default(), stoppable }
     }
 }
 
@@ -374,7 +368,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     #[cfg(feature = "ledger-write")]
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
         // If the Ctrl-C handler registered the signal, then skip advancing to the next block.
-        if self.shutdown.load(Ordering::Acquire) {
+        if self.stoppable.is_stopped() {
             bail!("Skipping advancing to block {} - The node is shutting down", block.height());
         }
         // Advance to the next block.

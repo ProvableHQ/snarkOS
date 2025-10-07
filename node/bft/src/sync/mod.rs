@@ -995,6 +995,7 @@ mod tests {
 
     use snarkos_account::Account;
     use snarkos_node_sync::BlockSync;
+    use snarkos_utilities::SimpleStoppable;
     use snarkvm::{
         console::{
             account::{Address, PrivateKey},
@@ -1046,7 +1047,7 @@ mod tests {
         // Initialize the ledger with the genesis block.
         let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
         // Initialize the ledger.
-        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
+        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), SimpleStoppable::new()));
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
@@ -1220,7 +1221,7 @@ mod tests {
         let storage_mode = StorageMode::new_test(None);
         let syncing_ledger = Arc::new(CoreLedgerService::new(
             CurrentLedger::load(genesis, storage_mode.clone()).unwrap(),
-            Default::default(),
+            SimpleStoppable::new(),
         ));
         // Initialize the gateway.
         let gateway =
@@ -1273,7 +1274,7 @@ mod tests {
         // Initialize the ledger with the genesis block.
         let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
         // Initialize the ledger.
-        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
+        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), SimpleStoppable::new()));
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
             // Initialize the committee.

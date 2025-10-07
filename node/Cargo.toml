@@ -81,9 +81,6 @@ workspace = true
 [dependencies.num_cpus]
 workspace = true
 
-[dependencies.once_cell]
-workspace = true
-
 [dependencies.parking_lot]
 workspace = true
 
@@ -123,6 +120,9 @@ workspace = true
 workspace = true
 
 [dependencies.snarkos-node-tcp]
+workspace = true
+
+[dependencies.snarkos-utilities]
 workspace = true
 
 [dependencies.snarkvm]

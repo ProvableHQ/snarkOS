@@ -19,7 +19,6 @@ extern crate tracing;
 #[cfg(feature = "metrics")]
 extern crate snarkos_node_metrics as metrics;
 
-use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
@@ -30,6 +29,9 @@ use snarkos_node_bft::{
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_sync::BlockSync;
+use snarkos_utilities::SimpleStoppable;
+
+use aleo_std::StorageMode;
 use snarkvm::{
     console::{account::PrivateKey, algorithms::BHP256, types::Address},
     ledger::{
@@ -64,7 +66,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
+    sync::{Arc, Mutex, OnceLock},
 };
 use tokio::{net::TcpListener, sync::oneshot};
 use tracing_subscriber::{
@@ -221,7 +223,7 @@ fn create_ledger(
     }
     let mut rng = TestRng::default();
     let gen_ledger = genesis_ledger(*gen_key, committee.clone(), balances.clone(), node_id, &mut rng);
-    Arc::new(TranslucentLedgerService::new(gen_ledger, Arc::new(AtomicBool::new(false))))
+    Arc::new(TranslucentLedgerService::new(gen_ledger, SimpleStoppable::new()))
 }
 
 pub type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;

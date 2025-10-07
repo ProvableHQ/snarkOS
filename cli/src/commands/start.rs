@@ -23,6 +23,8 @@ use snarkos_node::{
     rest::DEFAULT_REST_PORT,
     router::{DEFAULT_NODE_PORT, bootstrap_peers, messages::NodeType},
 };
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::{
     console::{
         account::{Address, PrivateKey},
@@ -54,7 +56,10 @@ use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
 };
-use tokio::runtime::{self, Runtime};
+use tokio::{
+    runtime::{self, Runtime},
+    sync::mpsc,
+};
 use tracing::warn;
 use ureq::http;
 
@@ -258,7 +263,7 @@ pub struct Start {
 }
 
 impl Start {
-    /// Starts the snarkOS node.
+    /// Starts the snarkOS node and blocks until it terminates.
     pub fn parse(self) -> Result<String> {
         // Prepare the shutdown flag.
         let shutdown: Arc<AtomicBool> = Default::default();
@@ -276,45 +281,30 @@ impl Start {
         // Initialize the runtime.
         Self::runtime().block_on(async move {
             // Error messages.
-            let node_parse_error = || "Failed to parse node arguments";
-            let display_start_error = || "Failed to initialize the display";
+            let node_parse_error = || "Failed to start node";
+            let signal_handler = SignalHandler::new();
 
             // Clone the configurations.
-            let mut cli = self.clone();
-            // Parse the network.
-            match cli.network {
-                MainnetV0::ID => {
-                    // Parse the node from the configurations.
-                    let node = cli.parse_node::<MainnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
-                    // If the display is enabled, render the display.
-                    if !cli.nodisplay {
-                        // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
-                    }
-                }
-                TestnetV0::ID => {
-                    // Parse the node from the configurations.
-                    let node = cli.parse_node::<TestnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
-                    // If the display is enabled, render the display.
-                    if !cli.nodisplay {
-                        // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
-                    }
-                }
-                CanaryV0::ID => {
-                    // Parse the node from the configurations.
-                    let node = cli.parse_node::<CanaryV0>(shutdown.clone()).await.with_context(node_parse_error)?;
-                    // If the display is enabled, render the display.
-                    if !cli.nodisplay {
-                        // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
-                    }
-                }
+            let mut self_ = self.clone();
+
+            // Parse the node arguments, start it, and block until shutdown.
+            match self_.network {
+                MainnetV0::ID => self_
+                    .parse_node::<MainnetV0>(log_receiver, signal_handler.clone())
+                    .await
+                    .with_context(node_parse_error)?,
+
+                TestnetV0::ID => self_
+                    .parse_node::<TestnetV0>(log_receiver, signal_handler.clone())
+                    .await
+                    .with_context(node_parse_error)?,
+                CanaryV0::ID => self_
+                    .parse_node::<CanaryV0>(log_receiver, signal_handler.clone())
+                    .await
+                    .with_context(node_parse_error)?,
                 _ => panic!("Invalid network ID specified"),
             };
-            // Note: Do not move this. The pending await must be here otherwise
-            // other snarkOS commands will not exit.
-            std::future::pending::<()>().await;
+
             Ok(String::new())
         })
     }
@@ -575,9 +565,9 @@ impl Start {
         }
     }
 
-    /// Returns the node type corresponding to the given configurations.
+    /// Start the node and blocks until it terminates.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>) -> Result<Node<N>> {
+    async fn parse_node<N: Network>(&mut self, log_receiver: mpsc::Receiver<Vec<u8>>, signal_handler: Arc<SignalHandler>) -> Result<()> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
@@ -716,22 +706,28 @@ impl Start {
             }
         };
 
-
         // TODO(kaimast): start the display earlier and show sync progress.
         if !self.nodisplay && !self.nocdn {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
 
         // Initialize the node.
-        match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, shutdown.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.dev, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await,
+                 let node = match node_type {
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
+        }?;
+
+        if !self.nodisplay {
+            Display::start(node.clone(), log_receiver, signal_handler.clone()).with_context(|| "Failed to start the display")?;
         }
+
+        node.wait_for_signals(&signal_handler).await;
+        Ok(())
     }
 
-    /// Returns a runtime for the node.
+    /// Starts a rayon thread pool and tokio runtime for the node, and returns the tokio `Runtime`.
     fn runtime() -> Runtime {
         // Retrieve the number of cores.
         let num_cores = num_cpus::get();
@@ -742,14 +738,16 @@ impl Start {
         let (num_tokio_worker_threads, max_tokio_blocking_threads, num_rayon_cores_global) =
             (2 * num_cores, 512, num_cores);
 
-        // Initialize the parallelization parameters.
+        // Set up the rayon thread pool.
+        // A custom panic handler is not needed here, as rayon propagates the panic to the calling thread by default (except for `rayon::spawn` which we do not use).
         rayon::ThreadPoolBuilder::new()
             .stack_size(8 * 1024 * 1024)
             .num_threads(num_rayon_cores_global)
             .build_global()
             .unwrap();
 
-        // Initialize the runtime configuration.
+        // Set up the tokio Runtime.
+        // TODO(kaimast): set up a panic handler here for each worker thread once [`tokio::runtime::Builder::unhandled_panic`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.unhandled_panic) is stabilized.
         runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(8 * 1024 * 1024)
