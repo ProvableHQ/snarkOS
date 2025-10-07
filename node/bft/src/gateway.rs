@@ -701,14 +701,7 @@ impl<N: Network> Gateway<N> {
                 Ok(true)
             }
             Event::ValidatorsRequest(_) => {
-                // Retrieve the connected peers.
-                let mut connected_peers: Vec<_> = match self.dev.is_some() {
-                    // In development mode, relax the validity requirements to make operating devnets more flexible.
-                    true => self.connected_peers(),
-                    // In production mode, ensure the peer IPs are valid.
-                    false => self.connected_peers().into_iter().filter(|ip| self.is_valid_peer_ip(*ip)).collect(),
-                };
-                // Shuffle the connected peers.
+                let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
                 connected_peers.shuffle(&mut rand::thread_rng());
 
                 let self_ = self.clone();
@@ -716,12 +709,9 @@ impl<N: Network> Gateway<N> {
                     // Initialize the validators.
                     let mut validators = IndexMap::with_capacity(MAX_VALIDATORS_TO_SEND);
                     // Iterate over the validators.
-                    for validator_ip in connected_peers.into_iter().take(MAX_VALIDATORS_TO_SEND) {
-                        // Retrieve the validator address.
-                        if let Some(validator_address) = self_.resolve_to_aleo_addr(validator_ip) {
-                            // Add the validator to the list of validators.
-                            validators.insert(validator_ip, validator_address);
-                        }
+                    for validator in connected_peers.into_iter() {
+                        // Add the validator to the list of validators.
+                        validators.insert(validator.listener_addr, validator.aleo_addr);
                     }
                     // Send the validators response to the peer.
                     let event = Event::ValidatorsResponse(ValidatorsResponse { validators });

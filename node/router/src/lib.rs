@@ -385,6 +385,31 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         self.filter_connected_peers(|_| true)
     }
 
+    /// Returns an optionally bounded sorted list of all connected peers sorted by their
+    /// block height (highest first) and failure count (lowest first).
+    fn get_best_connected_peers(&self, max_entries: Option<usize>) -> Vec<ConnectedPeer<N>> {
+        // Get a snapshot of the currently connected peers.
+        let mut peers = self.get_connected_peers();
+        // Get the low-level peer stats.
+        let known_peers = self.tcp().known_peers().snapshot();
+
+        // Sort the prospect peers.
+        peers.sort_unstable_by_key(|peer| {
+            if let Some(peer_stats) = known_peers.get(&peer.listener_addr.ip()) {
+                // Prioritize greatest height, then lowest failure count.
+                (cmp::Reverse(peer.last_height_seen), peer_stats.failures())
+            } else {
+                // Unreachable; use an else-compatible dummy.
+                (cmp::Reverse(peer.last_height_seen), 0)
+            }
+        });
+        if let Some(max) = max_entries {
+            peers.truncate(max);
+        }
+
+        peers
+    }
+
     /// Returns all connected peers that satisify the given predicate.
     fn filter_connected_peers<P: FnMut(&ConnectedPeer<N>) -> bool>(&self, mut predicate: P) -> Vec<ConnectedPeer<N>> {
         self.peer_pool()
