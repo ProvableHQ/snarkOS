@@ -748,7 +748,7 @@ impl<N: Network> Gateway<N> {
                         (self.account.address() != aleo_addr
                             && !self.is_connected_address(aleo_addr)
                             && self.is_authorized_validator_address(aleo_addr))
-                        .then_some(listener_addr)
+                        .then_some((listener_addr, None))
                     })
                     .collect::<Vec<_>>();
                 if !valid_addrs.is_empty() {

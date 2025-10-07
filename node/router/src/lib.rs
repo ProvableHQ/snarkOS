@@ -269,13 +269,15 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
         // Insert or update the applicable candidate peers.
         for (addr, height) in listener_addrs {
-            match peer_pool.entry(*addr) {
+            match peer_pool.entry(addr) {
                 Entry::Vacant(entry) => {
-                    entry.insert(Peer::new_candidate(*addr, false));
+                    entry.insert(Peer::new_candidate(addr, false));
                 }
                 Entry::Occupied(mut entry) => {
-                    if let Peer::Candidate(peer) = entry.get_mut() {
-                        peer.last_height_seen = *height;
+                    if height.is_some() {
+                        if let Peer::Candidate(peer) = entry.get_mut() {
+                            peer.last_height_seen = height;
+                        }
                     }
                 }
             }

@@ -349,7 +349,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles a `PeerResponse` message.
-    fn peer_response(&self, _peer_ip: SocketAddr, peers: &[(SocketAddr, Option<u32>)]) -> bool {
+    fn peer_response(&self, _peer_ip: SocketAddr, peers: Vec<(SocketAddr, Option<u32>)>) -> bool {
         // Check if the number of peers received is less than MAX_PEERS_TO_SEND.
         if peers.len() > MAX_PEERS_TO_SEND {
             return false;
