@@ -97,7 +97,7 @@ const MAX_CONNECTION_ATTEMPTS: usize = 10;
 const RESTRICTED_INTERVAL: i64 = (MAX_CONNECTION_ATTEMPTS as u64 * MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
 
 /// The maximum number of validators to send in a validators response event.
-const MAX_VALIDATORS_TO_SEND: usize = 200;
+pub const MAX_VALIDATORS_TO_SEND: usize = 200;
 
 /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
 #[cfg(not(any(test)))]

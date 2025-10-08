@@ -117,12 +117,12 @@ impl<N: Network> Handshake for BootstrapClient<N> {
 
         if let Some(addr) = listener_addr {
             match handshake_result {
-                Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version))) => {
+                Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version, validator_mode))) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
                         self.resolver.write().insert_peer(
                             peer.listener_addr(),
                             peer_addr,
-                            if peer_node_type == NodeType::Validator { Some(peer_aleo_addr) } else { None },
+                            if validator_mode { Some(peer_aleo_addr) } else { None },
                         );
                         peer.upgrade_to_connected(peer_addr, peer_port, peer_aleo_addr, peer_node_type, peer_version);
                     }
@@ -152,7 +152,7 @@ impl<N: Network> BootstrapClient<N> {
         peer_addr: SocketAddr,
         listener_addr: &mut Option<SocketAddr>,
         stream: &'a mut TcpStream,
-    ) -> io::Result<Option<(u16, Address<N>, NodeType, u32)>> {
+    ) -> io::Result<Option<(u16, Address<N>, NodeType, u32, bool)>> {
         // Construct the stream.
         let mut framed = Framed::new(stream, BootstrapClientCodec::<N>::handshake());
 
@@ -160,17 +160,16 @@ impl<N: Network> BootstrapClient<N> {
 
         // Listen for the challenge request message, which can be either from a regular peer, or a validator.
         let peer_request = expect_handshake_msg!(HandshakeMessageKind::ChallengeRequest, framed, peer_addr);
-        let (peer_port, peer_nonce, peer_aleo_addr, peer_node_type, peer_version) = match peer_request {
+        let (peer_port, peer_nonce, peer_aleo_addr, peer_node_type, peer_version, validator_mode) = match peer_request {
             MessageOrEvent::Message(Message::ChallengeRequest(ref msg)) => {
-                (msg.listener_port, msg.nonce, msg.address, msg.node_type, msg.version)
+                (msg.listener_port, msg.nonce, msg.address, msg.node_type, msg.version, false)
             }
             MessageOrEvent::Event(Event::ChallengeRequest(ref msg)) => {
-                (msg.listener_port, msg.nonce, msg.address, NodeType::Validator, msg.version)
+                (msg.listener_port, msg.nonce, msg.address, NodeType::Validator, msg.version, true)
             }
             _ => unreachable!(),
         };
-        let is_validator = peer_node_type == NodeType::Validator;
-        debug!("Handshake mode: {}validator", if is_validator { "" } else { "non-" });
+        debug!("Handshake mode: {}validator", if validator_mode { "" } else { "non-" });
 
         // Obtain the peer's listening address.
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_port));
@@ -200,7 +199,7 @@ impl<N: Network> BootstrapClient<N> {
         };
 
         // Send the challenge response.
-        if !is_validator {
+        if !validator_mode {
             let our_response = messages::ChallengeResponse {
                 genesis_header: self.genesis_header,
                 restrictions_id: self.restrictions_id,
@@ -222,7 +221,7 @@ impl<N: Network> BootstrapClient<N> {
         // Sample a random nonce.
         let our_nonce: u64 = rng.r#gen();
         // Send the challenge request.
-        if !is_validator {
+        if !validator_mode {
             let our_request = messages::ChallengeRequest::new(
                 self.local_ip().port(),
                 NodeType::BootstrapClient,
@@ -243,7 +242,7 @@ impl<N: Network> BootstrapClient<N> {
         let peer_response = expect_handshake_msg!(HandshakeMessageKind::ChallengeResponse, framed, peer_addr);
         // Verify the challenge response.
         if !self.verify_challenge_response(peer_addr, peer_aleo_addr, our_nonce, &peer_response).await {
-            if !is_validator {
+            if !validator_mode {
                 let msg = Message::Disconnect::<N>(messages::DisconnectReason::InvalidChallengeResponse.into());
                 send_msg!(msg, framed, peer_addr)?;
             } else {
@@ -253,7 +252,7 @@ impl<N: Network> BootstrapClient<N> {
             return Err(error(format!("Handshake with '{peer_addr}' failed: invalid challenge response")));
         }
 
-        Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version)))
+        Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version, validator_mode)))
     }
 
     async fn verify_challenge_request(

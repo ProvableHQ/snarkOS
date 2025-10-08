@@ -693,7 +693,8 @@ impl<N: Network> Router<N> {
         // - Provers always operate at the latest message version.
         // - Validators and clients may accept older versions, depending on their current block height.
         let lowest_accepted_message_version = match self.node_type {
-            // Provers should always use the latest version.
+            // Provers should always use the latest version. The bootstrap clients are forced to
+            // be strict, as they don't follow the current chain height.
             NodeType::Prover | NodeType::BootstrapClient => Message::<N>::latest_message_version(),
             // Validators and clients accept messages from lower version based on the migration height.
             NodeType::Validator | NodeType::Client => {

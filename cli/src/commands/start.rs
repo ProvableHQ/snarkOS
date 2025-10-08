@@ -116,7 +116,7 @@ pub struct Start {
     pub client: bool,
 
     /// Start the node as a bootstrap client.
-    #[clap(long = "bootstrap-client", group = "node_type", verbatim_doc_comment)]
+    #[clap(long = "bootstrap-client", group = "node_type", conflicts_with_all = ["peers", "validators"], verbatim_doc_comment)]
     pub bootstrap_client: bool,
 
     /// Start the node as a validator.

@@ -97,9 +97,6 @@ workspace = true
 version = "0.12"
 features = [ "json", "rustls-tls" ]
 
-[dependencies.serde]
-workspace = true
-
 [dependencies.serde_json]
 workspace = true
 features = [ "preserve_order" ]

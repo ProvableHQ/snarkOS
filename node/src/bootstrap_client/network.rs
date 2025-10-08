@@ -15,9 +15,13 @@
 
 use crate::{
     BootstrapClient,
-    bft::events::{self, Event},
+    bft::{
+        MAX_VALIDATORS_TO_SEND,
+        events::{self, Event},
+    },
     bootstrap_client::codec::BootstrapClientCodec,
     router::{
+        MAX_PEERS_TO_SEND,
         Peer,
         PeerPoolHandling,
         Resolver,
@@ -113,7 +117,7 @@ impl<N: Network> Reading for BootstrapClient<N> {
         match message {
             MessageOrEvent::Message(Message::PeerRequest(_)) => {
                 debug!("Received a PeerRequest from '{listener_addr}'");
-                let peers = self.get_best_connected_peers(Some(u8::MAX as usize));
+                let peers = self.get_best_connected_peers(Some(MAX_PEERS_TO_SEND));
                 let peers = peers.into_iter().map(|peer| (peer.listener_addr, None)).collect::<Vec<_>>();
 
                 debug!("Sending {} peer address(es) to '{listener_addr}'", peers.len());
@@ -129,20 +133,25 @@ impl<N: Network> Reading for BootstrapClient<N> {
                     Ok(new_committee) => new_committee,
                     Err(error) => {
                         error!("Couldn't update the validator committee: {error}");
-                        Default::default()
+                        None
                     }
                 };
 
-                let validators = if !current_committee.is_empty() {
-                    let peers = self.get_best_connected_peers(Some(u8::MAX as usize));
-                    let mut validators = IndexMap::with_capacity(current_committee.len());
-                    for validator in peers.into_iter().filter(|peer| current_committee.contains(&peer.aleo_addr)) {
-                        validators.insert(validator.listener_addr, validator.aleo_addr);
+                // Filter out applicable validator addresses.
+                let peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
+                let mut validators =
+                    IndexMap::with_capacity(current_committee.as_ref().map(|c| c.len()).unwrap_or_default());
+                for validator in peers.into_iter().filter(|peer| {
+                    if let Some(committee) = &current_committee {
+                        // If possible, check the current committee for the prospect Aleo address.
+                        committee.contains(&peer.aleo_addr)
+                    } else {
+                        // Otherwise, filter out known peers connected in validator mode (via Gateway).
+                        self.resolve_to_aleo_addr(peer.listener_addr).is_some()
                     }
-                    validators
-                } else {
-                    Default::default()
-                };
+                }) {
+                    validators.insert(validator.listener_addr, validator.aleo_addr);
+                }
 
                 debug!("Sending {} validator address(es) to '{listener_addr}'", validators.len());
                 let msg = MessageOrEvent::Event(Event::ValidatorsResponse(events::ValidatorsResponse { validators }));
@@ -151,8 +160,12 @@ impl<N: Network> Reading for BootstrapClient<N> {
                 debug!("Disconnecting from '{listener_addr}' - peers provided");
                 self.tcp().disconnect(peer_addr).await;
             }
-            _ => {
-                trace!("Ignoring an unhandled message from {listener_addr}");
+            msg => {
+                let name = match msg {
+                    MessageOrEvent::Message(msg) => msg.name(),
+                    MessageOrEvent::Event(msg) => msg.name(),
+                };
+                trace!("Ignoring an unhandled message ({name}) from {listener_addr}");
             }
         }
 

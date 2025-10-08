@@ -158,8 +158,14 @@ impl<N: Network> BootstrapClient<N> {
         self.dev.is_some()
     }
 
-    /// Returns the current validator committee or updates it from the explorer.
-    pub async fn get_or_update_committee(&self) -> anyhow::Result<HashSet<Address<N>>> {
+    /// Returns the current validator committee or updates it from the explorer, if
+    /// we are capable of obtaining it from the network.
+    pub async fn get_or_update_committee(&self) -> anyhow::Result<Option<HashSet<Address<N>>>> {
+        // The current committee can't be looked up in dev mode.
+        if self.is_dev() {
+            return Ok(None);
+        }
+
         let now = Instant::now();
         let (committee, timestamp) = &mut *self.latest_committee.lock().await;
         if now - *timestamp >= Self::COMMITTEE_REFRESH_TIME {
@@ -172,9 +178,9 @@ impl<N: Network> BootstrapClient<N> {
             *committee = full_committee.members().keys().copied().collect();
             debug!("The validator committee has {} members now", committee.len());
 
-            Ok(committee.clone())
+            Ok(Some(committee.clone()))
         } else {
-            Ok(committee.clone())
+            Ok(Some(committee.clone()))
         }
     }
 

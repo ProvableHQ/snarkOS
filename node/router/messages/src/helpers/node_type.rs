@@ -82,7 +82,7 @@ impl FromBytes for NodeType {
             1 => Ok(Self::Prover),
             2 => Ok(Self::Validator),
             3 => Ok(Self::BootstrapClient),
-            x => Err(error(format!("Invalid node type: expected 0, 1, or 2, got {x}."))),
+            x => Err(error(format!("Invalid node type: expected 0..=3, got {x}."))),
         }
     }
 }
