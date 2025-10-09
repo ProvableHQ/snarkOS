@@ -46,10 +46,10 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "619464c8edf75636809d0bfb8e8404de78a62c97"
+#rev = "619464c8edf75636809d0bfb8e8404de78a62c97"
+branch = "feat/block-header-from-unchecked"
 #version = "=4.2.1"
 default-features = false
-#features = [ "circuit", "console", "rocks" ]
 
 [workspace.dependencies.anyhow]
 version = "1.0"

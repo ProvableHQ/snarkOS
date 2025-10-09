@@ -103,7 +103,8 @@ impl Scan {
         let (start_height, end_height) = self.parse_block_range::<N>(&endpoint)?;
 
         // Fetch the records from the network.
-        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)?;
+        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)
+            .with_context(|| "Failed to fetch records")?;
 
         // Output the decrypted records associated with the view key.
         if records.is_empty() {
@@ -184,7 +185,7 @@ impl Scan {
     ) -> Result<Vec<Record<N, Plaintext<N>>>> {
         // Check the bounds of the request.
         if start_height > end_height {
-            bail!("Invalid block range");
+            bail!("Invalid block range. Start height ({start_height}) is not smaller than end height ({end_height}).");
         }
 
         // Derive the x-coordinate of the address corresponding to the given view key.
@@ -202,9 +203,13 @@ impl Scan {
 
         // Fetch the genesis block from the endpoint.
         let genesis_block: Block<N> =
-            ureq::get(&format!("{endpoint}{}/block/0", N::SHORT_NAME)).call()?.into_body().read_json()?;
+            (|| ureq::get(&format!("{endpoint}{}/block/0", N::SHORT_NAME)).call()?.into_body().read_json())()
+                .with_context(|| "Failed to fetch genesis block")?;
+
         // Determine if the endpoint is on a development network.
-        let is_development_network = genesis_block != Block::from_bytes_le(N::genesis_bytes())?;
+        // Use the unchecked version to allow loading the regular genesis block, even if the CLI
+        // has `test_targets` enabled.
+        let is_development_network = genesis_block != Block::from_bytes_le_unchecked(N::genesis_bytes())?;
 
         // Determine the request start height.
         let mut request_start = match is_development_network {
@@ -243,7 +248,8 @@ impl Scan {
             // Establish the endpoint.
             let blocks_endpoint = format!("{endpoint}{}/blocks?start={request_start}&end={request_end}", N::SHORT_NAME);
             // Fetch blocks
-            let blocks: Vec<Block<N>> = ureq::get(&blocks_endpoint).call()?.into_body().read_json()?;
+            let blocks: Vec<Block<N>> = (|| ureq::get(&blocks_endpoint).call()?.into_body().read_json())()
+                .with_context(|| format!("Failed to fetch blocks range {request_start}..{request_end}"))?;
 
             // Scan the blocks for owned records.
             for block in &blocks {
