@@ -36,7 +36,7 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use std::{collections::HashMap, io, net::SocketAddr, time::Duration};
+use std::{collections::HashMap, io, net::SocketAddr};
 use tokio::time::sleep;
 use tokio_util::codec::Decoder;
 
@@ -137,12 +137,11 @@ impl<N: Network> Reading for BootstrapClient<N> {
                 debug!("Sending {} peer address(es) to '{listener_addr}'", peers.len());
                 let msg = MessageOrEvent::Message(Message::PeerResponse(messages::PeerResponse { peers }));
                 if let Err(err) = self.unicast(peer_addr, msg)?.await {
-                    warn!("Couldn't deliver a peer list to '{listener_addr}': {err}");
+                    warn!("Couldn't deliver a peer list to '{listener_addr}': {err}; disconnecting");
                 } else {
                     debug!("Disconnecting from '{listener_addr}' - peers provided");
                 }
 
-                sleep(Duration::from_secs(1)).await;
                 self.tcp().disconnect(peer_addr).await;
             }
             MessageOrEvent::Event(Event::ValidatorsRequest(_)) => {
@@ -166,12 +165,11 @@ impl<N: Network> Reading for BootstrapClient<N> {
                 debug!("Sending {} validator address(es) to '{listener_addr}'", validators.len());
                 let msg = MessageOrEvent::Event(Event::ValidatorsResponse(events::ValidatorsResponse { validators }));
                 if let Err(err) = self.unicast(peer_addr, msg)?.await {
-                    warn!("Couldn't deliver a peer list to '{listener_addr}': {err}");
+                    warn!("Couldn't deliver a peer list to '{listener_addr}': {err}; disconnecting");
                 } else {
                     debug!("Disconnecting from '{listener_addr}' - peers provided");
                 }
 
-                sleep(Duration::from_secs(1)).await;
                 self.tcp().disconnect(peer_addr).await;
             }
             msg => {
