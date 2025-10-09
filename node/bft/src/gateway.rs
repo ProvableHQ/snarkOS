@@ -69,7 +69,10 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::{
+    rngs::OsRng,
+    seq::{IteratorRandom, SliceRandom},
+};
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -785,7 +788,7 @@ impl<N: Network> Gateway<N> {
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
-                self_clone.heartbeat();
+                self_clone.heartbeat().await;
                 // Sleep for the heartbeat interval.
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
@@ -814,7 +817,7 @@ impl<N: Network> Gateway<N> {
 
 impl<N: Network> Gateway<N> {
     /// Handles the heartbeat request.
-    fn heartbeat(&self) {
+    async fn heartbeat(&self) {
         // Log the connected validators.
         self.log_connected_validators();
         // Log the validator participation scores.
@@ -822,6 +825,8 @@ impl<N: Network> Gateway<N> {
         self.log_participation_scores();
         // Keep the trusted validators connected.
         self.handle_trusted_validators();
+        // Keep the bootstrap peers within the allowed range.
+        self.handle_bootstrap_peers().await;
         // Removes any validators that not in the current committee.
         self.handle_unauthorized_validators();
         // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
@@ -891,6 +896,53 @@ impl<N: Network> Gateway<N> {
         for validator_ip in &self.trusted_peers() {
             // Attempt to connect to the trusted validator.
             self.connect(*validator_ip);
+        }
+    }
+
+    /// This function keeps the number of bootstrap peers within the allowed range.
+    async fn handle_bootstrap_peers(&self) {
+        // Split the bootstrap peers into connected and candidate lists.
+        let mut candidate_bootstrap = Vec::new();
+        let connected_bootstrap = self.filter_connected_peers(|peer| peer.node_type == NodeType::BootstrapClient);
+        for bootstrap_ip in bootstrap_peers::<N>(self.is_dev()) {
+            if !connected_bootstrap.iter().any(|peer| peer.listener_addr == bootstrap_ip) {
+                candidate_bootstrap.push(bootstrap_ip);
+            }
+        }
+        // If there are not enough connected bootstrap peers, connect to more.
+        if connected_bootstrap.is_empty() {
+            // Initialize an RNG.
+            let rng = &mut OsRng;
+            // Attempt to connect to a bootstrap peer.
+            if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
+                match self.connect(peer_ip) {
+                    Some(hdl) => {
+                        let result = hdl.await;
+                        if let Err(err) = result {
+                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
+                        }
+                    }
+                    None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
+                }
+            }
+        }
+        // Determine if the node is connected to more bootstrap peers than allowed.
+        let num_surplus = connected_bootstrap.len().saturating_sub(1);
+        if num_surplus > 0 {
+            // Initialize an RNG.
+            let rng = &mut OsRng;
+            // Proceed to send disconnect requests to these bootstrap peers.
+            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+                info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
+                <Self as Transport<N>>::send(
+                    self,
+                    peer.listener_addr,
+                    Event::Disconnect(DisconnectReason::NoReasonGiven.into()),
+                )
+                .await;
+                // Disconnect from this peer.
+                self.disconnect(peer.listener_addr);
+            }
         }
     }
 
