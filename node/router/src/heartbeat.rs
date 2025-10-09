@@ -133,7 +133,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 && !self.router().cache.contains_inbound_block_request(&peer.listener_addr) // This peer is currently syncing from us.
                 && (is_block_synced || self.router().cache.num_outbound_block_requests(&peer.listener_addr) == 0) // We are currently syncing from this peer.
         });
-        peers.sort_by_key(|peer| (peer.node_type.is_validator(), peer.last_seen));
+        peers.sort_by_key(|peer| peer.last_seen);
 
         peers
     }
@@ -212,7 +212,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Proceed to send disconnect requests to these peers.
             for peer in peers_to_disconnect.chain(provers_to_disconnect) {
                 // TODO (howardwu): Remove this after specializing this function.
-                if self.router().node_type().is_prover() && peer.node_type.is_validator() {
+                if self.router().node_type().is_prover() {
                     continue;
                 }
 
