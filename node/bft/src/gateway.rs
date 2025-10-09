@@ -499,8 +499,13 @@ impl<N: Network> Gateway<N> {
             trace!("Dropping a {} from {peer_addr} - no longer connected.", event.name());
             return Ok(false);
         };
-        // Ensure that the peer is an authorized committee member.
-        if !self.is_authorized_validator_ip(peer_ip) {
+        // Ensure that the peer is an authorized committee member or a bootstrapper.
+        if !(self.is_authorized_validator_ip(peer_ip)
+            || self
+                .get_connected_peer(peer_ip)
+                .map(|peer| peer.node_type == NodeType::BootstrapClient)
+                .unwrap_or(false))
+        {
             bail!("{CONTEXT} Dropping '{}' from '{peer_ip}' (not authorized)", event.name())
         }
         // Drop the peer, if they have exceeded the rate limit (i.e. they are requesting too much from us).
@@ -1249,13 +1254,13 @@ impl<N: Network> Handshake for Gateway<N> {
         if let Some(addr) = listener_addr {
             match handshake_result {
                 Ok(Some(ref cr)) => {
-                    let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
-                        NodeType::BootstrapClient
+                    let (node_type, aleo_address) = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                        (NodeType::BootstrapClient, None)
                     } else {
-                        NodeType::Validator
+                        (NodeType::Validator, Some(cr.address))
                     };
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
+                        self.resolver.write().insert_peer(addr, peer_addr, aleo_address);
                         peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, node_type, cr.version);
                     }
                     #[cfg(feature = "metrics")]
