@@ -16,7 +16,9 @@
 use crate::{
     ConnectedPeer,
     Outbound,
+    PeerPoolHandling,
     Router,
+    bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
 };
 use snarkvm::prelude::Network;
@@ -118,7 +120,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
         // The hardcoded bootstrap nodes.
-        let bootstrap = self.router().bootstrap_peers();
+        let bootstrap = bootstrap_peers::<N>(self.router().is_dev());
         // Are we synced already? (cache this here, so it does not need to be recomputed)
         let is_block_synced = self.is_block_synced();
 
@@ -195,7 +197,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             );
 
             // Retrieve the bootstrap peers.
-            let bootstrap = self.router().bootstrap_peers();
+            let bootstrap = bootstrap_peers::<N>(self.router().is_dev());
 
             // Determine the provers to disconnect from.
             let provers_to_disconnect = self
@@ -237,9 +239,21 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Initialize an RNG.
             let rng = &mut OsRng;
 
-            // Attempt to connect to more peers.
-            for peer_ip in self.router().candidate_peers().into_iter().choose_multiple(rng, num_deficient) {
-                self.router().connect(peer_ip);
+            // Attempt to connect to more peers, separately choosing from those at a greater block
+            // height, and those whose height is lower or unknown to us.
+            let own_height = self.router().ledger.latest_block_height();
+            let (higher_peers, other_peers): (Vec<_>, Vec<_>) = self
+                .router()
+                .get_candidate_peers()
+                .into_iter()
+                .partition(|peer| peer.last_height_seen.map(|h| h > own_height).unwrap_or(false));
+            // We may not know of half of `num_deficient` candidates; account for it using `min`.
+            let num_higher_peers = num_deficient.div_ceil(2).min(higher_peers.len());
+            for peer in higher_peers.into_iter().choose_multiple(rng, num_higher_peers) {
+                self.router().connect(peer.listener_addr);
+            }
+            for peer in other_peers.into_iter().choose_multiple(rng, num_deficient - num_higher_peers) {
+                self.router().connect(peer.listener_addr);
             }
 
             if self.router().allow_external_peers() {
@@ -257,7 +271,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let mut connected_bootstrap = Vec::new();
         let mut candidate_bootstrap = Vec::new();
         let connected_peers = self.router().connected_peers();
-        for bootstrap_ip in self.router().bootstrap_peers() {
+        for bootstrap_ip in bootstrap_peers::<N>(self.router().is_dev()) {
             match connected_peers.contains(&bootstrap_ip) {
                 true => connected_bootstrap.push(bootstrap_ip),
                 false => candidate_bootstrap.push(bootstrap_ip),

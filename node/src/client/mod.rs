@@ -163,6 +163,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
+            storage_mode.clone(),
             dev.is_some(),
         )
         .await?;
@@ -293,7 +294,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.sync.set_sync_height(self.ledger.latest_height());
 
-        let new_requests = self.sync.handle_block_request_timeouts(self);
+        let new_requests = self.sync.handle_block_request_timeouts(self.router());
         if let Some((block_requests, sync_peers)) = new_requests {
             self.send_block_requests(block_requests, sync_peers).await;
         }
@@ -353,7 +354,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     ) {
         // Issues the block requests in batches.
         for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.sync.send_block_requests(self, &sync_peers, requests).await {
+            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
                 // Stop if we fail to process a batch of requests.
                 break;
             }
@@ -468,6 +469,21 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let _node = node.clone();
                     // For each deployment, spawn a task to verify it.
                     tokio::task::spawn_blocking(move || {
+                        // First collect the state root.
+                        let Some(state_root) = transaction.fee_transition().map(|t| t.global_state_root()) else {
+                            debug!("Failed to access global state root for deployment from peer_ip {peer_ip}");
+                            _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                            return;
+                        };
+                        // Check if the state root is in the ledger.
+                        if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
+                            debug!("Failed to find global state root for deployment from peer_ip {peer_ip}, propagating anyway");
+                            // Propagate the `UnconfirmedTransaction`.
+                            _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                            _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                            return;
+                            // Also skip the `check_transaction_basic` call if it is already propagated.
+                        }
                         // Check the deployment.
                         match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
                             Ok(_) => {
@@ -521,6 +537,24 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let _node = node.clone();
                     // For each execution, spawn a task to verify it.
                     tokio::task::spawn_blocking(move || {
+                        // First collect the state roots.
+                        let state_roots = [
+                            transaction.execution().map(|t| t.global_state_root()),
+                            transaction.fee_transition().map(|t| t.global_state_root()),
+                        ]
+                        .into_iter()
+                        .flatten();
+
+                        for state_root in state_roots {
+                            if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
+                                debug!("Failed to find global state root for execution from peer_ip {peer_ip}, propagating anyway");
+                                // Propagate the `UnconfirmedTransaction`.
+                                _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                                _node.num_verifying_executions.fetch_sub(1, Relaxed);
+                                return;
+                                // Also skip the `check_transaction_basic` call if it is already propagated.
+                            }
+                        }
                         // Check the execution.
                         match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
                             Ok(_) => {

@@ -19,6 +19,7 @@ use common::*;
 use snarkos_node_router::{
     Heartbeat,
     Outbound,
+    PeerPoolHandling,
     Router,
     Routing,
     messages::{Message, MessageCodec},
@@ -84,7 +85,7 @@ async fn connect_to(router: &TestRouter<Network>, other: &TestRouter<Network>) {
     let success = router.connect(other.local_ip()).unwrap().await.unwrap();
     assert!(success, "Connection failed");
 
-    while !router.is_connected(&other.local_ip()) {
+    while !router.is_connected(other.local_ip()) {
         sleep(Duration::from_millis(10)).await;
     }
 }

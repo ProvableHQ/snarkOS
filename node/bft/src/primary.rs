@@ -44,6 +44,7 @@ use crate::{
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_router::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
 use snarkvm::{
     console::{
@@ -132,7 +133,8 @@ impl<N: Network> Primary<N> {
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway.
-        let gateway = Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, dev)?;
+        let gateway =
+            Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, storage_mode.clone(), dev)?;
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), ledger.clone(), block_sync);
 
@@ -401,7 +403,7 @@ impl<N: Network> Primary<N> {
             // Iterate through the non-signers.
             for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
                 // Resolve the address to the peer IP.
-                match self.gateway.resolver().get_peer_ip_for_address(address) {
+                match self.gateway.resolver().read().get_peer_ip_for_address(address) {
                     // Resend the batch proposal to the validator for signing.
                     Some(peer_ip) => {
                         let (gateway, event_, round) = (self.gateway.clone(), event.clone(), proposal.round());
@@ -726,7 +728,7 @@ impl<N: Network> Primary<N> {
         let batch_author = batch_header.author();
 
         // Ensure the batch proposal is from the validator.
-        match self.gateway.resolver().get_address(peer_ip) {
+        match self.gateway.resolve_to_aleo_addr(peer_ip) {
             // If the peer is a validator, then ensure the batch proposal is from the validator.
             Some(address) => {
                 if address != batch_author {
@@ -997,7 +999,7 @@ impl<N: Network> Primary<N> {
         let signer = signature.to_address();
 
         // Ensure the batch signature is signed by the validator.
-        if self.gateway.resolver().get_address(peer_ip) != Some(signer) {
+        if self.gateway.resolve_to_aleo_addr(peer_ip) != Some(signer) {
             // Proceed to disconnect the validator.
             self.gateway.disconnect(peer_ip);
             bail!("Malicious peer - batch signature is from a different validator ({signer})");
@@ -1036,7 +1038,7 @@ impl<N: Network> Primary<N> {
                     // Retrieve the committee lookback for the round.
                     let committee_lookback = self_.ledger.get_committee_lookback_for_round(proposal.round())?;
                     // Retrieve the address of the validator.
-                    let Some(signer) = self_.gateway.resolver().get_address(peer_ip) else {
+                    let Some(signer) = self_.gateway.resolve_to_aleo_addr(peer_ip) else {
                         bail!("Signature is from a disconnected validator");
                     };
                     // Add the signature to the batch.
@@ -1959,7 +1961,7 @@ mod tests {
     use snarkvm::{
         ledger::{
             committee::{Committee, MIN_VALIDATOR_STAKE},
-            snarkvm_ledger_test_helpers::sample_execution_transaction_with_fee,
+            test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::{Address, Signature},
     };
@@ -2001,7 +2003,7 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::Test(None), None).unwrap();
+            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::new_test(None), None).unwrap();
 
         // Construct a worker instance.
         primary.workers = Arc::from([Worker::new(
@@ -2222,7 +2224,7 @@ mod tests {
     fn map_account_addresses(primary: &Primary<CurrentNetwork>, accounts: &[(SocketAddr, Account<CurrentNetwork>)]) {
         // First account is primary, which doesn't need to resolve.
         for (addr, acct) in accounts.iter().skip(1) {
-            primary.gateway.resolver().insert_peer(*addr, *addr, acct.address());
+            primary.gateway.resolver().write().insert_peer(*addr, *addr, Some(acct.address()));
         }
     }
 
@@ -2419,7 +2421,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2458,7 +2460,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // Add a high block locator to indicate we are not synced.
         primary.sync.test_update_peer_locators(peer_ip, sample_block_locators(20)).unwrap();
@@ -2498,7 +2500,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2535,7 +2537,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2580,7 +2582,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2636,7 +2638,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.try_block_sync().await;
 
@@ -2683,8 +2685,8 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary_v4.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
-        primary_v5.gateway.resolver().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary_v4.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
+        primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // primary v4 must be considered synced.
         primary_v4.sync.test_update_peer_locators(peer_ip, sample_block_locators(0)).unwrap();

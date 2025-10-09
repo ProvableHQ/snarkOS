@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync-communication-service"
-version = "4.1.0"
+version = "4.2.2"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A communication service for the sync module in a decentralized operating system"
 homepage = "https://aleo.org"
@@ -23,13 +23,6 @@ version = "0.1"
 workspace = true
 features = [ "sync" ]
 
-[dependencies.parking_lot]
-workspace = true
-optional = true
-
-[dev-dependencies.parking_lot]
-workspace = true
-
 [features]
 default = [ ]
-test-helpers = [ "dep:parking_lot" ]
+test-helpers = [ ]

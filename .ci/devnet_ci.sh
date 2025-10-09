@@ -176,6 +176,15 @@ else
   echo "✅ Transaction executed successfully: $execute_result"
 fi
 
+# Fail if status does not exist or is not set to "accepted".
+rest_confirmed=$(curl -s "http://localhost:3030/v2/$network_name/transaction/confirmed/$tx")
+
+rest_status=$(jq --raw-output '.status' <<< "$rest_confirmed")
+if [ "$rest_status" != "accepted" ]; then
+  printf "❌ Test failed! Rest API did not mark the transaction as \"accepted\". Status was: \"%s\" \nFull JSON: %s\n" "$rest_status" "$rest_confirmed"
+  exit 1
+fi
+
 echo "ℹ️Testing REST API and REST Error Handling"
 
 # Test invalid transaction data (JsonDataError) returns 422 Unprocessable Content

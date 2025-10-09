@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "4.1.0"
+version = "4.2.2"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -22,6 +22,9 @@ locktick = [ "dep:locktick", "snarkos-node-tcp/locktick", "snarkvm/locktick" ]
 metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
+
+[dependencies.aleo-std]
+workspace = true
 
 [dependencies.anyhow]
 workspace = true
@@ -63,6 +66,9 @@ workspace = true
 [dependencies.snarkos-node-bft-ledger-service]
 workspace = true
 features = [ "ledger", "prover" ]
+
+[dependencies.snarkos-node-sync-communication-service]
+workspace = true
 
 [dependencies.snarkos-node-sync-locators]
 workspace = true
@@ -116,11 +122,11 @@ workspace = true
 features = [ "ledger-write", "test" ]
 
 [dev-dependencies.snarkos-node-sync]
-workspace = true
+path = "../sync"
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router]
-workspace = true
+path = "."
 features = [ "test" ]
 
 [dev-dependencies.snarkos-node-router-messages]

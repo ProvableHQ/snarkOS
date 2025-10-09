@@ -14,13 +14,15 @@
 // limitations under the License.
 
 use snarkos_cli::{commands::CLI, helpers::Updater};
+use snarkvm::utilities::display_error;
 
 use clap::Parser;
 #[cfg(feature = "locktick")]
 use locktick::lock_snapshots;
 #[cfg(feature = "locktick")]
 use std::time::Instant;
-use std::{env, process::exit};
+use std::{backtrace::Backtrace, env, panic::catch_unwind};
+use tracing::log::logger;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use tikv_jemallocator::Jemalloc;
@@ -32,7 +34,29 @@ static GLOBAL: Jemalloc = Jemalloc;
 // Obtain information on the build.
 include!(concat!(env!("OUT_DIR"), "/built.rs"));
 
-fn main() -> anyhow::Result<()> {
+/// Prints a message using `tracing::error` if logging is enabled, otherwise uses `eprintln`.
+macro_rules! print_error {
+    ($($arg:tt)*) => {
+        if tracing::log::log_enabled!(tracing::log::Level::Error) {
+            tracing::error!($($arg)*);
+        } else {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
+/// Stops the process with the given exit code.
+fn exit(exitcode: i32) -> ! {
+    tracing::debug!("Stopping process with exitcode {exitcode}");
+
+    // Ensure all log messages are written before the process terminates.
+    logger().flush();
+
+    // Perform the system call to exit the process.
+    std::process::exit(exitcode);
+}
+
+fn main() {
     // A hack to avoid having to go through clap to display advanced version information.
     check_for_version();
 
@@ -68,27 +92,74 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Parse the given arguments.
-    let cli = CLI::parse();
-    if !cli.noupdater {
-        // Run the updater.
-        println!("{}", Updater::print_cli());
-    }
+    // Set a custom hook here to show "pretty" errors when panicking.
+    std::panic::set_hook(Box::new(|err| {
+        print_error!("⚠️ {}\n", err.to_string().replace("panicked at", "snarkOS encountered an unexpected error at"));
+
+        // Always show backtraces.
+        let backtrace = Backtrace::force_capture().to_string();
+
+        let mut msg = "Backtrace:\n".to_string();
+        msg.push_str("      [...]\n");
+
+        // Remove all the low level frames.
+        // This can be done more cleanly once the `backtrace_frames` feature is stabilized.
+        let lines = backtrace.lines().skip_while(|line| !line.contains("core::panicking"));
+
+        for line in lines {
+            // Stop printing once we hit the panic handler.
+            if line.contains("snarkos::main") {
+                break;
+            }
+
+            msg.push_str(&format!("{line}\n"));
+        }
+
+        // Print the entire backtrace as a single log message.
+        print_error!("{msg}");
+    }));
 
     // Run the CLI.
-    match cli.command.parse() {
-        Ok(output) => println!("{output}\n"),
-        Err(error) => {
-            // Print the top level error and then any additional context.
-            println!("⚠️  {error}");
-            for entry in error.chain().skip(1) {
-                println!("     ↳ {entry}");
-            }
-            println!();
+    // We use `catch_unwind` here to ensure a panic stops execution and not just a single thread.
+    // Note: `catch_unwind` can be nested without problems.
+    let result = catch_unwind(|| {
+        // Parse the given arguments.
+        let cli = CLI::parse();
+
+        // Run the updater.
+        if !cli.noupdater
+            && let Some(msg) = Updater::print_cli()
+        {
+            println!("{msg}");
+        }
+
+        // Run the CLI.
+        cli.command.parse()
+    });
+
+    // Process any errors (including panics).
+    match result {
+        Ok(Ok(output)) => {
+            println!("{output}\n");
+            exit(0);
+        }
+        Ok(Err(err)) => {
+            // A regular error occurred.
+            display_error(&err);
+            eprintln!();
+            eprintln!("Use `--help` for instructions on how to use this command");
+
+            exit(1);
+        }
+        Err(_) => {
+            print_error!(
+                "This is most likely a bug!\n\
+                Please report it to the snarkOS developers: https://github.com/ProvableHQ/snarkOS/issues/new?template=bug.md"
+            );
+
             exit(1);
         }
     }
-    Ok(())
 }
 
 /// Checks whether the version information was requested and - if so - display it and exit.

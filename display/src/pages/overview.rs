@@ -15,7 +15,10 @@
 
 use crate::{content_style, header_style};
 
-use snarkos_node::{Node, router::Peer};
+use snarkos_node::{
+    Node,
+    router::{Peer, PeerPoolHandling},
+};
 use snarkvm::prelude::Network;
 
 use ratatui::{
@@ -79,7 +82,7 @@ impl Overview {
                     Peer::Connected(_) => "connected",
                 }.to_string();
 
-                let node_type = if let Some(node_type ) = peer.node_type() {
+                let node_type = if let Some(node_type) = peer.node_type() {
                     node_type.to_string()
                 } else {
                     "unknown".to_string()
