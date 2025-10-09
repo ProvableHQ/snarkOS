@@ -119,6 +119,7 @@ jobs:
           
           This update was performed automatically by the snarkVM update workflow."
           git push --force-with-lease origin update-snarkvm-staging
+        continue-on-error: true
 
       - name: Create or update PR
         if: steps.snarkvm-commit.outputs.update_needed == 'true'
