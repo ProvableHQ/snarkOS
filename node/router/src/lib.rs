@@ -217,7 +217,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn insert_candidate_peers(&self, mut listener_addrs: Vec<(SocketAddr, Option<u32>)>) {
         // Hold a write guard from now on, so as not to accidentally slash multiple times
         // based on multiple batches of candidate peers, and to not overwrite any entries.
-        let mut peer_pool = self.peer_pool().write();
+        // Reject multiple overlapping entries via `RwLock::try_write`.
+        let Some(mut peer_pool) = self.peer_pool().try_write() else { return };
 
         // Perform filtering to ensure candidate validity. Also count how many entries are updates.
         let mut num_updates: usize = 0;
