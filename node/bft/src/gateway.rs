@@ -951,15 +951,22 @@ impl<N: Network> Gateway<N> {
         let self_ = self.clone();
         tokio::spawn(async move {
             // Retrieve the connected validators.
-            let validators = self_.connected_peers();
+            let validators = self_.get_connected_peers();
             // Iterate over the validator IPs.
-            for peer_ip in validators {
+            for peer in validators {
+                // Skip bootstrapper peers.
+                if peer.node_type == NodeType::BootstrapClient {
+                    continue;
+                }
                 // Disconnect any validator that is not in the current committee.
-                if !self_.is_authorized_validator_ip(peer_ip) {
-                    warn!("{CONTEXT} Disconnecting from '{peer_ip}' - Validator is not in the current committee");
-                    Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
+                if !self_.is_authorized_validator_ip(peer.listener_addr) {
+                    warn!(
+                        "{CONTEXT} Disconnecting from '{}' - Validator is not in the current committee",
+                        peer.listener_addr
+                    );
+                    Transport::send(&self_, peer.listener_addr, DisconnectReason::ProtocolViolation.into()).await;
                     // Disconnect from this peer.
-                    self_.disconnect(peer_ip);
+                    self_.disconnect(peer.listener_addr);
                 }
             }
         });

@@ -83,10 +83,14 @@ macro_rules! expect_handshake_msg {
                 message
             }
             _ => {
+                let msg_name = match message {
+                    MessageOrEvent::Message(message) => message.name(),
+                    MessageOrEvent::Event(event) => event.name(),
+                };
                 return Err(error(format!(
-                    "'{}' did not follow the handshake protocol: expected {}",
+                    "'{}' did not follow the handshake protocol: expected {}, got {msg_name}",
                     $peer_addr,
-                    stringify!($expected),
+                    stringify!($msg_ty),
                 )));
             }
         }
