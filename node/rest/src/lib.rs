@@ -28,10 +28,7 @@ mod version;
 
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
-use snarkos_node_router::{
-    Routing,
-    messages::{Message, UnconfirmedTransaction},
-};
+use snarkos_node_router::{Routing, messages::Message};
 use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{program::ProgramID, types::Field},

@@ -669,10 +669,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         // Prepare the unconfirmed transaction message.
         let tx_id = tx.id();
-        let message = Message::UnconfirmedTransaction(UnconfirmedTransaction {
-            transaction_id: tx_id,
-            transaction: Data::Object(tx.clone()),
-        });
+        // let message = Message::UnconfirmedTransaction(UnconfirmedTransaction {
+        //     transaction_id: tx_id,
+        //     transaction: Data::Object(tx.clone()),
+        // });
 
         // Check if the node is within sync leniency.
         let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
@@ -734,7 +734,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         // Broadcast the transaction.
-        rest.routing.propagate(message, &[]);
+        // rest.routing.propagate(message, &[]);
 
         // Determine if the node is synced and if the transaction was checked.
         match !is_within_sync_leniency && check_transaction {
