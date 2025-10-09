@@ -122,6 +122,7 @@ impl<N: Network> Handshake for BootstrapClient<N> {
                         self.resolver.write().insert_peer(
                             peer.listener_addr(),
                             peer_addr,
+                            // Only resolve aleo addresses for Gateway connections.
                             if validator_mode { Some(peer_aleo_addr) } else { None },
                         );
                         peer.upgrade_to_connected(peer_addr, peer_port, peer_aleo_addr, peer_node_type, peer_version);

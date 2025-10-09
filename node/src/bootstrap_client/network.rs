@@ -74,6 +74,15 @@ pub enum MessageOrEvent<N: Network> {
 #[async_trait]
 impl<N: Network> OnConnect for BootstrapClient<N> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
+        // If the peer is connected in validator (Gateway) mode, save it to the collection
+        // of known validators.
+        if let Some(listener_addr) = self.resolve_to_listener(peer_addr) {
+            if let Some(peer) = self.get_connected_peer(listener_addr) {
+                if self.resolver().read().get_peer_ip_for_address(peer.aleo_addr).is_some() {
+                    self.known_validators.write().insert(listener_addr, peer.aleo_addr);
+                }
+            }
+        }
         // The peers should only ask us for the peer list; spawn a task that will
         // terminate the connection after a while.
         let tcp = self.tcp().clone();
@@ -117,7 +126,12 @@ impl<N: Network> Reading for BootstrapClient<N> {
         match message {
             MessageOrEvent::Message(Message::PeerRequest(_)) => {
                 debug!("Received a PeerRequest from '{listener_addr}'");
-                let peers = self.get_best_connected_peers(Some(MAX_PEERS_TO_SEND));
+                let mut peers = self.get_candidate_peers();
+
+                // Filter out peers who had been connected via the Gateway.
+                let known_validators = self.get_known_validators();
+                peers.retain(|peer| !known_validators.contains_key(&peer.listener_addr));
+                peers.truncate(MAX_PEERS_TO_SEND);
                 let peers = peers.into_iter().map(|peer| (peer.listener_addr, None)).collect::<Vec<_>>();
 
                 debug!("Sending {} peer address(es) to '{listener_addr}'", peers.len());
@@ -137,21 +151,13 @@ impl<N: Network> Reading for BootstrapClient<N> {
                     }
                 };
 
-                // Filter out applicable validator addresses.
-                let peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
-                let mut validators =
-                    IndexMap::with_capacity(current_committee.as_ref().map(|c| c.len()).unwrap_or_default());
-                for validator in peers.into_iter().filter(|peer| {
-                    if let Some(committee) = &current_committee {
-                        // If possible, check the current committee for the prospect Aleo address.
-                        committee.contains(&peer.aleo_addr)
-                    } else {
-                        // Otherwise, filter out known peers connected in validator mode (via Gateway).
-                        self.resolve_to_aleo_addr(peer.listener_addr).is_some()
-                    }
-                }) {
-                    validators.insert(validator.listener_addr, validator.aleo_addr);
+                // Return the known addresses of current committee members, or all known
+                // validators if the committee info is unavailable.
+                let mut known_validators = self.get_known_validators();
+                if let Some(committee) = &current_committee {
+                    known_validators.retain(|_, aleo_addr| committee.contains(aleo_addr));
                 }
+                let validators = known_validators.into_iter().take(MAX_VALIDATORS_TO_SEND).collect::<IndexMap<_, _>>();
 
                 debug!("Sending {} validator address(es) to '{listener_addr}'", validators.len());
                 let msg = MessageOrEvent::Event(Event::ValidatorsResponse(events::ValidatorsResponse { validators }));

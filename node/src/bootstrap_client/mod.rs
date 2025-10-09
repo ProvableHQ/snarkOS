@@ -62,6 +62,7 @@ impl<N: Network> Deref for BootstrapClient<N> {
 pub struct InnerBootstrapClient<N: Network> {
     tcp: Tcp,
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
+    known_validators: RwLock<HashMap<SocketAddr, Address<N>>>,
     resolver: RwLock<Resolver<N>>,
     account: Account<N>,
     genesis_header: Header<N>,
@@ -90,6 +91,8 @@ impl<N: Network> BootstrapClient<N> {
         let tcp = Tcp::new(tcp::Config::new(listener_addr, Self::MAX_PEERS));
         // Initialize the peer pool.
         let peer_pool = Default::default();
+        // Initialize a collection of validators that had connected in Gateway mode.
+        let known_validators = Default::default();
         // Load the restrictions ID.
         let restrictions_id = Restrictions::load()?.restrictions_id();
         // Create a resolver.
@@ -107,6 +110,7 @@ impl<N: Network> BootstrapClient<N> {
         let inner = InnerBootstrapClient {
             tcp,
             peer_pool,
+            known_validators,
             resolver,
             account,
             genesis_header,
@@ -182,6 +186,11 @@ impl<N: Network> BootstrapClient<N> {
         } else {
             Ok(Some(committee.clone()))
         }
+    }
+
+    /// Returns the list of known validators connected in Gateway mode.
+    pub fn get_known_validators(&self) -> HashMap<SocketAddr, Address<N>> {
+        self.known_validators.read().clone()
     }
 
     /// Shuts down the bootstrap client.
