@@ -197,12 +197,11 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     }
 
     /// Returns the spent cost for a transaction in microcredits.
-    fn transaction_spent_cost_in_microcredits(
+    fn transaction_spend_in_microcredits(
         &self,
-        transaction_id: N::TransactionID,
-        transaction: Transaction<N>,
+        transaction: &Transaction<N>,
         consensus_version: ConsensusVersion,
     ) -> Result<u64> {
-        self.inner.transaction_spent_cost_in_microcredits(transaction_id, transaction, consensus_version)
+        self.inner.transaction_spend_in_microcredits(transaction, consensus_version)
     }
 }
