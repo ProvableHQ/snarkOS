@@ -115,6 +115,10 @@ pub struct Start {
     #[clap(long, group = "node_type", verbatim_doc_comment)]
     pub client: bool,
 
+    /// Start the node as a bootstrap client.
+    #[clap(long = "bootstrap-client", group = "node_type", conflicts_with_all = ["peers", "validators"], verbatim_doc_comment)]
+    pub bootstrap_client: bool,
+
     /// Start the node as a validator.
     ///
     /// Validators are "full nodes", like clients, but also participate in AleoBFT.
@@ -564,6 +568,8 @@ impl Start {
             NodeType::Validator
         } else if self.prover {
             NodeType::Prover
+        } else if self.bootstrap_client {
+            NodeType::BootstrapClient
         } else {
             NodeType::Client
         }
@@ -720,7 +726,8 @@ impl Start {
         match node_type {
             NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, shutdown.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.dev, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await,
+            NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }
     }
 

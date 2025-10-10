@@ -36,12 +36,11 @@ use snarkvm::prelude::{
 };
 
 use anyhow::{Result, anyhow, bail};
-use snarkos_node_tcp::is_bogon_ip;
-use std::{cmp, net::SocketAddr};
+use std::net::SocketAddr;
 use tokio::task::spawn_blocking;
 
 /// The max number of peers to send in a `PeerResponse` message.
-pub(crate) const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
+pub const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
 
 #[async_trait]
 pub trait Inbound<N: Network>: Reading + Outbound<N> {
@@ -315,32 +314,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
     /// Handles a `PeerRequest` message.
     fn peer_request(&self, peer_ip: SocketAddr) -> bool {
-        // Retrieve the connected peers, filtering out invalid addresses.
-        let mut peers = self.router().filter_connected_peers(|peer| {
-            let ip = peer.listener_addr;
-            match self.router().is_dev() {
-                // In development mode, relax the validity requirements to make operating devnets more flexible.
-                true => ip != peer_ip && !is_bogon_ip(ip.ip()),
-                // In production mode, ensure the peer IPs are valid.
-                false => ip != peer_ip && self.router().is_valid_peer_ip(ip),
-            }
-        });
-        // Get the low-level peer stats.
-        let known_peers = self.tcp().known_peers().snapshot();
-
-        // Sort the prospect peers.
-        peers.sort_unstable_by_key(|peer| {
-            if let Some(peer_stats) = known_peers.get(&peer.listener_addr.ip()) {
-                // Prioritize greatest height, then lowest failure count.
-                (cmp::Reverse(peer.last_height_seen), peer_stats.failures())
-            } else {
-                // Unreachable; use an else-compatible dummy.
-                (cmp::Reverse(peer.last_height_seen), 0)
-            }
-        });
-
-        // Truncate and convert to socket addrs.
-        peers.truncate(MAX_PEERS_TO_SEND);
+        let peers = self.router().get_best_connected_peers(Some(MAX_PEERS_TO_SEND));
         let peers = peers.into_iter().map(|peer| (peer.listener_addr, peer.last_height_seen)).collect();
 
         // Send a `PeerResponse` message to the peer.

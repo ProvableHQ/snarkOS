@@ -43,7 +43,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver};
+use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -69,7 +69,10 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::{
+    rngs::OsRng,
+    seq::{IteratorRandom, SliceRandom},
+};
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -97,7 +100,7 @@ const MAX_CONNECTION_ATTEMPTS: usize = 10;
 const RESTRICTED_INTERVAL: i64 = (MAX_CONNECTION_ATTEMPTS as u64 * MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
 
 /// The maximum number of validators to send in a validators response event.
-const MAX_VALIDATORS_TO_SEND: usize = 200;
+pub const MAX_VALIDATORS_TO_SEND: usize = 200;
 
 /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
 #[cfg(not(any(test)))]
@@ -496,8 +499,13 @@ impl<N: Network> Gateway<N> {
             trace!("Dropping a {} from {peer_addr} - no longer connected.", event.name());
             return Ok(false);
         };
-        // Ensure that the peer is an authorized committee member.
-        if !self.is_authorized_validator_ip(peer_ip) {
+        // Ensure that the peer is an authorized committee member or a bootstrapper.
+        if !(self.is_authorized_validator_ip(peer_ip)
+            || self
+                .get_connected_peer(peer_ip)
+                .map(|peer| peer.node_type == NodeType::BootstrapClient)
+                .unwrap_or(false))
+        {
             bail!("{CONTEXT} Dropping '{}' from '{peer_ip}' (not authorized)", event.name())
         }
         // Drop the peer, if they have exceeded the rate limit (i.e. they are requesting too much from us).
@@ -701,14 +709,7 @@ impl<N: Network> Gateway<N> {
                 Ok(true)
             }
             Event::ValidatorsRequest(_) => {
-                // Retrieve the connected peers.
-                let mut connected_peers: Vec<_> = match self.dev.is_some() {
-                    // In development mode, relax the validity requirements to make operating devnets more flexible.
-                    true => self.connected_peers(),
-                    // In production mode, ensure the peer IPs are valid.
-                    false => self.connected_peers().into_iter().filter(|ip| self.is_valid_peer_ip(*ip)).collect(),
-                };
-                // Shuffle the connected peers.
+                let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
                 connected_peers.shuffle(&mut rand::thread_rng());
 
                 let self_ = self.clone();
@@ -716,12 +717,9 @@ impl<N: Network> Gateway<N> {
                     // Initialize the validators.
                     let mut validators = IndexMap::with_capacity(MAX_VALIDATORS_TO_SEND);
                     // Iterate over the validators.
-                    for validator_ip in connected_peers.into_iter().take(MAX_VALIDATORS_TO_SEND) {
-                        // Retrieve the validator address.
-                        if let Some(validator_address) = self_.resolve_to_aleo_addr(validator_ip) {
-                            // Add the validator to the list of validators.
-                            validators.insert(validator_ip, validator_address);
-                        }
+                    for validator in connected_peers.into_iter() {
+                        // Add the validator to the list of validators.
+                        validators.insert(validator.listener_addr, validator.aleo_addr);
                     }
                     // Send the validators response to the peer.
                     let event = Event::ValidatorsResponse(ValidatorsResponse { validators });
@@ -795,7 +793,7 @@ impl<N: Network> Gateway<N> {
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
-                self_clone.heartbeat();
+                self_clone.heartbeat().await;
                 // Sleep for the heartbeat interval.
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
@@ -824,7 +822,7 @@ impl<N: Network> Gateway<N> {
 
 impl<N: Network> Gateway<N> {
     /// Handles the heartbeat request.
-    fn heartbeat(&self) {
+    async fn heartbeat(&self) {
         // Log the connected validators.
         self.log_connected_validators();
         // Log the validator participation scores.
@@ -832,6 +830,8 @@ impl<N: Network> Gateway<N> {
         self.log_participation_scores();
         // Keep the trusted validators connected.
         self.handle_trusted_validators();
+        // Keep the bootstrap peers within the allowed range.
+        self.handle_bootstrap_peers().await;
         // Removes any validators that not in the current committee.
         self.handle_unauthorized_validators();
         // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
@@ -904,20 +904,74 @@ impl<N: Network> Gateway<N> {
         }
     }
 
+    /// This function keeps the number of bootstrap peers within the allowed range.
+    async fn handle_bootstrap_peers(&self) {
+        // Split the bootstrap peers into connected and candidate lists.
+        let mut candidate_bootstrap = Vec::new();
+        let connected_bootstrap = self.filter_connected_peers(|peer| peer.node_type == NodeType::BootstrapClient);
+        for bootstrap_ip in bootstrap_peers::<N>(self.is_dev()) {
+            if !connected_bootstrap.iter().any(|peer| peer.listener_addr == bootstrap_ip) {
+                candidate_bootstrap.push(bootstrap_ip);
+            }
+        }
+        // If there are not enough connected bootstrap peers, connect to more.
+        if connected_bootstrap.is_empty() {
+            // Initialize an RNG.
+            let rng = &mut OsRng;
+            // Attempt to connect to a bootstrap peer.
+            if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
+                match self.connect(peer_ip) {
+                    Some(hdl) => {
+                        let result = hdl.await;
+                        if let Err(err) = result {
+                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
+                        }
+                    }
+                    None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
+                }
+            }
+        }
+        // Determine if the node is connected to more bootstrap peers than allowed.
+        let num_surplus = connected_bootstrap.len().saturating_sub(1);
+        if num_surplus > 0 {
+            // Initialize an RNG.
+            let rng = &mut OsRng;
+            // Proceed to send disconnect requests to these bootstrap peers.
+            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+                info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
+                <Self as Transport<N>>::send(
+                    self,
+                    peer.listener_addr,
+                    Event::Disconnect(DisconnectReason::NoReasonGiven.into()),
+                )
+                .await;
+                // Disconnect from this peer.
+                self.disconnect(peer.listener_addr);
+            }
+        }
+    }
+
     /// This function attempts to disconnect any validators that are not in the current committee.
     fn handle_unauthorized_validators(&self) {
         let self_ = self.clone();
         tokio::spawn(async move {
             // Retrieve the connected validators.
-            let validators = self_.connected_peers();
+            let validators = self_.get_connected_peers();
             // Iterate over the validator IPs.
-            for peer_ip in validators {
+            for peer in validators {
+                // Skip bootstrapper peers.
+                if peer.node_type == NodeType::BootstrapClient {
+                    continue;
+                }
                 // Disconnect any validator that is not in the current committee.
-                if !self_.is_authorized_validator_ip(peer_ip) {
-                    warn!("{CONTEXT} Disconnecting from '{peer_ip}' - Validator is not in the current committee");
-                    Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
+                if !self_.is_authorized_validator_ip(peer.listener_addr) {
+                    warn!(
+                        "{CONTEXT} Disconnecting from '{}' - Validator is not in the current committee",
+                        peer.listener_addr
+                    );
+                    Transport::send(&self_, peer.listener_addr, DisconnectReason::ProtocolViolation.into()).await;
                     // Disconnect from this peer.
-                    self_.disconnect(peer_ip);
+                    self_.disconnect(peer.listener_addr);
                 }
             }
         });
@@ -1138,8 +1192,13 @@ impl<N: Network> Disconnect for Gateway<N> {
 
 #[async_trait]
 impl<N: Network> OnConnect for Gateway<N> {
-    async fn on_connect(&self, _peer_addr: SocketAddr) {
-        return;
+    async fn on_connect(&self, peer_addr: SocketAddr) {
+        if let Some(peer) = self.get_connected_peer(peer_addr) {
+            if peer.node_type == NodeType::BootstrapClient {
+                let _ =
+                    <Self as Transport<N>>::send(self, peer_addr, Event::ValidatorsRequest(ValidatorsRequest)).await;
+            }
+        }
     }
 }
 
@@ -1156,7 +1215,7 @@ impl<N: Network> Handshake for Gateway<N> {
         if self.dev().is_none() && peer_side == ConnectionSide::Initiator {
             // If the IP is already banned reject the connection.
             if self.is_ip_banned(peer_addr.ip()) {
-                trace!("{CONTEXT} Gateway rejected a connection request from banned IP '{}'", peer_addr.ip());
+                trace!("{CONTEXT} Rejected a connection request from banned IP '{}'", peer_addr.ip());
                 return Err(error(format!("'{}' is a banned IP address", peer_addr.ip())));
             }
 
@@ -1165,7 +1224,7 @@ impl<N: Network> Handshake for Gateway<N> {
             debug!("Number of connection attempts from '{}': {}", peer_addr.ip(), num_attempts);
             if num_attempts > MAX_CONNECTION_ATTEMPTS {
                 self.update_ip_ban(peer_addr.ip());
-                trace!("{CONTEXT} Gateway rejected a consecutive connection request from IP '{}'", peer_addr.ip());
+                trace!("{CONTEXT} Rejected a consecutive connection request from IP '{}'", peer_addr.ip());
                 return Err(error(format!("'{}' appears to be spamming connections", peer_addr.ip())));
             }
         }
@@ -1175,10 +1234,10 @@ impl<N: Network> Handshake for Gateway<N> {
         // If this is an inbound connection, we log it, but don't know the listening address yet.
         // Otherwise, we can immediately register the listening address.
         let mut listener_addr = if peer_side == ConnectionSide::Initiator {
-            debug!("{CONTEXT} Gateway received a connection request from '{peer_addr}'");
+            debug!("{CONTEXT} Received a connection request from '{peer_addr}'");
             None
         } else {
-            debug!("{CONTEXT} Gateway is connecting to {peer_addr}...");
+            debug!("{CONTEXT} Shaking hands with {peer_addr}...");
             Some(peer_addr)
         };
 
@@ -1195,19 +1254,18 @@ impl<N: Network> Handshake for Gateway<N> {
         if let Some(addr) = listener_addr {
             match handshake_result {
                 Ok(Some(ref cr)) => {
+                    let (node_type, aleo_address) = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                        (NodeType::BootstrapClient, None)
+                    } else {
+                        (NodeType::Validator, Some(cr.address))
+                    };
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
-                        peer.upgrade_to_connected(
-                            peer_addr,
-                            cr.listener_port,
-                            cr.address,
-                            NodeType::Validator,
-                            cr.version,
-                        );
+                        self.resolver.write().insert_peer(addr, peer_addr, aleo_address);
+                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, node_type, cr.version);
                     }
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
-                    info!("{CONTEXT} Gateway is connected to '{addr}'");
+                    info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Ok(None) => {
                     return Err(error("Duplicate handshake attempt with '{addr}'"));
@@ -1232,7 +1290,7 @@ macro_rules! expect_event {
         match $framed.try_next().await? {
             // Received the expected event, proceed.
             Some($event_ty(data)) => {
-                trace!("{CONTEXT} Gateway received '{}' from '{}'", data.name(), $peer_addr);
+                trace!("{CONTEXT} Received '{}' from '{}'", data.name(), $peer_addr);
                 data
             }
             // Received a disconnect event, abort.
@@ -1265,7 +1323,7 @@ async fn send_event<N: Network>(
     peer_addr: SocketAddr,
     event: Event<N>,
 ) -> io::Result<()> {
-    trace!("{CONTEXT} Gateway is sending '{}' to '{peer_addr}'", event.name());
+    trace!("{CONTEXT} Sending '{}' to '{peer_addr}'", event.name());
     framed.send(event).await
 }
 
@@ -1418,17 +1476,19 @@ impl<N: Network> Gateway<N> {
         let &ChallengeRequest { version, listener_port: _, address, nonce: _ } = event;
         // Ensure the event protocol version is not outdated.
         if version < Event::<N>::VERSION {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' on version {version} (outdated)");
+            warn!("{CONTEXT} Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
-        // Ensure the address is a current committee member.
-        if !self.is_authorized_validator_address(address) {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' for being an unauthorized validator ({address})");
-            return Some(DisconnectReason::ProtocolViolation);
+        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&peer_addr) {
+            // Ensure the address is a current committee member.
+            if !self.is_authorized_validator_address(address) {
+                warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
+                return Some(DisconnectReason::ProtocolViolation);
+            }
         }
         // Ensure the address is not already connected.
         if self.is_connected_address(address) {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' for being already connected ({address})");
+            warn!("{CONTEXT} Dropping '{peer_addr}' for being already connected ({address})");
             return Some(DisconnectReason::ProtocolViolation);
         }
         None
@@ -1448,17 +1508,17 @@ impl<N: Network> Gateway<N> {
 
         // Verify the restrictions ID.
         if restrictions_id != expected_restrictions_id {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (incorrect restrictions ID)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (incorrect restrictions ID)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         // Perform the deferred non-blocking deserialization of the signature.
         let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         };
         // Verify the signature.
         if !signature.verify_bytes(&peer_address, &[expected_nonce.to_le_bytes(), nonce.to_le_bytes()].concat()) {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (invalid signature)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (invalid signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         None

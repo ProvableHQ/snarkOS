@@ -13,11 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Client, Prover, Validator, traits::NodeInterface};
+use crate::{BootstrapClient, Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
-use snarkos_node_router::{Outbound, Router, messages::NodeType};
+use snarkos_node_router::{Outbound, Peer, PeerPoolHandling, messages::NodeType};
 use snarkvm::prelude::{
     Address,
+    Header,
     Ledger,
     Network,
     PrivateKey,
@@ -28,7 +29,12 @@ use snarkvm::prelude::{
 
 use aleo_std::StorageMode;
 use anyhow::Result;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -41,6 +47,8 @@ pub enum Node<N: Network> {
     Prover(Arc<Prover<N, ConsensusMemory<N>>>),
     /// A client node is a full node, capable of querying with the network.
     Client(Arc<Client<N, ConsensusDB<N>>>),
+    /// A bootstrap client node is a light node dedicated to serving lists of peers.
+    BootstrapClient(BootstrapClient<N>),
 }
 
 impl<N: Network> Node<N> {
@@ -129,12 +137,23 @@ impl<N: Network> Node<N> {
         )))
     }
 
+    /// Initializes a new bootstrap client node.
+    pub async fn new_bootstrap_client(
+        listener_addr: SocketAddr,
+        account: Account<N>,
+        genesis_header: Header<N>,
+        dev: Option<u16>,
+    ) -> Result<Self> {
+        Ok(Self::BootstrapClient(BootstrapClient::new(listener_addr, account, genesis_header, dev).await?))
+    }
+
     /// Returns the node type.
     pub fn node_type(&self) -> NodeType {
         match self {
             Self::Validator(validator) => validator.node_type(),
             Self::Prover(prover) => prover.node_type(),
             Self::Client(client) => client.node_type(),
+            Self::BootstrapClient(_) => NodeType::BootstrapClient,
         }
     }
 
@@ -144,6 +163,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.private_key(),
             Self::Prover(node) => node.private_key(),
             Self::Client(node) => node.private_key(),
+            Self::BootstrapClient(node) => node.private_key(),
         }
     }
 
@@ -153,6 +173,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.view_key(),
             Self::Prover(node) => node.view_key(),
             Self::Client(node) => node.view_key(),
+            Self::BootstrapClient(node) => node.view_key(),
         }
     }
 
@@ -162,6 +183,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.address(),
             Self::Prover(node) => node.address(),
             Self::Client(node) => node.address(),
+            Self::BootstrapClient(node) => node.address(),
         }
     }
 
@@ -171,15 +193,17 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.is_dev(),
             Self::Prover(node) => node.is_dev(),
             Self::Client(node) => node.is_dev(),
+            Self::BootstrapClient(node) => node.is_dev(),
         }
     }
 
-    /// Get the router for P2P networking
-    pub fn router(&self) -> &Router<N> {
+    /// Returns a reference to the underlying peer pool.
+    pub fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         match self {
-            Self::Validator(node) => node.router(),
-            Self::Prover(node) => node.router(),
-            Self::Client(node) => node.router(),
+            Self::Validator(validator) => validator.router().peer_pool(),
+            Self::Prover(prover) => prover.router().peer_pool(),
+            Self::Client(client) => client.router().peer_pool(),
+            Self::BootstrapClient(client) => client.peer_pool(),
         }
     }
 
@@ -189,6 +213,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => Some(node.ledger()),
             Self::Prover(_) => None,
             Self::Client(node) => Some(node.ledger()),
+            Self::BootstrapClient(_) => None,
         }
     }
 
@@ -198,6 +223,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.is_block_synced(),
             Self::Prover(node) => node.is_block_synced(),
             Self::Client(node) => node.is_block_synced(),
+            Self::BootstrapClient(_) => true,
         }
     }
 
@@ -208,6 +234,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.num_blocks_behind(),
             Self::Prover(node) => node.num_blocks_behind(),
             Self::Client(node) => node.num_blocks_behind(),
+            Self::BootstrapClient(_) => Some(0),
         }
     }
 
@@ -218,6 +245,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.get_sync_speed(),
             Self::Prover(node) => node.get_sync_speed(),
             Self::Client(node) => node.get_sync_speed(),
+            Self::BootstrapClient(_) => 0.0,
         }
     }
 
@@ -227,6 +255,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.shut_down().await,
             Self::Prover(node) => node.shut_down().await,
             Self::Client(node) => node.shut_down().await,
+            Self::BootstrapClient(node) => node.shut_down().await,
         }
     }
 }

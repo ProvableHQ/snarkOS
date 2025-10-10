@@ -60,6 +60,9 @@ workspace = true
 [dependencies.async-trait]
 workspace = true
 
+[dependencies.bytes]
+workspace = true
+
 [dependencies.colored]
 workspace = true
 
@@ -89,6 +92,10 @@ workspace = true
 
 [dependencies.http]
 workspace = true
+
+[dependencies.reqwest]
+version = "0.12"
+features = [ "json", "rustls-tls" ]
 
 [dependencies.serde_json]
 workspace = true
@@ -127,6 +134,9 @@ workspace = true
 [dependencies.tokio]
 workspace = true
 features = [ "rt", "signal" ]
+
+[dependencies.tokio-stream]
+version = "=0.1"
 
 [dependencies.tokio-util]
 workspace = true

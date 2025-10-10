@@ -1,0 +1,208 @@
+// Copyright (c) 2019-2025 Provable Inc.
+// This file is part of the snarkOS library.
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+mod codec;
+mod handshake;
+mod network;
+
+use crate::{
+    router::{Peer, Resolver},
+    tcp::{self, Tcp},
+};
+use snarkos_account::Account;
+use snarkos_node_tcp::{P2P, protocols::*};
+use snarkvm::{
+    ledger::committee::Committee,
+    prelude::{Address, Field, Header, Network, PrivateKey, ViewKey},
+    synthesizer::Restrictions,
+};
+
+#[cfg(feature = "locktick")]
+use locktick::{
+    parking_lot::{Mutex, RwLock},
+    tokio::Mutex as TMutex,
+};
+#[cfg(not(feature = "locktick"))]
+use parking_lot::{Mutex, RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    ops::Deref,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+#[cfg(not(feature = "locktick"))]
+use tokio::sync::Mutex as TMutex;
+use tokio::sync::oneshot;
+
+#[derive(Clone)]
+pub struct BootstrapClient<N: Network>(Arc<InnerBootstrapClient<N>>);
+
+impl<N: Network> Deref for BootstrapClient<N> {
+    type Target = Arc<InnerBootstrapClient<N>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct InnerBootstrapClient<N: Network> {
+    tcp: Tcp,
+    peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
+    known_validators: RwLock<HashMap<SocketAddr, Address<N>>>,
+    resolver: RwLock<Resolver<N>>,
+    account: Account<N>,
+    genesis_header: Header<N>,
+    restrictions_id: Field<N>,
+    http_client: reqwest::Client,
+    latest_committee: TMutex<(HashSet<Address<N>>, Instant)>,
+    dev: Option<u16>,
+    shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl<N: Network> BootstrapClient<N> {
+    // The interval for validator committee refreshes.
+    const COMMITTEE_REFRESH_TIME: Duration = Duration::from_secs(20);
+    // The maximum amount of time per connection.
+    const CONNECTION_LIFETIME: Duration = Duration::from_secs(15);
+    // The maximum number of connected peers.
+    const MAX_PEERS: u16 = 1_000;
+
+    pub async fn new(
+        listener_addr: SocketAddr,
+        account: Account<N>,
+        genesis_header: Header<N>,
+        dev: Option<u16>,
+    ) -> anyhow::Result<Self> {
+        // Initialize the TCP stack.
+        let tcp = Tcp::new(tcp::Config::new(listener_addr, Self::MAX_PEERS));
+        // Initialize the peer pool.
+        let peer_pool = Default::default();
+        // Initialize a collection of validators that had connected in Gateway mode.
+        let known_validators = Default::default();
+        // Load the restrictions ID.
+        let restrictions_id = Restrictions::load()?.restrictions_id();
+        // Create a resolver.
+        let resolver = Default::default();
+        // Create an HTTP client to obtain the current committee.
+        let http_client = reqwest::Client::new();
+        // Prepare a placeholder committee, ensuring that it's insta-outdated.
+        let latest_committee = TMutex::new((Default::default(), Instant::now() - Self::COMMITTEE_REFRESH_TIME));
+
+        // Prepare the shutdown channel.
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let shutdown_tx = Mutex::new(Some(shutdown_tx));
+
+        // Construct and return the bootstrap client.
+        let inner = InnerBootstrapClient {
+            tcp,
+            peer_pool,
+            known_validators,
+            resolver,
+            account,
+            genesis_header,
+            restrictions_id,
+            http_client,
+            latest_committee,
+            dev,
+            shutdown_tx,
+        };
+        let node = BootstrapClient(Arc::new(inner));
+
+        // Enable the TCP protocols.
+        node.enable_handshake().await;
+        node.enable_reading().await;
+        node.enable_writing().await;
+        node.enable_disconnect().await;
+        node.enable_on_connect().await;
+        // Enable the TCP listener. Note: This must be called after the above protocols.
+        node.tcp().enable_listener().await.expect("Failed to enable the TCP listener");
+
+        // Await the shutdown signal.
+        let _ = shutdown_rx.await;
+
+        Ok(node)
+    }
+
+    /// Returns the account address of the node.
+    pub fn address(&self) -> Address<N> {
+        self.account.address()
+    }
+
+    /// Returns the account private key of the node.
+    pub fn private_key(&self) -> &PrivateKey<N> {
+        self.account.private_key()
+    }
+
+    /// Returns the account view key of the node.
+    pub fn view_key(&self) -> &ViewKey<N> {
+        self.account.view_key()
+    }
+
+    /// Returns the listener IP address from the connected peer address.
+    pub fn resolve_to_listener(&self, connected_addr: SocketAddr) -> Option<SocketAddr> {
+        self.resolver.read().get_listener(connected_addr)
+    }
+
+    /// Returns `true` if the node is in development mode.
+    pub fn is_dev(&self) -> bool {
+        self.dev.is_some()
+    }
+
+    /// Returns the current validator committee or updates it from the explorer, if
+    /// we are capable of obtaining it from the network.
+    pub async fn get_or_update_committee(&self) -> anyhow::Result<Option<HashSet<Address<N>>>> {
+        // The current committee can't be looked up in dev mode.
+        if self.is_dev() {
+            return Ok(None);
+        }
+
+        let now = Instant::now();
+        let (committee, timestamp) = &mut *self.latest_committee.lock().await;
+        if now - *timestamp >= Self::COMMITTEE_REFRESH_TIME {
+            debug!("Updating the validator committee");
+            *timestamp = now;
+            let committe_query_addr = format!("https://api.explorer.provable.com/v2/{}/committee/latest", N::NAME);
+            let response = self.http_client.get(committe_query_addr).send().await?;
+            let json = response.text().await?;
+            let full_committee = Committee::from_str(&json)?;
+            *committee = full_committee.members().keys().copied().collect();
+            debug!("The validator committee has {} members now", committee.len());
+
+            Ok(Some(committee.clone()))
+        } else {
+            Ok(Some(committee.clone()))
+        }
+    }
+
+    /// Returns the list of known validators connected in Gateway mode.
+    pub fn get_known_validators(&self) -> HashMap<SocketAddr, Address<N>> {
+        self.known_validators.read().clone()
+    }
+
+    /// Shuts down the bootstrap client.
+    pub async fn shut_down(&self) {
+        info!("Shutting down the bootstrap client...");
+
+        // Shut down the low-level network features.
+        self.tcp.shut_down().await;
+
+        // Shut down the node.
+        if let Some(shutdown_tx) = self.shutdown_tx.lock().take() {
+            let _ = shutdown_tx.send(());
+        }
+    }
+}

@@ -241,7 +241,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // If we're about to exceed the peer pool size limit, apply candidate slashing.
-        if self.number_of_peers() + listener_addrs.len() - num_updates >= Self::MAXIMUM_POOL_SIZE
+        if peer_pool.len() + listener_addrs.len() - num_updates >= Self::MAXIMUM_POOL_SIZE
             && Self::PEER_SLASHING_COUNT != 0
         {
             // Collect the addresses of prospect peers.
@@ -271,7 +271,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // Make sure that we won't breach the pool size limit in case the slashing didn't suffice.
-        listener_addrs.truncate(Self::MAXIMUM_POOL_SIZE.saturating_sub(self.number_of_peers()));
+        listener_addrs.truncate(Self::MAXIMUM_POOL_SIZE.saturating_sub(peer_pool.len()));
 
         // If we've managed to truncate to 0, exit.
         if listener_addrs.is_empty() {
@@ -383,6 +383,31 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Returns all connected peers.
     fn get_connected_peers(&self) -> Vec<ConnectedPeer<N>> {
         self.filter_connected_peers(|_| true)
+    }
+
+    /// Returns an optionally bounded list of all connected peers sorted by their
+    /// block height (highest first) and failure count (lowest first).
+    fn get_best_connected_peers(&self, max_entries: Option<usize>) -> Vec<ConnectedPeer<N>> {
+        // Get a snapshot of the currently connected peers.
+        let mut peers = self.get_connected_peers();
+        // Get the low-level peer stats.
+        let known_peers = self.tcp().known_peers().snapshot();
+
+        // Sort the prospect peers.
+        peers.sort_unstable_by_key(|peer| {
+            if let Some(peer_stats) = known_peers.get(&peer.listener_addr.ip()) {
+                // Prioritize greatest height, then lowest failure count.
+                (cmp::Reverse(peer.last_height_seen), peer_stats.failures())
+            } else {
+                // Unreachable; use an else-compatible dummy.
+                (cmp::Reverse(peer.last_height_seen), 0)
+            }
+        });
+        if let Some(max) = max_entries {
+            peers.truncate(max);
+        }
+
+        peers
     }
 
     /// Returns all connected peers that satisify the given predicate.
@@ -668,8 +693,9 @@ impl<N: Network> Router<N> {
         // - Provers always operate at the latest message version.
         // - Validators and clients may accept older versions, depending on their current block height.
         let lowest_accepted_message_version = match self.node_type {
-            // Provers should always use the latest version.
-            NodeType::Prover => Message::<N>::latest_message_version(),
+            // Provers should always use the latest version. The bootstrap clients are forced to
+            // be strict, as they don't follow the current chain height.
+            NodeType::Prover | NodeType::BootstrapClient => Message::<N>::latest_message_version(),
             // Validators and clients accept messages from lower version based on the migration height.
             NodeType::Validator | NodeType::Client => {
                 Message::<N>::lowest_accepted_message_version(self.ledger.latest_block_height())
