@@ -60,10 +60,12 @@ where
 {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        if let Some(peer) = self.router.get_connected_peer(peer_addr) {
-            if peer.node_type != NodeType::BootstrapClient {
-                // Send the first `Ping` message to the peer.
-                self.ping.on_peer_connected(peer.listener_addr);
+        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
+            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
+                if peer.node_type != NodeType::BootstrapClient {
+                    // Send the first `Ping` message to the peer.
+                    self.ping.on_peer_connected(listener_addr);
+                }
             }
         }
     }
