@@ -19,8 +19,11 @@ use crate::helpers::{args::prepare_endpoint, dev::get_development_key};
 use snarkos_node_cdn::CDN_BASE_URL;
 use snarkvm::{
     console::network::Network,
-    prelude::{Ciphertext, Field, FromBytes, Plaintext, PrivateKey, Record, ViewKey, block::Block},
+    prelude::{Ciphertext, Field, Plaintext, PrivateKey, Record, ViewKey, block::Block},
 };
+
+#[cfg(not(feature = "test_targets"))]
+use snarkvm::prelude::FromBytes;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, builder::NonEmptyStringValueParser};
@@ -103,7 +106,8 @@ impl Scan {
         let (start_height, end_height) = self.parse_block_range::<N>(&endpoint)?;
 
         // Fetch the records from the network.
-        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)?;
+        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)
+            .with_context(|| "Failed to fetch records")?;
 
         // Output the decrypted records associated with the view key.
         if records.is_empty() {
@@ -200,11 +204,19 @@ impl Scan {
         print!("\rScanning {total_blocks} blocks for records (0% complete)...");
         stdout().flush()?;
 
-        // Fetch the genesis block from the endpoint.
-        let genesis_block: Block<N> =
-            ureq::get(&format!("{endpoint}{}/block/0", N::SHORT_NAME)).call()?.into_body().read_json()?;
-        // Determine if the endpoint is on a development network.
-        let is_development_network = genesis_block != Block::from_bytes_le(N::genesis_bytes())?;
+        // If the CLI was compiled with test targets, always assume the endpoint is on a development network.
+        #[cfg(feature = "test_targets")]
+        let is_development_network = true;
+
+        // Otherwise, determine if the endpoint is on a development network based on its genesis block.
+        #[cfg(not(feature = "test_targets"))]
+        let is_development_network = {
+            // Fetch the genesis block from the endpoint.
+            let endpoint_genesis_block: Block<N> =
+                ureq::get(&format!("{endpoint}{}/block/0", N::SHORT_NAME)).call()?.into_body().read_json()?;
+            // If the endpoint's block differs from our (production) block, it is on a development network.
+            endpoint_genesis_block != Block::from_bytes_le(N::genesis_bytes())?
+        };
 
         // Determine the request start height.
         let mut request_start = match is_development_network {
