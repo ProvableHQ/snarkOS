@@ -93,6 +93,16 @@ workspace = true
 [dependencies.rayon]
 workspace = true
 
+[dependencies.serde]
+workspace = true
+features = [ "derive" ]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.once_cell]
+version = "1.0"
+
 [dependencies.sha2]
 version = "0.10"
 default-features = false

@@ -562,6 +562,7 @@ impl<N: Network> BFT<N> {
     ) -> Result<()> {
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
+        crate::helpers::end_stage(latest_leader_round, crate::helpers::ConsensusStage::CertificateCollection);
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];
