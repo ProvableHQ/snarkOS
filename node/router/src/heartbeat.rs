@@ -117,7 +117,6 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     /// Rules:
     ///     - Trusted peers and bootstrap nodes are not removable.
     ///     - Peers that we are currently syncing with are not removable.
-    ///     - Validators are considered higher priority than provers or clients.
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
         // Are we synced already? (cache this here, so it does not need to be recomputed)
