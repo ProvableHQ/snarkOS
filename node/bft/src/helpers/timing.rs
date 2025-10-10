@@ -69,8 +69,8 @@ pub struct SubdagTimings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimingSnapshot {
     pub timestamp: SystemTime,
-    pub round_timings: HashMap<u64, RoundTimings>,
-    pub subdag_timings: HashMap<(u64, u64), SubdagTimings>,
+    pub round_timings: HashMap<String, RoundTimings>,
+    pub subdag_timings: HashMap<String, SubdagTimings>,
 }
 
 impl RoundTimings {
@@ -215,7 +215,18 @@ pub fn get_timing_snapshot() -> TimingSnapshot {
     let round_timings = ROUND_TIMINGS.read().map(|t| t.clone()).unwrap_or_default();
     let subdag_timings = SUBDAG_TIMINGS.read().map(|t| t.clone()).unwrap_or_default();
 
-    TimingSnapshot { timestamp: SystemTime::now(), round_timings, subdag_timings }
+    // Convert keys to strings for JSON serialization
+    let round_timings_str: HashMap<String, RoundTimings> = round_timings
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    
+    let subdag_timings_str: HashMap<String, SubdagTimings> = subdag_timings
+        .into_iter()
+        .map(|((low, high), v)| (format!("{}-{}", low, high), v))
+        .collect();
+
+    TimingSnapshot { timestamp: SystemTime::now(), round_timings: round_timings_str, subdag_timings: subdag_timings_str }
 }
 
 /// Export current timing state to a JSON file
@@ -293,5 +304,29 @@ mod tests {
         } else {
             panic!("Expected complete timing data");
         }
+    }
+
+    #[test]
+    fn test_json_export() {
+        let round = 54321;
+        let (low, high) = (200, 210);
+
+        // Add some timing data
+        start_stage(round, ConsensusStage::ProposalGeneration);
+        thread::sleep(Duration::from_millis(5));
+        end_stage(round, ConsensusStage::ProposalGeneration);
+
+        start_subdag_stage(low, high, SubdagStage::SubdagProcessing);
+        thread::sleep(Duration::from_millis(5));
+        end_subdag_stage(low, high, SubdagStage::SubdagProcessing);
+
+        // Test JSON export
+        let snapshot = get_timing_snapshot();
+        let json_result = serde_json::to_string_pretty(&snapshot);
+        assert!(json_result.is_ok(), "JSON serialization should succeed");
+
+        let json_str = json_result.unwrap();
+        assert!(json_str.contains(&round.to_string()), "JSON should contain round data");
+        assert!(json_str.contains(&format!("{}-{}", low, high)), "JSON should contain subdag data");
     }
 }

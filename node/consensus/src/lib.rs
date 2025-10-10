@@ -536,7 +536,7 @@ impl<N: Network> Consensus<N> {
             snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
         );
         let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
-        let next_block_height = next_block.height();
+        let _next_block_height = next_block.height();
         snarkos_node_bft::helpers::end_subdag_stage(
             lowest_round,
             highest_round,
@@ -568,7 +568,7 @@ impl<N: Network> Consensus<N> {
         );
 
         // Export timing data to JSON after block generation
-        let json_filename = format!("consensus_timing_block_{next_block_height}.json");
+        let json_filename = format!("consensus_timing_block.json");
         if let Err(e) = snarkos_node_bft::helpers::export_to_json(&json_filename) {
             warn!("Failed to export timing data to {}: {}", json_filename, e);
         } else {
