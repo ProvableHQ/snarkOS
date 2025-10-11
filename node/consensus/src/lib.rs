@@ -568,7 +568,7 @@ impl<N: Network> Consensus<N> {
         );
 
         // Export timing data to JSON after block generation
-        let dev_index = self.bft().primary().gateway().dev.unwrap(); // TODO: cleanly handle unwrap.
+        let dev_index = self.bft().primary().gateway().dev().unwrap(); // TODO: cleanly handle unwrap.
         let json_filename = format!("consensus_timing_block_{dev_index}.json");
         if let Err(e) = snarkos_node_bft::helpers::export_to_json(&json_filename) {
             warn!("Failed to export timing data to {}: {}", json_filename, e);
