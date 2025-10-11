@@ -75,8 +75,18 @@ pub fn generate_bar_chart(
         .y_desc("Time (seconds from start)")
         .draw()?;
 
-    let mut legend_entries = Vec::new();
-    let mut used_labels = std::collections::HashSet::new();
+    // Define the chronological order of stages for the legend
+    let chronological_stages = [
+        ("proposal_generation", "Proposal Generation"),
+        ("certificate_generation", "Certificate Generation"),
+        ("certificate_collection", "Certificate Collection"),
+        ("subdag_processing", "Subdag Processing"),
+        ("check_next_block", "Check Next Block"),
+        ("advance_to_next_block", "Advance to Next Block"),
+    ];
+
+    // Track which stages are actually present in the data
+    let mut stages_present = std::collections::HashSet::new();
 
     // Draw round-based stages
     for (&round_num, round_data) in &data.round_timings {
@@ -91,19 +101,15 @@ pub fn generate_bar_chart(
             let height = timing.duration().unwrap();
 
             let color = StageColors::get_color(stage_name);
-            let display_name = StageColors::get_stage_display_name(stage_name);
 
-            // Draw the bar
+            // Draw the bar (without legend for now)
             chart.draw_series(std::iter::once(Rectangle::new(
                 [(x_center - width / 2.0, y_start), (x_center + width / 2.0, y_start + height)],
                 color.filled(),
             )))?;
 
-            // Add to legend if not already added
-            if !used_labels.contains(display_name) {
-                legend_entries.push((display_name, color));
-                used_labels.insert(display_name);
-            }
+            // Mark this stage as present
+            stages_present.insert(stage_name.as_str());
         }
     }
 
@@ -120,19 +126,28 @@ pub fn generate_bar_chart(
             let height = timing.duration().unwrap();
 
             let color = StageColors::get_color(stage_name);
-            let display_name = StageColors::get_stage_display_name(stage_name);
 
-            // Draw the bar
+            // Draw the bar (without legend for now)
             chart.draw_series(std::iter::once(Rectangle::new(
                 [(x_center - width / 2.0, y_start), (x_center + width / 2.0, y_start + height)],
                 color.filled(),
             )))?;
 
-            // Add to legend if not already added
-            if !used_labels.contains(display_name) {
-                legend_entries.push((display_name, color));
-                used_labels.insert(display_name);
-            }
+            // Mark this stage as present
+            stages_present.insert(stage_name.as_str());
+        }
+    }
+
+    // Now create legend entries in chronological order
+    for (stage_key, display_name) in chronological_stages.iter() {
+        if stages_present.contains(stage_key) {
+            let color = StageColors::get_color(stage_key);
+            
+            // Create a dummy series just for the legend entry
+            let legend_series = chart.draw_series(std::iter::empty::<Rectangle<(f64, f64)>>())?;
+            legend_series.label(*display_name).legend(move |(x, y)| {
+                Rectangle::new([(x, y), (x + 10, y + 10)], color.filled())
+            });
         }
     }
 
@@ -142,16 +157,6 @@ pub fn generate_bar_chart(
         .background_style(&WHITE.mix(0.8))
         .border_style(&BLACK)
         .draw()?;
-
-    // Manually add legend entries
-    for (label, color) in legend_entries {
-        chart.draw_series(std::iter::once(Rectangle::new(
-            [(-1000.0, -1000.0), (-999.0, -999.0)], // Off-screen rectangle for legend
-            color.filled(),
-        )))?.label(label);
-    }
-
-    chart.configure_series_labels().draw()?;
 
     root.present()?;
     println!("Chart saved to {}", output_path);
