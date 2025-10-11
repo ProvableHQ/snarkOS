@@ -425,8 +425,6 @@ impl<N: Network> Primary<N> {
         #[cfg(feature = "metrics")]
         metrics::gauge(metrics::bft::PROPOSAL_ROUND, round as f64);
 
-        crate::helpers::start_stage(round, crate::helpers::ConsensusStage::ProposalGeneration);
-
         // Ensure that the primary does not create a new proposal too quickly.
         if let Err(e) = self.check_proposal_timestamp(previous_round, self.gateway.account().address(), now()) {
             debug!("Primary is safely skipping a batch proposal for round {round} - {}", format!("{e}").dimmed());
@@ -696,14 +694,16 @@ impl<N: Network> Primary<N> {
                 error!("Failed to reinsert transmissions: {e:?}");
             }
         })?;
+        
+        // Record the proposal created event
+        crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated, Some(true));
+        
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
         // Set the timestamp of the latest proposed batch.
         *self.latest_proposed_batch_timestamp.write() = proposal.timestamp();
         // Set the proposed batch.
         *self.proposed_batch.write() = Some(proposal);
-        crate::helpers::end_stage(round, crate::helpers::ConsensusStage::ProposalGeneration);
-        crate::helpers::start_stage(round, crate::helpers::ConsensusStage::CertificateGeneration);
         Ok(())
     }
 
@@ -764,6 +764,9 @@ impl<N: Network> Primary<N> {
                 batch_header.committee_id()
             );
         }
+
+        // Record the proposal seen event
+        crate::helpers::record_event(batch_round, crate::helpers::ConsensusStage::ProposalSeen, Some(false));
 
         // Retrieve the cached round and batch ID for this validator.
         if let Some((signed_round, signed_batch_id, signature)) =
@@ -1083,6 +1086,7 @@ impl<N: Network> Primary<N> {
 
         #[cfg(feature = "metrics")]
         metrics::increment_gauge(metrics::bft::CERTIFIED_BATCHES, 1.0);
+
         Ok(())
     }
 
@@ -1625,9 +1629,6 @@ impl<N: Network> Primary<N> {
     async fn store_and_broadcast_certificate(&self, proposal: &Proposal<N>, committee: &Committee<N>) -> Result<()> {
         // Create the batch certificate and transmissions.
         let (certificate, transmissions) = tokio::task::block_in_place(|| proposal.to_certificate(committee))?;
-        let round = certificate.round();
-        crate::helpers::end_stage(round, crate::helpers::ConsensusStage::CertificateGeneration);
-        crate::helpers::start_stage(round, crate::helpers::ConsensusStage::CertificateCollection);
         // Convert the transmissions into a HashMap.
         // Note: Do not change the `Proposal` to use a HashMap. The ordering there is necessary for safety.
         let transmissions = transmissions.into_iter().collect::<HashMap<_, _>>();

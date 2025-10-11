@@ -480,6 +480,9 @@ impl<N: Network> BFT<N> {
         // Insert the certificate into the DAG.
         self.dag.write().insert(certificate);
 
+        // Record the certificate added event
+        crate::helpers::record_event(certificate_round, crate::helpers::ConsensusStage::CertificateAdded, None);
+
         // Get the previous round number.
         let commit_round = certificate_round.saturating_sub(1);
 
@@ -562,7 +565,6 @@ impl<N: Network> BFT<N> {
     ) -> Result<()> {
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
-        crate::helpers::end_stage(latest_leader_round, crate::helpers::ConsensusStage::CertificateCollection);
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];

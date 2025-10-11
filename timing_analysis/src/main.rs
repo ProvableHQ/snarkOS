@@ -1,10 +1,25 @@
+// Copyright (c) 2019-2025 Provable Inc.
+// This file is part of the snarkOS library.
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 mod data;
 mod visualization;
 
 use anyhow::{Context, Result};
 use clap::{Arg, Command};
 use data::load_timing_data;
-use visualization::{generate_bar_chart, generate_text_visualization, print_summary};
+use visualization::{generate_scatter_chart, generate_text_visualization, print_summary};
 
 fn main() -> Result<()> {
     // Initialize tracing
@@ -78,7 +93,7 @@ fn main() -> Result<()> {
             .context("Failed to generate text visualization")?;
     } else {
         // Try to generate the chart
-        match generate_bar_chart(&timing_data, output_file, width, height) {
+        match generate_scatter_chart(&timing_data, output_file, width, height) {
             Ok(()) => {
                 println!("Chart successfully saved to: {}", output_file);
             }
@@ -97,7 +112,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{JsonSystemTime, RawRoundTiming, RawSubdagTiming, RawTimingSnapshot};
+    use crate::data::{JsonSystemTime, JsonRoundEvents, JsonTimingEvent, RawSubdagTiming, RawTimingSnapshot};
     use std::collections::HashMap;
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -110,22 +125,28 @@ mod tests {
                 secs_since_epoch: 1640995200,
                 nanos_since_epoch: 0,
             },
-            round_timings: {
+            round_events: {
                 let mut map = HashMap::new();
-                map.insert("100".to_string(), RawRoundTiming {
+                map.insert("100".to_string(), JsonRoundEvents {
                     round: 100,
-                    proposal_generation: Some((
-                        JsonSystemTime { secs_since_epoch: 1640995200, nanos_since_epoch: 0 },
-                        Some(JsonSystemTime { secs_since_epoch: 1640995201, nanos_since_epoch: 500_000_000 })
-                    )),
-                    certificate_generation: Some((
-                        JsonSystemTime { secs_since_epoch: 1640995201, nanos_since_epoch: 500_000_000 },
-                        Some(JsonSystemTime { secs_since_epoch: 1640995202, nanos_since_epoch: 200_000_000 })
-                    )),
-                    certificate_collection: Some((
-                        JsonSystemTime { secs_since_epoch: 1640995202, nanos_since_epoch: 200_000_000 },
-                        Some(JsonSystemTime { secs_since_epoch: 1640995203, nanos_since_epoch: 0 })
-                    )),
+                    proposal_seen: vec![JsonTimingEvent {
+                        round: 100,
+                        timestamp: JsonSystemTime { secs_since_epoch: 1640995200, nanos_since_epoch: 0 },
+                        event_type: "proposal_seen".to_string(),
+                        is_local: Some(false),
+                    }],
+                    proposal_created: vec![JsonTimingEvent {
+                        round: 100,
+                        timestamp: JsonSystemTime { secs_since_epoch: 1640995201, nanos_since_epoch: 500_000_000 },
+                        event_type: "proposal_created".to_string(),
+                        is_local: Some(true),
+                    }],
+                    certificate_added: vec![JsonTimingEvent {
+                        round: 100,
+                        timestamp: JsonSystemTime { secs_since_epoch: 1640995202, nanos_since_epoch: 200_000_000 },
+                        event_type: "certificate_added".to_string(),
+                        is_local: None,
+                    }],
                 });
                 map
             },
@@ -167,14 +188,17 @@ mod tests {
         assert!(result.is_ok());
         
         let data = result.unwrap();
-        assert_eq!(data.round_timings.len(), 1);
+        assert_eq!(data.events.len(), 3);
         assert_eq!(data.subdag_timings.len(), 1);
         
-        // Verify round timing data
-        let round_100 = data.round_timings.get(&100).unwrap();
-        assert!(round_100.contains_key("proposal_generation"));
-        assert!(round_100.contains_key("certificate_generation"));
-        assert!(round_100.contains_key("certificate_collection"));
+        // Verify event data
+        let proposal_created_events = data.get_events_by_type("proposal_created");
+        assert_eq!(proposal_created_events.len(), 1);
+        assert_eq!(proposal_created_events[0].round, 100);
+        
+        let proposal_seen_events = data.get_events_by_type("proposal_seen");
+        assert_eq!(proposal_seen_events.len(), 1);
+        assert_eq!(proposal_seen_events[0].is_local, Some(false));
         
         // Verify subdag timing data
         let subdag_100_102 = data.subdag_timings.get(&(100, 102)).unwrap();

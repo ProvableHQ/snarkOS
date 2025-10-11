@@ -1,3 +1,18 @@
+// Copyright (c) 2019-2025 Provable Inc.
+// This file is part of the snarkOS library.
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -52,13 +67,22 @@ impl TimingData {
     }
 }
 
-/// Raw round timing data from JSON
+/// Timing event for a specific consensus stage
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RawRoundTiming {
+pub struct JsonTimingEvent {
     pub round: u64,
-    pub proposal_generation: Option<(JsonSystemTime, Option<JsonSystemTime>)>,
-    pub certificate_generation: Option<(JsonSystemTime, Option<JsonSystemTime>)>,
-    pub certificate_collection: Option<(JsonSystemTime, Option<JsonSystemTime>)>,
+    pub timestamp: JsonSystemTime,
+    pub event_type: String,
+    pub is_local: Option<bool>, // Some(true) for local events, Some(false) for peer events, None for unknown
+}
+
+/// Round-based events from JSON
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRoundEvents {
+    pub round: u64,
+    pub proposal_seen: Vec<JsonTimingEvent>,
+    pub proposal_created: Vec<JsonTimingEvent>,
+    pub certificate_added: Vec<JsonTimingEvent>,
 }
 
 /// Raw subdag timing data from JSON
@@ -75,15 +99,40 @@ pub struct RawSubdagTiming {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawTimingSnapshot {
     pub timestamp: JsonSystemTime,
-    pub round_timings: HashMap<String, RawRoundTiming>,
+    pub round_events: HashMap<String, JsonRoundEvents>,
     pub subdag_timings: HashMap<String, RawSubdagTiming>,
+}
+
+/// Processed timing event
+#[derive(Debug, Clone)]
+pub struct TimingEvent {
+    pub round: u64,
+    pub timestamp: f64,
+    pub event_type: String,
+    pub is_local: Option<bool>,
+}
+
+impl TimingEvent {
+    pub fn new(round: u64, timestamp: f64, event_type: String, is_local: Option<bool>) -> Self {
+        Self {
+            round,
+            timestamp,
+            event_type,
+            is_local,
+        }
+    }
+
+    /// Check if this is a local event (created by this node)
+    pub fn is_local_event(&self) -> bool {
+        self.is_local.unwrap_or(false)
+    }
 }
 
 /// Processed timing data for analysis
 #[derive(Debug, Clone)]
 pub struct ProcessedTimingData {
     pub snapshot_timestamp: f64,
-    pub round_timings: IndexMap<u64, HashMap<String, TimingData>>,
+    pub events: Vec<TimingEvent>,
     pub subdag_timings: IndexMap<(u64, u64), HashMap<String, TimingData>>,
 }
 
@@ -92,23 +141,23 @@ impl ProcessedTimingData {
     pub fn new(snapshot_timestamp: f64) -> Self {
         Self {
             snapshot_timestamp,
-            round_timings: IndexMap::new(),
+            events: Vec::new(),
             subdag_timings: IndexMap::new(),
         }
+    }
+
+    /// Add an event to the processed data
+    pub fn add_event(&mut self, event: TimingEvent) {
+        self.events.push(event);
     }
 
     /// Get the overall time range of all timing data
     pub fn get_time_range(&self) -> (f64, f64) {
         let mut all_times = Vec::new();
 
-        // Collect all timestamps from round timings
-        for round_data in self.round_timings.values() {
-            for timing in round_data.values() {
-                all_times.push(timing.start_time);
-                if let Some(end_time) = timing.end_time {
-                    all_times.push(end_time);
-                }
-            }
+        // Collect all timestamps from events
+        for event in &self.events {
+            all_times.push(event.timestamp);
         }
 
         // Collect all timestamps from subdag timings
@@ -135,9 +184,9 @@ impl ProcessedTimingData {
     pub fn get_all_rounds(&self) -> Vec<u64> {
         let mut rounds = std::collections::HashSet::new();
 
-        // Add rounds from round timings
-        for &round in self.round_timings.keys() {
-            rounds.insert(round);
+        // Add rounds from events
+        for event in &self.events {
+            rounds.insert(event.round);
         }
 
         // Add rounds from subdag timings
@@ -151,6 +200,27 @@ impl ProcessedTimingData {
         sorted_rounds.sort();
         sorted_rounds
     }
+
+    /// Get all event types
+    pub fn get_all_event_types(&self) -> Vec<String> {
+        let mut event_types = std::collections::HashSet::new();
+        for event in &self.events {
+            event_types.insert(event.event_type.clone());
+        }
+        let mut sorted_types: Vec<String> = event_types.into_iter().collect();
+        sorted_types.sort();
+        sorted_types
+    }
+
+    /// Get events for a specific round
+    pub fn get_events_for_round(&self, round: u64) -> Vec<&TimingEvent> {
+        self.events.iter().filter(|e| e.round == round).collect()
+    }
+
+    /// Get events by type
+    pub fn get_events_by_type(&self, event_type: &str) -> Vec<&TimingEvent> {
+        self.events.iter().filter(|e| e.event_type == event_type).collect()
+    }
 }
 
 /// Parse raw timing data into processed format
@@ -158,47 +228,41 @@ pub fn parse_timing_data(raw: RawTimingSnapshot) -> Result<ProcessedTimingData> 
     let snapshot_timestamp = raw.timestamp.into();
     let mut processed = ProcessedTimingData::new(snapshot_timestamp);
 
-    // Process round timings
-    for (round_str, raw_round) in raw.round_timings {
+    // Process round events
+    for (round_str, round_events) in raw.round_events {
         let round_num: u64 = round_str.parse()
             .with_context(|| format!("Failed to parse round number: {}", round_str))?;
 
-        let mut round_data = HashMap::new();
-
-        // Process each stage
-        if let Some((start, end)) = raw_round.proposal_generation {
-            let start_time: f64 = start.into();
-            let end_time = end.map(|e| e.into());
-            round_data.insert(
-                "proposal_generation".to_string(),
-                TimingData::new("proposal_generation".to_string(), start_time, end_time),
-            );
+        // Process each event type
+        for event in round_events.proposal_seen {
+            processed.add_event(TimingEvent::new(
+                round_num,
+                event.timestamp.into(),
+                "proposal_seen".to_string(),
+                event.is_local,
+            ));
         }
 
-        if let Some((start, end)) = raw_round.certificate_generation {
-            let start_time: f64 = start.into();
-            let end_time = end.map(|e| e.into());
-            round_data.insert(
-                "certificate_generation".to_string(),
-                TimingData::new("certificate_generation".to_string(), start_time, end_time),
-            );
+        for event in round_events.proposal_created {
+            processed.add_event(TimingEvent::new(
+                round_num,
+                event.timestamp.into(),
+                "proposal_created".to_string(),
+                event.is_local,
+            ));
         }
 
-        if let Some((start, end)) = raw_round.certificate_collection {
-            let start_time: f64 = start.into();
-            let end_time = end.map(|e| e.into());
-            round_data.insert(
-                "certificate_collection".to_string(),
-                TimingData::new("certificate_collection".to_string(), start_time, end_time),
-            );
-        }
-
-        if !round_data.is_empty() {
-            processed.round_timings.insert(round_num, round_data);
+        for event in round_events.certificate_added {
+            processed.add_event(TimingEvent::new(
+                round_num,
+                event.timestamp.into(),
+                "certificate_added".to_string(),
+                event.is_local,
+            ));
         }
     }
 
-    // Process subdag timings
+    // Process subdag timings (unchanged)
     for (subdag_str, raw_subdag) in raw.subdag_timings {
         let parts: Vec<&str> = subdag_str.split('-').collect();
         if parts.len() != 2 {
@@ -299,16 +363,23 @@ mod tests {
                 secs_since_epoch: 1640995200,
                 nanos_since_epoch: 0,
             },
-            round_timings: {
+            round_events: {
                 let mut map = HashMap::new();
-                map.insert("100".to_string(), RawRoundTiming {
+                map.insert("100".to_string(), JsonRoundEvents {
                     round: 100,
-                    proposal_generation: Some((
-                        JsonSystemTime { secs_since_epoch: 1640995200, nanos_since_epoch: 0 },
-                        Some(JsonSystemTime { secs_since_epoch: 1640995201, nanos_since_epoch: 500_000_000 })
-                    )),
-                    certificate_generation: None,
-                    certificate_collection: None,
+                    proposal_seen: vec![JsonTimingEvent {
+                        round: 100,
+                        timestamp: JsonSystemTime { secs_since_epoch: 1640995200, nanos_since_epoch: 0 },
+                        event_type: "proposal_seen".to_string(),
+                        is_local: Some(false),
+                    }],
+                    proposal_created: vec![JsonTimingEvent {
+                        round: 100,
+                        timestamp: JsonSystemTime { secs_since_epoch: 1640995201, nanos_since_epoch: 500_000_000 },
+                        event_type: "proposal_created".to_string(),
+                        is_local: Some(true),
+                    }],
+                    certificate_added: vec![],
                 });
                 map
             },
@@ -331,29 +402,27 @@ mod tests {
         let processed = parse_timing_data(raw).unwrap();
         
         assert_eq!(processed.snapshot_timestamp, 1640995200.0);
-        assert_eq!(processed.round_timings.len(), 1);
+        assert_eq!(processed.events.len(), 2);
         assert_eq!(processed.subdag_timings.len(), 1);
 
-        let round_100 = processed.round_timings.get(&100).unwrap();
-        assert!(round_100.contains_key("proposal_generation"));
+        let proposal_seen = processed.events.iter().find(|e| e.event_type == "proposal_seen").unwrap();
+        assert_eq!(proposal_seen.round, 100);
+        assert_eq!(proposal_seen.timestamp, 1640995200.0);
+        assert_eq!(proposal_seen.is_local, Some(false));
         
-        let proposal_timing = round_100.get("proposal_generation").unwrap();
-        assert_eq!(proposal_timing.start_time, 1640995200.0);
-        assert_eq!(proposal_timing.end_time, Some(1640995201.5));
-        assert!(proposal_timing.is_complete());
+        let proposal_created = processed.events.iter().find(|e| e.event_type == "proposal_created").unwrap();
+        assert_eq!(proposal_created.round, 100);
+        assert_eq!(proposal_created.timestamp, 1640995201.5);
+        assert_eq!(proposal_created.is_local, Some(true));
     }
 
     #[test]
     fn test_get_time_range() {
         let mut processed = ProcessedTimingData::new(1640995200.0);
         
-        // Add some round timing data
-        let mut round_data = HashMap::new();
-        round_data.insert(
-            "proposal_generation".to_string(),
-            TimingData::new("proposal_generation".to_string(), 100.0, Some(101.5)),
-        );
-        processed.round_timings.insert(100, round_data);
+        // Add some events
+        processed.add_event(TimingEvent::new(100, 100.0, "proposal_created".to_string(), Some(true)));
+        processed.add_event(TimingEvent::new(101, 101.5, "proposal_seen".to_string(), Some(false)));
 
         // Add some subdag timing data
         let mut subdag_data = HashMap::new();
@@ -372,13 +441,8 @@ mod tests {
     fn test_get_all_rounds() {
         let mut processed = ProcessedTimingData::new(1640995200.0);
         
-        // Add round 100
-        let mut round_data = HashMap::new();
-        round_data.insert(
-            "proposal_generation".to_string(),
-            TimingData::new("proposal_generation".to_string(), 100.0, Some(101.5)),
-        );
-        processed.round_timings.insert(100, round_data);
+        // Add event for round 100
+        processed.add_event(TimingEvent::new(100, 100.0, "proposal_created".to_string(), Some(true)));
 
         // Add subdag spanning rounds 102-105
         let mut subdag_data = HashMap::new();
