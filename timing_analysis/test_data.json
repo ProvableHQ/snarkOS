@@ -1,0 +1,110 @@
+{
+  "timestamp": {
+    "secs_since_epoch": 1640995200,
+    "nanos_since_epoch": 0
+  },
+  "round_timings": {
+    "100": {
+      "round": 100,
+      "proposal_generation": [
+        {
+          "secs_since_epoch": 1640995200,
+          "nanos_since_epoch": 0
+        },
+        {
+          "secs_since_epoch": 1640995201,
+          "nanos_since_epoch": 500000000
+        }
+      ],
+      "certificate_generation": [
+        {
+          "secs_since_epoch": 1640995201,
+          "nanos_since_epoch": 500000000
+        },
+        {
+          "secs_since_epoch": 1640995202,
+          "nanos_since_epoch": 200000000
+        }
+      ],
+      "certificate_collection": [
+        {
+          "secs_since_epoch": 1640995202,
+          "nanos_since_epoch": 200000000
+        },
+        {
+          "secs_since_epoch": 1640995203,
+          "nanos_since_epoch": 0
+        }
+      ]
+    },
+    "101": {
+      "round": 101,
+      "proposal_generation": [
+        {
+          "secs_since_epoch": 1640995203,
+          "nanos_since_epoch": 100000000
+        },
+        {
+          "secs_since_epoch": 1640995204,
+          "nanos_since_epoch": 0
+        }
+      ],
+      "certificate_generation": [
+        {
+          "secs_since_epoch": 1640995204,
+          "nanos_since_epoch": 0
+        },
+        {
+          "secs_since_epoch": 1640995204,
+          "nanos_since_epoch": 800000000
+        }
+      ],
+      "certificate_collection": [
+        {
+          "secs_since_epoch": 1640995204,
+          "nanos_since_epoch": 800000000
+        },
+        {
+          "secs_since_epoch": 1640995205,
+          "nanos_since_epoch": 500000000
+        }
+      ]
+    }
+  },
+  "subdag_timings": {
+    "100-101": {
+      "lowest_round": 100,
+      "highest_round": 101,
+      "subdag_processing": [
+        {
+          "secs_since_epoch": 1640995207,
+          "nanos_since_epoch": 500000000
+        },
+        {
+          "secs_since_epoch": 1640995208,
+          "nanos_since_epoch": 200000000
+        }
+      ],
+      "check_next_block": [
+        {
+          "secs_since_epoch": 1640995208,
+          "nanos_since_epoch": 200000000
+        },
+        {
+          "secs_since_epoch": 1640995208,
+          "nanos_since_epoch": 800000000
+        }
+      ],
+      "advance_to_next_block": [
+        {
+          "secs_since_epoch": 1640995208,
+          "nanos_since_epoch": 800000000
+        },
+        {
+          "secs_since_epoch": 1640995209,
+          "nanos_since_epoch": 500000000
+        }
+      ]
+    }
+  }
+}

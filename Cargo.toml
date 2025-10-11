@@ -37,7 +37,7 @@ members = [
   "node/sync/communication-service",
   "node/sync/locators",
   "node/tcp"
-]
+, "timing_analysis"]
 
 [workspace.dependencies.aleo-std]
 version = "1.0.1"
