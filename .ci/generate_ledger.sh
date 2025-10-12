@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ####################################################
-# Runs a network up to a certain height andi stores
+# Runs a network up to a certain height and stores
 # the first node's ledger in a zipfile.
 ####################################################
 
@@ -32,19 +32,16 @@ git_commit=$(git rev-parse --short=10 HEAD)
 echo "On git commit ${git_commit}"
 
 network_name=$(get_network_name "$network_id")
-echo "Network set $network_name with $total_validators validators"
+echo "Network set to $network_name with $total_validators validators"
 
 # Create log directory
 log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 chmod 755 "$log_dir"
 
-# Array to store PIDs of all processes
-declare -a PIDS
-
 # Define a trap handler that cleans up all processes on exit.
 function exit_handler() {
-  shutdown "${PIDS[@]}"
+  stop_nodes
 }
 trap exit_handler EXIT
 
@@ -52,19 +49,19 @@ trap exit_handler EXIT
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Flags used by all ndoes
-common_flags="--nodisplay --nobanner --noupdater --network=$network_id \
-  --log-filter=$log_filter --allow-external-peers --dev-num-validators=$total_validators"
+common_flags=(--nodisplay --nobanner --noupdater "--network=$network_id"
+  "--log-filter=$log_filter" --allow-external-peers "--dev-num-validators=$total_validators")
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-  snarkos clean --dev $validator_index --network=$network_id
+  snarkos clean --dev $validator_index "--network=${network_id}"
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
-    snarkos start ${common_flags} --dev "$validator_index" \
+    snarkos start "${common_flags[@]}" --dev "$validator_index" \
       --validator --logfile "$log_file" --metrics --no-dev-txs &
   else
-    snarkos start ${common_flags} --dev "$validator_index" \
+    snarkos start "${common_flags[@]}" --dev "$validator_index" \
       --validator --logfile "$log_file" &
   fi
   PIDS[validator_index]=$!
@@ -77,17 +74,19 @@ done
 # Ensure all nodes are up and running.
 wait_for_nodes "$total_validators" 0
 
-# Wait until all nodes reached the given height.
+# Wait until the first node reaches the given height.
 total_wait=0
-while ! check_heights "$total_validators" 0 "$min_height" "$network_name"; do
+while ! check_heights 0 1 "$min_height" "$network_name"; do
   # Continue waiting
   sleep $poll_interval
-  total_wait=$((total_wait + $poll_interval))
+  total_wait=$((total_wait + poll_interval))
   echo "Waited $total_wait seconds so far..."
 done
 
-printf "num_validators=${total_validators}, git_commit=${git_commit}, snapshot_height=${min_height}" > info.txt
+printf "num_validators=%i, git_commit=%s, snapshot_height=%i" "$total_validators" "$git_commit" "$min_height" > info.txt
 
-zipname="sync-ledger-val${num_validators}-${min_height}.zip"
+zipname="sync-ledger-val${total_validators}-${min_height}-${git_commit}.zip"
 echo "Done! Generating zipfile \"$zipname\""
-zip $zipname ".ledger-${network_id}-0" info.txt
+zip -r "$zipname" ".ledger-${network_id}-0" info.txt
+
+exit 0
