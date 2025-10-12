@@ -6,6 +6,7 @@ A high-performance Rust implementation for analyzing consensus timing data from 
 
 - **Fast JSON Parsing**: Efficient parsing of large timing data files using serde
 - **SVG Chart Generation**: High-quality vector graphics using the plotters crate
+- **Dynamic Scaling**: Automatically adjusts chart height and dot size based on the number of rounds for optimal visualization
 - **Text-based Visualization**: ASCII fallback for environments without graphics
 - **Comprehensive Statistics**: Detailed analysis of consensus stage performance
 - **Command-line Interface**: User-friendly CLI with clap
@@ -44,15 +45,66 @@ The binary will be available at `target/release/timing_analysis`.
 
 # Custom chart dimensions
 ./target/release/timing_analysis --json-file consensus_timing_block.json --width 1600 --height 1000
+
+# Filter to specific round range
+./target/release/timing_analysis --json-file consensus_timing_block.json --start-round 100 --end-round 200
+
+# Filter from specific round onwards
+./target/release/timing_analysis --json-file consensus_timing_block.json --start-round 150
+
+# Filter up to specific round
+./target/release/timing_analysis --json-file consensus_timing_block.json --end-round 180
 ```
 
 ### Command-line Options
 
 - `--json-file <FILE>`: Path to the consensus timing JSON file (required)
 - `--output <FILE>`: Output SVG file name (default: `consensus_timing_analysis.svg`)
-- `--width <PIXELS>`: Chart width in pixels (default: 1200)
-- `--height <PIXELS>`: Chart height in pixels (default: 800)
+- `--width <PIXELS>`: Base chart width in pixels (default: 1200)
+- `--height <PIXELS>`: Base chart height in pixels (default: 800, will be scaled based on number of rounds)
 - `--text-only`: Show only text-based visualization
+- `--start-round <ROUND>`: Filter to show only rounds >= this value (optional)
+- `--end-round <ROUND>`: Filter to show only rounds <= this value (optional)
+
+### Dynamic Scaling
+
+The tool automatically adjusts visualization parameters based on the number of rounds:
+
+- **Chart Height**: Scales from 1.0x to 3.0x based on round count (more rounds = taller chart)
+- **Dot Size**: Scales inversely from 2 to 6 pixels radius (more rounds = smaller dots)
+- **Scaling Formula**: 
+  - Height scale: `min(3.0, 1.0 + round_span/50.0)`
+  - Dot size: `max(2.0, min(6.0, 4.0 * 50.0/(round_span + 25.0)))`
+
+This ensures optimal visual balance between discrete events (dots) and duration bars regardless of data size.
+
+**Example scaling output:**
+```
+=== Visualization Scaling ===
+Number of rounds: 201
+Chart height scaled by 3.00x to 2400 pixels
+Dot size scaled to 2 pixels radius
+```
+
+### Round Filtering
+
+Focus analysis on specific round ranges using the `--start-round` and `--end-round` options:
+
+- **Both bounds**: `--start-round 100 --end-round 200` shows only rounds 100-200
+- **Lower bound only**: `--start-round 150` shows rounds 150 and above
+- **Upper bound only**: `--end-round 180` shows rounds up to 180
+- **Subdag overlap**: Subdags are included if any part of their range overlaps with the filter
+
+**Example filtering output:**
+```
+Applied round filter: 120 - 180
+Filtered from 9 to 3 events, 2 to 0 subdags
+```
+
+Chart titles automatically reflect the filtering applied:
+- `"Consensus Events Timeline (rounds 100-200, 5 total)"`
+- `"Consensus Events Timeline (rounds 150+, 3 total)"`
+- `"Consensus Events Timeline (rounds ≤180, 4 total)"`
 
 ### Development Commands
 
@@ -91,10 +143,12 @@ Subdag-based stages:
 
 ### SVG Chart
 - High-quality vector graphics suitable for presentations
-- Color-coded stages with legend
+- Color-coded stages with **proper colored legend entries**
+- **Chronologically ordered legend** - stages always appear in consensus execution order
 - Proper scaling and axis labels
 - Round index on X-axis, time on Y-axis
 - Bars showing start/end times and durations
+- Interactive legend with color-matched squares
 
 ### Text Visualization
 ```
@@ -148,6 +202,23 @@ pub struct TimingData {
     pub end_time: Option<f64>,
 }
 ```
+
+### Legend Chronological Ordering
+
+The legend always displays stages in their natural consensus execution order, regardless of how they appear in the JSON data:
+
+```rust
+let chronological_stages = [
+    ("proposal_generation", "Proposal Generation"),
+    ("certificate_generation", "Certificate Generation"), 
+    ("certificate_collection", "Certificate Collection"),
+    ("subdag_processing", "Subdag Processing"),
+    ("check_next_block", "Check Next Block"),
+    ("advance_to_next_block", "Advance to Next Block"),
+];
+```
+
+This ensures consistent legend ordering across all charts, making it easier to compare different timing datasets.
 
 ### Consensus Stages
 
