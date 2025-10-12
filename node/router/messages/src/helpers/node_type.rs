@@ -27,6 +27,8 @@ pub enum NodeType {
     Prover,
     /// A validator is a full node, capable of validating blocks.
     Validator,
+    /// A bootstrapclient is a light node dedicated to serving peer lists.
+    BootstrapClient,
 }
 
 impl NodeType {
@@ -36,6 +38,7 @@ impl NodeType {
             Self::Client => "a client node",
             Self::Prover => "a prover node",
             Self::Validator => "a validator node",
+            Self::BootstrapClient => "a bootstrap client node",
         }
     }
 
@@ -61,6 +64,7 @@ impl core::fmt::Display for NodeType {
             Self::Client => "Client",
             Self::Prover => "Prover",
             Self::Validator => "Validator",
+            Self::BootstrapClient => "Bootstrap Client",
         })
     }
 }
@@ -77,7 +81,8 @@ impl FromBytes for NodeType {
             0 => Ok(Self::Client),
             1 => Ok(Self::Prover),
             2 => Ok(Self::Validator),
-            x => Err(error(format!("Invalid node type: expected 0, 1, or 2, got {x}."))),
+            3 => Ok(Self::BootstrapClient),
+            x => Err(error(format!("Invalid node type: expected 0..=3, got {x}."))),
         }
     }
 }

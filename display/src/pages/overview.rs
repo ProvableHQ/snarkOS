@@ -17,7 +17,7 @@ use crate::{content_style, header_style};
 
 use snarkos_node::{
     Node,
-    router::{Peer, PeerPoolHandling},
+    router::{Peer, messages::NodeType},
 };
 use snarkvm::prelude::Network;
 
@@ -47,6 +47,9 @@ impl Overview {
     }
 
     fn draw_sync_status<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
+        if node.node_type() == NodeType::BootstrapClient {
+            return;
+        }
         let is_synced = node.is_block_synced();
         let num_blocks_behind = node.num_blocks_behind();
 
@@ -71,9 +74,9 @@ impl Overview {
         let constraints = [Constraint::Length(20), Constraint::Length(10), Constraint::Length(10)];
 
         let rows: Vec<_> = node
-            .router()
-            .get_peers()
-            .into_iter()
+            .peer_pool()
+            .read()
+            .values()
             .filter(|peer| !peer.is_candidate()) // Too many candidate peers for overview.
             .map(|peer| {
                 let state = match peer {

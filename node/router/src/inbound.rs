@@ -36,12 +36,11 @@ use snarkvm::prelude::{
 };
 
 use anyhow::{Result, anyhow, bail};
-use snarkos_node_tcp::is_bogon_ip;
-use std::{cmp, net::SocketAddr};
+use std::net::SocketAddr;
 use tokio::task::spawn_blocking;
 
 /// The max number of peers to send in a `PeerResponse` message.
-pub(crate) const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
+pub const MAX_PEERS_TO_SEND: usize = u8::MAX as usize;
 
 #[async_trait]
 pub trait Inbound<N: Network>: Reading + Outbound<N> {
@@ -78,7 +77,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     /// propagated to the caller.
     async fn inbound(&self, peer_addr: SocketAddr, message: Message<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
-        let peer_ip = match self.router().resolve_to_listener(&peer_addr) {
+        let peer_ip = match self.router().resolve_to_listener(peer_addr) {
             Some(peer_ip) => peer_ip,
             None => {
                 // No longer connected to the peer.
@@ -179,7 +178,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     bail!("Not accepting peer response from '{peer_ip}' (validator gossip is disabled)");
                 }
 
-                match self.peer_response(peer_ip, &message.peers) {
+                match self.peer_response(peer_ip, message.peers) {
                     true => Ok(true),
                     false => bail!("Peer '{peer_ip}' sent an invalid peer response"),
                 }
@@ -315,33 +314,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
     /// Handles a `PeerRequest` message.
     fn peer_request(&self, peer_ip: SocketAddr) -> bool {
-        // Retrieve the connected peers, filtering out invalid addresses.
-        let mut peers = self.router().filter_connected_peers(|peer| {
-            let ip = peer.listener_addr;
-            match self.router().is_dev() {
-                // In development mode, relax the validity requirements to make operating devnets more flexible.
-                true => ip != peer_ip && !is_bogon_ip(ip.ip()),
-                // In production mode, ensure the peer IPs are valid.
-                false => ip != peer_ip && self.router().is_valid_peer_ip(ip),
-            }
-        });
-        // Get the low-level peer stats.
-        let known_peers = self.tcp().known_peers().snapshot();
-
-        // Sort the prospect peers.
-        peers.sort_unstable_by_key(|peer| {
-            if let Some(peer_stats) = known_peers.get(&peer.listener_addr.ip()) {
-                // Prioritize greatest height, then lowest failure count.
-                (cmp::Reverse(peer.last_height_seen), peer_stats.failures())
-            } else {
-                // Unreachable; use an else-compatible dummy.
-                (cmp::Reverse(peer.last_height_seen), 0)
-            }
-        });
-
-        // Truncate and convert to socket addrs.
-        peers.truncate(MAX_PEERS_TO_SEND);
-        let peers = peers.into_iter().map(|peer| peer.listener_addr).collect();
+        let peers = self.router().get_best_connected_peers(Some(MAX_PEERS_TO_SEND));
+        let peers = peers.into_iter().map(|peer| (peer.listener_addr, peer.last_height_seen)).collect();
 
         // Send a `PeerResponse` message to the peer.
         self.router().send(peer_ip, Message::PeerResponse(PeerResponse { peers }));
@@ -349,20 +323,19 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     }
 
     /// Handles a `PeerResponse` message.
-    fn peer_response(&self, _peer_ip: SocketAddr, peers: &[SocketAddr]) -> bool {
+    fn peer_response(&self, _peer_ip: SocketAddr, peers: Vec<(SocketAddr, Option<u32>)>) -> bool {
         // Check if the number of peers received is less than MAX_PEERS_TO_SEND.
         if peers.len() > MAX_PEERS_TO_SEND {
             return false;
         }
-        // Filter out invalid addresses.
-        let peers = match self.router().is_dev() {
-            // In development mode, relax the validity requirements to make operating devnets more flexible.
-            true => peers.iter().copied().filter(|ip| !is_bogon_ip(ip.ip())).collect::<Vec<_>>(),
-            // In production mode, ensure the peer IPs are valid.
-            false => peers.iter().copied().filter(|ip| self.router().is_valid_peer_ip(*ip)).collect(),
-        };
         // Adds the given peer IPs to the list of candidate peers.
-        self.router().insert_candidate_peers(&peers);
+        if !peers.is_empty() {
+            self.router().insert_candidate_peers(peers);
+        }
+
+        #[cfg(feature = "metrics")]
+        self.router().update_metrics();
+
         true
     }
 

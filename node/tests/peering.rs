@@ -55,7 +55,10 @@ macro_rules! test_reject_unsolicited_peer_response {
                     // Check the candidate peers.
                     assert_eq!(node.router().number_of_candidate_peers(), 0);
 
-                    let peers = vec!["1.1.1.1:1111".parse().unwrap(), "2.2.2.2:2222".parse().unwrap()];
+                    let peers = vec![
+                        ("1.1.1.1:1111".parse().unwrap(), None),
+                        ("2.2.2.2:2222".parse().unwrap(), None),
+                    ];
 
                     // Send a `PeerResponse` to the node.
                     assert!(
@@ -71,8 +74,9 @@ macro_rules! test_reject_unsolicited_peer_response {
                     deadline!(Duration::from_secs(5), move || node_clone.router().number_of_connected_peers() == 0);
 
                     // Make sure the sent addresses weren't inserted in the candidate peers.
-                    for peer in peers {
-                        assert!(!node.router().candidate_peers().contains(&peer));
+                    let candidate_peer_addrs = node.router().get_candidate_peers().into_iter().map(|peer| peer.listener_addr).collect::<Vec<_>>();
+                    for (peer, _) in peers {
+                        assert!(!candidate_peer_addrs.contains(&peer));
                     }
                 }
             }

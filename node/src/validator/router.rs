@@ -66,9 +66,14 @@ where
 {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        let Some(peer_ip) = self.router.resolve_to_listener(&peer_addr) else { return };
-        // Send the first `Ping` message to the peer.
-        self.ping.on_peer_connected(peer_ip);
+        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
+            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
+                if peer.node_type != NodeType::BootstrapClient {
+                    // Send the first `Ping` message to the peer.
+                    self.ping.on_peer_connected(listener_addr);
+                }
+            }
+        }
     }
 }
 
@@ -76,9 +81,13 @@ where
 impl<N: Network, C: ConsensusStorage<N>> Disconnect for Validator<N, C> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
-        if let Some(peer_ip) = self.router.resolve_to_listener(&peer_addr) {
+        if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
             self.sync.remove_peer(&peer_ip);
-            self.router.remove_connected_peer(peer_ip);
+            self.router.downgrade_peer_to_candidate(peer_ip);
+            // Clear cached entries applicable to the peer.
+            self.router.cache().clear_peer_entries(peer_ip);
+            #[cfg(feature = "metrics")]
+            self.router.update_metrics();
         }
     }
 }
@@ -119,7 +128,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
             warn!("Failed to process inbound message from '{peer_addr}' - {error}");
-            if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
+            if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
                 warn!("Disconnecting from '{peer_ip}' for protocol violation");
                 self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
                 // Disconnect from this peer.

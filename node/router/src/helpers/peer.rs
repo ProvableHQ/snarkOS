@@ -29,7 +29,7 @@ pub enum Peer<N: Network> {
     Connected(ConnectedPeer<N>),
 }
 
-/// A candidate peer.
+/// A connecting peer.
 #[derive(Clone)]
 pub struct ConnectingPeer {
     /// The listening address of a connecting peer.
@@ -45,6 +45,8 @@ pub struct CandidatePeer {
     pub listener_addr: SocketAddr,
     /// Indicates whether the peer is considered trusted.
     pub trusted: bool,
+    /// The latest block height known to be associated with the peer.
+    pub last_height_seen: Option<u32>,
 }
 
 /// A fully connected peer.
@@ -73,7 +75,7 @@ pub struct ConnectedPeer<N: Network> {
 impl<N: Network> Peer<N> {
     /// Create a candidate peer.
     pub const fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Candidate(CandidatePeer { listener_addr, trusted })
+        Self::Candidate(CandidatePeer { listener_addr, trusted, last_height_seen: None })
     }
 
     /// Create a connecting peer.
@@ -90,11 +92,14 @@ impl<N: Network> Peer<N> {
         node_type: NodeType,
         node_version: u32,
     ) {
-        // Logic check: this can only happen during the handshake.
-        assert!(matches!(self, Self::Connecting(_)));
-
         let timestamp = Instant::now();
         let listener_addr = SocketAddr::from((connected_addr.ip(), listener_port));
+
+        // Logic check: this can only happen during the handshake. This isn't a fatal
+        // error, but should not be triggered.
+        if !matches!(self, Self::Connecting(_)) {
+            warn!("Peer '{listener_addr}' is being upgraded to Connected, but isn't Connecting");
+        }
 
         *self = Self::Connected(ConnectedPeer {
             listener_addr,
@@ -111,7 +116,11 @@ impl<N: Network> Peer<N> {
 
     /// Demote a peer to candidate status, marking it as disconnected.
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
-        *self = Self::new_candidate(listener_addr, self.is_trusted());
+        *self = Self::Candidate(CandidatePeer {
+            listener_addr,
+            trusted: self.is_trusted(),
+            last_height_seen: self.last_height_seen(),
+        });
     }
 
     /// Returns the type of the node (only applicable to connected peers).

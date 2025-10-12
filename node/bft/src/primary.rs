@@ -600,26 +600,22 @@ impl<N: Network> Primary<N> {
                             continue;
                         }
 
-                        // Check if the transaction is still valid.
-                        // TODO: check if clone is cheap, otherwise fix.
-                        if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction.clone()).await {
-                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
-                            continue;
-                        }
-
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                        let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
-                            transaction_id,
-                            transaction,
-                            consensus_version,
-                        ) else {
+                        let Ok(cost) = self.ledger.transaction_spend_in_microcredits(&transaction, consensus_version)
+                        else {
                             debug!(
                                 "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
                                 fmt_id(transaction_id)
                             );
                             continue;
                         };
+
+                        // Check if the transaction is still valid.
+                        if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction).await {
+                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
+                            continue;
+                        }
 
                         // Compute the next proposal cost.
                         // Note: We purposefully discard this transaction if the proposal cost overflows.
@@ -902,11 +898,8 @@ impl<N: Network> Primary<N> {
 
                     // Compute the transaction spent cost (in microcredits).
                     // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                    let Ok(cost) = self.ledger.transaction_spent_cost_in_microcredits(
-                        *transaction_id,
-                        transaction,
-                        consensus_version,
-                    ) else {
+                    let Ok(cost) = self.ledger.transaction_spend_in_microcredits(&transaction, consensus_version)
+                    else {
                         bail!(
                             "Invalid batch proposal - Unable to compute transaction spent cost on transaction '{}'",
                             fmt_id(transaction_id)
@@ -2231,7 +2224,7 @@ mod tests {
     fn map_account_addresses(primary: &Primary<CurrentNetwork>, accounts: &[(SocketAddr, Account<CurrentNetwork>)]) {
         // First account is primary, which doesn't need to resolve.
         for (addr, acct) in accounts.iter().skip(1) {
-            primary.gateway.resolver().write().insert_peer(*addr, *addr, acct.address());
+            primary.gateway.resolver().write().insert_peer(*addr, *addr, Some(acct.address()));
         }
     }
 
@@ -2428,7 +2421,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2467,7 +2460,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // Add a high block locator to indicate we are not synced.
         primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
@@ -2507,7 +2500,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
@@ -2544,7 +2537,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.testing_only_try_block_sync_testing_only().await;
 
@@ -2589,7 +2582,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.testing_only_try_block_sync_testing_only().await;
 
@@ -2645,7 +2638,7 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
         primary.sync.testing_only_try_block_sync_testing_only().await;
 
@@ -2692,8 +2685,8 @@ mod tests {
         }
 
         // The author must be known to resolver to pass propose checks.
-        primary_v4.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
-        primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, peer_account.1.address());
+        primary_v4.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
+        primary_v5.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
         // primary v4 must be considered synced.
         primary_v4.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
