@@ -63,6 +63,20 @@ fn main() -> Result<()> {
                 .help("Only show text-based visualization (no chart generation)")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("start-round")
+                .long("start-round")
+                .value_name("ROUND")
+                .help("Filter to show only rounds >= this value (optional)")
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .arg(
+            Arg::new("end-round")
+                .long("end-round")
+                .value_name("ROUND")
+                .help("Filter to show only rounds <= this value (optional)")
+                .value_parser(clap::value_parser!(u64)),
+        )
         .get_matches();
 
     let json_file = matches.get_one::<String>("json-file").unwrap();
@@ -72,6 +86,15 @@ fn main() -> Result<()> {
     let height: u32 = matches.get_one::<String>("height").unwrap().parse()
         .context("Height must be a valid number")?;
     let text_only = matches.get_flag("text-only");
+    let start_round = matches.get_one::<u64>("start-round").copied();
+    let end_round = matches.get_one::<u64>("end-round").copied();
+
+    // Validate round range
+    if let (Some(start), Some(end)) = (start_round, end_round) {
+        if start > end {
+            return Err(anyhow::anyhow!("Start round ({}) cannot be greater than end round ({})", start, end));
+        }
+    }
 
     // Check if the JSON file exists
     if !std::path::Path::new(json_file).exists() {
@@ -81,8 +104,29 @@ fn main() -> Result<()> {
     println!("Loading timing data from: {}", json_file);
 
     // Load and parse the timing data
-    let timing_data = load_timing_data(json_file)
+    let mut timing_data = load_timing_data(json_file)
         .context("Failed to load timing data")?;
+
+    // Apply round range filtering if specified
+    if start_round.is_some() || end_round.is_some() {
+        let original_events = timing_data.events.len();
+        let original_subdags = timing_data.subdag_timings.len();
+        
+        timing_data = timing_data.filter_by_round_range(start_round, end_round);
+        
+        println!("Applied round filter: {} - {}", 
+            start_round.map(|r| r.to_string()).unwrap_or_else(|| "∞".to_string()),
+            end_round.map(|r| r.to_string()).unwrap_or_else(|| "∞".to_string())
+        );
+        println!("Filtered from {} to {} events, {} to {} subdags", 
+            original_events, timing_data.events.len(),
+            original_subdags, timing_data.subdag_timings.len()
+        );
+        
+        if timing_data.events.is_empty() && timing_data.subdag_timings.is_empty() {
+            return Err(anyhow::anyhow!("No data remaining after applying round filter"));
+        }
+    }
 
     // Print summary statistics
     print_summary(&timing_data);
@@ -107,7 +151,7 @@ fn main() -> Result<()> {
             .context("Failed to generate text visualization")?;
     } else {
         // Try to generate the chart
-        match generate_scatter_chart(&timing_data, output_file, width, height) {
+        match generate_scatter_chart(&timing_data, output_file, width, height, start_round, end_round) {
             Ok(()) => {
                 println!("Chart successfully saved to: {}", output_file);
             }

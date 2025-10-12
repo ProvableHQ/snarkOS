@@ -55,6 +55,8 @@ pub fn generate_scatter_chart(
     output_path: &str,
     width: u32,
     height: u32,
+    start_round: Option<u64>,
+    end_round: Option<u64>,
 ) -> Result<()> {
     if data.events.is_empty() && data.subdag_timings.is_empty() {
         return Err(anyhow::anyhow!("No timing data to visualize"));
@@ -88,12 +90,20 @@ pub fn generate_scatter_chart(
     // Scale dot size inversely with number of rounds (minimum size 2, maximum size 6)
     let dot_size = ((base_dot_size as f64) * (50.0 / (round_span + 25.0))).max(2.0).min(6.0) as i32;
 
+    // Generate chart title with round information
+    let title = match (start_round, end_round) {
+        (Some(start), Some(end)) => format!("Consensus Events Timeline (rounds {}-{}, {} total)", start, end, round_span as u32),
+        (Some(start), None) => format!("Consensus Events Timeline (rounds {}+, {} total)", start, round_span as u32),
+        (None, Some(end)) => format!("Consensus Events Timeline (rounds ≤{}, {} total)", end, round_span as u32),
+        (None, None) => format!("Consensus Events Timeline ({} rounds)", round_span as u32),
+    };
+
     // Create the drawing backend
     let root = SVGBackend::new(output_path, (width, scaled_height)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption(&format!("Consensus Events Timeline ({} rounds)", round_span as u32), ("sans-serif", 40))
+        .caption(&title, ("sans-serif", 40))
         .margin(20)
         .x_label_area_size(60)
         .y_label_area_size(80)
@@ -355,7 +365,7 @@ mod tests {
         let empty_data = ProcessedTimingData::new(1640995200.0);
         
         // Should return error for empty data
-        let result = generate_scatter_chart(&empty_data, "test.svg", 800, 600);
+        let result = generate_scatter_chart(&empty_data, "test.svg", 800, 600, None, None);
         assert!(result.is_err());
         
         // Text visualization should handle empty data gracefully

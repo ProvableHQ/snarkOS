@@ -221,6 +221,45 @@ impl ProcessedTimingData {
     pub fn get_events_by_type(&self, event_type: &str) -> Vec<&TimingEvent> {
         self.events.iter().filter(|e| e.event_type == event_type).collect()
     }
+
+    /// Filter data to only include events and subdags within the specified round range
+    pub fn filter_by_round_range(&self, start_round: Option<u64>, end_round: Option<u64>) -> ProcessedTimingData {
+        let mut filtered = ProcessedTimingData::new(self.snapshot_timestamp);
+
+        // Filter events
+        for event in &self.events {
+            let include_event = match (start_round, end_round) {
+                (Some(start), Some(end)) => event.round >= start && event.round <= end,
+                (Some(start), None) => event.round >= start,
+                (None, Some(end)) => event.round <= end,
+                (None, None) => true,
+            };
+
+            if include_event {
+                filtered.add_event(event.clone());
+            }
+        }
+
+        // Filter subdag timings
+        for (&(low_round, high_round), subdag_data) in &self.subdag_timings {
+            // Include subdag if any part of its range overlaps with the filter range
+            let include_subdag = match (start_round, end_round) {
+                (Some(start), Some(end)) => {
+                    // Include if subdag range overlaps with filter range
+                    !(high_round < start || low_round > end)
+                },
+                (Some(start), None) => high_round >= start,
+                (None, Some(end)) => low_round <= end,
+                (None, None) => true,
+            };
+
+            if include_subdag {
+                filtered.subdag_timings.insert((low_round, high_round), subdag_data.clone());
+            }
+        }
+
+        filtered
+    }
 }
 
 /// Parse raw timing data into processed format
@@ -454,5 +493,44 @@ mod tests {
 
         let rounds = processed.get_all_rounds();
         assert_eq!(rounds, vec![100, 102, 103, 104, 105]);
+    }
+
+    #[test]
+    fn test_filter_by_round_range() {
+        let mut processed = ProcessedTimingData::new(1640995200.0);
+        
+        // Add events for different rounds
+        processed.add_event(TimingEvent::new(100, 100.0, "proposal_created".to_string(), Some(true)));
+        processed.add_event(TimingEvent::new(150, 150.0, "proposal_seen".to_string(), Some(false)));
+        processed.add_event(TimingEvent::new(200, 200.0, "certificate_added".to_string(), None));
+
+        // Add subdag data
+        let mut subdag_data = HashMap::new();
+        subdag_data.insert(
+            "subdag_processing".to_string(),
+            TimingData::new("subdag_processing".to_string(), 102.0, Some(104.0)),
+        );
+        processed.subdag_timings.insert((100, 105), subdag_data.clone());
+        processed.subdag_timings.insert((180, 185), subdag_data);
+
+        // Test filtering with both start and end
+        let filtered = processed.filter_by_round_range(Some(120), Some(180));
+        assert_eq!(filtered.events.len(), 1); // Only round 150 event
+        assert_eq!(filtered.subdag_timings.len(), 1); // Only the (180, 185) subdag
+        
+        // Test filtering with only start
+        let filtered = processed.filter_by_round_range(Some(150), None);
+        assert_eq!(filtered.events.len(), 2); // Rounds 150 and 200
+        assert_eq!(filtered.subdag_timings.len(), 1); // Only the (180, 185) subdag
+        
+        // Test filtering with only end
+        let filtered = processed.filter_by_round_range(None, Some(150));
+        assert_eq!(filtered.events.len(), 2); // Rounds 100 and 150
+        assert_eq!(filtered.subdag_timings.len(), 1); // Only the (100, 105) subdag
+        
+        // Test no filtering
+        let filtered = processed.filter_by_round_range(None, None);
+        assert_eq!(filtered.events.len(), 3); // All events
+        assert_eq!(filtered.subdag_timings.len(), 2); // All subdags
     }
 }
