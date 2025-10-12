@@ -65,13 +65,15 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
 impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        if let Some(peer) = self.router.get_connected_peer(peer_addr) {
-            // If it's a bootstrap client, only request its peers.
-            if peer.node_type == NodeType::BootstrapClient {
-                self.router().send(peer.listener_addr, Message::PeerRequest(PeerRequest));
-            } else {
-                // Send the first `Ping` message to the peer.
-                self.ping.on_peer_connected(peer.listener_addr);
+        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
+            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
+                // If it's a bootstrap client, only request its peers.
+                if peer.node_type == NodeType::BootstrapClient {
+                    self.router().send(listener_addr, Message::PeerRequest(PeerRequest));
+                } else {
+                    // Send the first `Ping` message to the peer.
+                    self.ping.on_peer_connected(listener_addr);
+                }
             }
         }
     }
