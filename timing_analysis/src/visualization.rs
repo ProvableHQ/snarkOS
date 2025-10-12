@@ -71,16 +71,29 @@ pub fn generate_scatter_chart(
 
     let min_round = *all_rounds.first().unwrap() as f64;
     let max_round = *all_rounds.last().unwrap() as f64;
+    let round_span = max_round - min_round + 1.0;
     let time_range = max_time - min_time;
     let time_padding = time_range * 0.05; // 5% padding
     let round_padding = (max_round - min_round) * 0.05; // 5% padding
 
+    // Calculate dynamic scaling based on number of rounds
+    // More rounds = taller chart and smaller dots to maintain good visual balance
+    let base_height = height as f64;
+    let base_dot_size = 4;
+    
+    // Scale height based on number of rounds (minimum 1.0x, maximum 3.0x)
+    let height_scale_factor = (1.0 + (round_span / 50.0)).min(3.0);
+    let scaled_height = (base_height * height_scale_factor) as u32;
+    
+    // Scale dot size inversely with number of rounds (minimum size 2, maximum size 6)
+    let dot_size = ((base_dot_size as f64) * (50.0 / (round_span + 25.0))).max(2.0).min(6.0) as i32;
+
     // Create the drawing backend
-    let root = SVGBackend::new(output_path, (width, height)).into_drawing_area();
+    let root = SVGBackend::new(output_path, (width, scaled_height)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption("Consensus Events Timeline", ("sans-serif", 40))
+        .caption(&format!("Consensus Events Timeline ({} rounds)", round_span as u32), ("sans-serif", 40))
         .margin(20)
         .x_label_area_size(60)
         .y_label_area_size(80)
@@ -114,8 +127,8 @@ pub fn generate_scatter_chart(
         let x = event.round as f64;
         let y = event.timestamp;
 
-        // Draw a circle for each event
-        chart.draw_series(std::iter::once(Circle::new((x, y), 4, color.filled())))?;
+        // Draw a circle for each event with dynamic size
+        chart.draw_series(std::iter::once(Circle::new((x, y), dot_size, color.filled())))?;
 
         // Mark this event type as present
         event_types_present.insert(event.event_type.as_str());
@@ -160,10 +173,10 @@ pub fn generate_scatter_chart(
                 });
                 series
             } else {
-                // For events, use circle legend
+                // For events, use circle legend with dynamic size
                 let series = chart.draw_series(std::iter::empty::<Circle<(f64, f64), i32>>())?;
                 series.label(*display_name).legend(move |(x, y)| {
-                    Circle::new((x + 5, y + 5), 4, color.filled())
+                    Circle::new((x + 5, y + 5), dot_size, color.filled())
                 });
                 series
             };

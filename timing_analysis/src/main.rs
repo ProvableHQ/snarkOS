@@ -47,14 +47,14 @@ fn main() -> Result<()> {
             Arg::new("width")
                 .long("width")
                 .value_name("PIXELS")
-                .help("Width of the output image in pixels")
+                .help("Base width of the output image in pixels")
                 .default_value("1200"),
         )
         .arg(
             Arg::new("height")
                 .long("height")
                 .value_name("PIXELS")
-                .help("Height of the output image in pixels")
+                .help("Base height of the output image in pixels (will be scaled based on number of rounds)")
                 .default_value("800"),
         )
         .arg(
@@ -86,6 +86,20 @@ fn main() -> Result<()> {
 
     // Print summary statistics
     print_summary(&timing_data);
+
+    // Show scaling information
+    let all_rounds = timing_data.get_all_rounds();
+    let round_count = all_rounds.len();
+    if round_count > 0 {
+        println!("\n=== Visualization Scaling ===");
+        println!("Number of rounds: {}", round_count);
+        let round_span = (*all_rounds.last().unwrap() - *all_rounds.first().unwrap() + 1) as f64;
+        let height_scale = (1.0 + (round_span / 50.0)).min(3.0);
+        let scaled_height = (height as f64 * height_scale) as u32;
+        let dot_size = ((4.0 * (50.0 / (round_span + 25.0))).max(2.0).min(6.0)) as i32;
+        println!("Chart height scaled by {:.2}x to {} pixels", height_scale, scaled_height);
+        println!("Dot size scaled to {} pixels radius", dot_size);
+    }
 
     // Generate visualization
     if text_only {
