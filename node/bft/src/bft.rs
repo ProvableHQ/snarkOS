@@ -480,6 +480,9 @@ impl<N: Network> BFT<N> {
         // Insert the certificate into the DAG.
         self.dag.write().insert(certificate);
 
+        // Record the certificate added event
+        crate::helpers::record_event(certificate_round, crate::helpers::ConsensusStage::CertificateAdded, None);
+
         // Get the previous round number.
         let commit_round = certificate_round.saturating_sub(1);
 

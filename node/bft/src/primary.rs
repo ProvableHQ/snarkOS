@@ -694,6 +694,10 @@ impl<N: Network> Primary<N> {
                 error!("Failed to reinsert transmissions: {e:?}");
             }
         })?;
+
+        // Record the proposal created event
+        crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated, Some(true));
+
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
         // Set the timestamp of the latest proposed batch.
@@ -760,6 +764,9 @@ impl<N: Network> Primary<N> {
                 batch_header.committee_id()
             );
         }
+
+        // Record the proposal seen event
+        crate::helpers::record_event(batch_round, crate::helpers::ConsensusStage::ProposalSeen, Some(false));
 
         // Retrieve the cached round and batch ID for this validator.
         if let Some((signed_round, signed_batch_id, signature)) =
