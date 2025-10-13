@@ -695,7 +695,7 @@ impl<N: Network> Primary<N> {
             }
         })?;
 
-        // Record the proposal created event
+        #[cfg(feature = "test_network")]
         crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated, Some(true));
 
         // Broadcast the batch to all validators for signing.
@@ -765,7 +765,7 @@ impl<N: Network> Primary<N> {
             );
         }
 
-        // Record the proposal seen event
+        #[cfg(feature = "test_network")]
         crate::helpers::record_event(batch_round, crate::helpers::ConsensusStage::ProposalSeen, Some(false));
 
         // Retrieve the cached round and batch ID for this validator.

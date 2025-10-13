@@ -273,7 +273,7 @@ locktick = [
 serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
-test_network = [ "snarkos-cli/test_network" ]
+test_network = [ "snarkos-cli/test_network", "snarkos-node/test_network" ]
 
 [dependencies.clap]
 workspace = true

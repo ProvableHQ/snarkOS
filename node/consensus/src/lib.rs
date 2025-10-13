@@ -526,58 +526,65 @@ impl<N: Network> Consensus<N> {
 
         // Extract lowest and highest rounds from the subdag
         let rounds: Vec<u64> = subdag.keys().copied().collect();
-        let lowest_round = rounds.iter().min().copied().unwrap_or(0);
-        let highest_round = rounds.iter().max().copied().unwrap_or(0);
+        let _lowest_round = rounds.iter().min().copied().unwrap_or(0);
+        let _highest_round = rounds.iter().max().copied().unwrap_or(0);
 
         // Create the candidate next block.
+        #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::start_subdag_stage(
-            lowest_round,
-            highest_round,
+            _lowest_round,
+            _highest_round,
             snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
         );
         let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
         let _next_block_height = next_block.height();
+        #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::end_subdag_stage(
-            lowest_round,
-            highest_round,
+            _lowest_round,
+            _highest_round,
             snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
         );
         // Check that the block is well-formed.
+        #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::start_subdag_stage(
-            lowest_round,
-            highest_round,
+            _lowest_round,
+            _highest_round,
             snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
         );
         self.ledger.check_next_block(&next_block)?;
+        #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::end_subdag_stage(
-            lowest_round,
-            highest_round,
+            _lowest_round,
+            _highest_round,
             snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
         );
         // Advance to the next block.
+        #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::start_subdag_stage(
-            lowest_round,
-            highest_round,
+            _lowest_round,
+            _highest_round,
             snarkos_node_bft::helpers::SubdagStage::AdvanceToNextBlock,
         );
         self.ledger.advance_to_next_block(&next_block)?;
+        #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::end_subdag_stage(
-            lowest_round,
-            highest_round,
+            _lowest_round,
+            _highest_round,
             snarkos_node_bft::helpers::SubdagStage::AdvanceToNextBlock,
         );
 
         // Export timing data to JSON after block generation
-        let dev_index = self.bft().primary().gateway().dev().unwrap(); // TODO: cleanly handle unwrap.
-        let json_filename = format!("consensus_timing_block_{dev_index}.json");
-        if let Err(e) = snarkos_node_bft::helpers::export_to_json(&json_filename) {
-            warn!("Failed to export timing data to {}: {}", json_filename, e);
-        } else {
-            info!("Exported timing data to {}", json_filename);
+        #[cfg(feature = "test_network")]
+        {
+            let dev_index = self.bft().primary().gateway().dev().unwrap_or_default();
+            let json_filename = format!("consensus_timing_block_{dev_index}.json");
+            if let Err(e) = snarkos_node_bft::helpers::export_to_json(&json_filename) {
+                warn!("Failed to export timing data to {}: {}", json_filename, e);
+            } else {
+                info!("Exported timing data to {}", json_filename);
+            }
         }
 
-        // Clean up old timing entries to prevent memory growth (keep last 100 entries)
-        // snarkos_node_bft::helpers::cleanup_old_entries(100);
         #[cfg(feature = "telemetry")]
         // Fetch the latest committee
         let latest_committee = self.ledger.current_committee()?;

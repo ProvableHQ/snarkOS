@@ -13,11 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-    time::SystemTime,
-};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
+
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -157,61 +158,57 @@ impl SubdagTimings {
 /// Record a consensus event for a specific round
 pub fn record_event(round: u64, stage: ConsensusStage, is_local: Option<bool>) {
     let now = SystemTime::now();
-    if let Ok(mut events) = ROUND_EVENTS.write() {
-        let round_events = events.entry(round).or_insert_with(|| RoundEvents::new(round));
-        round_events.add_event(stage, now, is_local);
-    }
+    let mut round_events = ROUND_EVENTS.write();
+    let round_event = round_events.entry(round).or_insert_with(|| RoundEvents::new(round));
+    round_event.add_event(stage, now, is_local);
 }
 
 /// Record a consensus event with custom timestamp for a specific round
 pub fn record_event_with_timestamp(round: u64, stage: ConsensusStage, timestamp: SystemTime, is_local: Option<bool>) {
-    if let Ok(mut events) = ROUND_EVENTS.write() {
-        let round_events = events.entry(round).or_insert_with(|| RoundEvents::new(round));
-        round_events.add_event(stage, timestamp, is_local);
-    }
+    let mut events = ROUND_EVENTS.write();
+    let round_events = events.entry(round).or_insert_with(|| RoundEvents::new(round));
+    round_events.add_event(stage, timestamp, is_local);
 }
 
 /// Record the start of a subdag processing stage
 pub fn start_subdag_stage(lowest_round: u64, highest_round: u64, stage: SubdagStage) {
     let key = (lowest_round, highest_round);
-    if let Ok(mut timings) = SUBDAG_TIMINGS.write() {
-        let subdag_timing = timings.entry(key).or_insert_with(|| SubdagTimings::new(lowest_round, highest_round));
-        subdag_timing.start_stage(stage);
-    }
+    let mut timings = SUBDAG_TIMINGS.write();
+    let subdag_timing = timings.entry(key).or_insert_with(|| SubdagTimings::new(lowest_round, highest_round));
+    subdag_timing.start_stage(stage);
 }
 
 /// Record the end of a subdag processing stage
 pub fn end_subdag_stage(lowest_round: u64, highest_round: u64, stage: SubdagStage) {
     let key = (lowest_round, highest_round);
-    if let Ok(mut timings) = SUBDAG_TIMINGS.write() {
-        if let Some(subdag_timing) = timings.get_mut(&key) {
-            subdag_timing.end_stage(stage);
-        }
+    let mut timings = SUBDAG_TIMINGS.write();
+    if let Some(subdag_timing) = timings.get_mut(&key) {
+        subdag_timing.end_stage(stage);
     }
 }
 
 /// Get event data for a specific round
 pub fn get_round_events(round: u64) -> Option<RoundEvents> {
-    ROUND_EVENTS.read().ok()?.get(&round).cloned()
+    ROUND_EVENTS.read().get(&round).cloned()
 }
 
 /// Get timing data for a specific subdag
 pub fn get_subdag_timings(lowest_round: u64, highest_round: u64) -> Option<SubdagTimings> {
     let key = (lowest_round, highest_round);
-    SUBDAG_TIMINGS.read().ok()?.get(&key).cloned()
+    SUBDAG_TIMINGS.read().get(&key).cloned()
 }
 
 /// Get a snapshot of all current timing data
 pub fn get_timing_snapshot() -> TimingSnapshot {
-    let round_events = ROUND_EVENTS.read().map(|t| t.clone()).unwrap_or_default();
-    let subdag_timings = SUBDAG_TIMINGS.read().map(|t| t.clone()).unwrap_or_default();
+    let round_events = ROUND_EVENTS.read();
+    let subdag_timings = SUBDAG_TIMINGS.read();
 
     // Convert keys to strings for JSON serialization
     let round_events_str: HashMap<String, RoundEvents> =
-        round_events.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        round_events.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
 
     let subdag_timings_str: HashMap<String, SubdagTimings> =
-        subdag_timings.into_iter().map(|((low, high), v)| (format!("{low}-{high}"), v)).collect();
+        subdag_timings.iter().map(|((low, high), v)| (format!("{low}-{high}"), v.clone())).collect();
 
     TimingSnapshot { timestamp: SystemTime::now(), round_events: round_events_str, subdag_timings: subdag_timings_str }
 }
@@ -222,34 +219,6 @@ pub fn export_to_json(file_path: &str) -> Result<(), Box<dyn std::error::Error>>
     let json = serde_json::to_string_pretty(&snapshot)?;
     std::fs::write(file_path, json)?;
     Ok(())
-}
-
-/// Clean up old timing entries to prevent memory growth
-/// Keeps only the most recent `keep_count` entries for each type
-pub fn cleanup_old_entries(keep_count: usize) {
-    // Clean up round events
-    if let Ok(mut round_events) = ROUND_EVENTS.write() {
-        if round_events.len() > keep_count {
-            let mut rounds: Vec<u64> = round_events.keys().copied().collect();
-            rounds.sort_unstable();
-            let to_remove = rounds.len().saturating_sub(keep_count);
-            for &round in &rounds[..to_remove] {
-                round_events.remove(&round);
-            }
-        }
-    }
-
-    // Clean up subdag timings
-    if let Ok(mut subdag_timings) = SUBDAG_TIMINGS.write() {
-        if subdag_timings.len() > keep_count {
-            let mut keys: Vec<(u64, u64)> = subdag_timings.keys().copied().collect();
-            keys.sort_unstable_by_key(|(low, _)| *low);
-            let to_remove = keys.len().saturating_sub(keep_count);
-            for &key in &keys[..to_remove] {
-                subdag_timings.remove(&key);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
