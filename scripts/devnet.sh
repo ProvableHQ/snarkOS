@@ -28,6 +28,9 @@ clear_ledger=${clear_ledger:-n}
 # Log verbosity is set to 1 (DEBUG) by default.
 verbosity=1
 
+# Binary path set to "" by default (using installed binary) 
+binary_path=""
+
 if [[ $build_binary == "y" ]]; then
   # Ask the user if they want to enable validator telemetry
   read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
@@ -58,6 +61,10 @@ if [[ $build_binary == "y" ]]; then
   # Build command
   echo "Running build command: \"$build_cmd\""
   eval "$build_cmd" || exit 1
+else
+  # Ask the user whether to use a custom relative path
+  read -p "Do you want to run snarkos from a relative path? (e.g. ./target/debug/, defaults to the installed binary): " binary_path
+  binary_path=${binary_path:-""}
 fi
 
 # Clear the ledger logs for each validator if the user chooses to clear ledger
@@ -67,7 +74,7 @@ if [[ $clear_ledger == "y" ]]; then
 
   for ((index = 0; index < $((total_validators + total_clients)); index++)); do
     # Run 'snarkos clean' for each node in the background
-    snarkos clean --network $network_id --dev $index &
+    ${binary_path}snarkos clean --network $network_id --dev $index &
 
     # Store the process ID of the background task
     clean_processes+=($!)
@@ -114,7 +121,7 @@ for validator_index in "${validator_indices[@]}"; do
   fi
 
   # Send the command to start the validator to the new window and capture output to the log file
-  tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity --metrics --metrics-ip=0.0.0.0:$metrics_port --no-dev-txs" C-m
+  tmux send-keys -t "devnet:$window_index" "${binary_path}snarkos start --nodisplay --network $network_id --dev $validator_index --allow-external-peers --dev-num-validators $total_validators --validator --logfile $log_file --verbosity $verbosity --metrics --metrics-ip=0.0.0.0:$metrics_port --no-dev-txs" C-m
 done
 
 if [ "$total_clients" -ne 0 ]; then
@@ -133,7 +140,7 @@ if [ "$total_clients" -ne 0 ]; then
     tmux new-window -t "devnet:$window_index" -n $name
 
     # Send the command to start the client to the new window and capture output to the log file
-    tmux send-keys -t "devnet:$window_index" "snarkos start --nodisplay --network $network_id --dev $window_index --dev-num-validators $total_validators --client --logfile $log_file  --verbosity $verbosity" C-m
+    tmux send-keys -t "devnet:$window_index" "${binary_path}snarkos start --nodisplay --network $network_id --dev $window_index --dev-num-validators $total_validators --client --logfile $log_file  --verbosity $verbosity" C-m
   done
 fi
 
