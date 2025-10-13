@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760288808271,
+  "lastUpdate": 1760353658924,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -3216,6 +3216,66 @@ window.BENCHMARK_DATA = {
             "value": 1.19,
             "unit": "blocks/s",
             "extra": "total_wait=210s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=202s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "96c7cd16a53c8aaabfb471b44e2992e351abdebd",
+          "message": "Merge pull request #3929 from ProvableHQ/devnet_path\n\nAdd option to devnet.sh to run from local path",
+          "timestamp": "2025-10-13T12:37:40+02:00",
+          "tree_id": "35728ba66140c43f050947e037e9a027ac393543",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/96c7cd16a53c8aaabfb471b44e2992e351abdebd"
+        },
+        "date": 1760353658306,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.5903384604358353,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=185.3039698600769, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7943.513854309773,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.071109771728516, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.4,
+            "unit": "blocks/s",
+            "extra": "total_wait=178s, target_height=250, connect_time=22s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.46043,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=173, mean_speed=0.842775, max_speed=3.583333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.16,
+            "unit": "blocks/s",
+            "extra": "total_wait=215s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
