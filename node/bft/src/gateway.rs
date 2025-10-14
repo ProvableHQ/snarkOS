@@ -576,6 +576,9 @@ impl<N: Network> Gateway<N> {
                     bail!("Block request from '{peer_ip}' has an excessive range ({start_height}..{end_height})")
                 }
 
+                // End height is exclusive.
+                let latest_consensus_version = N::CONSENSUS_VERSION(end_height - 1)?;
+
                 let self_ = self.clone();
                 let blocks = match task::spawn_blocking(move || {
                     // Retrieve the blocks within the requested range.
@@ -594,17 +597,18 @@ impl<N: Network> Gateway<N> {
                 let self_ = self.clone();
                 tokio::spawn(async move {
                     // Send the `BlockResponse` message to the peer.
-                    let event = Event::BlockResponse(BlockResponse { request: block_request, blocks });
+                    let event = Event::BlockResponse(BlockResponse {
+                        request: block_request,
+                        blocks,
+                        latest_consensus_version,
+                    });
                     Transport::send(&self_, peer_ip, event).await;
                 });
                 Ok(true)
             }
-            Event::BlockResponse(block_response) => {
+            Event::BlockResponse(BlockResponse { request, blocks, latest_consensus_version }) => {
                 // Process the block response. Except for some tests, there is always a sync sender.
                 if let Some(sync_sender) = self.sync_sender.get() {
-                    // Retrieve the block response.
-                    let BlockResponse { request, blocks } = block_response;
-
                     // Check the response corresponds to a request.
                     if !self.cache.remove_outbound_block_request(peer_ip, &request) {
                         bail!("Unsolicited block response from '{peer_ip}'")
@@ -627,7 +631,9 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(err) = sync_sender.insert_block_response(peer_ip, blocks.0).await {
+                    if let Err(err) =
+                        sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await
+                    {
                         warn!("Unable to process block response from '{peer_ip}' - {err}");
                     }
                 }

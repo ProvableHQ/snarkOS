@@ -32,8 +32,9 @@ use snarkos_node_router::{
 };
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
-    ledger::narwhal::Data,
-    prelude::{Network, block::Transaction},
+    console::network::{ConsensusVersion, Network},
+    ledger::{block::Transaction, narwhal::Data},
+    utilities::{log_error, log_warning},
 };
 
 use std::{io, net::SocketAddr};
@@ -179,6 +180,15 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     fn block_request(&self, peer_ip: SocketAddr, message: BlockRequest) -> bool {
         let BlockRequest { start_height, end_height } = &message;
 
+        // Get the latest consensus version, i.e., the one for the last block's height.
+        let latest_consensus_version = match N::CONSENSUS_VERSION(end_height - 1) {
+            Ok(version) => version,
+            Err(err) => {
+                log_error(&err.context("Failed to retrieve consensus version"));
+                return false;
+            }
+        };
+
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => Data::Object(DataBlocks(blocks)),
@@ -187,16 +197,25 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
                 return false;
             }
         };
+
         // Send the `BlockResponse` message to the peer.
-        self.router().send(peer_ip, Message::BlockResponse(BlockResponse { request: message, blocks }));
+        self.router().send(
+            peer_ip,
+            Message::BlockResponse(BlockResponse { request: message, blocks, latest_consensus_version }),
+        );
         true
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> bool {
+    fn block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: ConsensusVersion,
+    ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
-        if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks) {
-            warn!("Failed to insert block response: {err}");
+        if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
+            log_warning(&err.context("Failed to insert block response"));
             false
         } else {
             true

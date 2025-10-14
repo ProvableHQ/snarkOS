@@ -28,6 +28,9 @@ pub struct BlockResponse<N: Network> {
     pub request: BlockRequest,
     /// The blocks.
     pub blocks: Data<DataBlocks<N>>,
+    /// The consensus version at the height of the *last* block in this response.
+    /// This enables detecting if the current node, or the peer, missed an upgrade.
+    pub latest_consensus_version: ConsensusVersion,
 }
 
 impl<N: Network> MessageTrait for BlockResponse<N> {
@@ -47,15 +50,17 @@ impl<N: Network> MessageTrait for BlockResponse<N> {
 impl<N: Network> ToBytes for BlockResponse<N> {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         self.request.write_le(&mut writer)?;
-        self.blocks.write_le(writer)
+        self.blocks.write_le(&mut writer)?;
+        self.latest_consensus_version.write_le(&mut writer)
     }
 }
 
 impl<N: Network> FromBytes for BlockResponse<N> {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
         let request = BlockRequest::read_le(&mut reader)?;
-        let blocks = Data::read_le(reader)?;
-        Ok(Self { request, blocks })
+        let blocks = Data::read_le(&mut reader)?;
+        let latest_consensus_version = FromBytes::read_le(&mut reader)?;
+        Ok(Self { request, blocks, latest_consensus_version })
     }
 }
 
@@ -64,7 +69,7 @@ pub mod prop_tests {
     use crate::{BlockResponse, DataBlocks, block_request::prop_tests::any_block_request};
     use snarkvm::{
         ledger::test_helpers::sample_genesis_block,
-        prelude::{block::Block, narwhal::Data},
+        prelude::{ConsensusVersion, block::Block, narwhal::Data},
         utilities::{FromBytes, TestRng, ToBytes},
     };
 
@@ -87,7 +92,11 @@ pub mod prop_tests {
 
     pub fn any_block_response() -> BoxedStrategy<BlockResponse<CurrentNetwork>> {
         (any_block_request(), any_data_blocks())
-            .prop_map(|(request, data_blocks)| BlockResponse { request, blocks: Data::Object(data_blocks) })
+            .prop_map(|(request, data_blocks)| BlockResponse {
+                request,
+                blocks: Data::Object(data_blocks),
+                latest_consensus_version: ConsensusVersion::V1,
+            })
             .boxed()
     }
 

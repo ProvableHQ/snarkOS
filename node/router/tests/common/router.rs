@@ -42,6 +42,7 @@ use snarkos_node_tcp::{
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
 use snarkvm::prelude::{
+    ConsensusVersion,
     Field,
     Network,
     block::{Block, Header, Transaction},
@@ -207,7 +208,12 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, _peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
+    fn block_response(
+        &self,
+        _peer_ip: SocketAddr,
+        _blocks: Vec<Block<N>>,
+        _latest_consensus_version: ConsensusVersion,
+    ) -> bool {
         true
     }
 

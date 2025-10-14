@@ -15,12 +15,18 @@
 
 use super::*;
 
+use snarkvm::console::network::ConsensusVersion;
+
+/// Gateway/BFT version of `snarkos_router_messages::BlockResponse`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct BlockResponse<N: Network> {
     /// The original block request.
     pub request: BlockRequest,
     /// The blocks.
     pub blocks: Data<DataBlocks<N>>,
+    /// The consensus version at the height of the *last* block in this response.
+    /// This enables detecting if the current node, or the peer, missed an upgrade.
+    pub latest_consensus_version: ConsensusVersion,
 }
 
 impl<N: Network> EventTrait for BlockResponse<N> {
@@ -40,7 +46,8 @@ impl<N: Network> EventTrait for BlockResponse<N> {
 impl<N: Network> ToBytes for BlockResponse<N> {
     fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
         self.request.write_le(&mut writer)?;
-        self.blocks.write_le(&mut writer)
+        self.blocks.write_le(&mut writer)?;
+        self.latest_consensus_version.write_le(&mut writer)
     }
 }
 
@@ -48,8 +55,9 @@ impl<N: Network> FromBytes for BlockResponse<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
         let request = BlockRequest::read_le(&mut reader)?;
         let blocks = Data::read_le(&mut reader)?;
+        let latest_consensus_version = FromBytes::read_le(&mut reader)?;
 
-        Ok(Self { request, blocks })
+        Ok(Self { request, blocks, latest_consensus_version })
     }
 }
 
@@ -137,7 +145,9 @@ impl<N: Network> FromBytes for DataBlocks<N> {
 #[cfg(test)]
 pub mod prop_tests {
     use crate::{BlockResponse, DataBlocks, block_request::prop_tests::any_block_request};
+
     use snarkvm::{
+        console::network::ConsensusVersion,
         ledger::test_helpers::sample_genesis_block,
         prelude::{FromBytes, TestRng, ToBytes, block::Block, narwhal::Data},
     };
@@ -161,7 +171,11 @@ pub mod prop_tests {
 
     pub fn any_block_response() -> BoxedStrategy<BlockResponse<CurrentNetwork>> {
         (any_block_request(), any_data_blocks())
-            .prop_map(|(request, data_blocks)| BlockResponse { request, blocks: Data::Object(data_blocks) })
+            .prop_map(|(request, data_blocks)| BlockResponse {
+                request,
+                blocks: Data::Object(data_blocks),
+                latest_consensus_version: ConsensusVersion::V1,
+            })
             .boxed()
     }
 

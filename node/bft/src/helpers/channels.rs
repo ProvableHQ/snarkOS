@@ -231,7 +231,8 @@ pub fn init_worker_channels<N: Network>() -> (WorkerSender<N>, WorkerReceiver<N>
 
 #[derive(Debug)]
 pub struct SyncSender<N: Network> {
-    pub tx_block_sync_insert_block_response: mpsc::Sender<(SocketAddr, Vec<Block<N>>, oneshot::Sender<Result<()>>)>,
+    pub tx_block_sync_insert_block_response:
+        mpsc::Sender<(SocketAddr, Vec<Block<N>>, ConsensusVersion, oneshot::Sender<Result<()>>)>,
     pub tx_block_sync_remove_peer: mpsc::Sender<SocketAddr>,
     pub tx_block_sync_update_peer_locators: mpsc::Sender<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub tx_certificate_request: mpsc::Sender<(SocketAddr, CertificateRequest<N>)>,
@@ -253,14 +254,21 @@ impl<N: Network> SyncSender<N> {
     }
 
     /// Sends the request to insert a new block response.
-    pub async fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+    pub async fn insert_block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: ConsensusVersion,
+    ) -> Result<()> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the request to advance with sync blocks.
         // This `tx_block_sync_advance_with_sync_blocks.send()` call
         // causes the `rx_block_sync_advance_with_sync_blocks.recv()` call
         // in one of the loops in [`Sync::run()`] to return.
-        self.tx_block_sync_insert_block_response.send((peer_ip, blocks, callback_sender)).await?;
+        self.tx_block_sync_insert_block_response
+            .send((peer_ip, blocks, latest_consensus_version, callback_sender))
+            .await?;
         // Await the callback to continue.
         callback_receiver.await?
     }
@@ -268,7 +276,8 @@ impl<N: Network> SyncSender<N> {
 
 #[derive(Debug)]
 pub struct SyncReceiver<N: Network> {
-    pub rx_block_sync_insert_block_response: mpsc::Receiver<(SocketAddr, Vec<Block<N>>, oneshot::Sender<Result<()>>)>,
+    pub rx_block_sync_insert_block_response:
+        mpsc::Receiver<(SocketAddr, Vec<Block<N>>, ConsensusVersion, oneshot::Sender<Result<()>>)>,
     pub rx_block_sync_remove_peer: mpsc::Receiver<SocketAddr>,
     pub rx_block_sync_update_peer_locators: mpsc::Receiver<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub rx_certificate_request: mpsc::Receiver<(SocketAddr, CertificateRequest<N>)>,
