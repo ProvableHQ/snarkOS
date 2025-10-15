@@ -720,7 +720,7 @@ impl<N: Network> BlockSync<N> {
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
         } else {
             // There are no more peers left.
-            // self.sync_state.write().set_unsynced();
+            self.sync_state.write().clear_greatest_peer_height();
         }
 
         // Notify the sync loop that something changed.
@@ -785,7 +785,7 @@ impl<N: Network> BlockSync<N> {
             print_requests();
             Default::default()
         } else if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
-            // Retrieve the greatest highest block height.
+            // Retrieve the greatest block height of any connected peer.
             // We do not need to update the sync state here, as that already happens when the block locators are received.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
 
@@ -1054,8 +1054,11 @@ impl<N: Network> BlockSync<N> {
                     return None;
                 };
 
-                // Retrieve the highest block height.
-                let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
+                // Retrieve the greatest block height of any connected peer.
+                let Some(greatest_peer_height) = sync_peers.values().map(|l| l.latest_locator_height()).max() else {
+                    warn!("Cannot re-request blocks because no peers are connected");
+                    return None;
+                };
 
                 debug!("Re-requesting blocks starting at height {start}");
 
