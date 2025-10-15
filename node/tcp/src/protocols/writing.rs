@@ -211,7 +211,7 @@ impl<W: Writing> WritingInternal for W {
 
         // the task for writing outbound messages
         let self_clone = self.clone();
-        let writer_task = tokio::spawn(async move {
+        let writer_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
             trace!(parent: node.span(), "spawned a task for writing messages to {}", addr);
             tx_writer.send(()).unwrap(); // safe; the channel was just opened
@@ -242,7 +242,7 @@ impl<W: Writing> WritingInternal for W {
             }
 
             node.disconnect(addr).await;
-        });
+        }));
         let _ = rx_writer.await;
         conn.tasks.push(writer_task);
 
