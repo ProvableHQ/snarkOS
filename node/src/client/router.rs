@@ -191,7 +191,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
 
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
-            Ok(blocks) => Data::Object(DataBlocks(blocks)),
+            Ok(blocks) => DataBlocks(blocks),
             Err(error) => {
                 error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
                 return false;
@@ -199,10 +199,8 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         };
 
         // Send the `BlockResponse` message to the peer.
-        self.router().send(
-            peer_ip,
-            Message::BlockResponse(BlockResponse { request: message, blocks, latest_consensus_version }),
-        );
+        self.router()
+            .send(peer_ip, Message::BlockResponse(BlockResponse::new(message, blocks, latest_consensus_version)));
         true
     }
 
@@ -211,7 +209,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         &self,
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
-        latest_consensus_version: ConsensusVersion,
+        latest_consensus_version: Option<ConsensusVersion>,
     ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {

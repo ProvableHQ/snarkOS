@@ -352,7 +352,7 @@ impl<N: Network> Sync<N> {
         &self,
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
-        latest_consensus_version: ConsensusVersion,
+        latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<()> {
         // Verify that the response is valid and add it to block sync.
         self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)

@@ -212,7 +212,7 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
         &self,
         _peer_ip: SocketAddr,
         _blocks: Vec<Block<N>>,
-        _latest_consensus_version: ConsensusVersion,
+        _latest_consensus_version: Option<ConsensusVersion>,
     ) -> bool {
         true
     }

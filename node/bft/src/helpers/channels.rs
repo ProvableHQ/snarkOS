@@ -232,7 +232,7 @@ pub fn init_worker_channels<N: Network>() -> (WorkerSender<N>, WorkerReceiver<N>
 #[derive(Debug)]
 pub struct SyncSender<N: Network> {
     pub tx_block_sync_insert_block_response:
-        mpsc::Sender<(SocketAddr, Vec<Block<N>>, ConsensusVersion, oneshot::Sender<Result<()>>)>,
+        mpsc::Sender<(SocketAddr, Vec<Block<N>>, Option<ConsensusVersion>, oneshot::Sender<Result<()>>)>,
     pub tx_block_sync_remove_peer: mpsc::Sender<SocketAddr>,
     pub tx_block_sync_update_peer_locators: mpsc::Sender<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub tx_certificate_request: mpsc::Sender<(SocketAddr, CertificateRequest<N>)>,
@@ -258,7 +258,7 @@ impl<N: Network> SyncSender<N> {
         &self,
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
-        latest_consensus_version: ConsensusVersion,
+        latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<()> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
@@ -277,7 +277,7 @@ impl<N: Network> SyncSender<N> {
 #[derive(Debug)]
 pub struct SyncReceiver<N: Network> {
     pub rx_block_sync_insert_block_response:
-        mpsc::Receiver<(SocketAddr, Vec<Block<N>>, ConsensusVersion, oneshot::Sender<Result<()>>)>,
+        mpsc::Receiver<(SocketAddr, Vec<Block<N>>, Option<ConsensusVersion>, oneshot::Sender<Result<()>>)>,
     pub rx_block_sync_remove_peer: mpsc::Receiver<SocketAddr>,
     pub rx_block_sync_update_peer_locators: mpsc::Receiver<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub rx_certificate_request: mpsc::Receiver<(SocketAddr, CertificateRequest<N>)>,

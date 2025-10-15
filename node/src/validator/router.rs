@@ -189,17 +189,15 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
 
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
-            Ok(blocks) => Data::Object(DataBlocks(blocks)),
+            Ok(blocks) => DataBlocks(blocks),
             Err(error) => {
                 error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
                 return false;
             }
         };
         // Send the `BlockResponse` message to the peer.
-        self.router().send(
-            peer_ip,
-            Message::BlockResponse(BlockResponse { request: message, blocks, latest_consensus_version }),
-        );
+        self.router()
+            .send(peer_ip, Message::BlockResponse(BlockResponse::new(message, blocks, latest_consensus_version)));
         true
     }
 
@@ -208,7 +206,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         &self,
         peer_ip: SocketAddr,
         _blocks: Vec<Block<N>>,
-        _latest_consensus_version: ConsensusVersion,
+        _latest_consensus_version: Option<ConsensusVersion>,
     ) -> bool {
         warn!("Received a block response through P2P, not BFT, from {peer_ip}");
         false

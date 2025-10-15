@@ -456,19 +456,22 @@ impl<N: Network> BlockSync<N> {
         &self,
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
-        latest_consensus_version: ConsensusVersion,
+        latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<()> {
-        let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
-            bail!("Empty block response");
-        };
+        // Perform consensus version check, if possible.
+        if let Some(latest_consensus_version) = latest_consensus_version {
+            let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
+                bail!("Empty block response");
+            };
 
-        let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
+            let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
 
-        ensure_equals!(
-            expected_consensus_version,
-            latest_consensus_version,
-            "the peer's consensus version for height {last_height} does not match ours"
-        );
+            ensure_equals!(
+                expected_consensus_version,
+                latest_consensus_version,
+                "the peer's consensus version for height {last_height} does not match ours"
+            );
+        }
 
         // Insert the candidate blocks into the sync pool.
         for block in blocks {

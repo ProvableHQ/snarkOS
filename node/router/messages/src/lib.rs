@@ -75,13 +75,7 @@ use snarkvm::prelude::{
     puzzle::{Solution, SolutionID},
 };
 
-use std::{
-    borrow::Cow,
-    fmt,
-    fmt::{Display, Formatter},
-    io,
-    net::SocketAddr,
-};
+use std::{borrow::Cow, io, net::SocketAddr};
 
 pub trait MessageTrait: ToBytes + FromBytes {
     /// Returns the message name.
