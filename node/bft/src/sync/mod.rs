@@ -572,7 +572,10 @@ impl<N: Network> Sync<N> {
 
             // The height is incremented as blocks are added.
             let mut current_height = start_height;
-            trace!("Try advancing with block responses (at block {current_height})");
+            trace!(
+                "Trying to advance blocks with BFT (starting at block {current_height}, current sync speed is {})",
+                self.block_sync.get_sync_speed()
+            );
 
             // If we already were within GC or successfully caught up with GC, try to advance BFT normally again.
             loop {
@@ -597,12 +600,12 @@ impl<N: Network> Sync<N> {
 
             cleanup(start_height, current_height, None)
         } else {
-            info!("Block sync is too far behind other validators. Syncing without BFT.");
-
             // For non-BFT sync we need to start at the current height of the ledger,as blocks are immediately
             // added to it and not queue up in `latest_block_responses`.
             let start_height = ledger_height;
             let mut current_height = start_height;
+
+            trace!("Trying to advance blocks without BFT (starting at block {current_height})");
 
             // For sanity, update the sync height before starting.
             // (if this is lower or equal to the current sync height, this is a noop)

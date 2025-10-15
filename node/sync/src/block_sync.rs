@@ -372,7 +372,7 @@ impl<N: Network> BlockSync<N> {
             }
         };
 
-        debug!("Sending {len} block requests to peers {peers:?}", len = requests.len(), peers = sync_peers.keys());
+        debug!("Sending {len} block requests to peer(s) at {peers:?}", len = requests.len(), peers = sync_peers.keys());
 
         // Use a randomly sampled subset of the sync IPs.
         let sync_ips: IndexSet<_> =
@@ -1051,39 +1051,45 @@ impl<N: Network> BlockSync<N> {
         // requests immediately if there are no other peers at a given time.
         // Further, this only closes the first gap. So multiple calls to this might be needed.
         let sync_height = self.get_sync_height();
-        if let Some(next_height) = next_request_height {
-            let start = sync_height + 1;
 
-            // Is there a gap?
-            if next_height > start {
-                // Only request the given range, so there are no overlaps with other requests.
-                let end = next_height; // exclusive
-                let max_new_blocks_to_request = end - start;
+        // If there are no requests remaining, we do not need to re-issue requests, but can just issue them regularly.
+        let next_height = next_request_height?;
 
-                let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start) else {
-                    warn!("Block requests timed out, but found no other peers to re-request from");
-                    return None;
-                };
-
-                // Retrieve the highest block height.
-                let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
-
-                debug!("Re-requesting blocks starting at height {start}");
-
-                return Some((
-                    self.construct_requests(
-                        &sync_peers,
-                        sync_height,
-                        min_common_ancestor,
-                        max_new_blocks_to_request,
-                        greatest_peer_height,
-                    ),
-                    sync_peers,
-                ));
-            }
+        // Only issue block requests if there is a gap at the beginning.
+        let start = sync_height + 1;
+        if next_height <= start {
+            return None;
         }
 
-        None
+        // Only request the given range, so there are no overlaps with other requests.
+        let end = next_height; // exclusive
+        let max_new_blocks_to_request = end - start;
+
+        let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start) else {
+            // Once there are new peers, the sync task will be woken up and (if needed) will retry.
+            warn!("Block requests timed out, but found no other peers to re-request from");
+            return None;
+        };
+
+        // Retrieve the highest block height.
+        let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
+
+        // (Try to) construct the requests.
+        let requests = self.construct_requests(
+            &sync_peers,
+            sync_height,
+            min_common_ancestor,
+            max_new_blocks_to_request,
+            greatest_peer_height,
+        );
+
+        // If the ledger advanced concurrenctly, there may be no requests to issue after all.
+        if let Some((height, _)) = requests.as_slice().first() {
+            debug!("Re-requesting blocks starting at height {height}");
+            Some((requests, sync_peers))
+        } else {
+            None
+        }
     }
 
     /// Finds the peers to sync from and the shared common ancestor, starting at the give height.
@@ -1178,7 +1184,8 @@ impl<N: Network> BlockSync<N> {
             let mut start_height = sync_height + 1;
 
             loop {
-                if requests.contains_key(&start_height) {
+                // Do not issue requests that already exist or would be obsolete.
+                if requests.contains_key(&start_height) || self.ledger.latest_block_height() >= start_height {
                     start_height += 1;
                 } else {
                     break;
@@ -1209,7 +1216,7 @@ impl<N: Network> BlockSync<N> {
         for height in start_height..end_height {
             // Ensure the current height is not in the ledger or already requested.
             if let Err(err) = self.check_block_request(height) {
-                trace!("Failed to issue new request for height {height}: {err}");
+                trace!("{err}");
 
                 // If the sequence of block requests is interrupted, then return early.
                 // Otherwise, continue until the first start height that is new.
