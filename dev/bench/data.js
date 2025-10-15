@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760532965180,
+  "lastUpdate": 1760538870168,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -3402,6 +3402,66 @@ window.BENCHMARK_DATA = {
             "value": 1.24,
             "unit": "blocks/s",
             "extra": "total_wait=201s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7abd639ffe2b3a8a90755a066d09130ab651b573",
+          "message": "Merge pull request #3939 from ljedrz/feat/tokio-console\n\n[Feat] Introduce a tokio_console feature",
+          "timestamp": "2025-10-15T16:04:35+02:00",
+          "tree_id": "2d3a2892e99d50f3ebdcb9f982a45ba5e2d114a2",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7abd639ffe2b3a8a90755a066d09130ab651b573"
+        },
+        "date": 1760538869344,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.5951185438585513,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=184.9626488685608, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 8140.536348031227,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=9.827362298965454, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.39,
+            "unit": "blocks/s",
+            "extra": "total_wait=179s, target_height=250, connect_time=19s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.194069,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=175, mean_speed=0.788857, max_speed=3.416667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=202s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
           }
         ]
       }
