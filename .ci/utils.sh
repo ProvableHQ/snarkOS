@@ -44,6 +44,10 @@ function check_heights() {
   local min_height=$3
   local network_name=$4
   local elapsed=$5
+  local print_success=$6
+
+  # Show the success message by default
+  : "${print_success:=true}"
 
   local all_reached=true
   local highest_height=0
@@ -63,7 +67,9 @@ function check_heights() {
   done
   
   if $all_reached; then
-    echo "✅ SUCCESS: All nodes reached minimum height of $min_height"
+    if $print_success; then
+      echo "✅ SUCCESS: All nodes reached minimum height of $min_height"
+    fi
     return 0
   else
     if (( elapsed > 0 && ((elapsed % 60) == 0) )); then

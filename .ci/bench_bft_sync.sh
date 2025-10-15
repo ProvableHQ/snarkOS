@@ -47,7 +47,7 @@ trap child_exit_handler CHLD
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
-# Shared flags betwen all nodes
+# Shared flags between all nodes
 common_flags=(
   --nobanner --noupdater --nodisplay \
   "--network=$network_id"
@@ -96,9 +96,25 @@ SECONDS=0
 #    exit 1
 #  fi
 #done
-
+ 
 connect_time=$SECONDS
 echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
+
+# Ensure the first node actually has the ledger snapshot.
+# This should succeed instantly in most cases
+SECONDS=0
+has_blocks=false
+while (( SECONDS < 30 )); do
+  if check_heights 0 1 $min_height "$network_name" 0 false; then
+    has_blocks=true
+    break
+  fi
+done
+
+if ! $has_blocks; then
+  echo "Node #0 has not reached the expected height. Maybe the ledger snapshot is corrupted or outdated?"
+  exit 1
+fi
 
 # Check heights periodically with a timeout
 SECONDS=0

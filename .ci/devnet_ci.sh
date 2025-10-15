@@ -47,7 +47,7 @@ trap child_exit_handler CHLD
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
-# Flags used by all ndoes
+# Flags used by all nodes
 common_flags=(
   --nodisplay --nobanner --noupdater "--network=$network_id" --verbosity=1
   --allow-external-peers "--dev-num-validators=$total_validators"

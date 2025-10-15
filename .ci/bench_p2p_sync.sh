@@ -145,7 +145,7 @@ echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block
 SECONDS=0
 has_blocks=false
 while (( SECONDS < 30 )); do
-  if check_heights 0 1 $min_height "$network_name" "0"; then
+  if check_heights 0 1 $min_height "$network_name" 0 false; then
     has_blocks=true
     break
   fi
