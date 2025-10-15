@@ -273,6 +273,7 @@ serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network" ]
+tokio_console = [ "snarkos-cli/tokio_console" ]
 
 [dependencies.clap]
 workspace = true

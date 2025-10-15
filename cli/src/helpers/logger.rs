@@ -157,8 +157,8 @@ pub fn initialize_logger<P: AsRef<Path>>(
     // of the log event, i.e., the file/module where the log message was created.
     let show_target = verbosity > 2 || log_filter.is_some();
 
-    // Initialize tracing.
-    let _ = tracing_subscriber::registry()
+    // Attach tracing-subscriber.
+    let layered = tracing_subscriber::registry()
         .with(
             // Add layer using LogWriter for stdout / terminal
             tracing_subscriber::fmt::Layer::default()
@@ -175,8 +175,14 @@ pub fn initialize_logger<P: AsRef<Path>>(
                 .with_writer(logfile)
                 .with_target(show_target)
                 .with_filter(logfile_filter?),
-        )
-        .try_init();
+        );
+
+    // Attach console-subscriber, if enabled.
+    #[cfg(feature = "tokio_console")]
+    let layered = layered.with(console_subscriber::spawn());
+
+    // Initialize tracing.
+    let _ = layered.try_init();
 
     Ok(log_receiver)
 }
