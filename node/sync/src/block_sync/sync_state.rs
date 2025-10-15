@@ -17,6 +17,13 @@ use super::MAX_BLOCKS_BEHIND;
 
 use std::{cmp::Ordering, time::Instant};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncStatus {
+    Unsynced, // Never synced or no peers
+    Syncing,  // In progress
+    Synced,   // Fully synced with peers
+}
+
 #[derive(Clone)]
 pub(super) struct SyncState {
     /// The height we synced to already
@@ -28,20 +35,14 @@ pub(super) struct SyncState {
     greatest_peer_height: Option<u32>,
     /// Are we synced?
     /// Allows keeping track of when the sync state changes.
-    is_synced: bool,
+    status: SyncStatus,
     /// Last time the sync state changed
     last_change: Instant,
 }
 
 impl Default for SyncState {
     fn default() -> Self {
-        Self {
-            sync_height: 0,
-            greatest_peer_height: None,
-            // Start as "synced" by default. Otherwise, validators will never propose certificates.
-            is_synced: true,
-            last_change: Instant::now(),
-        }
+        Self { sync_height: 0, greatest_peer_height: None, status: SyncStatus::Unsynced, last_change: Instant::now() }
     }
 }
 
@@ -55,7 +56,7 @@ impl SyncState {
     /// Did we catch up with the greatest known peer height?
     /// This will return false if we never synced from a peer.
     pub fn is_block_synced(&self) -> bool {
-        self.is_synced
+        self.status == SyncStatus::Synced
     }
 
     /// Returns `true` if there a blocks to sync from other nodes.
@@ -116,44 +117,62 @@ impl SyncState {
     /// Updates the state of `is_block_synced` for the sync module.
     fn update_is_block_synced(&mut self) {
         trace!(
-            "Updating is_block_synced: greatest_peer_height={greatest_peer:?}, current_height={current}, is_synced={is_synced}",
+            "Updating is_block_synced: greatest_peer_height={greatest_peer:?}, current_height={current}, status={status:?}",
             greatest_peer = self.greatest_peer_height,
             current = self.sync_height,
-            is_synced = self.is_synced,
+            status = self.status,
         );
 
         let num_blocks_behind = self.num_blocks_behind();
-        let old_sync_val = self.is_synced;
+        let old_status = self.status;
 
         // If there are no block locators, we consider ourselves synced.
         // Otherwise, validators will never propose certificates.
-        let new_sync_val = num_blocks_behind.is_none_or(|num| num <= MAX_BLOCKS_BEHIND);
+        let new_status = match num_blocks_behind {
+            Some(num) if num <= MAX_BLOCKS_BEHIND => SyncStatus::Synced,
+            Some(_) => SyncStatus::Syncing,
+            None => SyncStatus::Unsynced,
+        };
 
-        // Print a message if the state changed
-        if new_sync_val != old_sync_val {
-            // Measure how long sync took.
-            let now = Instant::now();
-            let elapsed = now.saturating_duration_since(self.last_change).as_secs();
-            self.last_change = now;
+        // Return early if the state is unchanged
+        if new_status == old_status {
+            return;
+        }
 
-            if new_sync_val {
-                let elapsed =
-                    if elapsed < 60 { format!("{elapsed} seconds") } else { format!("{} minutes", elapsed / 60) };
+        // Measure how long sync took.
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.last_change).as_secs();
 
-                debug!("Block sync state changed to \"synced\". It took {elapsed} to catch up with the network.");
-            } else {
+        self.status = new_status;
+        self.last_change = now;
+
+        match self.status {
+            SyncStatus::Synced => {
+                if old_status == SyncStatus::Syncing {
+                    let elapsed =
+                        if elapsed < 60 { format!("{elapsed} seconds") } else { format!("{} minutes", elapsed / 60) };
+
+                    debug!("Block sync state changed to \"synced\". It took {elapsed} to catch up with the network.");
+                } else {
+                    // If we move directly from unsynced to synced, it means we connected to a peer with a lower height.
+                    // In this case it does not make sense to print how long sync took.
+                    debug!("Block sync state changed to \"synced\".");
+                }
+            }
+            SyncStatus::Syncing => {
                 // num_blocks_behind should never be None at this point,
                 // but we still use `unwrap_or` just in case.
                 let behind_msg = num_blocks_behind.map(|n| n.to_string()).unwrap_or("unknown".to_string());
 
                 debug!("Block sync state changed to \"syncing\". We are {behind_msg} blocks behind.");
             }
+            SyncStatus::Unsynced => {
+                debug!("Block sync state changed to \"unsynced\". Connect more peers to resume block sync.");
+            }
         }
-
-        self.is_synced = new_sync_val;
 
         // Update the `IS_SYNCED` metric.
         #[cfg(feature = "metrics")]
-        metrics::gauge(metrics::bft::IS_SYNCED, new_sync_val);
+        metrics::gauge(metrics::bft::IS_SYNCED, self.status == SyncStatus::Synced);
     }
 }

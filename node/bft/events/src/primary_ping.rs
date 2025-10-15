@@ -19,24 +19,17 @@ use super::*;
 pub struct PrimaryPing<N: Network> {
     pub version: u32,
     pub block_locators: BlockLocators<N>,
-    pub primary_certificate: Data<BatchCertificate<N>>,
+    // The latest certificate of this primary.
+    // (can be `None` if the node has not participated in consensus yet or if the network has not created any blocks yet)
+    pub primary_certificate: Option<Data<BatchCertificate<N>>>,
 }
 
-impl<N: Network> PrimaryPing<N> {
+impl<N: Network> From<(u32, BlockLocators<N>, Option<BatchCertificate<N>>)> for PrimaryPing<N> {
     /// Initializes a new ping event.
-    pub const fn new(
-        version: u32,
-        block_locators: BlockLocators<N>,
-        primary_certificate: Data<BatchCertificate<N>>,
+    fn from(
+        (version, block_locators, primary_certificate): (u32, BlockLocators<N>, Option<BatchCertificate<N>>),
     ) -> Self {
-        Self { version, block_locators, primary_certificate }
-    }
-}
-
-impl<N: Network> From<(u32, BlockLocators<N>, BatchCertificate<N>)> for PrimaryPing<N> {
-    /// Initializes a new ping event.
-    fn from((version, block_locators, primary_certificate): (u32, BlockLocators<N>, BatchCertificate<N>)) -> Self {
-        Self::new(version, block_locators, Data::Object(primary_certificate))
+        Self { version, block_locators, primary_certificate: primary_certificate.map(Data::Object) }
     }
 }
 
@@ -54,8 +47,14 @@ impl<N: Network> ToBytes for PrimaryPing<N> {
         self.version.write_le(&mut writer)?;
         // Write the block locators.
         self.block_locators.write_le(&mut writer)?;
-        // Write the primary certificate.
-        self.primary_certificate.write_le(&mut writer)?;
+
+        // Write the primary certificate (if any).
+        if let Some(cert) = &self.primary_certificate {
+            1u8.write_le(&mut writer)?;
+            cert.write_le(&mut writer)?;
+        } else {
+            0u8.write_le(&mut writer)?;
+        }
 
         Ok(())
     }
@@ -67,11 +66,12 @@ impl<N: Network> FromBytes for PrimaryPing<N> {
         let version = u32::read_le(&mut reader)?;
         // Read the block locators.
         let block_locators = BlockLocators::read_le(&mut reader)?;
-        // Read the primary certificate.
-        let primary_certificate = Data::read_le(&mut reader)?;
+
+        // Read the primary certificate (if any).
+        let primary_certificate = if u8::read_le(&mut reader)? == 0 { None } else { Some(Data::read_le(&mut reader)?) };
 
         // Return the ping event.
-        Ok(Self::new(version, block_locators, primary_certificate))
+        Ok(Self { version, block_locators, primary_certificate })
     }
 }
 
@@ -94,7 +94,7 @@ pub mod prop_tests {
     pub fn any_primary_ping() -> BoxedStrategy<PrimaryPing<CurrentNetwork>> {
         (any::<u32>(), any_block_locators(), any_batch_certificate())
             .prop_map(|(version, block_locators, batch_certificate)| {
-                PrimaryPing::from((version, block_locators, batch_certificate.clone()))
+                PrimaryPing::from((version, block_locators, Some(batch_certificate.clone())))
             })
             .boxed()
     }
@@ -107,8 +107,8 @@ pub mod prop_tests {
         assert_eq!(primary_ping.version, decoded.version);
         assert_eq!(primary_ping.block_locators, decoded.block_locators);
         assert_eq!(
-            primary_ping.primary_certificate.deserialize_blocking().unwrap(),
-            decoded.primary_certificate.deserialize_blocking().unwrap(),
+            primary_ping.primary_certificate.unwrap().deserialize_blocking().unwrap(),
+            decoded.primary_certificate.unwrap().deserialize_blocking().unwrap(),
         );
     }
 }

@@ -667,9 +667,7 @@ impl<N: Network> Gateway<N> {
                 self.disconnect(peer_ip);
                 Ok(false)
             }
-            Event::PrimaryPing(ping) => {
-                let PrimaryPing { version, block_locators, primary_certificate } = ping;
-
+            Event::PrimaryPing(PrimaryPing { version, block_locators, primary_certificate }) => {
                 // Ensure the event version is not outdated.
                 if version < Event::<N>::VERSION {
                     bail!("Dropping '{peer_ip}' on event version {version} (outdated)");
@@ -683,8 +681,10 @@ impl<N: Network> Gateway<N> {
                     }
                 }
 
-                // Send the batch certificates to the primary.
-                let _ = self.primary_sender().tx_primary_ping.send((peer_ip, primary_certificate)).await;
+                if let Some(certificate) = primary_certificate {
+                    // Send the batch certificates to the primary.
+                    let _ = self.primary_sender().tx_primary_ping.send((peer_ip, certificate)).await;
+                }
                 Ok(true)
             }
             Event::TransmissionRequest(request) => {

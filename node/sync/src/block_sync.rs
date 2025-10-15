@@ -711,7 +711,7 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Update `is_synced`.
+        // Update sync status.
         if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
         }

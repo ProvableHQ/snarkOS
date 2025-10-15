@@ -1236,12 +1236,7 @@ impl<N: Network> Primary<N> {
                         }
                     }
 
-                    // Determine if the primary certificate was found.
-                    match certificate {
-                        Some(certificate) => certificate,
-                        // Skip this iteration of the loop (do not send a primary ping).
-                        None => continue,
-                    }
+                    certificate
                 };
 
                 // Construct the primary ping.
