@@ -527,7 +527,7 @@ impl<N: Network> BlockSync<N> {
         let mut current_height = self.ledger.latest_block_height();
         let start_height = current_height;
         trace!(
-            "Try advancing with block responses (at block {current_height}, current sync speed is {})",
+            "Trying to advance with block responses (starting at block {current_height}, current sync speed is {})",
             self.get_sync_speed()
         );
 
@@ -783,24 +783,18 @@ impl<N: Network> BlockSync<N> {
             );
 
             print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
         } else if max_new_blocks_to_request == 0 {
             trace!(
                 "Already reached the maximum number of outstanding blocks ({max_outstanding_block_requests}). Will not issue more."
             );
             print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
         } else if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
             // Retrieve the highest block height.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
             // Update the state of `is_block_synced` for the sync module.
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
             // Return the list of block requests.
-            (
+            return (
                 self.construct_requests(
                     &sync_peers,
                     current_height,
@@ -809,21 +803,19 @@ impl<N: Network> BlockSync<N> {
                     greatest_peer_height,
                 ),
                 sync_peers,
-            )
+            );
         } else {
-            // Update `is_block_synced` if there are no pending requests or responses.
-            if self.requests.read().is_empty() {
-                trace!("All requests have been processed. Will set block synced to true.");
-                // Update the state of `is_block_synced` for the sync module.
-                // TODO(kaimast): remove this workaround
-                self.sync_state.write().set_greatest_peer_height(0);
+            let num_requests = self.requests.read().len();
+            if num_requests == 0 {
+                trace!("No new blocks can be requested, and there are no outstanding requests remaining.");
             } else {
-                trace!("No new blocks can be requests, but there are still outstanding requests.");
+                trace!("No new blocks can be requested, but there are still {num_requests} outstanding requests.");
+                print_requests();
             }
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
         }
+
+        // Return an empty list of block requests.
+        (Default::default(), Default::default())
     }
 
     /// Should only be called by validators when they successfully process a block request.
