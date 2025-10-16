@@ -689,9 +689,11 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Update `is_synced`.
+        // Update sync state, because the greatest peer height may have decreased.
         if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
+        } else {
+            error!("Got new block locators but greatest peer height is zero.");
         }
 
         // Notify the sync loop that something changed.
@@ -712,6 +714,14 @@ impl<N: Network> BlockSync<N> {
         self.common_ancestors.write().retain(|pair, _| !pair.contains(peer_ip));
         // Remove all block requests to the peer.
         self.remove_block_requests_to_peer(peer_ip);
+
+        // Update sync state, because the greatest peer height may have decreased.
+        if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
+            self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
+        } else {
+            // There are no more peers left.
+            // self.sync_state.write().set_unsynced();
+        }
 
         // Notify the sync loop that something changed.
         self.peer_notify.notify_one();
@@ -775,7 +785,7 @@ impl<N: Network> BlockSync<N> {
             print_requests();
             Default::default()
         } else if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
-            // Retrieve the greatest peer block height.
+            // Retrieve the greatest highest block height.
             // We do not need to update the sync state here, as that already happens when the block locators are received.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
 
