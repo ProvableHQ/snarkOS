@@ -134,7 +134,7 @@ impl<N: Network> Handshake for BootstrapClient<N> {
                     debug!("Completed the handshake with '{peer_addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(error) => {
                     debug!("Handshake with '{peer_addr}' failed: {error}");
