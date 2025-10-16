@@ -268,6 +268,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
             // Remove the peers to slash from the pool.
             peer_pool.retain(|addr, _| !peers_to_slash.contains(addr));
+
+            // Remove the peers to slash from the low-level list of known peers.
+            self.tcp().known_peers().batch_remove(peers_to_slash.iter().map(|addr| addr.ip()));
         }
 
         // Make sure that we won't breach the pool size limit in case the slashing didn't suffice.
