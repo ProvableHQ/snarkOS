@@ -273,12 +273,38 @@ impl<N: Network> BootstrapClient<N> {
                     send_msg!(msg, framed, peer_addr)?;
                     return Ok(false);
                 }
+
+                // Reject validators that aren't members of the committee.
+                if msg.node_type == NodeType::Validator {
+                    // This check is skipped in dev mode (the None scenario).
+                    if let Some(current_committee) =
+                        self.get_or_update_committee().await.map_err(|_| error("Couldn't load the committee"))?
+                    {
+                        if !current_committee.contains(&msg.address) {
+                            let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
+                            send_msg!(msg, framed, peer_addr)?;
+                            return Ok(false);
+                        }
+                    }
+                }
             }
             MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
                 if msg.version < Event::<N>::VERSION {
                     let msg = Event::Disconnect::<N>(events::DisconnectReason::OutdatedClientVersion.into());
                     send_msg!(msg, framed, peer_addr)?;
                     return Ok(false);
+                }
+
+                // Reject validators that aren't members of the committee.
+                // This check is skipped in dev mode (the None scenario).
+                if let Some(current_committee) =
+                    self.get_or_update_committee().await.map_err(|_| error("Couldn't load the committee"))?
+                {
+                    if !current_committee.contains(&msg.address) {
+                        let msg = Event::Disconnect::<N>(events::DisconnectReason::ProtocolViolation.into());
+                        send_msg!(msg, framed, peer_addr)?;
+                        return Ok(false);
+                    }
                 }
             }
             _ => unreachable!(),
