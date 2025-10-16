@@ -730,8 +730,10 @@ impl<N: Network> BlockSync<N> {
     /// This should be called by at most one task at a time.
     ///
     /// # Usage
-    ///  - For validators, the primary spawns one task that periodically calls `bft::Sync::try_block_sync`. There is no possibility of multiple calls to it at a time.
-    ///  - For clients, `Client::initialize_sync` also spawns exactly one task that periodically calls this function.
+    ///  - For validators, the primary spawns exactly one task that periodically calls
+    ///    `bft::Sync::try_issuing_block_requests`. There is no possibility of concurrent calls to it.
+    ///  - For clients, `Client::initialize_sync` spawn exactly one task that periodically calls
+    ///    `Client::try_issuing_block_requests` which calls this function.
     ///  - Provers do not call this function.
     pub fn prepare_block_requests(&self) -> BlockRequestBatch<N> {
         // Used to print more information when we max out on requests.
@@ -750,57 +752,56 @@ impl<N: Network> BlockSync<N> {
         // Ensure to not exceed the maximum number of outstanding block requests.
         let max_outstanding_block_requests =
             (MAX_BLOCK_REQUESTS as u32) * (DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as u32);
+
+        // Ensure there is a finite bound on the number of block respnoses we receive, that have not been processed yet.
         let max_total_requests = 4 * max_outstanding_block_requests;
+
         let max_new_blocks_to_request =
             max_outstanding_block_requests.saturating_sub(self.num_outstanding_block_requests() as u32);
 
-        // Prepare the block requests.
+        // Prepare the block requests and sync peers, or returns an empty result if there is nothing to request.
         if self.num_total_block_requests() >= max_total_requests as usize {
             trace!(
                 "We are already requested at least {max_total_requests} blocks that have not been fully processed yet. Will not issue more."
             );
 
             print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
+            Default::default()
         } else if max_new_blocks_to_request == 0 {
             trace!(
                 "Already reached the maximum number of outstanding blocks ({max_outstanding_block_requests}). Will not issue more."
             );
+
             print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
+            Default::default()
         } else if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
-            // Retrieve the highest block height.
+            // Retrieve the greatest peer block height.
+            // We do not need to update the sync state here, as that already happens when the block locators are received.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
-            // Update the state of `is_block_synced` for the sync module.
-            self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
-            // Return the list of block requests.
-            (
-                self.construct_requests(
-                    &sync_peers,
-                    current_height,
-                    min_common_ancestor,
-                    max_new_blocks_to_request,
-                    greatest_peer_height,
-                ),
-                sync_peers,
-            )
-        } else {
-            // Update `is_block_synced` if there are no pending requests or responses.
-            if self.requests.read().is_empty() {
-                trace!("All requests have been processed. Will set block synced to true.");
-                // Update the state of `is_block_synced` for the sync module.
-                // TODO(kaimast): remove this workaround
-                self.sync_state.write().set_greatest_peer_height(0);
-            } else {
-                trace!("No new blocks can be requests, but there are still outstanding requests.");
-            }
 
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
+            // Construct the list of block requests.
+            let requests = self.construct_requests(
+                &sync_peers,
+                current_height,
+                min_common_ancestor,
+                max_new_blocks_to_request,
+                greatest_peer_height,
+            );
+
+            (requests, sync_peers)
+        } else if self.requests.read().is_empty() {
+            // This can happen during a race condition where the node just finished syncing.
+            // It does not make sense to log or change the sync status here.
+            // Checking the sync status here also does not make sense, as the node might as well have switched back
+            //  from `synced` to `syncing` between calling `find_sync_peers_inner` and this line.
+
+            Default::default()
+        } else {
+            // This happens if we already requested all advertised blocks.
+            trace!("No new blocks can be requested, but there are still outstanding requests.");
+
+            print_requests();
+            Default::default()
         }
     }
 
