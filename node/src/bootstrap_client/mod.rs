@@ -59,10 +59,13 @@ impl<N: Network> Deref for BootstrapClient<N> {
     }
 }
 
+// A tuple holding the validator's Aleo address, and a bool indicating if it's in Gateway mode.
+type KnownValidatorInfo<N> = (Address<N>, bool);
+
 pub struct InnerBootstrapClient<N: Network> {
     tcp: Tcp,
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
-    known_validators: RwLock<HashMap<SocketAddr, Address<N>>>,
+    known_validators: RwLock<HashMap<SocketAddr, KnownValidatorInfo<N>>>,
     resolver: RwLock<Resolver<N>>,
     account: Account<N>,
     genesis_header: Header<N>,
@@ -188,9 +191,23 @@ impl<N: Network> BootstrapClient<N> {
         }
     }
 
-    /// Returns the list of known validators connected in Gateway mode.
-    pub fn get_known_validators(&self) -> HashMap<SocketAddr, Address<N>> {
-        self.known_validators.read().clone()
+    // Return the known addresses of current committee members, or all known
+    // validators if the committee info is unavailable.
+    pub async fn get_validator_addrs(&self) -> HashMap<SocketAddr, KnownValidatorInfo<N>> {
+        // First, collect info on all the validators we had connected to before.
+        let mut known_validators = self.known_validators.read().clone();
+        // If the committee info is available, prune non-committee members.
+        match self.get_or_update_committee().await {
+            Ok(Some(committee)) => {
+                known_validators.retain(|_, (aleo_addr, _)| committee.contains(aleo_addr));
+                known_validators
+            }
+            Ok(None) => known_validators,
+            Err(error) => {
+                error!("Couldn't update the validator committee: {error}");
+                known_validators
+            }
+        }
     }
 
     /// Shuts down the bootstrap client.
