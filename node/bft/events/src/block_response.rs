@@ -38,7 +38,7 @@ pub struct BlockResponse<N: Network> {
 }
 
 impl<N: Network> EventTrait for BlockResponse<N> {
-    /// Returns the message name.
+    /// Returns the event name.
     #[inline]
     fn name(&self) -> Cow<'static, str> {
         let start = self.request.start_height;
