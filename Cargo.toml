@@ -117,7 +117,7 @@ version = "2"
 version = "0.3"
 
 [workspace.dependencies.tokio]
-version = "1.28"
+version = "1.48"
 
 [workspace.dependencies.tokio-util]
 version = "0.7"
@@ -273,13 +273,14 @@ serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network" ]
+tokio_console = [ "snarkos-cli/tokio_console" ]
 
 [dependencies.clap]
 workspace = true
 features = [ "derive" ]
 
 [dependencies.locktick]
-version = "0.3"
+version = "0.4"
 optional = true
 
 [dependencies.snarkos-account]
