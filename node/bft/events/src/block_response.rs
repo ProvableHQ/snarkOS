@@ -33,8 +33,8 @@ pub struct BlockResponse<N: Network> {
     /// The blocks.
     pub blocks: Data<DataBlocks<N>>,
     /// The consensus version at the height of the *last* block in this response.
-    /// This enables detecting if the current node, or the peer, missed an upgrade.
-    latest_consensus_version: ConsensusVersion,
+    /// This enables detecting if the current node, or the peer, missed an upgrade. Its value is `None` for messages with version < 2.
+    pub latest_consensus_version: Option<ConsensusVersion>,
 }
 
 impl<N: Network> EventTrait for BlockResponse<N> {
@@ -54,22 +54,12 @@ impl<N: Network> EventTrait for BlockResponse<N> {
 impl<N: Network> BlockResponse<N> {
     // Constructs a new block response.
     pub fn new(request: BlockRequest, blocks: DataBlocks<N>, latest_consensus_version: ConsensusVersion) -> Self {
-        Self { version: 2, request, blocks: Data::Object(blocks), latest_consensus_version }
-    }
-
-    /// Returns `None` for messages of version < 2, otherwise returns the consensus version of the latest block contained in the response.
-    pub fn latest_consensus_version(&self) -> Option<ConsensusVersion> {
-        if self.version < 2 { None } else { Some(self.latest_consensus_version) }
-    }
-
-    /// Returns the start height of the response's block range.
-    pub fn start_height(&self) -> u32 {
-        self.request.start_height
-    }
-
-    /// Returns the (exclusive) end height of the response's block range.
-    pub fn end_height(&self) -> u32 {
-        self.request.end_height
+        Self {
+            version: 2,
+            request,
+            blocks: Data::Object(blocks),
+            latest_consensus_version: Some(latest_consensus_version),
+        }
     }
 }
 
@@ -79,13 +69,18 @@ impl<N: Network> ToBytes for BlockResponse<N> {
             return Err(io_error("Can only serialize block responses of version 2 or greater"));
         }
 
+        let Some(latest_consensus_version) = self.latest_consensus_version else {
+            // This cannot be `None` because we checked that the version earlier.
+            return Err(io_error("Malformed block response"));
+        };
+
         // Currently, we simply write four zero bytes as the version number,
         // because we know a valid request start height is always non-zero.
         // In the future we can encode the real version here.
         0u32.write_le(&mut writer)?;
         self.request.write_le(&mut writer)?;
         self.blocks.write_le(&mut writer)?;
-        self.latest_consensus_version.write_le(&mut writer)
+        latest_consensus_version.write_le(&mut writer)
     }
 }
 
@@ -108,9 +103,9 @@ impl<N: Network> FromBytes for BlockResponse<N> {
         let latest_consensus_version = if version < 2 {
             // If the version is not included, that field will be ignored
             // and can be set to any (valid) value.
-            ConsensusVersion::V1
+            None
         } else {
-            FromBytes::read_le(&mut reader)?
+            Some(FromBytes::read_le(&mut reader)?)
         };
 
         Ok(Self { version, request, blocks, latest_consensus_version })
@@ -228,7 +223,7 @@ pub mod prop_tests {
         let decoded = BlockResponse::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap();
 
         assert_eq!(block_response.request, decoded.request);
-        assert_eq!(block_response.latest_consensus_version(), decoded.latest_consensus_version());
+        assert_eq!(block_response.latest_consensus_version, decoded.latest_consensus_version);
         assert_eq!(block_response.version, decoded.version);
         assert_eq!(
             block_response.blocks.deserialize_blocking().unwrap(),
@@ -258,7 +253,7 @@ pub mod prop_tests {
 
         assert_eq!(response.version, 1);
         assert_eq!(response.request, request);
-        assert_eq!(response.latest_consensus_version(), None);
+        assert_eq!(response.latest_consensus_version, None);
         assert_eq!(response.blocks.deserialize_blocking().unwrap(), blocks);
     }
 }

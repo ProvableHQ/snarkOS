@@ -18,6 +18,7 @@ use crate::{
     PeerPoolHandling,
     messages::{
         BlockRequest,
+        BlockResponse,
         DataBlocks,
         Message,
         PeerResponse,
@@ -124,21 +125,18 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     false => bail!("Peer '{peer_ip}' sent an invalid block request"),
                 }
             }
-            Message::BlockResponse(response) => {
+            Message::BlockResponse(BlockResponse { request, latest_consensus_version, blocks, .. }) => {
                 // Remove the block request, checking if this node previously sent a block request to this peer.
-                if !self.router().cache.remove_outbound_block_request(peer_ip, &response.request) {
+                if !self.router().cache.remove_outbound_block_request(peer_ip, &request) {
                     bail!("Peer '{peer_ip}' is not following the protocol (unexpected block response)")
                 }
-                // Extract consensus version before the response is passed to rayon.
-                let latest_consensus_version = response.latest_consensus_version();
 
                 // Perform the deferred non-blocking deserialization of the blocks.
                 // The deserialization can take a long time (minutes). We should not be running
                 // this on a blocking task, but on a rayon thread pool.
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn_fifo(move || {
-                    let blocks =
-                        response.blocks.deserialize_blocking().map_err(|error| anyhow!("[BlockResponse] {error}"));
+                    let blocks = blocks.deserialize_blocking().map_err(|error| anyhow!("[BlockResponse] {error}"));
                     let _ = send.send(blocks);
                 });
                 let blocks = match recv.await {
@@ -148,11 +146,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 };
 
                 // Ensure the block response is well-formed.
-                blocks.ensure_response_is_well_formed(
-                    peer_ip,
-                    response.request.start_height,
-                    response.request.end_height,
-                )?;
+                blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
 
                 // Process the block response.
                 let node = self.clone();
