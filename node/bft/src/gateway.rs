@@ -64,7 +64,7 @@ use snarkvm::{
 
 use colored::Colorize;
 use futures::SinkExt;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
@@ -842,10 +842,18 @@ impl<N: Network> Gateway<N> {
 
     /// Logs the connected validators.
     fn log_connected_validators(&self) {
-        // Log the connected validators.
+        // Retrieve the connected validators and current committee.
         let connected_validators = self.connected_peers();
+        let committee = match self.ledger.current_committee() {
+            Ok(c) => c,
+            Err(err) => {
+                error!("Failed to get current committee: {err}");
+                return;
+            }
+        };
+
         // Resolve the total number of connectable validators.
-        let validators_total = self.ledger.current_committee().map_or(0, |c| c.num_members().saturating_sub(1));
+        let validators_total = committee.num_members().saturating_sub(1);
         // Format the total validators message.
         let total_validators = format!("(of {validators_total} bonded validators)").dimmed();
         // Construct the connections message.
@@ -854,9 +862,12 @@ impl<N: Network> Gateway<N> {
             num_connected => format!("Connected to {num_connected} validators {total_validators}"),
         };
         // Collect the connected validator addresses.
-        let mut connected_validator_addresses = IndexSet::with_capacity(connected_validators.len());
+        let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
+        // Include our own address, so we do not log ourself as disconnected and include ourself in the check
+        // for the quorum threshold.
         connected_validator_addresses.insert(self.account.address());
-        // Log the connected validators.
+
+        // Log the connected validators and count the total connected stake.
         info!("{connections_msg}");
         for peer_ip in &connected_validators {
             let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
@@ -871,13 +882,17 @@ impl<N: Network> Gateway<N> {
         if num_not_connected > 0 {
             info!("Not connected to {num_not_connected} validators {total_validators}");
             // Collect the committee members.
-            let committee_members: IndexSet<_> =
+            let committee_members: HashSet<_> =
                 self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
 
             // Log the validators that are not connected.
             for address in committee_members.difference(&connected_validator_addresses) {
                 debug!("{}", format!("  Not connected to {address}").dimmed());
             }
+        }
+
+        if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
+            error!("Not connected to a quorum of validators");
         }
     }
 
