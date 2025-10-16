@@ -1271,7 +1271,7 @@ impl<N: Network> Handshake for Gateway<N> {
                     info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(error) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {

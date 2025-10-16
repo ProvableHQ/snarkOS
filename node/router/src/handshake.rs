@@ -143,7 +143,7 @@ impl<N: Network> Router<N> {
                     debug!("Completed the handshake with '{peer_addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(_) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
