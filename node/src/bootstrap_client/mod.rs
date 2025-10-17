@@ -169,9 +169,19 @@ impl<N: Network> BootstrapClient<N> {
     /// Returns the current validator committee or updates it from the explorer, if
     /// we are capable of obtaining it from the network.
     pub async fn get_or_update_committee(&self) -> anyhow::Result<Option<HashSet<Address<N>>>> {
-        // The current committee can't be looked up in dev mode.
-        if self.is_dev() {
-            return Ok(None);
+        // Development testing may include a list of committee Aleo addresses loaded from the environment.
+        if cfg!(feature = "test") || self.is_dev() {
+            match std::env::var("TEST_COMMITTEE_ADDRS") {
+                Ok(aleo_addrs) => {
+                    let dev_committee =
+                        aleo_addrs.split(',').map(|addr| Address::<N>::from_str(addr).unwrap()).collect();
+                    return Ok(Some(dev_committee));
+                }
+                Err(err) => {
+                    warn!("Failed to load committee peers from environment: {err}");
+                    return Ok(None);
+                }
+            }
         }
 
         let now = Instant::now();
