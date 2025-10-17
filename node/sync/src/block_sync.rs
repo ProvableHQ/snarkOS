@@ -459,7 +459,10 @@ impl<N: Network> BlockSync<N> {
         latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<()> {
         // Perform consensus version check, if possible.
-        if let Some(latest_consensus_version) = latest_consensus_version {
+        // This check is only enabled after nodes have reached V12.
+        if let Some(latest_consensus_version) = latest_consensus_version
+            && latest_consensus_version > ConsensusVersion::V11
+        {
             let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
                 bail!("Empty block response");
             };

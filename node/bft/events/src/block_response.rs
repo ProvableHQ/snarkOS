@@ -26,8 +26,6 @@ use std::borrow::Cow;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockResponse<N: Network> {
-    /// The message version.
-    version: u8,
     /// The original block request.
     pub request: BlockRequest,
     /// The blocks.
@@ -52,26 +50,29 @@ impl<N: Network> EventTrait for BlockResponse<N> {
 }
 
 impl<N: Network> BlockResponse<N> {
+    /// The version number that we use to serialize block responses,
+    /// and the highest known message valid version number.
+    const CURRENT_VERSION_NUMBER: u8 = 2;
+    /// The minimum supported message version number.
+    const MIN_VERSION_NUMBER: u8 = 1;
+
+    /// Returns true if a message of the givenversion contains the blocks'
+    /// latest consensus version number.
+    const fn contains_consensus_version(vno: u8) -> bool {
+        vno > Self::MIN_VERSION_NUMBER
+    }
+
     // Constructs a new block response.
     pub fn new(request: BlockRequest, blocks: DataBlocks<N>, latest_consensus_version: ConsensusVersion) -> Self {
-        Self {
-            version: 2,
-            request,
-            blocks: Data::Object(blocks),
-            latest_consensus_version: Some(latest_consensus_version),
-        }
+        Self { request, blocks: Data::Object(blocks), latest_consensus_version: Some(latest_consensus_version) }
     }
 }
 
 impl<N: Network> ToBytes for BlockResponse<N> {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
-        if self.version < 2 {
-            return Err(io_error("Can only serialize block responses of version 2 or greater"));
-        }
-
+        // Block responses without a consesnsus version have message version `1`, other have to `2` (or greater in the future).
         let Some(latest_consensus_version) = self.latest_consensus_version else {
-            // This cannot be `None` because we checked that the version earlier.
-            return Err(io_error("Malformed block response"));
+            return Err(io_error("Can only serialize block responses of version 2 or greater"));
         };
 
         // Currently, we simply write four zero bytes as the version number,
@@ -87,28 +88,23 @@ impl<N: Network> ToBytes for BlockResponse<N> {
 impl<N: Network> FromBytes for BlockResponse<N> {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
         let start_height = u32::read_le(&mut reader)?;
-        let version = if start_height == 0 { 2 } else { 1 };
+        let vno = if start_height == 0 { Self::CURRENT_VERSION_NUMBER } else { Self::MIN_VERSION_NUMBER };
 
-        // If this is a version 1 message, use the first four bytes
-        // as the start_height. Otherwise, read the full request.
-        let request = if version < 2 {
+        // If this message type does not contain the consensus version, use the first four bytes as the start_height.
+        //  Otherwise, read the full request.
+        let request = if Self::contains_consensus_version(vno) {
+            BlockRequest::read_le(&mut reader)?
+        } else {
             let end_height = u32::read_le(&mut reader)?;
             BlockRequest::new(start_height, end_height)?
-        } else {
-            BlockRequest::read_le(&mut reader)?
         };
 
         let blocks = Data::read_le(&mut reader)?;
 
-        let latest_consensus_version = if version < 2 {
-            // If the version is not included, that field will be ignored
-            // and can be set to any (valid) value.
-            None
-        } else {
-            Some(FromBytes::read_le(&mut reader)?)
-        };
+        let latest_consensus_version =
+            if Self::contains_consensus_version(vno) { Some(FromBytes::read_le(&mut reader)?) } else { None };
 
-        Ok(Self { version, request, blocks, latest_consensus_version })
+        Ok(Self { request, blocks, latest_consensus_version })
     }
 }
 
@@ -224,7 +220,6 @@ pub mod prop_tests {
 
         assert_eq!(block_response.request, decoded.request);
         assert_eq!(block_response.latest_consensus_version, decoded.latest_consensus_version);
-        assert_eq!(block_response.version, decoded.version);
         assert_eq!(
             block_response.blocks.deserialize_blocking().unwrap(),
             decoded.blocks.deserialize_blocking().unwrap(),
@@ -251,7 +246,6 @@ pub mod prop_tests {
         // Deserialize it.
         let response = BlockResponse::read_le(data.reader()).unwrap();
 
-        assert_eq!(response.version, 1);
         assert_eq!(response.request, request);
         assert_eq!(response.latest_consensus_version, None);
         assert_eq!(response.blocks.deserialize_blocking().unwrap(), blocks);
