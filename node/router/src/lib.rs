@@ -171,7 +171,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // Determine whether the peer is trusted or a bootstrap node in order to decide
         // how problematic any potential connection issues are.
         let is_trusted_or_bootstrap =
-            self.is_trusted(listener_addr) || bootstrap_peers::<N>(false).contains(&listener_addr);
+            self.is_trusted(listener_addr) || bootstrap_peers::<N>(self.is_dev()).contains(&listener_addr);
 
         let tcp = self.tcp().clone();
         Some(tokio::spawn(async move {
