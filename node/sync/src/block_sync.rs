@@ -966,12 +966,16 @@ impl<N: Network> BlockSync<N> {
     /// This removes the corresponding block responses and returns the set of peers/addresses that timed out.
     /// It will ask the peer pool handling service to ban any timed-out peers.
     ///
-    /// Finally, it will return a set of new of block requests that replaced the timed-out requests (if needed).
+    /// # Return Value
+    /// On success it will return an empty set, if there is nothing to re-request, or a set of new of block requests that replaced the timed-out requests.
     /// This set of new requests can also replace requests that timed out earlier, and which we were not able to re-request yet.
+    ///
+    /// This function will return an error if it cannot re-request blocks due to a lack of peers.
+    /// In this case, the current iteration of block synchronization should not continue and the node should re-try later instead.
     pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
         peer_pool_handler: &P,
-    ) -> Option<BlockRequestBatch<N>> {
+    ) -> Result<Option<BlockRequestBatch<N>>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
 
@@ -1053,7 +1057,7 @@ impl<N: Network> BlockSync<N> {
         } else {
             // Nothing to do.
             // Do not log here as this check happens frequently.
-            return None;
+            return Ok(None);
         };
 
         // Set the maximum number of blocks, so that they do not exceed the end height.
@@ -1061,15 +1065,13 @@ impl<N: Network> BlockSync<N> {
 
         let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start_height) else {
             // This generally shouldn't happen, because there cannot be outstanding requests when no peers are connected.
-            error!("Cannot re-request blocks because no or not enough peers are connected");
-            return None;
+            bail!("Cannot re-request blocks because no or not enough peers are connected");
         };
 
         // Retrieve the greatest block height of any connected peer.
         let Some(greatest_peer_height) = sync_peers.values().map(|l| l.latest_locator_height()).max() else {
             // This should never happen because `sync_peers` is guaranteed to be non-empty.
-            error!("Cannot re-request blocks because no or not enough peers are connected");
-            return None;
+            bail!("Cannot re-request blocks because no or not enough peers are connected");
         };
 
         // (Try to) construct the requests.
@@ -1085,10 +1087,10 @@ impl<N: Network> BlockSync<N> {
         // The given height may also be greater `start_height` due to concurerent block advancement.
         if let Some((height, _)) = requests.as_slice().first() {
             debug!("Re-requesting blocks starting at height {height}");
-            Some((requests, sync_peers))
+            Ok(Some((requests, sync_peers)))
         } else {
             // Do not log here as this constitutes a benign race condition.
-            None
+            Ok(None)
         }
     }
 
@@ -1904,7 +1906,7 @@ mod tests {
 
         // Remove timed out block requests.
         let c = DummyPeerPoolHandler::default();
-        new_sync.handle_block_request_timeouts(&c);
+        new_sync.handle_block_request_timeouts(&c).unwrap();
 
         // Check that the number of requests is reduced based on the ledger height.
         assert_eq!(new_sync.requests.read().len(), (locator_height - ledger_height) as usize);
@@ -1933,7 +1935,7 @@ mod tests {
 
         // Remove timed out block requests.
         let c = DummyPeerPoolHandler::default();
-        sync.handle_block_request_timeouts(&c);
+        sync.handle_block_request_timeouts(&c).unwrap();
 
         let ban_list = c.peers_to_ban.write();
         assert_eq!(ban_list.len(), 1);
@@ -1981,7 +1983,7 @@ mod tests {
         // Remove timed out block requests.
         let c = DummyPeerPoolHandler::default();
 
-        let re_requests = sync.handle_block_request_timeouts(&c);
+        let re_requests = sync.handle_block_request_timeouts(&c).unwrap();
 
         let ban_list = c.peers_to_ban.write();
         assert_eq!(ban_list.len(), 1);
