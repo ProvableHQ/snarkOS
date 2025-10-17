@@ -1290,7 +1290,10 @@ impl<N: Network> Handshake for Gateway<N> {
                 }
                 Err(error) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                     // This error needs to be "repackaged" in order to conform to the return type.
                     return Err(error);
@@ -1390,7 +1393,12 @@ impl<N: Network> Gateway<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            if reason == DisconnectReason::NoReasonGiven {
+                // The Aleo address is already connected; no reason to return an error.
+                return Ok(None);
+            } else {
+                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            }
         }
 
         /* Step 3: Send the challenge response. */
@@ -1507,7 +1515,7 @@ impl<N: Network> Gateway<N> {
         // Ensure the address is not already connected.
         if self.is_connected_address(address) {
             warn!("{CONTEXT} Dropping '{peer_addr}' for being already connected ({address})");
-            return Some(DisconnectReason::ProtocolViolation);
+            return Some(DisconnectReason::NoReasonGiven);
         }
         None
     }

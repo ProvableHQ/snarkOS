@@ -139,7 +139,10 @@ impl<N: Network> Handshake for BootstrapClient<N> {
                 Err(error) => {
                     debug!("Handshake with '{peer_addr}' failed: {error}");
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                     return Err(error);
                 }
