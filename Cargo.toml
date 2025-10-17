@@ -161,7 +161,9 @@ default-features = false
 version = "0.2"
 
 [workspace.dependencies.tracing-subscriber]
-version = "0.3"
+# TODO remove this once colored logs work again in a newer version
+# See: https://github.com/tokio-rs/tracing/issues/3378
+version = "=0.3.19"
 
 [workspace.dependencies.test-strategy]
 version = "0.4"
