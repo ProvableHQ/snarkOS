@@ -1455,7 +1455,12 @@ impl<N: Network> Gateway<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            if reason == DisconnectReason::NoReasonGiven {
+                // The Aleo address is already connected; no reason to return an error.
+                return Ok(None);
+            } else {
+                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            }
         }
 
         /* Step 2: Send the challenge response followed by own challenge request. */
