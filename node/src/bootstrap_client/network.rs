@@ -21,6 +21,7 @@ use crate::{
     },
     bootstrap_client::codec::BootstrapClientCodec,
     router::{
+        ConnectionMode,
         MAX_PEERS_TO_SEND,
         NodeType,
         Peer,
@@ -56,6 +57,10 @@ impl<N: Network> PeerPoolHandling<N> for BootstrapClient<N> {
         self.dev.is_some()
     }
 
+    fn node_type(&self) -> NodeType {
+        NodeType::BootstrapClient
+    }
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
@@ -80,9 +85,7 @@ impl<N: Network> OnConnect for BootstrapClient<N> {
         if let Some(listener_addr) = self.resolve_to_listener(peer_addr) {
             if let Some(peer) = self.get_connected_peer(listener_addr) {
                 if peer.node_type == NodeType::Validator {
-                    // Having the Aleo address in the resolver indicates Gateway mode.
-                    let gateway_mode = self.resolver().read().get_peer_ip_for_address(peer.aleo_addr).is_some();
-                    self.known_validators.write().insert(listener_addr, (peer.aleo_addr, gateway_mode));
+                    self.known_validators.write().insert(listener_addr, (peer.aleo_addr, peer.connection_mode));
                 }
             }
         }
@@ -141,7 +144,10 @@ impl<N: Network> Reading for BootstrapClient<N> {
                 if peer.node_type == NodeType::Validator {
                     // Filter out Gateway addresses.
                     peers.retain(|peer| {
-                        validators.get(&peer.listener_addr).map(|(_, gateway_mode)| !gateway_mode).unwrap_or(true)
+                        validators
+                            .get(&peer.listener_addr)
+                            .map(|(_, connection_mode)| *connection_mode != ConnectionMode::Gateway)
+                            .unwrap_or(true)
                     });
                 } else {
                     // Filter out all validator addresses.
@@ -167,9 +173,9 @@ impl<N: Network> Reading for BootstrapClient<N> {
                 let validators = self.get_validator_addrs().await;
                 let validators = validators
                     .into_iter()
-                    .filter_map(|(listener_addr, (aleo_addr, gateway_mode))| {
+                    .filter_map(|(listener_addr, (aleo_addr, connection_mode))| {
                         // Only pick addresses connected in Gateway mode.
-                        gateway_mode.then_some((listener_addr, aleo_addr))
+                        (connection_mode == ConnectionMode::Gateway).then_some((listener_addr, aleo_addr))
                     })
                     .take(MAX_VALIDATORS_TO_SEND)
                     .collect::<IndexMap<_, _>>();

@@ -22,6 +22,7 @@ use crate::{
     tcp::{self, Tcp},
 };
 use snarkos_account::Account;
+use snarkos_node_router::ConnectionMode;
 use snarkos_node_tcp::{P2P, protocols::*};
 use snarkvm::{
     ledger::committee::Committee,
@@ -59,8 +60,8 @@ impl<N: Network> Deref for BootstrapClient<N> {
     }
 }
 
-// A tuple holding the validator's Aleo address, and a bool indicating if it's in Gateway mode.
-type KnownValidatorInfo<N> = (Address<N>, bool);
+// A tuple holding the validator's Aleo address, and its connection mode.
+type KnownValidatorInfo<N> = (Address<N>, ConnectionMode);
 
 pub struct InnerBootstrapClient<N: Network> {
     tcp: Tcp,
@@ -94,7 +95,7 @@ impl<N: Network> BootstrapClient<N> {
         let tcp = Tcp::new(tcp::Config::new(listener_addr, Self::MAX_PEERS));
         // Initialize the peer pool.
         let peer_pool = Default::default();
-        // Initialize a collection of validators that had connected in Gateway mode.
+        // Initialize a collection of validators.
         let known_validators = Default::default();
         // Load the restrictions ID.
         let restrictions_id = Restrictions::load()?.restrictions_id();
