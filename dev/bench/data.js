@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760701048978,
+  "lastUpdate": 1760703405595,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -3762,6 +3762,66 @@ window.BENCHMARK_DATA = {
             "value": 1.23,
             "unit": "blocks/s",
             "extra": "total_wait=203s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "41654e3d60ab05fc1068b756f6151155571e7cdd",
+          "message": "Merge pull request #3948 from ljedrz/fix/correct_peer_downgrading_for_validators\n\n[Fix] Correct downgrade_peer_to_candidate for non-Gateway use",
+          "timestamp": "2025-10-17T13:46:55+02:00",
+          "tree_id": "0109ff5aa5008e64876f31fd6c39d4634353fff8",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/41654e3d60ab05fc1068b756f6151155571e7cdd"
+        },
+        "date": 1760703404788,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.620111555678821,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=183.19830656051636, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7842.469593058571,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.200868368148804, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.34,
+            "unit": "blocks/s",
+            "extra": "total_wait=186s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.190678,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=182, mean_speed=0.840110, max_speed=2.850000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
           }
         ]
       }
