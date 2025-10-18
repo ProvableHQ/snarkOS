@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760709795221,
+  "lastUpdate": 1760777099550,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -3876,6 +3876,66 @@ window.BENCHMARK_DATA = {
             "value": 1.21,
             "unit": "blocks/s",
             "extra": "total_wait=205s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=203s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "36c35b7214eccd3ff77a0873eef5a26bba70c9eb",
+          "message": "Merge pull request #3952 from ProvableHQ/log/downgrade-tracing-subscriber\n\n[Logs] Downgrade `tracing-subscriber` due to breaking color changes",
+          "timestamp": "2025-10-18T10:12:38+02:00",
+          "tree_id": "39f7b70ffd0dc5018b25039a7ba4bcacc4e33f70",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/36c35b7214eccd3ff77a0873eef5a26bba70c9eb"
+        },
+        "date": 1760777098544,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.700167848187693,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=177.76672673225403, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7901.916702332455,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.124125957489014, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.29,
+            "unit": "blocks/s",
+            "extra": "total_wait=193s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.053035,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=188, mean_speed=0.814982, max_speed=2.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.15,
+            "unit": "blocks/s",
+            "extra": "total_wait=217s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
