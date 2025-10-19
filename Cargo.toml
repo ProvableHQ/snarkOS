@@ -46,10 +46,9 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "509ad3b"
+rev = "58b326d"
 #version = "=4.2.1"
 default-features = false
-#features = [ "circuit", "console", "rocks" ]
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -118,7 +117,7 @@ version = "2"
 version = "0.3"
 
 [workspace.dependencies.tokio]
-version = "1.28"
+version = "1.48"
 
 [workspace.dependencies.tokio-util]
 version = "0.7"
@@ -162,7 +161,9 @@ default-features = false
 version = "0.2"
 
 [workspace.dependencies.tracing-subscriber]
-version = "0.3"
+# TODO remove this once colored logs work again in a newer version
+# See: https://github.com/tokio-rs/tracing/issues/3378
+version = "=0.3.19"
 
 [workspace.dependencies.test-strategy]
 version = "0.4"
@@ -274,13 +275,14 @@ serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network", "snarkos-node/test_network" ]
+tokio_console = [ "snarkos-cli/tokio_console" ]
 
 [dependencies.clap]
 workspace = true
 features = [ "derive" ]
 
 [dependencies.locktick]
-version = "0.3"
+version = "0.4"
 optional = true
 
 [dependencies.snarkos-account]

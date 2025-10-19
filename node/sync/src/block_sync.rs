@@ -61,7 +61,11 @@ pub const REDUNDANCY_FACTOR: usize = 1;
 pub const REDUNDANCY_FACTOR: usize = 3;
 
 /// The time nodes wait between issuing batches of block requests to avoid triggering spam detection.
-// TODO (kaimast): Document why 10ms (not 1 or 100)
+///
+/// The current rate limit for all messages is around 160k  per second (see [`Gateway::max_cache_events`]).
+/// This constant limits number of block requests to a much lower 100 per second.
+///
+// TODO(kaimast): base rate limits on how many requests were sent to each peer instead.
 pub const BLOCK_REQUEST_BATCH_DELAY: Duration = Duration::from_millis(10);
 
 const EXTRA_REDUNDANCY_FACTOR: usize = REDUNDANCY_FACTOR * 3;
@@ -158,8 +162,11 @@ pub struct BlockSync<N: Network> {
     /// The lock used to ensure that [`Self::advance_with_sync_blocks()`] is called by one task at a time.
     advance_with_sync_blocks_lock: TMutex<()>,
 
-    /// Gets notified when there was an update to the locators, a peer disconnected, or we received a new block response.
-    notify: Notify,
+    /// Gets notified when there was an update to the locators or a peer disconnected.
+    peer_notify: Notify,
+
+    /// Gets notified when we received a new block response.
+    response_notify: Notify,
 
     /// Tracks sync speed
     metrics: BlockSyncMetrics,
@@ -174,7 +181,8 @@ impl<N: Network> BlockSync<N> {
         Self {
             ledger,
             sync_state: RwLock::new(sync_state),
-            notify: Default::default(),
+            peer_notify: Default::default(),
+            response_notify: Default::default(),
             locators: Default::default(),
             requests: Default::default(),
             common_ancestors: Default::default(),
@@ -183,8 +191,19 @@ impl<N: Network> BlockSync<N> {
         }
     }
 
-    pub async fn wait_for_update(&self) {
-        self.notify.notified().await
+    /// Blocks until something about a peer changes,
+    /// or block request has been fully processed (either successfully or unsuccessfully).
+    ///
+    /// Used by the outgoing task.
+    pub async fn wait_for_peer_update(&self) {
+        self.peer_notify.notified().await
+    }
+
+    /// Blocks until there is a new response to a block request.
+    ///
+    /// Used by the incoming task.
+    pub async fn wait_for_block_responses(&self) {
+        self.response_notify.notified().await
     }
 
     /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
@@ -409,8 +428,9 @@ impl<N: Network> BlockSync<N> {
             // If sending fails for any peer, remove the block request from the sync pool.
             if !success {
                 // Remove the entire block request from the sync pool.
+                let mut requests = self.requests.write();
                 for height in start_height..end_height {
-                    self.remove_block_request(height);
+                    requests.remove(&height);
                 }
                 // Break out of the loop.
                 return false;
@@ -669,13 +689,15 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Update `is_synced`.
+        // Update sync state, because the greatest peer height may have decreased.
         if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
+        } else {
+            error!("Got new block locators but greatest peer height is zero.");
         }
 
         // Notify the sync loop that something changed.
-        self.notify.notify_one();
+        self.peer_notify.notify_one();
 
         Ok(())
     }
@@ -693,8 +715,16 @@ impl<N: Network> BlockSync<N> {
         // Remove all block requests to the peer.
         self.remove_block_requests_to_peer(peer_ip);
 
+        // Update sync state, because the greatest peer height may have decreased.
+        if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
+            self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
+        } else {
+            // There are no more peers left.
+            self.sync_state.write().clear_greatest_peer_height();
+        }
+
         // Notify the sync loop that something changed.
-        self.notify.notify_one();
+        self.peer_notify.notify_one();
     }
 }
 
@@ -710,8 +740,10 @@ impl<N: Network> BlockSync<N> {
     /// This should be called by at most one task at a time.
     ///
     /// # Usage
-    ///  - For validators, the primary spawns one task that periodically calls `bft::Sync::try_block_sync`. There is no possibility of multiple calls to it at a time.
-    ///  - For clients, `Client::initialize_sync` also spawns exactly one task that periodically calls this function.
+    ///  - For validators, the primary spawns exactly one task that periodically calls
+    ///    `bft::Sync::try_issuing_block_requests`. There is no possibility of concurrent calls to it.
+    ///  - For clients, `Client::initialize_sync` spawn exactly one task that periodically calls
+    ///    `Client::try_issuing_block_requests` which calls this function.
     ///  - Provers do not call this function.
     pub fn prepare_block_requests(&self) -> BlockRequestBatch<N> {
         // Used to print more information when we max out on requests.
@@ -730,57 +762,56 @@ impl<N: Network> BlockSync<N> {
         // Ensure to not exceed the maximum number of outstanding block requests.
         let max_outstanding_block_requests =
             (MAX_BLOCK_REQUESTS as u32) * (DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as u32);
+
+        // Ensure there is a finite bound on the number of block respnoses we receive, that have not been processed yet.
         let max_total_requests = 4 * max_outstanding_block_requests;
+
         let max_new_blocks_to_request =
             max_outstanding_block_requests.saturating_sub(self.num_outstanding_block_requests() as u32);
 
-        // Prepare the block requests.
+        // Prepare the block requests and sync peers, or returns an empty result if there is nothing to request.
         if self.num_total_block_requests() >= max_total_requests as usize {
             trace!(
                 "We are already requested at least {max_total_requests} blocks that have not been fully processed yet. Will not issue more."
             );
 
             print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
+            Default::default()
         } else if max_new_blocks_to_request == 0 {
             trace!(
                 "Already reached the maximum number of outstanding blocks ({max_outstanding_block_requests}). Will not issue more."
             );
+
             print_requests();
-
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
+            Default::default()
         } else if let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(current_height) {
-            // Retrieve the highest block height.
+            // Retrieve the greatest block height of any connected peer.
+            // We do not need to update the sync state here, as that already happens when the block locators are received.
             let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
-            // Update the state of `is_block_synced` for the sync module.
-            self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
-            // Return the list of block requests.
-            (
-                self.construct_requests(
-                    &sync_peers,
-                    current_height,
-                    min_common_ancestor,
-                    max_new_blocks_to_request,
-                    greatest_peer_height,
-                ),
-                sync_peers,
-            )
-        } else {
-            // Update `is_block_synced` if there are no pending requests or responses.
-            if self.requests.read().is_empty() {
-                trace!("All requests have been processed. Will set block synced to true.");
-                // Update the state of `is_block_synced` for the sync module.
-                // TODO(kaimast): remove this workaround
-                self.sync_state.write().set_greatest_peer_height(0);
-            } else {
-                trace!("No new blocks can be requests, but there are still outstanding requests.");
-            }
 
-            // Return an empty list of block requests.
-            (Default::default(), Default::default())
+            // Construct the list of block requests.
+            let requests = self.construct_requests(
+                &sync_peers,
+                current_height,
+                min_common_ancestor,
+                max_new_blocks_to_request,
+                greatest_peer_height,
+            );
+
+            (requests, sync_peers)
+        } else if self.requests.read().is_empty() {
+            // This can happen during a race condition where the node just finished syncing.
+            // It does not make sense to log or change the sync status here.
+            // Checking the sync status here also does not make sense, as the node might as well have switched back
+            //  from `synced` to `syncing` between calling `find_sync_peers_inner` and this line.
+
+            Default::default()
+        } else {
+            // This happens if we already requested all advertised blocks.
+            trace!("No new blocks can be requested, but there are still outstanding requests.");
+
+            print_requests();
+            Default::default()
         }
     }
 
@@ -868,7 +899,7 @@ impl<N: Network> BlockSync<N> {
         }
 
         // Notify the sync loop that something changed.
-        self.notify.notify_one();
+        self.response_notify.notify_one();
 
         Ok(())
     }
@@ -887,12 +918,6 @@ impl<N: Network> BlockSync<N> {
         Ok(())
     }
 
-    /// Removes the entire block request for the given height, if it exists.
-    fn remove_block_request(&self, height: u32) {
-        // Remove the request entry for the given height.
-        self.requests.write().remove(&height);
-    }
-
     /// Removes the block request and response for the given height
     /// This may only be called after `peek_next_block`, which checked if the request for the given height was complete.
     ///
@@ -905,8 +930,11 @@ impl<N: Network> BlockSync<N> {
             trace!(
                 "Block request for height {height} was completed in {}ms (sync speed is {})",
                 e.timestamp.elapsed().as_millis(),
-                self.get_sync_speed(),
+                self.get_sync_speed()
             );
+
+            // Notify the sending task that less requests are in-flight.
+            self.peer_notify.notify_one();
         }
     }
 
@@ -1026,8 +1054,11 @@ impl<N: Network> BlockSync<N> {
                     return None;
                 };
 
-                // Retrieve the highest block height.
-                let greatest_peer_height = sync_peers.values().map(|l| l.latest_locator_height()).max().unwrap_or(0);
+                // Retrieve the greatest block height of any connected peer.
+                let Some(greatest_peer_height) = sync_peers.values().map(|l| l.latest_locator_height()).max() else {
+                    warn!("Cannot re-request blocks because no peers are connected");
+                    return None;
+                };
 
                 debug!("Re-requesting blocks starting at height {start}");
 
@@ -1381,7 +1412,8 @@ mod tests {
     /// Returns a duplicate (deep copy) of the sync pool with a different ledger height.
     fn duplicate_sync_at_new_height(sync: &BlockSync<CurrentNetwork>, height: u32) -> BlockSync<CurrentNetwork> {
         BlockSync::<CurrentNetwork> {
-            notify: Notify::new(),
+            peer_notify: Notify::new(),
+            response_notify: Default::default(),
             ledger: Arc::new(sample_ledger_service(height)),
             locators: RwLock::new(sync.locators.read().clone()),
             common_ancestors: RwLock::new(sync.common_ancestors.read().clone()),

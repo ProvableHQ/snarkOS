@@ -9,11 +9,15 @@ set -eo pipefail # error on any command failure
 network_id=1
 min_height=250
 
+# The total number of validators in the beacon committee.
+# This must match the number of validators used when generating the snapshot. 
+num_validators=40
+
 # The number of clients that are syncing
 num_clients=1
 
 # Adjust this to show more/less log messages
-log_filter="info,snarkos_node_sync=debug,snarkos_node_tcp=warn,snarkos_node_rest=warn"
+log_filter="info,snarkos_node::client=trace,snarkos_node_sync=trace,snarkos_node_tcp=warn,snarkos_node_rest=warn"
 
 max_wait=2400 # Wait for up to 40 minutes
 poll_interval=1 # Check block heights every second
@@ -88,13 +92,14 @@ trap child_exit_handler CHLD
 # Define a trap handler that prints a message when an error occurs.
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
-# Shared flags betwen all nodes
+# Shared flags between all nodes
 common_flags=(
   --nodisplay --nobanner --noupdater # reduce clutter in the output
   "--log-filter=$log_filter" # only show the logs we care about
   "--network=$network_id"
   --nocdn # don't sync from CDN, so we only benchmark p2p sync
-  --dev-num-validators=40 --no-dev-txs
+  "--dev-num-validators=$num_validators"
+  --no-dev-txs
 )
 
 # The client that has the ledger
@@ -135,8 +140,27 @@ done
 connect_time=$SECONDS
 echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
 
-# Check heights periodically with a timeout
+# Ensure the first node actually has the ledger snapshot.
+# This should succeed instantly in most cases
 SECONDS=0
+has_blocks=false
+while (( SECONDS < 30 )); do
+  if check_heights 0 1 $min_height "$network_name" "0"; then
+    has_blocks=true
+    break
+  fi
+done
+
+if ! $has_blocks; then
+  echo "Node #0 has not reached the expected height. Maybe the ledger snapshot is corrupted or outdated?"
+  exit 1
+fi
+
+# Count the initial startup of node #0 as part of the benchmark as the other node
+# might already start syncing.
+# SECONDS=0 
+
+# Check heights periodically with a timeout
 while (( SECONDS < max_wait )); do
   # Sample sync speed(s) for variance calculation
   sample_sync_speeds

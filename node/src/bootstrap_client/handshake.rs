@@ -134,12 +134,15 @@ impl<N: Network> Handshake for BootstrapClient<N> {
                     debug!("Completed the handshake with '{peer_addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(error) => {
                     debug!("Handshake with '{peer_addr}' failed: {error}");
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                     return Err(error);
                 }

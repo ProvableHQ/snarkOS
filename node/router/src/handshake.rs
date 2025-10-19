@@ -143,11 +143,14 @@ impl<N: Network> Router<N> {
                     debug!("Completed the handshake with '{peer_addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(_) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                 }
             }
