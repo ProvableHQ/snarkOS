@@ -143,21 +143,29 @@ impl SubdagTimings {
             SubdagStage::SubdagProcessing => {
                 if let Some((start, _)) = self.subdag_processing {
                     self.subdag_processing = Some((start, Some(now)));
+                } else {
+                    warn!("SubdagProcessing stage not started");
                 }
             }
             SubdagStage::PrepareAdvanceToNextQuorumBlock => {
                 if let Some((start, _)) = self.prepare_advance_to_next_quorum_block {
                     self.prepare_advance_to_next_quorum_block = Some((start, Some(now)));
+                } else {
+                    warn!("PrepareAdvanceToNextQuorumBlock stage not started");
                 }
             }
             SubdagStage::CheckNextBlock => {
                 if let Some((start, _)) = self.check_next_block {
                     self.check_next_block = Some((start, Some(now)));
+                } else {
+                    warn!("CheckNextBlock stage not started");
                 }
             }
             SubdagStage::AdvanceToNextBlock => {
                 if let Some((start, _)) = self.advance_to_next_block {
                     self.advance_to_next_block = Some((start, Some(now)));
+                } else {
+                    warn!("AdvanceToNextBlock stage not started");
                 }
             }
         }
