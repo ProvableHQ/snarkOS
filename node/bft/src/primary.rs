@@ -696,7 +696,7 @@ impl<N: Network> Primary<N> {
         })?;
 
         #[cfg(feature = "test_network")]
-        crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated, Some(true));
+        crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated);
 
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
@@ -766,7 +766,7 @@ impl<N: Network> Primary<N> {
         }
 
         #[cfg(feature = "test_network")]
-        crate::helpers::record_event(batch_round, crate::helpers::ConsensusStage::ProposalSeen, Some(false));
+        crate::helpers::record_event(batch_round, crate::helpers::ConsensusStage::ProposalSeen);
 
         // Retrieve the cached round and batch ID for this validator.
         if let Some((signed_round, signed_batch_id, signature)) =

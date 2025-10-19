@@ -529,12 +529,18 @@ impl<N: Network> Consensus<N> {
         let _lowest_round = rounds.iter().min().copied().unwrap_or(0);
         let _highest_round = rounds.iter().max().copied().unwrap_or(0);
 
+        #[cfg(feature = "test_network")]
+        snarkos_node_bft::helpers::end_subdag_stage(
+            _highest_round.saturating_sub(2),
+            _highest_round,
+            snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
+        );
         // Create the candidate next block.
         #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::start_subdag_stage(
             _lowest_round,
             _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
+            snarkos_node_bft::helpers::SubdagStage::PrepareAdvanceToNextQuorumBlock,
         );
         let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
         let _next_block_height = next_block.height();
@@ -542,7 +548,7 @@ impl<N: Network> Consensus<N> {
         snarkos_node_bft::helpers::end_subdag_stage(
             _lowest_round,
             _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
+            snarkos_node_bft::helpers::SubdagStage::PrepareAdvanceToNextQuorumBlock,
         );
         // Check that the block is well-formed.
         #[cfg(feature = "test_network")]

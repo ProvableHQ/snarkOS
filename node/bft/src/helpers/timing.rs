@@ -42,6 +42,7 @@ pub enum ConsensusStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubdagStage {
     SubdagProcessing,
+    PrepareAdvanceToNextQuorumBlock,
     CheckNextBlock,
     AdvanceToNextBlock,
 }
@@ -52,7 +53,6 @@ pub struct TimingEvent {
     pub round: u64,
     pub timestamp: SystemTime,
     pub event_type: String,
-    pub is_local: Option<bool>, // Some(true) for local events, Some(false) for peer events, None for unknown
 }
 
 /// Timing data for round-based events
@@ -70,6 +70,7 @@ pub struct SubdagTimings {
     pub lowest_round: u64,
     pub highest_round: u64,
     pub subdag_processing: Option<(SystemTime, Option<SystemTime>)>,
+    pub prepare_advance_to_next_quorum_block: Option<(SystemTime, Option<SystemTime>)>,
     pub check_next_block: Option<(SystemTime, Option<SystemTime>)>,
     pub advance_to_next_block: Option<(SystemTime, Option<SystemTime>)>,
 }
@@ -87,7 +88,7 @@ impl RoundEvents {
         Self { round, proposal_seen: Vec::new(), proposal_created: Vec::new(), certificate_added: Vec::new() }
     }
 
-    fn add_event(&mut self, stage: ConsensusStage, timestamp: SystemTime, is_local: Option<bool>) {
+    fn add_event(&mut self, stage: ConsensusStage, timestamp: SystemTime) {
         let event = TimingEvent {
             round: self.round,
             timestamp,
@@ -96,7 +97,6 @@ impl RoundEvents {
                 ConsensusStage::ProposalCreated => "proposal_created".to_string(),
                 ConsensusStage::CertificateAdded => "certificate_added".to_string(),
             },
-            is_local,
         };
 
         match stage {
@@ -113,6 +113,7 @@ impl SubdagTimings {
             lowest_round,
             highest_round,
             subdag_processing: None,
+            prepare_advance_to_next_quorum_block: None,
             check_next_block: None,
             advance_to_next_block: None,
         }
@@ -123,6 +124,9 @@ impl SubdagTimings {
         match stage {
             SubdagStage::SubdagProcessing => {
                 self.subdag_processing = Some((now, None));
+            }
+            SubdagStage::PrepareAdvanceToNextQuorumBlock => {
+                self.prepare_advance_to_next_quorum_block = Some((now, None));
             }
             SubdagStage::CheckNextBlock => {
                 self.check_next_block = Some((now, None));
@@ -141,6 +145,11 @@ impl SubdagTimings {
                     self.subdag_processing = Some((start, Some(now)));
                 }
             }
+            SubdagStage::PrepareAdvanceToNextQuorumBlock => {
+                if let Some((start, _)) = self.prepare_advance_to_next_quorum_block {
+                    self.prepare_advance_to_next_quorum_block = Some((start, Some(now)));
+                }
+            }
             SubdagStage::CheckNextBlock => {
                 if let Some((start, _)) = self.check_next_block {
                     self.check_next_block = Some((start, Some(now)));
@@ -156,18 +165,18 @@ impl SubdagTimings {
 }
 
 /// Record a consensus event for a specific round
-pub fn record_event(round: u64, stage: ConsensusStage, is_local: Option<bool>) {
+pub fn record_event(round: u64, stage: ConsensusStage) {
     let now = SystemTime::now();
     let mut round_events = ROUND_EVENTS.write();
     let round_event = round_events.entry(round).or_insert_with(|| RoundEvents::new(round));
-    round_event.add_event(stage, now, is_local);
+    round_event.add_event(stage, now);
 }
 
 /// Record a consensus event with custom timestamp for a specific round
-pub fn record_event_with_timestamp(round: u64, stage: ConsensusStage, timestamp: SystemTime, is_local: Option<bool>) {
+pub fn record_event_with_timestamp(round: u64, stage: ConsensusStage, timestamp: SystemTime) {
     let mut events = ROUND_EVENTS.write();
     let round_events = events.entry(round).or_insert_with(|| RoundEvents::new(round));
-    round_events.add_event(stage, timestamp, is_local);
+    round_events.add_event(stage, timestamp);
 }
 
 /// Record the start of a subdag processing stage
@@ -230,16 +239,13 @@ mod tests {
     fn test_event_recording() {
         let round = 12345;
 
-        record_event(round, ConsensusStage::ProposalCreated, Some(true));
-        record_event(round, ConsensusStage::ProposalSeen, Some(false));
+        record_event(round, ConsensusStage::ProposalCreated);
+        record_event(round, ConsensusStage::ProposalSeen);
 
         let events = get_round_events(round).unwrap();
         assert_eq!(events.proposal_created.len(), 1);
         assert_eq!(events.proposal_seen.len(), 1);
         assert_eq!(events.certificate_added.len(), 0);
-
-        assert_eq!(events.proposal_created[0].is_local, Some(true));
-        assert_eq!(events.proposal_seen[0].is_local, Some(false));
     }
 
     #[test]
@@ -266,9 +272,9 @@ mod tests {
         let (low, high) = (200, 210);
 
         // Add some timing data
-        record_event(round, ConsensusStage::ProposalCreated, None);
+        record_event(round, ConsensusStage::ProposalCreated);
         thread::sleep(Duration::from_millis(5));
-        record_event(round, ConsensusStage::ProposalCreated, None);
+        record_event(round, ConsensusStage::ProposalCreated);
 
         start_subdag_stage(low, high, SubdagStage::SubdagProcessing);
         thread::sleep(Duration::from_millis(5));
