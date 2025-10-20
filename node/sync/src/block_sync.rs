@@ -967,7 +967,7 @@ impl<N: Network> BlockSync<N> {
     /// It will ask the peer pool handling service to ban any timed-out peers.
     ///
     /// # Return Value
-    /// On success it will return an empty set, if there is nothing to re-request, or a set of new of block requests that replaced the timed-out requests.
+    /// On success it will return `None` if there is nothing to re-request, or a set of new of block requests that replaced the timed-out requests.
     /// This set of new requests can also replace requests that timed out earlier, and which we were not able to re-request yet.
     ///
     /// This function will return an error if it cannot re-request blocks due to a lack of peers.
