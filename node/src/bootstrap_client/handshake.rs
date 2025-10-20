@@ -286,7 +286,6 @@ impl<N: Network> BootstrapClient<N> {
 
                 // Reject validators that aren't members of the committee.
                 if msg.node_type == NodeType::Validator {
-                    // This check is skipped in dev mode (the None scenario).
                     if let Some(current_committee) =
                         self.get_or_update_committee().await.map_err(|_| error("Couldn't load the committee"))?
                     {
@@ -306,7 +305,6 @@ impl<N: Network> BootstrapClient<N> {
                 }
 
                 // Reject validators that aren't members of the committee.
-                // This check is skipped in dev mode (the None scenario).
                 if let Some(current_committee) =
                     self.get_or_update_committee().await.map_err(|_| error("Couldn't load the committee"))?
                 {
