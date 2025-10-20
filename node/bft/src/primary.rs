@@ -769,14 +769,14 @@ impl<N: Network> Primary<N> {
         if let Some((signed_round, signed_batch_id, signature)) =
             self.signed_proposals.read().get(&batch_author).copied()
         {
-            // If the signed round is ahead of the peer's batch round, do not sign the proposal.
-            // Note: while this may be valid behavior, additional formal analysis and testing will need to be done before allowing it.
-            if signed_round > batch_header.round() {
-                bail!(
-                    "Peer ({batch_author}) proposed a batch for a previous round ({}), latest signed round: {signed_round}",
-                    batch_header.round()
-                );
-            }
+            // // If the signed round is ahead of the peer's batch round, do not sign the proposal.
+            // // Note: while this may be valid behavior, additional formal analysis and testing will need to be done before allowing it.
+            // if signed_round > batch_header.round() {
+            //     bail!(
+            //         "Peer ({batch_author}) proposed a batch for a previous round ({}), latest signed round: {signed_round}",
+            //         batch_header.round()
+            //     );
+            // }
 
             // If the round matches and the batch ID differs, then the validator is malicious.
             if signed_round == batch_header.round() && signed_batch_id != batch_header.batch_id() {
