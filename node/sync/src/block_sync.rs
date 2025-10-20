@@ -1321,7 +1321,7 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_router::{Peer, Resolver};
+    use snarkos_node_router::{NodeType, Peer, Resolver};
     use snarkos_node_tcp::{P2P, Tcp};
     use snarkvm::{
         ledger::committee::Committee,
@@ -1364,6 +1364,10 @@ mod tests {
 
         fn is_dev(&self) -> bool {
             true
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Client
         }
 
         fn ip_ban_peer(&self, listener_addr: SocketAddr, _reason: Option<&str>) {

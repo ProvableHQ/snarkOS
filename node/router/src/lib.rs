@@ -97,6 +97,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Returns `true` if the owning node is in development mode.
     fn is_dev(&self) -> bool;
 
+    /// Returns the node type.
+    fn node_type(&self) -> NodeType;
+
     /// Returns the listener address of this node.
     fn local_ip(&self) -> SocketAddr {
         self.tcp().listening_addr().expect("The TCP listener is not enabled")
@@ -168,7 +171,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // Determine whether the peer is trusted or a bootstrap node in order to decide
         // how problematic any potential connection issues are.
         let is_trusted_or_bootstrap =
-            self.is_trusted(listener_addr) || bootstrap_peers::<N>(false).contains(&listener_addr);
+            self.is_trusted(listener_addr) || bootstrap_peers::<N>(self.is_dev()).contains(&listener_addr);
 
         let tcp = self.tcp().clone();
         Some(tokio::spawn(async move {
@@ -203,8 +206,17 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) {
         if let Some(peer) = self.peer_pool().write().get_mut(&listener_addr) {
             if let Peer::Connected(peer) = peer {
-                // Only validators get their aleo address registered with the resolver.
-                let aleo_addr = if peer.node_type == NodeType::Validator { Some(peer.aleo_addr) } else { None };
+                // Exception: the BootstrapClient only has a single Resolver,
+                // so it may only map a validator's Aleo address once, for its
+                // Gateway-mode connection. This also means that the Router-mode
+                // connection may not remove that mapping.
+                let aleo_addr = if self.node_type() == NodeType::BootstrapClient
+                    && peer.connection_mode == ConnectionMode::Router
+                {
+                    None
+                } else {
+                    Some(peer.aleo_addr)
+                };
                 self.resolver().write().remove_peer(peer.connected_addr, aleo_addr);
             }
             peer.downgrade_to_candidate(listener_addr);
@@ -599,6 +611,10 @@ impl<N: Network> PeerPoolHandling<N> for Router<N> {
     fn is_dev(&self) -> bool {
         self.is_dev
     }
+
+    fn node_type(&self) -> NodeType {
+        self.node_type
+    }
 }
 
 pub struct InnerRouter<N: Network> {
@@ -707,11 +723,6 @@ impl<N: Network> Router<N> {
 
         // Check if the incoming message version is valid.
         message_version >= lowest_accepted_message_version
-    }
-
-    /// Returns the node type.
-    pub fn node_type(&self) -> NodeType {
-        self.node_type
     }
 
     /// Returns the account private key of the node.

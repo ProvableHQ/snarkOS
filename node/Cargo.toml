@@ -50,6 +50,7 @@ cuda = [
   "snarkos-node-sync/cuda"
 ]
 serial = [ "snarkos-node-bft/serial" ]
+test = []
 
 [dependencies.aleo-std]
 workspace = true
