@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.3.2"
+version = "4.3.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -46,7 +46,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "78a69b703"
+rev = "eb44d391b"
 #version = "=4.2.1"
 default-features = false
 
