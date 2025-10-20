@@ -1183,10 +1183,13 @@ impl<N: Network> BlockSync<N> {
         // Compute the start height for the block requests.
         let start_height = {
             let requests = self.requests.read();
-            let mut start_height = sync_height + 1;
+            let ledger_height = self.ledger.latest_block_height();
 
-            // Do not issue requests that already exist or would be obsolete.
-            while requests.contains_key(&start_height) || self.ledger.latest_block_height() >= start_height {
+            // Do not issue requests for blocks already contained in the ledger.
+            let mut start_height = ledger_height.max(sync_height + 1);
+
+            // Do not issue requests that already exist.
+            while requests.contains_key(&start_height) {
                 start_height += 1;
             }
 
