@@ -17,6 +17,7 @@ use crate::common::sample_genesis_block;
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
+    NodeType,
     Outbound,
     Peer,
     PeerPoolHandling,
@@ -96,6 +97,10 @@ impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
 
     fn is_dev(&self) -> bool {
         true
+    }
+
+    fn node_type(&self) -> NodeType {
+        self.router().node_type()
     }
 }
 

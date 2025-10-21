@@ -18,6 +18,7 @@ use crate::{
     bft::events::{self, Event},
     bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
     router::{
+        ConnectionMode,
         NodeType,
         PeerPoolHandling,
         messages::{self, Message},
@@ -121,25 +122,36 @@ impl<N: Network> Handshake for BootstrapClient<N> {
 
         if let Some(addr) = listener_addr {
             match handshake_result {
-                Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version, validator_mode))) => {
+                Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version, connection_mode))) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(
-                            peer.listener_addr(),
+                        // Due to only having a single Resolver, the BootstrapClient only adds an Aleo
+                        // address mapping for Gateway-mode connections, as it is only used there, and
+                        // it could otherwise clash with the Router-mode mapping for validators, which
+                        // may connect in both modes at the same time.
+                        let aleo_addr =
+                            if connection_mode == ConnectionMode::Gateway { Some(peer_aleo_addr) } else { None };
+                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, aleo_addr);
+                        peer.upgrade_to_connected(
                             peer_addr,
-                            // Only resolve aleo addresses for Gateway connections.
-                            if validator_mode { Some(peer_aleo_addr) } else { None },
+                            peer_port,
+                            peer_aleo_addr,
+                            peer_node_type,
+                            peer_version,
+                            connection_mode,
                         );
-                        peer.upgrade_to_connected(peer_addr, peer_port, peer_aleo_addr, peer_node_type, peer_version);
                     }
                     debug!("Completed the handshake with '{peer_addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(error) => {
                     debug!("Handshake with '{peer_addr}' failed: {error}");
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                     return Err(error);
                 }
@@ -157,7 +169,7 @@ impl<N: Network> BootstrapClient<N> {
         peer_addr: SocketAddr,
         listener_addr: &mut Option<SocketAddr>,
         stream: &'a mut TcpStream,
-    ) -> io::Result<Option<(u16, Address<N>, NodeType, u32, bool)>> {
+    ) -> io::Result<Option<(u16, Address<N>, NodeType, u32, ConnectionMode)>> {
         // Construct the stream.
         let mut framed = Framed::new(stream, BootstrapClientCodec::<N>::handshake());
 
@@ -165,16 +177,17 @@ impl<N: Network> BootstrapClient<N> {
 
         // Listen for the challenge request message, which can be either from a regular peer, or a validator.
         let peer_request = expect_handshake_msg!(HandshakeMessageKind::ChallengeRequest, framed, peer_addr);
-        let (peer_port, peer_nonce, peer_aleo_addr, peer_node_type, peer_version, validator_mode) = match peer_request {
+        let (peer_port, peer_nonce, peer_aleo_addr, peer_node_type, peer_version, connection_mode) = match peer_request
+        {
             MessageOrEvent::Message(Message::ChallengeRequest(ref msg)) => {
-                (msg.listener_port, msg.nonce, msg.address, msg.node_type, msg.version, false)
+                (msg.listener_port, msg.nonce, msg.address, msg.node_type, msg.version, ConnectionMode::Router)
             }
             MessageOrEvent::Event(Event::ChallengeRequest(ref msg)) => {
-                (msg.listener_port, msg.nonce, msg.address, NodeType::Validator, msg.version, true)
+                (msg.listener_port, msg.nonce, msg.address, NodeType::Validator, msg.version, ConnectionMode::Gateway)
             }
             _ => unreachable!(),
         };
-        debug!("Handshake mode: {}validator", if validator_mode { "" } else { "non-" });
+        debug!("Handshake mode: {connection_mode:?}");
 
         // Obtain the peer's listening address.
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_port));
@@ -204,7 +217,7 @@ impl<N: Network> BootstrapClient<N> {
         };
 
         // Send the challenge response.
-        if !validator_mode {
+        if connection_mode == ConnectionMode::Router {
             let our_response = messages::ChallengeResponse {
                 genesis_header: self.genesis_header,
                 restrictions_id: self.restrictions_id,
@@ -226,7 +239,7 @@ impl<N: Network> BootstrapClient<N> {
         // Sample a random nonce.
         let our_nonce: u64 = rng.r#gen();
         // Send the challenge request.
-        if !validator_mode {
+        if connection_mode == ConnectionMode::Router {
             let our_request = messages::ChallengeRequest::new(
                 self.local_ip().port(),
                 NodeType::BootstrapClient,
@@ -247,7 +260,7 @@ impl<N: Network> BootstrapClient<N> {
         let peer_response = expect_handshake_msg!(HandshakeMessageKind::ChallengeResponse, framed, peer_addr);
         // Verify the challenge response.
         if !self.verify_challenge_response(peer_addr, peer_aleo_addr, our_nonce, &peer_response).await {
-            if !validator_mode {
+            if connection_mode == ConnectionMode::Router {
                 let msg = Message::Disconnect::<N>(messages::DisconnectReason::InvalidChallengeResponse.into());
                 send_msg!(msg, framed, peer_addr)?;
             } else {
@@ -257,7 +270,7 @@ impl<N: Network> BootstrapClient<N> {
             return Err(error(format!("Handshake with '{peer_addr}' failed: invalid challenge response")));
         }
 
-        Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version, validator_mode)))
+        Ok(Some((peer_port, peer_aleo_addr, peer_node_type, peer_version, connection_mode)))
     }
 
     async fn verify_challenge_request(
@@ -273,12 +286,36 @@ impl<N: Network> BootstrapClient<N> {
                     send_msg!(msg, framed, peer_addr)?;
                     return Ok(false);
                 }
+
+                // Reject validators that aren't members of the committee.
+                if msg.node_type == NodeType::Validator {
+                    if let Some(current_committee) =
+                        self.get_or_update_committee().await.map_err(|_| error("Couldn't load the committee"))?
+                    {
+                        if !current_committee.contains(&msg.address) {
+                            let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
+                            send_msg!(msg, framed, peer_addr)?;
+                            return Ok(false);
+                        }
+                    }
+                }
             }
             MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
                 if msg.version < Event::<N>::VERSION {
                     let msg = Event::Disconnect::<N>(events::DisconnectReason::OutdatedClientVersion.into());
                     send_msg!(msg, framed, peer_addr)?;
                     return Ok(false);
+                }
+
+                // Reject validators that aren't members of the committee.
+                if let Some(current_committee) =
+                    self.get_or_update_committee().await.map_err(|_| error("Couldn't load the committee"))?
+                {
+                    if !current_committee.contains(&msg.address) {
+                        let msg = Event::Disconnect::<N>(events::DisconnectReason::ProtocolViolation.into());
+                        send_msg!(msg, framed, peer_addr)?;
+                        return Ok(false);
+                    }
                 }
             }
             _ => unreachable!(),

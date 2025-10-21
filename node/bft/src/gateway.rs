@@ -43,7 +43,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
+use snarkos_node_router::{ConnectionMode, NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -64,7 +64,7 @@ use snarkvm::{
 
 use colored::Colorize;
 use futures::SinkExt;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
@@ -178,6 +178,10 @@ impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
 
     fn is_dev(&self) -> bool {
         self.dev.is_some()
+    }
+
+    fn node_type(&self) -> NodeType {
+        NodeType::Validator
     }
 }
 
@@ -367,12 +371,6 @@ impl<N: Network> Gateway<N> {
         self.worker_senders.get().and_then(|senders| senders.get(&worker_id))
     }
 
-    /// Returns `true` if the node is connected to the given Aleo address.
-    pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // The resolver only contains data on connected peers.
-        self.resolver.read().get_peer_ip_for_address(address).is_some()
-    }
-
     /// Returns `true` if the given peer IP is an authorized validator.
     pub fn is_authorized_validator_ip(&self, ip: SocketAddr) -> bool {
         // If the peer IP is in the trusted validators, return early.
@@ -460,7 +458,14 @@ impl<N: Network> Gateway<N> {
         // Add a transmission for this peer in the connected peers.
         self.peer_pool.write().insert(peer_ip, Peer::new_connecting(peer_ip, false));
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            peer.upgrade_to_connected(peer_addr, peer_ip.port(), address, NodeType::Validator, 0);
+            peer.upgrade_to_connected(
+                peer_addr,
+                peer_ip.port(),
+                address,
+                NodeType::Validator,
+                0,
+                ConnectionMode::Gateway,
+            );
         }
     }
 
@@ -845,10 +850,18 @@ impl<N: Network> Gateway<N> {
 
     /// Logs the connected validators.
     fn log_connected_validators(&self) {
-        // Log the connected validators.
+        // Retrieve the connected validators and current committee.
         let connected_validators = self.connected_peers();
+        let committee = match self.ledger.current_committee() {
+            Ok(c) => c,
+            Err(err) => {
+                error!("Failed to get current committee: {err}");
+                return;
+            }
+        };
+
         // Resolve the total number of connectable validators.
-        let validators_total = self.ledger.current_committee().map_or(0, |c| c.num_members().saturating_sub(1));
+        let validators_total = committee.num_members().saturating_sub(1);
         // Format the total validators message.
         let total_validators = format!("(of {validators_total} bonded validators)").dimmed();
         // Construct the connections message.
@@ -857,9 +870,12 @@ impl<N: Network> Gateway<N> {
             num_connected => format!("Connected to {num_connected} validators {total_validators}"),
         };
         // Collect the connected validator addresses.
-        let mut connected_validator_addresses = IndexSet::with_capacity(connected_validators.len());
+        let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
+        // Include our own address, so we do not log ourself as disconnected and include ourself in the check
+        // for the quorum threshold.
         connected_validator_addresses.insert(self.account.address());
-        // Log the connected validators.
+
+        // Log the connected validators and count the total connected stake.
         info!("{connections_msg}");
         for peer_ip in &connected_validators {
             let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
@@ -874,13 +890,17 @@ impl<N: Network> Gateway<N> {
         if num_not_connected > 0 {
             info!("Not connected to {num_not_connected} validators {total_validators}");
             // Collect the committee members.
-            let committee_members: IndexSet<_> =
+            let committee_members: HashSet<_> =
                 self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
 
             // Log the validators that are not connected.
             for address in committee_members.difference(&connected_validator_addresses) {
                 debug!("{}", format!("  Not connected to {address}").dimmed());
             }
+        }
+
+        if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
+            error!("Not connected to a quorum of validators");
         }
     }
 
@@ -1260,25 +1280,35 @@ impl<N: Network> Handshake for Gateway<N> {
         if let Some(addr) = listener_addr {
             match handshake_result {
                 Ok(Some(ref cr)) => {
-                    let (node_type, aleo_address) = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
-                        (NodeType::BootstrapClient, None)
+                    let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                        NodeType::BootstrapClient
                     } else {
-                        (NodeType::Validator, Some(cr.address))
+                        NodeType::Validator
                     };
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(addr, peer_addr, aleo_address);
-                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, node_type, cr.version);
+                        self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
+                        peer.upgrade_to_connected(
+                            peer_addr,
+                            cr.listener_port,
+                            cr.address,
+                            node_type,
+                            cr.version,
+                            ConnectionMode::Gateway,
+                        );
                     }
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
                     info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(error) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                     // This error needs to be "repackaged" in order to conform to the return type.
                     return Err(error);
@@ -1378,7 +1408,12 @@ impl<N: Network> Gateway<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            if reason == DisconnectReason::NoReasonGiven {
+                // The Aleo address is already connected; no reason to return an error.
+                return Ok(None);
+            } else {
+                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            }
         }
 
         /* Step 3: Send the challenge response. */
@@ -1435,7 +1470,12 @@ impl<N: Network> Gateway<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            if reason == DisconnectReason::NoReasonGiven {
+                // The Aleo address is already connected; no reason to return an error.
+                return Ok(None);
+            } else {
+                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            }
         }
 
         /* Step 2: Send the challenge response followed by own challenge request. */
@@ -1495,7 +1535,7 @@ impl<N: Network> Gateway<N> {
         // Ensure the address is not already connected.
         if self.is_connected_address(address) {
             warn!("{CONTEXT} Dropping '{peer_addr}' for being already connected ({address})");
-            return Some(DisconnectReason::ProtocolViolation);
+            return Some(DisconnectReason::NoReasonGiven);
         }
         None
     }
