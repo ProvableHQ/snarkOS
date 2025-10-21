@@ -19,11 +19,12 @@ pub mod test_peer;
 use std::str::FromStr;
 
 use snarkos_account::Account;
-use snarkvm::prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, block::Block};
+use snarkvm::prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, PrivateKey, TestRng, block::Block};
 
 /// Returns a fixed account.
-pub fn sample_account() -> Account<CurrentNetwork> {
-    Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap()
+pub fn sample_account(rng: &mut TestRng) -> Account<CurrentNetwork> {
+    let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+    Account::<CurrentNetwork>::try_from(&private_key).unwrap()
 }
 
 /// Loads the current network's genesis block.

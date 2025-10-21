@@ -21,15 +21,18 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Handshake, OnConnect},
 };
+use snarkvm::prelude::TestRng;
 
 use core::time::Duration;
 use deadline::deadline;
 
 #[tokio::test]
 async fn test_disconnect_without_handshake() {
+    let mut rng = TestRng::default();
+
     // Create 2 routers.
-    let node0 = validator(0, 1, &[], true).await;
-    let node1 = client(0, 1).await;
+    let node0 = validator(0, 1, &[], true, &mut rng).await;
+    let node1 = client(0, 1, &mut rng).await;
     assert_eq!(node0.number_of_connected_peers(), 0);
     assert_eq!(node1.number_of_connected_peers(), 0);
 
@@ -74,9 +77,11 @@ async fn test_disconnect_without_handshake() {
 
 #[tokio::test]
 async fn test_disconnect_with_handshake() {
+    let mut rng = TestRng::default();
+
     // Create 2 routers.
-    let node0 = validator(0, 1, &[], true).await;
-    let node1 = client(0, 1).await;
+    let node0 = validator(0, 1, &[], true, &mut rng).await;
+    let node1 = client(0, 1, &mut rng).await;
     assert_eq!(node0.number_of_connected_peers(), 0);
     assert_eq!(node1.number_of_connected_peers(), 0);
 

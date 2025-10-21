@@ -371,12 +371,6 @@ impl<N: Network> Gateway<N> {
         self.worker_senders.get().and_then(|senders| senders.get(&worker_id))
     }
 
-    /// Returns `true` if the node is connected to the given Aleo address.
-    pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // The resolver only contains data on connected peers.
-        self.resolver.read().get_peer_ip_for_address(address).is_some()
-    }
-
     /// Returns `true` if the given peer IP is an authorized validator.
     pub fn is_authorized_validator_ip(&self, ip: SocketAddr) -> bool {
         // If the peer IP is in the trusted validators, return early.

@@ -39,9 +39,9 @@ async fn test_connection_cleanups() {
     let mut nodes = Vec::with_capacity(2);
     for _ in 0..2 {
         let node = match rng.gen_range(0..3) % 3 {
-            0 => client(0, 1).await,
-            1 => prover(0, 1).await,
-            2 => validator(0, 1, &[], true).await,
+            0 => client(0, 1, &mut rng).await,
+            1 => prover(0, 1, &mut rng).await,
+            2 => validator(0, 1, &[], true, &mut rng).await,
             _ => unreachable!(),
         };
 

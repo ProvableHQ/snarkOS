@@ -341,6 +341,12 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_connected())
     }
 
+    /// Returns `true` if the node is connected to the given Aleo address.
+    fn is_connected_address(&self, aleo_address: Address<N>) -> bool {
+        // The resolver only contains data on connected peers.
+        self.resolver().read().get_peer_ip_for_address(aleo_address).is_some()
+    }
+
     /// Returns `true` if the given listener address is trusted.
     fn is_trusted(&self, listener_addr: SocketAddr) -> bool {
         self.peer_pool().read().get(&listener_addr).is_some_and(|peer| peer.is_trusted())
