@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760963008788,
+  "lastUpdate": 1761041797752,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -4056,6 +4056,66 @@ window.BENCHMARK_DATA = {
             "value": 1.19,
             "unit": "blocks/s",
             "extra": "total_wait=210s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c7c40d6d1ffdaf2202ad898100a969cad21e901",
+          "message": "Merge pull request #3928 from ProvableHQ/fix/cli-scan-minimal\n\n[Fix] Ensure `snarkos developer scan` works on devnets",
+          "timestamp": "2025-10-21T11:46:54+02:00",
+          "tree_id": "61fa5fe7b8bb5694cddfded24f1917f6980596fa",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/0c7c40d6d1ffdaf2202ad898100a969cad21e901"
+        },
+        "date": 1761041796623,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.562310938393127,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=187.33089447021484, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7575.060685604827,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.56097149848938, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.34,
+            "unit": "blocks/s",
+            "extra": "total_wait=186s, target_height=250, connect_time=22s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.290796,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=182, mean_speed=0.888919, max_speed=2.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=202s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
