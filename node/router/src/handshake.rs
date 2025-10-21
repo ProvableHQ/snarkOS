@@ -352,13 +352,23 @@ impl<N: Network> Router<N> {
         message: &ChallengeRequest<N>,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, node_type: _, address: _, nonce: _ } = message;
+        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _ } = message;
 
         // Ensure the message protocol version is not outdated.
         if !self.is_valid_message_version(version) {
             warn!("Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
+
+        // Ensure there are no validators connected with the given Aleo address.
+        if self.node_type() == NodeType::Validator
+            && node_type == NodeType::Validator
+            && self.is_connected_address(address)
+        {
+            warn!("Dropping '{peer_addr}' for being already connected ({address})");
+            return Some(DisconnectReason::NoReasonGiven);
+        }
+
         None
     }
 
