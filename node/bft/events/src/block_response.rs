@@ -50,18 +50,6 @@ impl<N: Network> EventTrait for BlockResponse<N> {
 }
 
 impl<N: Network> BlockResponse<N> {
-    /// The version number that we use to serialize block responses,
-    /// and the highest known message valid version number.
-    const CURRENT_VERSION_NUMBER: u8 = 2;
-    /// The minimum supported message version number.
-    const MIN_VERSION_NUMBER: u8 = 1;
-
-    /// Returns true if a message of the givenversion contains the blocks'
-    /// latest consensus version number.
-    const fn contains_consensus_version(vno: u8) -> bool {
-        vno > Self::MIN_VERSION_NUMBER
-    }
-
     // Constructs a new block response.
     pub fn new(request: BlockRequest, blocks: DataBlocks<N>, latest_consensus_version: ConsensusVersion) -> Self {
         Self { request, blocks: Data::Object(blocks), latest_consensus_version: Some(latest_consensus_version) }
@@ -88,11 +76,14 @@ impl<N: Network> ToBytes for BlockResponse<N> {
 impl<N: Network> FromBytes for BlockResponse<N> {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
         let start_height = u32::read_le(&mut reader)?;
-        let vno = if start_height == 0 { Self::CURRENT_VERSION_NUMBER } else { Self::MIN_VERSION_NUMBER };
 
-        // If this message type does not contain the consensus version, use the first four bytes as the start_height.
-        //  Otherwise, read the full request.
-        let request = if Self::contains_consensus_version(vno) {
+        // An invalid start height as the first four bytes indicates that this message
+        // contains the consensus version of the last block.
+        let contains_consensus_version = start_height == 0;
+
+        // If this message type does not contain the consensus version, use the first four bytes as the start height.
+        // Otherwise, read the full request.
+        let request = if contains_consensus_version {
             BlockRequest::read_le(&mut reader)?
         } else {
             let end_height = u32::read_le(&mut reader)?;
@@ -102,7 +93,7 @@ impl<N: Network> FromBytes for BlockResponse<N> {
         let blocks = Data::read_le(&mut reader)?;
 
         let latest_consensus_version =
-            if Self::contains_consensus_version(vno) { Some(FromBytes::read_le(&mut reader)?) } else { None };
+            if contains_consensus_version { Some(FromBytes::read_le(&mut reader)?) } else { None };
 
         Ok(Self { request, blocks, latest_consensus_version })
     }
