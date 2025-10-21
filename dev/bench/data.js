@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1761041797752,
+  "lastUpdate": 1761075544505,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -4122,6 +4122,66 @@ window.BENCHMARK_DATA = {
             "value": 1.22,
             "unit": "blocks/s",
             "extra": "total_wait=204s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "317467634f8b674c64262ce62c4eaf647f6ee071",
+          "message": "Merge pull request #3955 from ljedrz/tweak/reject_duplicate_aleo_addrs_in_router_mode\n\n[Tweak] Validators shouldn't accept duplicate validator connections in router mode",
+          "timestamp": "2025-10-21T21:08:38+02:00",
+          "tree_id": "cbad4fc59abbe0d3444af18c9905194cbf3b639d",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/317467634f8b674c64262ce62c4eaf647f6ee071"
+        },
+        "date": 1761075543645,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.663860952027491,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=180.18958520889282, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7923.677880499894,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.09632158279419, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.4,
+            "unit": "blocks/s",
+            "extra": "total_wait=178s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.376526,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=173, mean_speed=0.855106, max_speed=3.333333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.23,
+            "unit": "blocks/s",
+            "extra": "total_wait=203s, target_height=250"
           }
         ]
       }
