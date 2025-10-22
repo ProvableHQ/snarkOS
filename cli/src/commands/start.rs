@@ -556,7 +556,11 @@ impl Start {
             }
 
             // Construct the genesis block.
-            load_or_compute_genesis(dev_keys[0], committee, public_balances, bonded_balances, &mut rng)
+            std::thread::spawn(move || {
+                load_or_compute_genesis(dev_keys[0], committee, public_balances, bonded_balances, &mut rng)
+            })
+            .join()
+            .unwrap()
         } else {
             Block::from_bytes_le(N::genesis_bytes())
         }

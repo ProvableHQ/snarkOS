@@ -1056,7 +1056,8 @@ mod tests {
         ];
 
         // Initialize the ledger with the genesis block.
-        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
+        let genesis_clone = genesis.clone();
+        let ledger = spawn_blocking!(CurrentLedger::load(genesis_clone, StorageMode::new_test(None))).unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
 
@@ -1283,7 +1284,7 @@ mod tests {
             PrivateKey::new(genesis_rng)?,
         ];
         // Initialize the ledger with the genesis block.
-        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
+        let ledger = spawn_blocking!(CurrentLedger::load(genesis.clone(), StorageMode::new_test(None))).unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.

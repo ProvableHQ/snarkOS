@@ -101,7 +101,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         let signal_node = Self::handle_signals(shutdown.clone());
 
         // Initialize the ledger.
-        let ledger = Ledger::load(genesis, storage_mode.clone())?;
+        let mode = storage_mode.clone();
+        let ledger = spawn_blocking!(Ledger::load(genesis, mode))?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
