@@ -30,6 +30,7 @@ members = [
   "node/cdn",
   "node/consensus",
   "node/metrics",
+  "node/network",
   "node/rest",
   "node/router",
   "node/router/messages",
@@ -211,6 +212,10 @@ version = "=4.2.2"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
+version = "=4.2.2"
+
+[workspace.dependencies.snarkos-node-network]
+path = "node/network"
 version = "=4.2.2"
 
 [workspace.dependencies.snarkos-node-router]

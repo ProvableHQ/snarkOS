@@ -16,10 +16,10 @@
 mod common;
 use common::*;
 
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::{
     Heartbeat,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
     messages::{Message, MessageCodec},
