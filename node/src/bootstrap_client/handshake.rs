@@ -17,12 +17,8 @@ use crate::{
     BootstrapClient,
     bft::events::{self, Event},
     bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
-    router::{
-        ConnectionMode,
-        NodeType,
-        PeerPoolHandling,
-        messages::{self, Message},
-    },
+    network::{ConnectionMode, NodeType, PeerPoolHandling},
+    router::messages::{self, Message},
     tcp::{Connection, ConnectionSide, protocols::*},
 };
 use snarkvm::{

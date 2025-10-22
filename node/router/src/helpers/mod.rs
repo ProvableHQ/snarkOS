@@ -15,9 +15,3 @@
 
 mod cache;
 pub use cache::Cache;
-
-mod peer;
-pub use peer::*;
-
-mod resolver;
-pub use resolver::*;

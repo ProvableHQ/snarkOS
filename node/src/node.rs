@@ -15,7 +15,8 @@
 
 use crate::{BootstrapClient, Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
-use snarkos_node_router::{Outbound, Peer, PeerPoolHandling, messages::NodeType};
+use snarkos_node_network::{NodeType, Peer, PeerPoolHandling};
+use snarkos_node_router::Outbound;
 use snarkvm::prelude::{
     Address,
     Header,

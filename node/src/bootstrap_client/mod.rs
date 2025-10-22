@@ -17,12 +17,9 @@ mod codec;
 mod handshake;
 mod network;
 
-use crate::{
-    router::{Peer, Resolver},
-    tcp::{self, Tcp},
-};
+use crate::tcp::{self, Tcp};
 use snarkos_account::Account;
-use snarkos_node_router::ConnectionMode;
+use snarkos_node_network::{ConnectionMode, Peer, Resolver};
 use snarkos_node_tcp::{P2P, protocols::*};
 use snarkvm::{
     ledger::committee::Committee,

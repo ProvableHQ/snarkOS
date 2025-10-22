@@ -114,6 +114,9 @@ workspace = true
 [dependencies.snarkos-node-consensus]
 workspace = true
 
+[dependencies.snarkos-node-network]
+workspace = true
+
 [dependencies.snarkos-node-rest]
 workspace = true
 

@@ -14,7 +14,8 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_router::{PeerPoolHandling, messages::UnconfirmedSolution};
+use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkvm::{
     ledger::puzzle::Solution,
     prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},

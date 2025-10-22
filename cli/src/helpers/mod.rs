@@ -32,7 +32,7 @@ pub mod dev;
 pub mod updater;
 pub use updater::*;
 
-use snarkos_node::router::messages::NodeType;
+use snarkos_node::network::NodeType;
 
 use anyhow::Result;
 use colored::*;

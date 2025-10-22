@@ -20,6 +20,7 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService};
 use snarkos_node_cdn::CdnBlockSync;
+use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -27,7 +28,7 @@ use snarkos_node_router::{
     Outbound,
     Router,
     Routing,
-    messages::{Message, NodeType, UnconfirmedSolution, UnconfirmedTransaction},
+    messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 use snarkos_node_tcp::{

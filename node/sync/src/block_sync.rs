@@ -18,7 +18,8 @@ use crate::{
     locators::BlockLocators,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{PeerPoolHandling, messages::DataBlocks};
+use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 use snarkvm::prelude::{Network, block::Block};
@@ -1321,7 +1322,7 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_router::{NodeType, Peer, Resolver};
+    use snarkos_node_network::{NodeType, Peer, Resolver};
     use snarkos_node_tcp::{P2P, Tcp};
     use snarkvm::{
         ledger::committee::Committee,

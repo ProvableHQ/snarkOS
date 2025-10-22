@@ -21,15 +21,15 @@ use snarkos_account::Account;
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
+use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
-    messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
+    messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{

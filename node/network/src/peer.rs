@@ -15,6 +15,7 @@
 
 use crate::NodeType;
 use snarkvm::prelude::{Address, Network};
+use tracing::*;
 
 use std::{net::SocketAddr, time::Instant};
 

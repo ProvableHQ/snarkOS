@@ -25,7 +25,8 @@ use std::{
 use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::MockLedgerService;
-use snarkos_node_router::{Router, messages::NodeType};
+use snarkos_node_network::NodeType;
+use snarkos_node_router::Router;
 use snarkvm::{
     prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, PrivateKey, block::Block},
     utilities::TestRng,
