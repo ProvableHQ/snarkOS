@@ -55,7 +55,10 @@ use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
 };
-use tokio::runtime::{self, Runtime};
+use tokio::{
+    runtime::{self, Runtime},
+    task,
+};
 use tracing::warn;
 use ureq::http;
 
@@ -560,7 +563,11 @@ impl Start {
             }
 
             // Construct the genesis block.
-            load_or_compute_genesis(dev_keys[0], committee, public_balances, bonded_balances, &mut rng)
+            std::thread::spawn(move || {
+                load_or_compute_genesis(dev_keys[0], committee, public_balances, bonded_balances, &mut rng)
+            })
+            .join()
+            .unwrap()
         } else {
             Block::from_bytes_le(N::genesis_bytes())
         }
@@ -621,7 +628,8 @@ impl Start {
         let cdn = self.parse_cdn::<N>().with_context(|| "Failed to parse given CDN URL")?;
 
         // Parse the genesis block.
-        let genesis = self.parse_genesis::<N>()?;
+        let start = self.clone();
+        let genesis = task::spawn_blocking(move || start.parse_genesis::<N>()).await??;
         // Parse the private key of the node.
         let account = self.parse_private_key::<N>()?;
         // Parse the node type.
