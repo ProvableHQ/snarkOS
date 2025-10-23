@@ -1044,7 +1044,7 @@ mod tests {
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
         let seed: u64 = rng.r#gen();
         let vm = VM::from(store).unwrap();
-        let genesis_pk = account.private_key().clone();
+        let genesis_pk = *account.private_key();
         let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
 
         // Extract the private keys from the genesis committee by using the same RNG to sample private keys.
@@ -1287,7 +1287,7 @@ mod tests {
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
         let seed: u64 = rng.r#gen();
         let vm = VM::from(store).unwrap();
-        let genesis_pk = account.private_key().clone();
+        let genesis_pk = *account.private_key();
         let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
 
         // Extract the private keys from the genesis committee by using the same RNG to sample private keys.
