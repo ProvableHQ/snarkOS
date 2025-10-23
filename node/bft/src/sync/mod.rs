@@ -29,6 +29,7 @@ use snarkvm::{
     console::{network::Network, types::Field},
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
     prelude::{cfg_into_iter, cfg_iter},
+    utilities::log_error,
 };
 
 use anyhow::{Result, anyhow, bail};
@@ -295,18 +296,26 @@ impl<N: Network> Sync<N> {
     /// This method handles timeout removal, checks if block sync is possible,
     /// and issues block requests to peers.
     async fn try_issuing_block_requests(&self) {
-        // Check if any existing requests can be removed.
-        // We should do this even if we cannot block sync, to ensure
-        // there are no dangling block requests.
-        let timeout_requests = self.block_sync.handle_block_request_timeouts(&self.gateway);
-        if let Some((requests, sync_peers)) = timeout_requests {
-            self.send_block_requests(requests, sync_peers).await;
-            return;
-        }
-
         // Update the sync height to the latest ledger height.
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.block_sync.set_sync_height(self.ledger.latest_block_height());
+
+        // Check if any existing requests can be removed.
+        // We should do this even if we cannot block sync, to ensure
+        // there are no dangling block requests.
+        match self.block_sync.handle_block_request_timeouts(&self.gateway) {
+            Ok(Some((requests, sync_peers))) => {
+                // Re-request blocks instead of performing regular block sync.
+                self.send_block_requests(requests, sync_peers).await;
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                // Abort and retry later.
+                log_error(&err);
+                return;
+            }
+        }
 
         // Do not attempt to sync if there are no blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
@@ -561,7 +570,10 @@ impl<N: Network> Sync<N> {
 
             // The height is incremented as blocks are added.
             let mut current_height = start_height;
-            trace!("Try advancing with block responses (at block {current_height})");
+            trace!(
+                "Try advancing blocks responses with BFT (starting at block {current_height}, current sync speed is {})",
+                self.block_sync.get_sync_speed()
+            );
 
             // If we already were within GC or successfully caught up with GC, try to advance BFT normally again.
             loop {
@@ -586,12 +598,12 @@ impl<N: Network> Sync<N> {
 
             cleanup(start_height, current_height, None)
         } else {
-            info!("Block sync is too far behind other validators. Syncing without BFT.");
-
             // For non-BFT sync we need to start at the current height of the ledger,as blocks are immediately
             // added to it and not queue up in `latest_block_responses`.
             let start_height = ledger_height;
             let mut current_height = start_height;
+
+            trace!("Try advancing block responses without BFT (starting at block {current_height})");
 
             // For sanity, update the sync height before starting.
             // (if this is lower or equal to the current sync height, this is a noop)
