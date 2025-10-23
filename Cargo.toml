@@ -46,8 +46,9 @@ default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "58b326d"
+git = "https://github.com/ljedrz/snarkVM.git"
+branch = "feat/replace_vm_locks_with_channel"
+# rev = "58b326d"
 #version = "=4.2.1"
 default-features = false
 
