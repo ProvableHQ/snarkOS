@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1761224710145,
+  "lastUpdate": 1761259296526,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -4482,6 +4482,66 @@ window.BENCHMARK_DATA = {
             "value": 1.23,
             "unit": "blocks/s",
             "extra": "total_wait=203s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9357ebd361014248cbdf4eea32957655471cdfbe",
+          "message": "Merge pull request #3956 from ProvableHQ/fix/credits-aleo-version\n\n[Fix] Return 0 for latest credits.aleo edition and 404 for missing programs/editions",
+          "timestamp": "2025-10-23T17:06:30-05:00",
+          "tree_id": "f6698f83cdd1ad47f95bfe47f9d0d6621d760540",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/9357ebd361014248cbdf4eea32957655471cdfbe"
+        },
+        "date": 1761259295831,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.4053053640731314,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=199.55886149406433, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 10197.283936089982,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=7.845226287841797, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.2,
+            "unit": "blocks/s",
+            "extra": "total_wait=208s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.0863,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=203, mean_speed=0.752956, max_speed=3.083333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.08,
+            "unit": "blocks/s",
+            "extra": "total_wait=230s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.15,
+            "unit": "blocks/s",
+            "extra": "total_wait=217s, target_height=250"
           }
         ]
       }
