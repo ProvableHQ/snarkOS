@@ -84,7 +84,7 @@ commands:
           name: Prepare environment variables
           command: |
             echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
-            echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
+            echo 'export "SCCACHE_CACHE_SIZE"="5000M"' >> $BASH_ENV
 
             # Disable incremental builds so that sccache works as expected
             echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
@@ -139,6 +139,9 @@ commands:
       flags:
         type: string
         default: ""
+      env_vars:
+        type: string
+        default: ""
     steps:
       - checkout
       - setup_environment:
@@ -146,11 +149,11 @@ commands:
       - run:
           name: "Build tests"
           no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >> --no-run
+          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 << parameters.env_vars >> cargo test << parameters.flags >> --no-run
       - run:
           name: "Run tests"
           no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
+          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 << parameters.env_vars >> cargo test << parameters.flags >>
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
 
@@ -251,7 +254,10 @@ jobs:
       - run_serial:
           workspace_member: node
           cache_key: node
-
+          # reduce concurrency
+          flags: -j12
+          # disable sccache for this workflow
+          env_vars: RUSTC_WRAPPER="" CARGO_INCREMENTAL=1
   node-bft:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
@@ -259,6 +265,10 @@ jobs:
       - run_serial:
           workspace_member: node/bft
           cache_key: node-bft
+          # reduce concurrency
+          flags: -j12
+           # disable sccache for this workflow
+          env_vars: RUSTC_WRAPPER="" CARGO_INCREMENTAL=1
 
   node-bft-events:
     executor: rust-docker
