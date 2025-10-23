@@ -274,7 +274,8 @@ locktick = [
   "snarkos-node-rest/locktick",
   "snarkos-node-router/locktick",
   "snarkos-node-sync/locktick",
-  "snarkos-node-tcp/locktick"
+  "snarkos-node-tcp/locktick",
+  "snarkvm/locktick"
 ]
 serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]
