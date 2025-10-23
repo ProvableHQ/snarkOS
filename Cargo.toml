@@ -47,7 +47,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "58b326d"
+branch = "fix/credits-aleo-version"
+#rev = "58b326d"
 #version = "=4.2.1"
 default-features = false
 
