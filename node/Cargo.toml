@@ -50,7 +50,7 @@ cuda = [
   "snarkos-node-sync/cuda"
 ]
 serial = [ "snarkos-node-bft/serial" ]
-test_network = [ "snarkos-node-bft/test_network", "snarkos-node-consensus/test_network" ] 
+test_consensus_tracking = [ "snarkos-node-bft/test_consensus_tracking", "snarkos-node-consensus/test_consensus_tracking" ] 
 
 [dependencies.aleo-std]
 workspace = true

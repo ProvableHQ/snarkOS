@@ -44,7 +44,7 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
-test_network = [ ]
+test_consensus_tracking = [ ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
 
 [dependencies.aleo-std]

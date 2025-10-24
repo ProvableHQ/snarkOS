@@ -529,14 +529,14 @@ impl<N: Network> Consensus<N> {
         let _lowest_round = rounds.iter().min().copied().unwrap_or(0);
         let _highest_round = rounds.iter().max().copied().unwrap_or(0);
 
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::end_subdag_stage(
             _highest_round.saturating_sub(2),
             _highest_round,
             snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
         );
         // Create the candidate next block.
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::start_subdag_stage(
             _lowest_round,
             _highest_round,
@@ -544,35 +544,35 @@ impl<N: Network> Consensus<N> {
         );
         let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
         let _next_block_height = next_block.height();
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::end_subdag_stage(
             _lowest_round,
             _highest_round,
             snarkos_node_bft::helpers::SubdagStage::PrepareAdvanceToNextQuorumBlock,
         );
         // Check that the block is well-formed.
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::start_subdag_stage(
             _lowest_round,
             _highest_round,
             snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
         );
         self.ledger.check_next_block(&next_block)?;
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::end_subdag_stage(
             _lowest_round,
             _highest_round,
             snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
         );
         // Advance to the next block.
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::start_subdag_stage(
             _lowest_round,
             _highest_round,
             snarkos_node_bft::helpers::SubdagStage::AdvanceToNextBlock,
         );
         self.ledger.advance_to_next_block(&next_block)?;
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::end_subdag_stage(
             _lowest_round,
             _highest_round,
@@ -580,7 +580,7 @@ impl<N: Network> Consensus<N> {
         );
 
         // Export timing data to JSON after block generation
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         {
             let dev_index = self.bft().primary().gateway().dev().unwrap_or_default();
             let json_filename = format!("consensus_timing_block_{dev_index}.json");

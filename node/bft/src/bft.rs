@@ -480,7 +480,7 @@ impl<N: Network> BFT<N> {
         // Insert the certificate into the DAG.
         self.dag.write().insert(certificate);
 
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         crate::helpers::record_event(certificate_round, crate::helpers::ConsensusStage::CertificateAdded);
 
         // Get the previous round number.
@@ -566,7 +566,7 @@ impl<N: Network> BFT<N> {
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
 
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "test_consensus_tracking")]
         crate::helpers::start_subdag_stage(
             latest_leader_round.saturating_sub(2),
             latest_leader_round,

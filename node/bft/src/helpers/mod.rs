@@ -51,9 +51,9 @@ pub use telemetry::*;
 pub mod timestamp;
 pub use timestamp::*;
 
-#[cfg(feature = "test_network")]
+#[cfg(feature = "test_consensus_tracking")]
 pub mod timing;
-#[cfg(feature = "test_network")]
+#[cfg(feature = "test_consensus_tracking")]
 pub use timing::*;
 
 /// Formats an ID into a truncated identifier (for logging purposes).
