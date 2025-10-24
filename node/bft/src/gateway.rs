@@ -43,7 +43,15 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_network::{ConnectionMode, NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
+use snarkos_node_network::{
+    ConnectionMode,
+    NodeType,
+    Peer,
+    PeerPoolHandling,
+    Resolver,
+    bootstrap_peers,
+    log_repo_sha_comparison,
+};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -1516,7 +1524,9 @@ impl<N: Network> Gateway<N> {
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, address, nonce: _ } = event;
+        let &ChallengeRequest { version, listener_port: _, address, nonce: _, ref snarkos_sha } = event;
+        log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+
         // Ensure the event protocol version is not outdated.
         if version < Event::<N>::VERSION {
             warn!("{CONTEXT} Dropping '{peer_addr}' on version {version} (outdated)");

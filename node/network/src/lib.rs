@@ -32,6 +32,11 @@ use snarkvm::prelude::Network;
 use std::{net::SocketAddr, str::FromStr};
 use tracing::*;
 
+// Include the generated build information.
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 /// Returns the list of bootstrap peers.
 #[allow(clippy::if_same_then_else)]
 pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
@@ -72,4 +77,20 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
         // Unrecognized networks contain no bootstrap peers.
         vec![]
     }
+}
+
+/// Logs the peer's snarkOS repo SHA and how it compares to ours.
+pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &str, ctx: &str) {
+    let our_sha = built_info::GIT_COMMIT_HASH.unwrap_or_default();
+    let sha_cmp = if peer_sha == "unknown" {
+        " with an unknown repo SHA".to_owned()
+    } else if peer_sha == our_sha {
+        format!("@{peer_sha} (same as us)")
+    } else if our_sha.is_empty() {
+        format!("@{peer_sha} (potentially different than us)")
+    } else {
+        format!("@{peer_sha} (different than us)")
+    };
+
+    debug!("{ctx} Peer '{peer_addr}' uses snarkOS{sha_cmp}");
 }

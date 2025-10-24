@@ -15,18 +15,27 @@
 
 use super::*;
 
+use snarkos_node_network::built_info;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeRequest<N: Network> {
     pub version: u32,
     pub listener_port: u16,
     pub address: Address<N>,
     pub nonce: u64,
+    pub snarkos_sha: String,
 }
 
 impl<N: Network> ChallengeRequest<N> {
     /// Creates a new `ChallengeRequest` event.
     pub fn new(listener_port: u16, address: Address<N>, nonce: u64) -> Self {
-        Self { version: Event::<N>::VERSION, listener_port, address, nonce }
+        Self {
+            version: Event::<N>::VERSION,
+            listener_port,
+            address,
+            nonce,
+            snarkos_sha: built_info::GIT_COMMIT_HASH.unwrap_or_default().into(),
+        }
     }
 }
 
@@ -44,6 +53,8 @@ impl<N: Network> ToBytes for ChallengeRequest<N> {
         self.listener_port.write_le(&mut writer)?;
         self.address.write_le(&mut writer)?;
         self.nonce.write_le(&mut writer)?;
+        self.snarkos_sha.as_bytes().write_le(&mut writer)?;
+
         Ok(())
     }
 }
@@ -54,8 +65,12 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
         let listener_port = u16::read_le(&mut reader)?;
         let address = Address::<N>::read_le(&mut reader)?;
         let nonce = u64::read_le(&mut reader)?;
+        let snarkos_sha = str::from_utf8(&<[u8; 40]>::read_le(&mut reader).unwrap_or([b'?'; 40])[..])
+            .map(|str| if str.starts_with('?') { "unknown" } else { str })
+            .map_err(|_| error("Invalid snarkOS SHA"))?
+            .to_owned();
 
-        Ok(Self { version, listener_port, address, nonce })
+        Ok(Self { version, listener_port, address, nonce, snarkos_sha })
     }
 }
 
@@ -68,7 +83,10 @@ pub mod prop_tests {
     };
 
     use bytes::{Buf, BufMut, BytesMut};
-    use proptest::prelude::{BoxedStrategy, Strategy, any};
+    use proptest::{
+        collection,
+        prelude::{BoxedStrategy, Strategy, any},
+    };
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -78,12 +96,13 @@ pub mod prop_tests {
     }
 
     pub fn any_challenge_request() -> BoxedStrategy<ChallengeRequest<CurrentNetwork>> {
-        (any_valid_address(), any::<u64>(), any::<u32>(), any::<u16>())
-            .prop_map(|(address, nonce, version, listener_port)| ChallengeRequest {
+        (any_valid_address(), any::<u64>(), any::<u32>(), any::<u16>(), collection::vec(0u8..=127, 40))
+            .prop_map(|(address, nonce, version, listener_port, sha)| ChallengeRequest {
                 address,
                 nonce,
                 version,
                 listener_port,
+                snarkos_sha: sha.into_iter().map(|b| b as char).collect(),
             })
             .boxed()
     }

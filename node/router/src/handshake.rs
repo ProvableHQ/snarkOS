@@ -20,6 +20,7 @@ use crate::{
     Router,
     messages::{ChallengeRequest, ChallengeResponse, DisconnectReason, Message, MessageCodec, MessageTrait},
 };
+use snarkos_node_network::log_repo_sha_comparison;
 use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
@@ -352,7 +353,8 @@ impl<N: Network> Router<N> {
         message: &ChallengeRequest<N>,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _ } = message;
+        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _, ref snarkos_sha } = message;
+        log_repo_sha_comparison(peer_addr, snarkos_sha, Self::OWNER);
 
         // Ensure the message protocol version is not outdated.
         if !self.is_valid_message_version(version) {

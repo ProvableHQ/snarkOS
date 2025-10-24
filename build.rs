@@ -272,7 +272,7 @@ fn check_tokio_console_flags() {
     }
 }
 
-// The build script; it currently only checks the licenses.
+// The build script.
 fn main() {
     // Check licenses in the current folder.
     check_file_licenses(".");
