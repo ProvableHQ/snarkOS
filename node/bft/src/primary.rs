@@ -1256,7 +1256,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             while let Some((peer_ip, primary_certificate)) = rx_primary_ping.recv().await {
                 // If the primary is not synced, then do not process the primary ping.
-                if self_.sync.is_synced() {
+                if !self_.sync.is_synced() {
                     trace!("Processing new primary ping from '{peer_ip}'");
                 } else {
                     trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
