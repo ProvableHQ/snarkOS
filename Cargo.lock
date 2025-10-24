@@ -4256,6 +4256,7 @@ dependencies = [
  "indexmap 2.12.0",
  "proptest",
  "serde",
+ "snarkos-node-network",
  "snarkos-node-sync-locators",
  "snarkvm",
  "test-strategy 0.4.3",
@@ -4359,6 +4360,7 @@ version = "4.2.2"
 dependencies = [
  "aleo-std",
  "anyhow",
+ "built",
  "locktick",
  "parking_lot",
  "serde",
