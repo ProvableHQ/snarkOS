@@ -15,12 +15,24 @@
 
 use super::*;
 
-#[derive(Clone, PartialEq, Eq)]
+use snarkvm::{
+    console::network::ConsensusVersion,
+    ledger::narwhal::Data,
+    prelude::{FromBytes, ToBytes},
+    utilities::io_error,
+};
+
+use std::borrow::Cow;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockResponse<N: Network> {
     /// The original block request.
     pub request: BlockRequest,
     /// The blocks.
     pub blocks: Data<DataBlocks<N>>,
+    /// The consensus version at the height of the *last* block in this response.
+    /// This enables detecting if the current node, or the peer, missed an upgrade. Its value is `None` for messages with version < 2.
+    pub latest_consensus_version: Option<ConsensusVersion>,
 }
 
 impl<N: Network> EventTrait for BlockResponse<N> {
@@ -37,25 +49,59 @@ impl<N: Network> EventTrait for BlockResponse<N> {
     }
 }
 
+impl<N: Network> BlockResponse<N> {
+    // Constructs a new block response.
+    pub fn new(request: BlockRequest, blocks: DataBlocks<N>, latest_consensus_version: ConsensusVersion) -> Self {
+        Self { request, blocks: Data::Object(blocks), latest_consensus_version: Some(latest_consensus_version) }
+    }
+}
+
 impl<N: Network> ToBytes for BlockResponse<N> {
-    fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
-        self.request.write_le(&mut writer)?;
-        self.blocks.write_le(&mut writer)
+    fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
+        // Block responses without a consesnsus version have message version `1`, other have to `2` (or greater in the future).
+        let Some(latest_consensus_version) = self.latest_consensus_version else {
+            return Err(io_error("Can only serialize block responses of version 2 or greater"));
+        };
+
+        // Send the consensus version starting with V12.
+        if latest_consensus_version > ConsensusVersion::V11 {
+            // Currently, we simply write four zero bytes as the version number,
+            // because we know a valid request start height is always non-zero.
+            // In the future we can encode the real version here.
+            0u32.write_le(&mut writer)?;
+            self.request.write_le(&mut writer)?;
+            self.blocks.write_le(&mut writer)?;
+            latest_consensus_version.write_le(&mut writer)
+        } else {
+            self.request.write_le(&mut writer)?;
+            self.blocks.write_le(&mut writer)
+        }
     }
 }
 
 impl<N: Network> FromBytes for BlockResponse<N> {
-    fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
-        let request = BlockRequest::read_le(&mut reader)?;
+    fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
+        let start_height = u32::read_le(&mut reader)?;
+
+        // An invalid start height as the first four bytes indicates that this message
+        // contains the consensus version of the last block.
+        let contains_consensus_version = start_height == 0;
+
+        // If this message type does not contain the consensus version, use the first four bytes as the start height.
+        // Otherwise, read the full request.
+        let request = if contains_consensus_version {
+            BlockRequest::read_le(&mut reader)?
+        } else {
+            let end_height = u32::read_le(&mut reader)?;
+            BlockRequest::new(start_height, end_height)?
+        };
+
         let blocks = Data::read_le(&mut reader)?;
 
-        Ok(Self { request, blocks })
-    }
-}
+        let latest_consensus_version =
+            if contains_consensus_version { Some(FromBytes::read_le(&mut reader)?) } else { None };
 
-impl<N: Network> std::fmt::Debug for BlockResponse<N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.name())
+        Ok(Self { request, blocks, latest_consensus_version })
     }
 }
 
@@ -136,32 +182,30 @@ impl<N: Network> FromBytes for DataBlocks<N> {
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::{BlockResponse, DataBlocks, block_request::prop_tests::any_block_request};
+    use crate::{BlockRequest, BlockResponse, DataBlocks, block_request::prop_tests::any_block_request};
+
     use snarkvm::{
-        ledger::test_helpers::sample_genesis_block,
-        prelude::{FromBytes, TestRng, ToBytes, block::Block, narwhal::Data},
+        console::network::ConsensusVersion,
+        ledger::{narwhal::Data, test_helpers::sample_genesis_block},
+        prelude::{FromBytes, TestRng, ToBytes},
     };
 
     use bytes::{Buf, BufMut, BytesMut};
-    use proptest::{
-        collection::vec,
-        prelude::{BoxedStrategy, Strategy, any},
-    };
+    use proptest::prelude::{BoxedStrategy, Strategy, any};
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
-    pub fn any_block() -> BoxedStrategy<Block<CurrentNetwork>> {
-        any::<u64>().prop_map(|seed| sample_genesis_block(&mut TestRng::fixed(seed))).boxed()
-    }
-
-    pub fn any_data_blocks() -> BoxedStrategy<DataBlocks<CurrentNetwork>> {
-        vec(any_block(), 0..=1).prop_map(DataBlocks).boxed()
-    }
-
     pub fn any_block_response() -> BoxedStrategy<BlockResponse<CurrentNetwork>> {
-        (any_block_request(), any_data_blocks())
-            .prop_map(|(request, data_blocks)| BlockResponse { request, blocks: Data::Object(data_blocks) })
+        (any_block_request(), any::<u64>())
+            .prop_map(|(request, seed)| {
+                // Generate blocks that match the requests range.
+                let mut rng = TestRng::from_seed(seed);
+                let blocks: Vec<_> =
+                    (request.start_height..request.end_height).map(|_| sample_genesis_block(&mut rng)).collect();
+
+                BlockResponse::new(request, DataBlocks(blocks), ConsensusVersion::V11)
+            })
             .boxed()
     }
 
@@ -170,10 +214,37 @@ pub mod prop_tests {
         let mut bytes = BytesMut::default().writer();
         block_response.write_le(&mut bytes).unwrap();
         let decoded = BlockResponse::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap();
+
         assert_eq!(block_response.request, decoded.request);
+        assert_eq!(block_response.latest_consensus_version, decoded.latest_consensus_version);
         assert_eq!(
             block_response.blocks.deserialize_blocking().unwrap(),
             decoded.blocks.deserialize_blocking().unwrap(),
         );
+    }
+
+    /// Generates a block response encoded in the old format, and ensures it is still deserializable.
+    #[proptest]
+    fn deserialize_version1(
+        #[strategy(any_block_request())] request: BlockRequest,
+        #[strategy(any::<u64>())] seed: u64,
+    ) {
+        let mut rng = TestRng::from_seed(seed);
+
+        let blocks = DataBlocks(
+            (request.start_height..request.end_height).map(|_| sample_genesis_block(&mut rng)).collect::<Vec<_>>(),
+        );
+
+        // Write the response without message or consesnsus version.
+        let mut data = Vec::new();
+        request.write_le(&mut data).unwrap();
+        Data::Object(blocks.clone()).write_le(&mut data).unwrap();
+
+        // Deserialize it.
+        let response = BlockResponse::read_le(data.reader()).unwrap();
+
+        assert_eq!(response.request, request);
+        assert_eq!(response.latest_consensus_version, None);
+        assert_eq!(response.blocks.deserialize_blocking().unwrap(), blocks);
     }
 }
