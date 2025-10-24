@@ -30,6 +30,7 @@ members = [
   "node/cdn",
   "node/consensus",
   "node/metrics",
+  "node/network",
   "node/rest",
   "node/router",
   "node/router/messages",
@@ -213,6 +214,10 @@ version = "=4.2.2"
 path = "node/metrics"
 version = "=4.2.2"
 
+[workspace.dependencies.snarkos-node-network]
+path = "node/network"
+version = "=4.2.2"
+
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
 version = "=4.2.2"
@@ -269,7 +274,8 @@ locktick = [
   "snarkos-node-rest/locktick",
   "snarkos-node-router/locktick",
   "snarkos-node-sync/locktick",
-  "snarkos-node-tcp/locktick"
+  "snarkos-node-tcp/locktick",
+  "snarkvm/locktick"
 ]
 serial = [ "snarkos-cli/serial" ]
 test_targets = [ "snarkos-cli/test_targets" ]

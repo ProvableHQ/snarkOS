@@ -25,7 +25,7 @@ use crate::common::{
 use snarkos_account::Account;
 use snarkos_node_bft::{Gateway, helpers::init_primary_channels};
 use snarkos_node_bft_events::{ChallengeRequest, ChallengeResponse, Event};
-use snarkos_node_router::PeerPoolHandling;
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_tcp::P2P;
 use snarkvm::{ledger::narwhal::Data, prelude::TestRng};
 

@@ -14,8 +14,8 @@
 // limitations under the License.
 
 use super::*;
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::{
-    PeerPoolHandling,
     Routing,
     messages::{
         BlockRequest,

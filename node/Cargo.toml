@@ -25,6 +25,7 @@ locktick = [
   "snarkos-node-bft/locktick",
   "snarkos-node-cdn/locktick",
   "snarkos-node-consensus/locktick",
+  "snarkos-node-network/locktick",
   "snarkos-node-rest/locktick",
   "snarkos-node-router/locktick",
   "snarkos-node-sync/locktick",
@@ -112,6 +113,9 @@ workspace = true
 workspace = true
 
 [dependencies.snarkos-node-consensus]
+workspace = true
+
+[dependencies.snarkos-node-network]
 workspace = true
 
 [dependencies.snarkos-node-rest]

@@ -25,6 +25,7 @@ extern crate tracing;
 pub use snarkos_node_bft as bft;
 pub use snarkos_node_cdn as cdn;
 pub use snarkos_node_consensus as consensus;
+pub use snarkos_node_network as network;
 pub use snarkos_node_rest as rest;
 pub use snarkos_node_router as router;
 pub use snarkos_node_sync as sync;

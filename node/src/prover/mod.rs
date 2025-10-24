@@ -18,14 +18,14 @@ mod router;
 use crate::traits::NodeInterface;
 use snarkos_account::Account;
 use snarkos_node_bft::ledger_service::ProverLedgerService;
+use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
-    messages::{Message, NodeType, UnconfirmedSolution},
+    messages::{Message, UnconfirmedSolution},
 };
 use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{

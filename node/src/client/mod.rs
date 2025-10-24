@@ -20,6 +20,7 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService};
 use snarkos_node_cdn::CdnBlockSync;
+use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -27,7 +28,7 @@ use snarkos_node_router::{
     Outbound,
     Router,
     Routing,
-    messages::{Message, NodeType, UnconfirmedSolution, UnconfirmedTransaction},
+    messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
 use snarkos_node_tcp::{
@@ -43,6 +44,7 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
+    utilities::log_error,
 };
 
 use aleo_std::StorageMode;
@@ -311,17 +313,26 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
     async fn try_issuing_block_requests(&self) {
-        let new_requests = self.sync.handle_block_request_timeouts(&self.router);
-        if let Some((block_requests, sync_peers)) = new_requests {
-            self.send_block_requests(block_requests, sync_peers).await;
-        }
-
         // Wait for peer updates or timeout
         let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
 
         // For sanity, check that sync height is never below ledger height.
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.sync.set_sync_height(self.ledger.latest_height());
+
+        match self.sync.handle_block_request_timeouts(&self.router) {
+            Ok(Some((requests, sync_peers))) => {
+                // Re-request blocks instead of performing regular block sync.
+                self.send_block_requests(requests, sync_peers).await;
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                // Abort and retry later.
+                log_error(&err);
+                return;
+            }
+        }
 
         // Do not attempt to sync if there are not blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.

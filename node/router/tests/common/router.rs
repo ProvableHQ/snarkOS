@@ -14,14 +14,11 @@
 // limitations under the License.
 
 use crate::common::sample_genesis_block;
+use snarkos_node_network::{NodeType, Peer, PeerPoolHandling, Resolver};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
-    NodeType,
     Outbound,
-    Peer,
-    PeerPoolHandling,
-    Resolver,
     Router,
     Routing,
     messages::{

@@ -15,6 +15,7 @@
 
 use super::*;
 
+use snarkos_node_network::NodeType;
 use snarkvm::prelude::{FromBytes, ToBytes};
 
 use std::borrow::Cow;
@@ -67,7 +68,8 @@ impl<N: Network> ChallengeRequest<N> {
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::{ChallengeRequest, NodeType};
+    use crate::ChallengeRequest;
+    use snarkos_node_network::NodeType;
     use snarkvm::{
         console::prelude::{FromBytes, ToBytes},
         prelude::{Address, TestRng, Uniform},

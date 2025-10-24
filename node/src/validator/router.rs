@@ -14,19 +14,17 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_router::{
-    PeerPoolHandling,
-    messages::{
-        BlockRequest,
-        BlockResponse,
-        DataBlocks,
-        DisconnectReason,
-        Message,
-        MessageCodec,
-        Ping,
-        Pong,
-        UnconfirmedTransaction,
-    },
+use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_router::messages::{
+    BlockRequest,
+    BlockResponse,
+    DataBlocks,
+    DisconnectReason,
+    Message,
+    MessageCodec,
+    Ping,
+    Pong,
+    UnconfirmedTransaction,
 };
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{

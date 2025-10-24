@@ -18,7 +18,8 @@ use crate::{
     locators::BlockLocators,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{PeerPoolHandling, messages::DataBlocks};
+use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 
@@ -372,7 +373,7 @@ impl<N: Network> BlockSync<N> {
             }
         };
 
-        debug!("Sending {len} block requests to peers {peers:?}", len = requests.len(), peers = sync_peers.keys());
+        debug!("Sending {len} block requests to peer(s) at {peers:?}", len = requests.len(), peers = sync_peers.keys());
 
         // Use a randomly sampled subset of the sync IPs.
         let sync_ips: IndexSet<_> =
@@ -996,11 +997,16 @@ impl<N: Network> BlockSync<N> {
     /// This removes the corresponding block responses and returns the set of peers/addresses that timed out.
     /// It will ask the peer pool handling service to ban any timed-out peers.
     ///
-    /// Finally, it will return a set of new of block requests that replaced the timed-out requests (if needed).
+    /// # Return Value
+    /// On success it will return `None` if there is nothing to re-request, or a set of new of block requests that replaced the timed-out requests.
+    /// This set of new requests can also replace requests that timed out earlier, and which we were not able to re-request yet.
+    ///
+    /// This function will return an error if it cannot re-request blocks due to a lack of peers.
+    /// In this case, the current iteration of block synchronization should not continue and the node should re-try later instead.
     pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
         peer_pool_handler: &P,
-    ) -> Option<BlockRequestBatch<N>> {
+    ) -> Result<Option<BlockRequestBatch<N>>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
 
@@ -1064,48 +1070,59 @@ impl<N: Network> BlockSync<N> {
             peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
         }
 
-        // Re-issue any timed-out requests.
+        // Determine if we need to re-issue any timed-out requests.
+        // If there are no requests remaining or no gap at the beginning,
+        // we do not need to re-issue requests and will just issue them regularly.
         //
-        // Do this even if timed_out_requests is empty, because we might not be able to re-issue
+        // This needs to be checked even if timed_out_requests is empty, because we might not be able to re-issue
         // requests immediately if there are no other peers at a given time.
         // Further, this only closes the first gap. So multiple calls to this might be needed.
         let sync_height = self.get_sync_height();
-        if let Some(next_height) = next_request_height {
-            let start = sync_height + 1;
+        let start_height = sync_height + 1;
 
-            // Is there a gap?
-            if next_height > start {
-                // Only request the given range, so there are no overlaps with other requests.
-                let end = next_height; // exclusive
-                let max_new_blocks_to_request = end - start;
+        let end_height = if let Some(next_height) = next_request_height
+            && next_height > start_height
+        {
+            // The end height is exclusive, so use the height of the first existing block requests as the end
+            next_height
+        } else {
+            // Nothing to do.
+            // Do not log here as this check happens frequently.
+            return Ok(None);
+        };
 
-                let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start) else {
-                    warn!("Block requests timed out, but found no other peers to re-request from");
-                    return None;
-                };
+        // Set the maximum number of blocks, so that they do not exceed the end height.
+        let max_new_blocks_to_request = end_height - start_height;
 
-                // Retrieve the greatest block height of any connected peer.
-                let Some(greatest_peer_height) = sync_peers.values().map(|l| l.latest_locator_height()).max() else {
-                    warn!("Cannot re-request blocks because no peers are connected");
-                    return None;
-                };
+        let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start_height) else {
+            // This generally shouldn't happen, because there cannot be outstanding requests when no peers are connected.
+            bail!("Cannot re-request blocks because no or not enough peers are connected");
+        };
 
-                debug!("Re-requesting blocks starting at height {start}");
+        // Retrieve the greatest block height of any connected peer.
+        let Some(greatest_peer_height) = sync_peers.values().map(|l| l.latest_locator_height()).max() else {
+            // This should never happen because `sync_peers` is guaranteed to be non-empty.
+            bail!("Cannot re-request blocks because no or not enough peers are connected");
+        };
 
-                return Some((
-                    self.construct_requests(
-                        &sync_peers,
-                        sync_height,
-                        min_common_ancestor,
-                        max_new_blocks_to_request,
-                        greatest_peer_height,
-                    ),
-                    sync_peers,
-                ));
-            }
+        // (Try to) construct the requests.
+        let requests = self.construct_requests(
+            &sync_peers,
+            sync_height,
+            min_common_ancestor,
+            max_new_blocks_to_request,
+            greatest_peer_height,
+        );
+
+        // If the ledger advanced concurrenctly, there may be no requests to issue after all.
+        // The given height may also be greater `start_height` due to concurerent block advancement.
+        if let Some((height, _)) = requests.as_slice().first() {
+            debug!("Re-requesting blocks starting at height {height}");
+            Ok(Some((requests, sync_peers)))
+        } else {
+            // Do not log here as this constitutes a benign race condition.
+            Ok(None)
         }
-
-        None
     }
 
     /// Finds the peers to sync from and the shared common ancestor, starting at the give height.
@@ -1197,14 +1214,14 @@ impl<N: Network> BlockSync<N> {
         // Compute the start height for the block requests.
         let start_height = {
             let requests = self.requests.read();
-            let mut start_height = sync_height + 1;
+            let ledger_height = self.ledger.latest_block_height();
 
-            loop {
-                if requests.contains_key(&start_height) {
-                    start_height += 1;
-                } else {
-                    break;
-                }
+            // Do not issue requests for blocks already contained in the ledger.
+            let mut start_height = ledger_height.max(sync_height + 1);
+
+            // Do not issue requests that already exist.
+            while requests.contains_key(&start_height) {
+                start_height += 1;
             }
 
             start_height
@@ -1231,7 +1248,7 @@ impl<N: Network> BlockSync<N> {
         for height in start_height..end_height {
             // Ensure the current height is not in the ledger or already requested.
             if let Err(err) = self.check_block_request(height) {
-                trace!("Failed to issue new request for height {height}: {err}");
+                trace!("{err}");
 
                 // If the sequence of block requests is interrupted, then return early.
                 // Otherwise, continue until the first start height that is new.
@@ -1351,7 +1368,7 @@ mod tests {
     };
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
-    use snarkos_node_router::{NodeType, Peer, Resolver};
+    use snarkos_node_network::{NodeType, Peer, Resolver};
     use snarkos_node_tcp::{P2P, Tcp};
     use snarkvm::{
         ledger::committee::Committee,
@@ -1923,7 +1940,7 @@ mod tests {
 
         // Remove timed out block requests.
         let c = DummyPeerPoolHandler::default();
-        new_sync.handle_block_request_timeouts(&c);
+        new_sync.handle_block_request_timeouts(&c).unwrap();
 
         // Check that the number of requests is reduced based on the ledger height.
         assert_eq!(new_sync.requests.read().len(), (locator_height - ledger_height) as usize);
@@ -1952,7 +1969,7 @@ mod tests {
 
         // Remove timed out block requests.
         let c = DummyPeerPoolHandler::default();
-        sync.handle_block_request_timeouts(&c);
+        sync.handle_block_request_timeouts(&c).unwrap();
 
         let ban_list = c.peers_to_ban.write();
         assert_eq!(ban_list.len(), 1);
@@ -2000,7 +2017,7 @@ mod tests {
         // Remove timed out block requests.
         let c = DummyPeerPoolHandler::default();
 
-        let re_requests = sync.handle_block_request_timeouts(&c);
+        let re_requests = sync.handle_block_request_timeouts(&c).unwrap();
 
         let ban_list = c.peers_to_ban.write();
         assert_eq!(ban_list.len(), 1);

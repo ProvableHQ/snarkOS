@@ -134,7 +134,8 @@ done
 
 # Creates a test program.
 mkdir -p program
-echo "program test_program.aleo;
+program_name="test_program.aleo"
+echo "program ${program_name};
 
 function main:
     input r0 as u32.public;
@@ -147,7 +148,7 @@ constructor:
 " > program/main.aleo
 
 echo "{
-  \"program\": \"test_program.aleo\",
+  \"program\": \"${program_name}\",
   \"version\": \"0.1.0\",
   \"description\": \"\",
   \"license\": \"\",
@@ -157,12 +158,48 @@ echo "{
 " > program/program.json
 
 # Deploy the test program and wait for the deployment to be processed.
-_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 10 test_program.aleo)
+_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 10 "$program_name")
+
+# Ensure we are able to fetch the program fromn the node.
+status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/program/${program_name}/0")
+if (( status_code == 200 )); then
+  echo "✅ Program exists on the node"
+else
+  echo "❌ Test failed! Failed to get program. Code was ${status_code}"
+  exit 1
+fi
+
+# Ensure the latest edition is indeed 0.
+edition=$(curl -s -o /dev/null "http://localhost:3030/v2/$network_name/program/${program_name}/latest_edition")
+if (( edition == 0 )); then
+  echo "✅ Only program edition 0 exists on the node"
+else
+  echo "❌ Test failed! Invalid latest edition {} for test program returned, not 0."
+  exit 1
+fi
+
+# Also check that the latest edition for the default program (credits.aleo) is 0.
+edition=$(curl -s -o /dev/null "http://localhost:3030/v2/$network_name/program/credits.aleo/latest_edition")
+if (( edition == 0 )); then
+  echo "✅ Only program edition 0 exists on the node"
+else
+  echo "❌ Test failed! Invalid latest edition {} for credits.aleo returned, not 0."
+  exit 1
+fi
+
+# Finally, check that we cannot fetch a non-existing edition of a program
+status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/program/${program_name}/1")
+if (( status_code == 404 )); then
+  echo "✅ Only program edition 0 exists on the node"
+else
+  echo "❌ Test failed! Invalid edition returnd ${status}, not 404."
+  exit 1
+fi
 
 # Execute a function in the deployed program and wait for the execution to be processed.
 # Use the old flags here `--query` and `--broadcast=URL` to test they still work.
 # Also, use the v1 API to test it still works.
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" test_program.aleo main 1u32 1u32 --wait --timeout 10)
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
 
 # Fail if the execution transaction does not exist.
 tx=$(echo "$execute_result" | tail -n 1)
@@ -190,7 +227,7 @@ echo "ℹ️Testing REST API and REST Error Handling"
 # Test invalid transaction data (JsonDataError) returns 422 Unprocessable Content
 echo "Testing invalid transaction data returns 422 status code..."
 (cd program && snarkos developer execute --dev-key 0 --network "$network_id" --endpoint=localhost:3030 \
-  --store txn_data.json --store-format=string test_program.aleo main 1u32 1u32)
+  --store txn_data.json --store-format=string "$program_name" main 1u32 1u32)
 
 # Modify the proof data
 # This changes the last three characters in the hash but keeps the correct length.
