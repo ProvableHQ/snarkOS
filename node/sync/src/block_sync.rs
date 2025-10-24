@@ -458,22 +458,24 @@ impl<N: Network> BlockSync<N> {
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<()> {
+        let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
+            bail!("Empty block response");
+        };
+
+        let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
+
         // Perform consensus version check, if possible.
         // This check is only enabled after nodes have reached V12.
-        if let Some(latest_consensus_version) = latest_consensus_version
-            && latest_consensus_version > ConsensusVersion::V11
-        {
-            let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
-                bail!("Empty block response");
-            };
-
-            let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
-
-            ensure_equals!(
-                expected_consensus_version,
-                latest_consensus_version,
-                "the peer's consensus version for height {last_height} does not match ours"
-            );
+        if expected_consensus_version > ConsensusVersion::V11 {
+            if let Some(latest_consensus_version) = latest_consensus_version {
+                ensure_equals!(
+                    expected_consensus_version,
+                    latest_consensus_version,
+                    "the peer's consensus version for height {last_height} does not match ours"
+                );
+            } else {
+                bail!("The peer did not send a consensus version");
+            }
         }
 
         // Insert the candidate blocks into the sync pool.
