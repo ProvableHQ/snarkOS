@@ -63,13 +63,19 @@ impl<N: Network> ToBytes for BlockResponse<N> {
             return Err(io_error("Can only serialize block responses of version 2 or greater"));
         };
 
-        // Currently, we simply write four zero bytes as the version number,
-        // because we know a valid request start height is always non-zero.
-        // In the future we can encode the real version here.
-        0u32.write_le(&mut writer)?;
-        self.request.write_le(&mut writer)?;
-        self.blocks.write_le(&mut writer)?;
-        latest_consensus_version.write_le(&mut writer)
+        // Send the consensus version starting with V12.
+        if latest_consensus_version > ConsensusVersion::V11 {
+            // Currently, we simply write four zero bytes as the version number,
+            // because we know a valid request start height is always non-zero.
+            // In the future we can encode the real version here.
+            0u32.write_le(&mut writer)?;
+            self.request.write_le(&mut writer)?;
+            self.blocks.write_le(&mut writer)?;
+            latest_consensus_version.write_le(&mut writer)
+        } else {
+            self.request.write_le(&mut writer)?;
+            self.blocks.write_le(&mut writer)
+        }
     }
 }
 
