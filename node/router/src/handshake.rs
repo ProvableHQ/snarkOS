@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use crate::{
+    ConnectionMode,
     NodeType,
     PeerPoolHandling,
     Router,
@@ -135,8 +136,15 @@ impl<N: Network> Router<N> {
             match handshake_result {
                 Ok(Some(ref cr)) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, None);
-                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, cr.node_type, cr.version);
+                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, Some(cr.address));
+                        peer.upgrade_to_connected(
+                            peer_addr,
+                            cr.listener_port,
+                            cr.address,
+                            cr.node_type,
+                            cr.version,
+                            ConnectionMode::Router,
+                        );
                     }
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
@@ -344,13 +352,23 @@ impl<N: Network> Router<N> {
         message: &ChallengeRequest<N>,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, node_type: _, address: _, nonce: _ } = message;
+        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _ } = message;
 
         // Ensure the message protocol version is not outdated.
         if !self.is_valid_message_version(version) {
             warn!("Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
+
+        // Ensure there are no validators connected with the given Aleo address.
+        if self.node_type() == NodeType::Validator
+            && node_type == NodeType::Validator
+            && self.is_connected_address(address)
+        {
+            warn!("Dropping '{peer_addr}' for being already connected ({address})");
+            return Some(DisconnectReason::NoReasonGiven);
+        }
+
         None
     }
 

@@ -45,8 +45,8 @@ pub(super) const GAUGE_NAMES: [&str; 26] = [
     tcp::TCP_TASKS,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 3] =
-    [bft::COMMIT_ROUNDS_LATENCY, consensus::CERTIFICATE_COMMIT_LATENCY, consensus::BLOCK_LATENCY];
+pub(super) const HISTOGRAM_NAMES: [&str; 4] =
+    [bft::COMMIT_ROUNDS_LATENCY, consensus::CERTIFICATE_COMMIT_LATENCY, consensus::BLOCK_LATENCY, consensus::BLOCK_LAG];
 
 pub mod bft {
     pub const COMMIT_ROUNDS_LATENCY: &str = "snarkos_bft_commit_rounds_latency_secs"; // <-- This one doesn't even make sense.
@@ -79,6 +79,7 @@ pub mod consensus {
     pub const CERTIFICATE_COMMIT_LATENCY: &str = "snarkos_consensus_certificate_commit_latency_secs";
     pub const COMMITTED_CERTIFICATES: &str = "snarkos_consensus_committed_certificates_total";
     pub const BLOCK_LATENCY: &str = "snarkos_consensus_block_latency_secs";
+    pub const BLOCK_LAG: &str = "snarkos_consensus_block_lag_ms";
     pub const UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_unconfirmed_transactions_total";
     pub const UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_unconfirmed_solutions_total";
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";

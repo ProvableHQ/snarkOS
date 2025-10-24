@@ -111,7 +111,7 @@ impl IntoResponse for RestError {
         })
         .unwrap_or_else(|err| format!("Failed to serialize error: {err}"));
 
-        info!("Returning REST error: {json_body:?}");
+        info!("Returning REST error: {json_body}");
 
         let mut response = Response::new(json_body.into());
         *response.status_mut() = status;

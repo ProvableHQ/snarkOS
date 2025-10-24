@@ -14,13 +14,19 @@
 // limitations under the License.
 
 use super::DEFAULT_ENDPOINT;
-use crate::helpers::{args::prepare_endpoint, dev::get_development_key};
+use crate::{
+    commands::Developer,
+    helpers::{args::prepare_endpoint, dev::get_development_key},
+};
 
 use snarkos_node_cdn::CDN_BASE_URL;
 use snarkvm::{
     console::network::Network,
-    prelude::{Ciphertext, Field, FromBytes, Plaintext, PrivateKey, Record, ViewKey, block::Block},
+    prelude::{Ciphertext, Field, Plaintext, PrivateKey, Record, ViewKey, block::Block},
 };
+
+#[cfg(not(feature = "test_targets"))]
+use snarkvm::prelude::FromBytes;
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, builder::NonEmptyStringValueParser};
@@ -64,7 +70,7 @@ pub struct Scan {
     #[clap(long, conflicts_with = "last")]
     start: Option<u32>,
 
-    /// The block height to stop scanning at.
+    /// The block height to stop scanning at (exclusive).
     /// Will start scanning at the geneiss block or the height specified with `--start`.
     #[clap(long, conflicts_with = "last")]
     end: Option<u32>,
@@ -103,7 +109,8 @@ impl Scan {
         let (start_height, end_height) = self.parse_block_range::<N>(&endpoint)?;
 
         // Fetch the records from the network.
-        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)?;
+        let records = Self::fetch_records::<N>(private_key, &view_key, &endpoint, start_height, end_height)
+            .with_context(|| "Failed to fetch records")?;
 
         // Output the decrypted records associated with the view key.
         if records.is_empty() {
@@ -145,7 +152,7 @@ impl Scan {
             }
             (Some(start), None, None) => {
                 // Request the latest block height from the endpoint.
-                let endpoint = format!("{endpoint}{}/block/height/latest", N::SHORT_NAME);
+                let endpoint = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
                 let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_body().read_to_string()?)?;
 
                 // Print a warning message if the user is attempting to scan the whole chain.
@@ -158,7 +165,7 @@ impl Scan {
             (None, Some(end), None) => Ok((0, end)),
             (None, None, Some(last)) => {
                 // Request the latest block height from the endpoint.
-                let endpoint = format!("{endpoint}{}/block/height/latest", N::SHORT_NAME);
+                let endpoint = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
                 let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_body().read_to_string()?)?;
 
                 Ok((latest_height.saturating_sub(last), latest_height))
@@ -200,11 +207,19 @@ impl Scan {
         print!("\rScanning {total_blocks} blocks for records (0% complete)...");
         stdout().flush()?;
 
-        // Fetch the genesis block from the endpoint.
-        let genesis_block: Block<N> =
-            ureq::get(&format!("{endpoint}{}/block/0", N::SHORT_NAME)).call()?.into_body().read_json()?;
-        // Determine if the endpoint is on a development network.
-        let is_development_network = genesis_block != Block::from_bytes_le(N::genesis_bytes())?;
+        // If the CLI was compiled with test targets, always assume the endpoint is on a development network.
+        #[cfg(feature = "test_targets")]
+        let is_development_network = true;
+
+        // Otherwise, determine if the endpoint is on a development network based on its genesis block.
+        #[cfg(not(feature = "test_targets"))]
+        let is_development_network = {
+            // Fetch the genesis block from the endpoint.
+            let endpoint = Developer::build_endpoint::<N>(endpoint, "block/0")?;
+            let endpoint_genesis_block: Block<N> = ureq::get(endpoint).call()?.into_body().read_json()?;
+            // If the endpoint's block differs from our (production) block, it is on a development network.
+            endpoint_genesis_block != Block::from_bytes_le(N::genesis_bytes())?
+        };
 
         // Determine the request start height.
         let mut request_start = match is_development_network {
@@ -213,7 +228,7 @@ impl Scan {
                 // Parse the CDN endpoint.
                 let cdn_endpoint = Self::parse_cdn::<N>()?;
                 // Scan the CDN first for records.
-                Self::scan_from_cdn(
+                let new_start_height = Self::scan_from_cdn(
                     start_height,
                     end_height,
                     &cdn_endpoint,
@@ -225,7 +240,7 @@ impl Scan {
                 )?;
 
                 // Scan the remaining blocks from the endpoint.
-                end_height.saturating_sub(start_height % MAX_BLOCK_RANGE)
+                new_start_height.max(start_height)
             }
         };
 
@@ -241,7 +256,8 @@ impl Scan {
             let request_end = request_start.saturating_add(num_blocks_to_request);
 
             // Establish the endpoint.
-            let blocks_endpoint = format!("{endpoint}{}/blocks?start={request_start}&end={request_end}", N::SHORT_NAME);
+            let blocks_endpoint =
+                Developer::build_endpoint::<N>(endpoint, &format!("blocks?start={request_start}&end={request_end}"))?;
             // Fetch blocks
             let blocks: Vec<Block<N>> = ureq::get(&blocks_endpoint).call()?.into_body().read_json()?;
 
@@ -262,7 +278,7 @@ impl Scan {
         Ok(result)
     }
 
-    /// Scan the blocks from the CDN.
+    /// Scan the blocks from the CDN. Returns the current height scanned to.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn scan_from_cdn<N: Network>(
         start_height: u32,
@@ -273,13 +289,13 @@ impl Scan {
         view_key: ViewKey<N>,
         address_x_coordinate: Field<N>,
         records: Arc<RwLock<Vec<Record<N, Plaintext<N>>>>>,
-    ) -> Result<()> {
+    ) -> Result<u32> {
         // Calculate the number of blocks to scan.
         let total_blocks = end_height.saturating_sub(start_height);
 
         // Get the start_height with
         let cdn_request_start = start_height.saturating_sub(start_height % MAX_BLOCK_RANGE);
-        let cdn_request_end = end_height.saturating_sub(start_height % MAX_BLOCK_RANGE);
+        let cdn_request_end = end_height.saturating_sub(end_height % MAX_BLOCK_RANGE).saturating_add(MAX_BLOCK_RANGE);
 
         // Construct the runtime.
         let rt = tokio::runtime::Runtime::new()?;
@@ -318,12 +334,14 @@ impl Scan {
                     Ok(())
                 })
                 .await;
-            if let Err(error) = result {
-                eprintln!("Error loading blocks from CDN - (height, error):{error:?}");
+            match result {
+                Ok(height) => Ok(height),
+                Err(error) => {
+                    eprintln!("Error loading blocks from CDN - (height, error):{error:?}");
+                    Ok(error.0)
+                }
             }
-        });
-
-        Ok(())
+        })
     }
 
     /// Scan a block for owned records.
@@ -366,7 +384,7 @@ impl Scan {
             let serial_number = Record::<N, Plaintext<N>>::serial_number(private_key, commitment)?;
 
             // Establish the endpoint.
-            let endpoint = format!("{endpoint}{}/find/transitionID/{serial_number}", N::SHORT_NAME);
+            let endpoint = Developer::build_endpoint::<N>(endpoint, &format!("find/transitionID/{serial_number}"))?;
 
             // Check if the record is spent.
             match ureq::get(&endpoint).call() {

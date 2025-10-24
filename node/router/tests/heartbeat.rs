@@ -16,10 +16,10 @@
 mod common;
 use common::*;
 
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::{
     Heartbeat,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
     messages::{Message, MessageCodec},
@@ -29,7 +29,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Handshake, OnConnect, Writing},
 };
-use snarkvm::prelude::MainnetV0 as Network;
+use snarkvm::prelude::{MainnetV0 as Network, TestRng};
 
 use async_trait::async_trait;
 use std::{net::SocketAddr, time::Duration};
@@ -93,20 +93,22 @@ async fn connect_to(router: &TestRouter<Network>, other: &TestRouter<Network>) {
 /// Checks that clients are ordered before nodes and that ordering is based on when a peer was last seen.
 #[tokio::test]
 async fn peer_priority_ordering() {
-    let router = client(0, 10).await;
+    let mut rng = TestRng::default();
+
+    let router = client(0, 10, &mut rng).await;
     router.enable_listener().await;
     router.enable_handshake().await;
     router.enable_on_connect().await;
 
-    let validator_peer1 = validator(0, 5, &[], true).await;
+    let validator_peer1 = validator(0, 5, &[], true, &mut rng).await;
     validator_peer1.enable_listener().await;
     validator_peer1.enable_handshake().await;
 
-    let validator_peer2 = validator(0, 5, &[], true).await;
+    let validator_peer2 = validator(0, 5, &[], true, &mut rng).await;
     validator_peer2.enable_listener().await;
     validator_peer2.enable_handshake().await;
 
-    let client_peer = client(0, 5).await;
+    let client_peer = client(0, 5, &mut rng).await;
     client_peer.enable_listener().await;
     client_peer.enable_handshake().await;
 
@@ -153,15 +155,17 @@ async fn peer_priority_ordering() {
 /// Checks that trusted peers are never marked as removable.
 #[tokio::test]
 async fn peer_priority_trusted_peers() {
-    let validator_peer = validator(0, 5, &[], true).await;
+    let mut rng = TestRng::default();
+
+    let validator_peer = validator(0, 5, &[], true, &mut rng).await;
     validator_peer.enable_listener().await;
     validator_peer.enable_handshake().await;
 
-    let client_peer = client(0, 5).await;
+    let client_peer = client(0, 5, &mut rng).await;
     client_peer.enable_listener().await;
     client_peer.enable_handshake().await;
 
-    let router = validator(0, 5, &[validator_peer.local_ip(), client_peer.local_ip()], false).await;
+    let router = validator(0, 5, &[validator_peer.local_ip(), client_peer.local_ip()], false, &mut rng).await;
     router.enable_listener().await;
     router.enable_handshake().await;
     router.enable_on_connect().await;

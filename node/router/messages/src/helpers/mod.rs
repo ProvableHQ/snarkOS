@@ -18,6 +18,3 @@ pub use codec::MessageCodec;
 
 mod disconnect;
 pub use disconnect::DisconnectReason;
-
-mod node_type;
-pub use node_type::*;

@@ -43,7 +43,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
+use snarkos_node_network::{ConnectionMode, NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -178,6 +178,10 @@ impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
 
     fn is_dev(&self) -> bool {
         self.dev.is_some()
+    }
+
+    fn node_type(&self) -> NodeType {
+        NodeType::Validator
     }
 }
 
@@ -367,12 +371,6 @@ impl<N: Network> Gateway<N> {
         self.worker_senders.get().and_then(|senders| senders.get(&worker_id))
     }
 
-    /// Returns `true` if the node is connected to the given Aleo address.
-    pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // The resolver only contains data on connected peers.
-        self.resolver.read().get_peer_ip_for_address(address).is_some()
-    }
-
     /// Returns `true` if the given peer IP is an authorized validator.
     pub fn is_authorized_validator_ip(&self, ip: SocketAddr) -> bool {
         // If the peer IP is in the trusted validators, return early.
@@ -460,7 +458,14 @@ impl<N: Network> Gateway<N> {
         // Add a transmission for this peer in the connected peers.
         self.peer_pool.write().insert(peer_ip, Peer::new_connecting(peer_ip, false));
         if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
-            peer.upgrade_to_connected(peer_addr, peer_ip.port(), address, NodeType::Validator, 0);
+            peer.upgrade_to_connected(
+                peer_addr,
+                peer_ip.port(),
+                address,
+                NodeType::Validator,
+                0,
+                ConnectionMode::Gateway,
+            );
         }
     }
 
@@ -1272,14 +1277,21 @@ impl<N: Network> Handshake for Gateway<N> {
         if let Some(addr) = listener_addr {
             match handshake_result {
                 Ok(Some(ref cr)) => {
-                    let (node_type, aleo_address) = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
-                        (NodeType::BootstrapClient, None)
+                    let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                        NodeType::BootstrapClient
                     } else {
-                        (NodeType::Validator, Some(cr.address))
+                        NodeType::Validator
                     };
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(addr, peer_addr, aleo_address);
-                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, node_type, cr.version);
+                        self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
+                        peer.upgrade_to_connected(
+                            peer_addr,
+                            cr.listener_port,
+                            cr.address,
+                            node_type,
+                            cr.version,
+                            ConnectionMode::Gateway,
+                        );
                     }
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
@@ -1570,7 +1582,7 @@ mod prop_tests {
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
-    use snarkos_node_router::PeerPoolHandling;
+    use snarkos_node_network::PeerPoolHandling;
     use snarkos_node_tcp::P2P;
     use snarkvm::{
         ledger::{

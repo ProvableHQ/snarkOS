@@ -25,6 +25,7 @@ locktick = [
   "snarkos-node-bft/locktick",
   "snarkos-node-cdn/locktick",
   "snarkos-node-consensus/locktick",
+  "snarkos-node-network/locktick",
   "snarkos-node-rest/locktick",
   "snarkos-node-router/locktick",
   "snarkos-node-sync/locktick",
@@ -51,6 +52,7 @@ cuda = [
 ]
 serial = [ "snarkos-node-bft/serial" ]
 test_consensus_tracking = [ "snarkos-node-bft/test_consensus_tracking", "snarkos-node-consensus/test_consensus_tracking" ] 
+test = []
 
 [dependencies.aleo-std]
 workspace = true
@@ -112,6 +114,9 @@ workspace = true
 workspace = true
 
 [dependencies.snarkos-node-consensus]
+workspace = true
+
+[dependencies.snarkos-node-network]
 workspace = true
 
 [dependencies.snarkos-node-rest]

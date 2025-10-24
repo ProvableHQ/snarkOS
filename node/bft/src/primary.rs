@@ -44,7 +44,7 @@ use crate::{
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::PeerPoolHandling;
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
 use snarkvm::{
     console::{

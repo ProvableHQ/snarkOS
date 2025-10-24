@@ -14,13 +14,11 @@
 // limitations under the License.
 
 use crate::common::sample_genesis_block;
+use snarkos_node_network::{NodeType, Peer, PeerPoolHandling, Resolver};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    Peer,
-    PeerPoolHandling,
-    Resolver,
     Router,
     Routing,
     messages::{
@@ -95,6 +93,10 @@ impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
 
     fn is_dev(&self) -> bool {
         true
+    }
+
+    fn node_type(&self) -> NodeType {
+        self.router().node_type()
     }
 }
 
