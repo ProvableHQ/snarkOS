@@ -467,7 +467,7 @@ impl<N: Network> BlockSync<N> {
 
         // Perform consensus version check, if possible.
         // This check is only enabled after nodes have reached V12.
-        if expected_consensus_version > ConsensusVersion::V11 {
+        if expected_consensus_version >= ConsensusVersion::V12 {
             if let Some(latest_consensus_version) = latest_consensus_version {
                 ensure_equals!(
                     expected_consensus_version,

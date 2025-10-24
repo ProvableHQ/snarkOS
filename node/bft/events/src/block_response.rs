@@ -64,7 +64,7 @@ impl<N: Network> ToBytes for BlockResponse<N> {
         };
 
         // Send the consensus version starting with V12.
-        if latest_consensus_version > ConsensusVersion::V11 {
+        if latest_consensus_version >= ConsensusVersion::V12 {
             // Currently, we simply write four zero bytes as the version number,
             // because we know a valid request start height is always non-zero.
             // In the future we can encode the real version here.
