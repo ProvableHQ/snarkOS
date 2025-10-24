@@ -184,7 +184,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         let latest_consensus_version = match N::CONSENSUS_VERSION(end_height.saturating_sub(1)) {
             Ok(version) => version,
             Err(err) => {
-                log_error(&err.context("Failed to retrieve consensus version"));
+                log_error(err.context("Failed to retrieve consensus version"));
                 return false;
             }
         };
@@ -213,7 +213,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
-            log_warning(&err.context("Failed to insert block response"));
+            log_warning(err.context("Failed to insert block response"));
             false
         } else {
             true

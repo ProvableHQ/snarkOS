@@ -182,7 +182,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         let latest_consensus_version = match N::CONSENSUS_VERSION(end_height.saturating_sub(1)) {
             Ok(version) => version,
             Err(err) => {
-                log_error(&err.context("Failed to retrieve consensus version"));
+                log_error(err.context("Failed to retrieve consensus version"));
                 return false;
             }
         };
