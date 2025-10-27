@@ -144,6 +144,11 @@ commands:
       - setup_environment:
           cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
       - run:
+          name: "Build tests"
+          no_output_timeout: 30m
+          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >> --no-run
+      - run:
+          name: "Run tests"
           no_output_timeout: 30m
           command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
       - clear_environment:
