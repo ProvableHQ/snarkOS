@@ -4403,6 +4403,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "snarkos-node-bft",
  "snarkos-node-cdn",
  "snarkos-node-consensus",
  "snarkos-node-network",

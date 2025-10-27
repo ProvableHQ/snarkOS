@@ -65,9 +65,9 @@ use snarkvm::{
     console::prelude::*,
     ledger::{
         committee::Committee,
-        narwhal::{BatchHeader, Data},
+        narwhal::{BatchHeader, Data, Transmission, TransmissionID},
     },
-    prelude::{Address, Field},
+    prelude::{Address, Field, Transaction},
 };
 
 use colored::Colorize;
@@ -738,6 +738,31 @@ impl<N: Network> Gateway<N> {
                 }
                 Ok(true)
             }
+            Event::UnconfirmedTransaction(event) => {
+                // Perform the deferred non-blocking deserialization of the transaction.
+                let transaction = match event.transaction.deserialize().await {
+                    Ok(transaction) => transaction,
+                    Err(error) => bail!("[UnconfirmedTransaction] {error}"),
+                };
+                // Calculate the transmission checksum.
+                let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
+                // Construct the transmission ID.
+                let transmission_id = TransmissionID::Transaction(transaction.id(), checksum);
+                // Construct the transmission.
+                let transmission = Transmission::Transaction(Data::Object(transaction));
+
+                // Determine the worker ID.
+                let Ok(worker_id) = assign_to_worker(transmission_id, self.num_workers()) else {
+                    warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", transmission_id);
+                    return Ok(true);
+                };
+                // Send the unconfirmed transmission to the worker.
+                if let Some(sender) = self.get_worker_sender(worker_id) {
+                    // Send the unconfirmed transmission to the worker.
+                    let _ = sender.tx_unconfirmed_transmission.send((peer_ip, transmission_id, transmission)).await;
+                }
+                Ok(true)
+            }
             Event::ValidatorsRequest(_) => {
                 let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
                 connected_peers.shuffle(&mut rand::thread_rng());
@@ -1104,6 +1129,14 @@ impl<N: Network> Gateway<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.tcp.banned_peers().remove_old_bans(IP_BAN_TIME_IN_SECS);
+    }
+
+    /// Broadcast an unconfirmed transaction so other validators can cache it.
+    pub fn broadcast_unconfirmed_transaction(&self, transaction: Transaction<N>) {
+        let event = Event::UnconfirmedTransaction(crate::events::UnconfirmedTransaction {
+            transaction: Data::Object(transaction),
+        });
+        Transport::broadcast(self, event);
     }
 }
 

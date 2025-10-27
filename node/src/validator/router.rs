@@ -260,8 +260,8 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
     /// Propagates the unconfirmed solution to all connected validators.
     async fn unconfirmed_solution(
         &self,
-        peer_ip: SocketAddr,
-        serialized: UnconfirmedSolution<N>,
+        _peer_ip: SocketAddr,
+        _serialized: UnconfirmedSolution<N>,
         solution: Solution<N>,
     ) -> bool {
         // Add the unconfirmed solution to the memory pool.
@@ -269,27 +269,44 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
             trace!("[UnconfirmedSolution] {error}");
             return true; // Maintain the connection.
         }
-        let message = Message::UnconfirmedSolution(serialized);
+        // let message = Message::UnconfirmedSolution(serialized);
         // Propagate the "UnconfirmedSolution" to the connected validators.
-        self.propagate_to_validators(message, &[peer_ip]);
+        // self.propagate_to_validators(message, &[peer_ip]);
         true
     }
 
     /// Handles an `UnconfirmedTransaction` message.
     async fn unconfirmed_transaction(
         &self,
-        peer_ip: SocketAddr,
-        serialized: UnconfirmedTransaction<N>,
+        _peer_ip: SocketAddr,
+        _serialized: UnconfirmedTransaction<N>,
         transaction: Transaction<N>,
     ) -> bool {
+        // Cache the unconfirmed transaction.
+        match self.consensus.cache_unconfirmed_transaction(transaction.clone()).await {
+            Err(error) => {
+                trace!("[UnconfirmedTransaction] {error}");
+                return true; // Maintain the connection.
+            }
+            Ok(transaction_previously_cached) => {
+                // If the transaction was previously propagated and cached, there's no need to propagate again.
+                if transaction_previously_cached {
+                    return true; // Maintain the connection.
+                }
+            }
+        }
+        // Broadcast the unconfirmed transaction so other validators can cache it.
+        self.consensus.bft().primary().gateway().broadcast_unconfirmed_transaction(transaction.clone());
         // Add the unconfirmed transaction to the memory pool.
+        // NOTE: broadcasting the transmission before adding it to our own
+        // mempool ensures that we reduce network resource usage for duplicate
+        // transmissions, at the expense of increased latency for new
+        // transmissions.
         if let Err(error) = self.consensus.add_unconfirmed_transaction(transaction).await {
             trace!("[UnconfirmedTransaction] {error}");
             return true; // Maintain the connection.
-        }
-        let message = Message::UnconfirmedTransaction(serialized);
-        // Propagate the "UnconfirmedTransaction" to the connected validators.
-        self.propagate_to_validators(message, &[peer_ip]);
+        };
+
         true
     }
 }

@@ -41,6 +41,11 @@ pub trait StorageService<N: Network>: Debug + Send + Sync {
         aborted_transmissions: HashSet<TransmissionID<N>>,
     ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>>;
 
+    /// Caches the given transmission in storage.
+    ///
+    /// Returns whether the transaction is already present in the cache.
+    fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool;
+
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
     fn insert_transmissions(
         &self,

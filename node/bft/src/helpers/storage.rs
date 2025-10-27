@@ -719,6 +719,13 @@ impl<N: Network> Storage<N> {
         );
     }
 
+    /// Caches the given `transmission` in storage.
+    ///
+    /// Returns whether the transaction is already present in the cache.
+    pub fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
+        self.transmissions.cache_transmission(transmission_id, transmission)
+    }
+
     /// Inserts the given unprocessed `certificate` into storage.
     ///
     /// This is a temporary storage, which is cleared again when calling `insert_certificate_atomic`.

@@ -219,6 +219,7 @@ pub struct WorkerSender<N: Network> {
     pub tx_worker_ping: mpsc::Sender<(SocketAddr, TransmissionID<N>)>,
     pub tx_transmission_request: mpsc::Sender<(SocketAddr, TransmissionRequest<N>)>,
     pub tx_transmission_response: mpsc::Sender<(SocketAddr, TransmissionResponse<N>)>,
+    pub tx_unconfirmed_transmission: mpsc::Sender<(SocketAddr, TransmissionID<N>, Transmission<N>)>,
 }
 
 #[derive(Debug)]
@@ -226,6 +227,7 @@ pub struct WorkerReceiver<N: Network> {
     pub rx_worker_ping: mpsc::Receiver<(SocketAddr, TransmissionID<N>)>,
     pub rx_transmission_request: mpsc::Receiver<(SocketAddr, TransmissionRequest<N>)>,
     pub rx_transmission_response: mpsc::Receiver<(SocketAddr, TransmissionResponse<N>)>,
+    pub rx_unconfirmed_transmission: mpsc::Receiver<(SocketAddr, TransmissionID<N>, Transmission<N>)>,
 }
 
 /// Initializes the worker channels.
@@ -233,9 +235,16 @@ pub fn init_worker_channels<N: Network>() -> (WorkerSender<N>, WorkerReceiver<N>
     let (tx_worker_ping, rx_worker_ping) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_transmission_request, rx_transmission_request) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_transmission_response, rx_transmission_response) = mpsc::channel(MAX_CHANNEL_SIZE);
+    let (tx_unconfirmed_transmission, rx_unconfirmed_transmission) = mpsc::channel(MAX_CHANNEL_SIZE);
 
-    let sender = WorkerSender { tx_worker_ping, tx_transmission_request, tx_transmission_response };
-    let receiver = WorkerReceiver { rx_worker_ping, rx_transmission_request, rx_transmission_response };
+    let sender =
+        WorkerSender { tx_worker_ping, tx_transmission_request, tx_transmission_response, tx_unconfirmed_transmission };
+    let receiver = WorkerReceiver {
+        rx_worker_ping,
+        rx_transmission_request,
+        rx_transmission_response,
+        rx_unconfirmed_transmission,
+    };
 
     (sender, receiver)
 }

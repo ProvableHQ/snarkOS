@@ -98,6 +98,17 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
         Ok(missing_transmissions)
     }
 
+    /// Caches the given transmission in storage.
+    ///
+    /// Returns whether the transaction is already present in the cache.
+    fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
+        // Acquire the transmissions write lock.
+        let mut transmissions = self.transmissions.write();
+        // Insert the transmission.
+        // TODO: fix the insertion or interface.
+        transmissions.insert(transmission_id, (transmission, indexset! {})).is_some()
+    }
+
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
     fn insert_transmissions(
         &self,

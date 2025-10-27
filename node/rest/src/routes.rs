@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use super::*;
+use snarkos_node_bft::{Transport, events::Event};
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkvm::{
@@ -740,14 +741,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             res?;
         }
 
-        // If the consensus module is enabled, add the unconfirmed transaction to the memory pool.
+        // If the consensus module is enabled, add the unconfirmed transaction to the memory pool and broadcast it to validators.
         if let Some(consensus) = rest.consensus {
             // Add the unconfirmed transaction to the memory pool.
             consensus.add_unconfirmed_transaction(tx.clone()).await?;
+            // Broadcast the unconfirmed transaction.
+            let event = Event::UnconfirmedTransaction(snarkos_node_bft::events::UnconfirmedTransaction {
+                transaction: Data::Object(tx.clone()),
+            });
+            consensus.bft().primary().gateway().broadcast(event);
+        } else {
+            // Broadcast the transaction to peers.
+            rest.routing.propagate(message, &[]);
         }
-
-        // Broadcast the transaction.
-        rest.routing.propagate(message, &[]);
 
         // Determine if the node is synced and if the transaction was checked.
         match !is_within_sync_leniency && check_transaction {

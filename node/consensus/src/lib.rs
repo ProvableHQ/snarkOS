@@ -372,6 +372,27 @@ impl<N: Network> Consensus<N> {
         Ok(())
     }
 
+    /// Caches the given unconfirmed transaction.
+    ///
+    /// Returns whether the transaction to be cached is new.
+    pub async fn cache_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<bool> {
+        // Calculate the transmission checksum.
+        let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
+        // Construct the transmission ID.
+        let transmission_id = TransmissionID::Transaction(transaction.id(), checksum);
+        // Queue the unconfirmed transaction.
+        let transaction_id = transaction.id();
+
+        // Check that the transaction is not a fee transaction.
+        if transaction.is_fee() {
+            bail!("Transaction '{}' is a fee transaction {}", fmt_id(transaction_id), "(skipping)".dimmed());
+        }
+        // Construct the transmission.
+        let transmission = Transmission::Transaction(Data::Object(transaction));
+        // Insert the transaction into cache_transmissions.
+        Ok(self.bft().primary().storage().cache_transmission(transmission_id, transmission))
+    }
+
     /// Adds the given unconfirmed transaction to the memory pool, which will then eventually be passed
     /// to the BFT layer for inclusion in a batch.
     pub async fn add_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<()> {

@@ -175,7 +175,7 @@ impl<N: Network> Worker<N> {
             || self.ledger.contains_transmission(&transmission_id).unwrap_or(false)
     }
 
-    /// Returns the transmission if it exists in the ready queue, proposed batch, storage.
+    /// Returns the transmission if it exists in the ready queue, storage or proposed batch.
     ///
     /// Note: We explicitly forbid retrieving a transmission from the ledger, as transmissions
     /// in the ledger are not guaranteed to be invalid for the current batch.
@@ -251,6 +251,13 @@ impl<N: Network> Worker<N> {
         if !transmission_ids.is_empty() {
             self.gateway.broadcast(Event::WorkerPing(transmission_ids.into()));
         }
+    }
+
+    /// Inserts the unconfirmed transmission into the storage.
+    ///
+    /// Returns whether the transaction is already present in the cache.
+    fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
+        self.storage.cache_transmission(transmission_id, transmission)
     }
 }
 
@@ -426,7 +433,12 @@ impl<N: Network> Worker<N> {
 impl<N: Network> Worker<N> {
     /// Starts the worker handlers.
     fn start_handlers(&self, receiver: WorkerReceiver<N>) {
-        let WorkerReceiver { mut rx_worker_ping, mut rx_transmission_request, mut rx_transmission_response } = receiver;
+        let WorkerReceiver {
+            mut rx_worker_ping,
+            mut rx_transmission_request,
+            mut rx_transmission_response,
+            mut rx_unconfirmed_transmission,
+        } = receiver;
 
         // Start the pending queue expiration loop.
         let self_ = self.clone();
@@ -470,6 +482,14 @@ impl<N: Network> Worker<N> {
                     self__.finish_transmission_request(peer_ip, transmission_response);
                     Ok(())
                 });
+            }
+        });
+
+        // Process the unconfirmed transmissions.
+        let self_ = self.clone();
+        self.spawn(async move {
+            while let Some((_peer_ip, transmission_id, transmission)) = rx_unconfirmed_transmission.recv().await {
+                self_.cache_transmission(transmission_id, transmission);
             }
         });
     }
