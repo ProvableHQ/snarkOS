@@ -380,7 +380,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     //     Ok(())
     // }
 
-    /// Initialize the transaction pool.
+    /// Initializes the transaction pool (if in development mode).
+    ///
+    /// Spawns a background task that periodically issues transactions to the network.
     fn initialize_transaction_pool(&self, dev: Option<u16>, dev_txs: bool) -> Result<()> {
         use snarkvm::console::{
             program::{Identifier, Literal, ProgramID, Value},

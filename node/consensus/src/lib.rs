@@ -372,6 +372,10 @@ impl<N: Network> Consensus<N> {
             if self.ledger.contains_transmission(&TransmissionID::Transaction(transaction_id, checksum))? {
                 bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
             }
+            // Check that the transaction is not in the mempool.
+            if self.contains_transaction(&transaction_id) {
+                bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
+            }
             #[cfg(feature = "metrics")]
             {
                 metrics::increment_gauge(metrics::consensus::UNCONFIRMED_TRANSACTIONS, 1f64);
@@ -379,10 +383,6 @@ impl<N: Network> Consensus<N> {
                 self.transmissions_tracker
                     .lock()
                     .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
-            }
-            // Check that the transaction is not in the mempool.
-            if self.contains_transaction(&transaction_id) {
-                bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
             }
             // Add the transaction to the memory pool.
             trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
@@ -565,6 +565,7 @@ impl<N: Network> Consensus<N> {
             let coinbase_target = next_block.header().coinbase_target();
             let cumulative_proof_target = next_block.header().cumulative_proof_target();
 
+            // Calculate latency for all transmissions included in this block.
             metrics::add_transmission_latency_metric(&self.transmissions_tracker, &next_block);
 
             metrics::gauge(metrics::consensus::COMMITTED_CERTIFICATES, num_committed_certificates as f64);
