@@ -65,7 +65,7 @@ use std::{
             Ordering::{Acquire, Relaxed},
         },
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     task::JoinHandle,
@@ -163,6 +163,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
+            storage_mode.clone(),
             dev.is_some(),
         )
         .await?;
@@ -252,55 +253,80 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
 /// Sync-specific code.
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
-    const SYNC_INTERVAL: Duration = std::time::Duration::from_secs(5);
+    /// The maximum time to wait for peer updates before timing out and attempting to issue new requests.
+    /// This only exists as a fallback for the (unlikely) case a task does not get notified about updates.
+    const MAX_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
     /// Spawns the tasks that performs the syncing logic for this client.
     fn initialize_sync(&self) {
-        // Start the sync loop.
-        let _self = self.clone();
-        let mut last_update = Instant::now();
+        // Start the block request generation loop (outgoing).
+        let self_ = self.clone();
+        self.spawn(async move {
+            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // Perform the sync routine.
+                self_.try_issuing_block_requests().await;
 
-        self.handles.lock().push(tokio::spawn(async move {
-            loop {
-                // If the Ctrl-C handler registered the signal, stop the node.
-                if _self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                    info!("Shutting down block production");
-                    break;
-                }
+                // Rate limiting happens in [`Self::send_block_requests`] and no additional sleeps are needed here
+            }
 
-                // Make sure we do not sync too often
-                let now = Instant::now();
-                let elapsed = now.saturating_duration_since(last_update);
-                let sleep_time = Self::SYNC_INTERVAL.saturating_sub(elapsed);
+            info!("Stopped block request generation");
+        });
 
-                if !sleep_time.is_zero() {
-                    sleep(sleep_time).await;
-                }
+        // Start the block response processing loop (incoming).
+        let self_ = self.clone();
+        self.spawn(async move {
+            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // Wait until there is something to do or until the timeout.
+                let _ = timeout(Self::MAX_SYNC_INTERVAL, self_.sync.wait_for_block_responses()).await;
 
                 // Perform the sync routine.
-                _self.try_block_sync().await;
-                last_update = now;
+                self_.try_advancing_block_synchronization().await;
+
+                // We perform no additional rate limiting here as
+                // requests are already rate-limited.
             }
-        }));
+
+            debug!("Stopped block response processing");
+        });
+    }
+
+    /// Client-side version of [`snarkvm_node_bft::Sync::try_advancing_block_synchronization`].
+    async fn try_advancing_block_synchronization(&self) {
+        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
+            Ok(val) => val,
+            Err(err) => {
+                error!("Block synchronization failed - {err}");
+                return;
+            }
+        };
+
+        // If there are new blocks, we need to update the block locators.
+        if has_new_blocks {
+            match self.sync.get_block_locators() {
+                Ok(locators) => self.ping.update_block_locators(locators),
+                Err(err) => error!("Failed to get block locators: {err}"),
+            }
+        }
     }
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
-    async fn try_block_sync(&self) {
-        // Sleep briefly to avoid triggering spam detection.
-        let _ = timeout(Self::SYNC_INTERVAL, self.sync.wait_for_update()).await;
+    async fn try_issuing_block_requests(&self) {
+        let new_requests = self.sync.handle_block_request_timeouts(&self.router);
+        if let Some((block_requests, sync_peers)) = new_requests {
+            self.send_block_requests(block_requests, sync_peers).await;
+        }
+
+        // Wait for peer updates or timeout
+        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
 
         // For sanity, check that sync height is never below ledger height.
         // (if the ledger height is lower or equal to the current sync height, this is a noop)
         self.sync.set_sync_height(self.ledger.latest_height());
 
-        let new_requests = self.sync.handle_block_request_timeouts(self);
-        if let Some((block_requests, sync_peers)) = new_requests {
-            self.send_block_requests(block_requests, sync_peers).await;
-        }
-
         // Do not attempt to sync if there are not blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
         if !self.sync.can_block_sync() {
+            trace!("Nothing to sync. Will not issue new block requests");
             return;
         }
 
@@ -310,24 +336,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() && self.sync.has_pending_responses() {
-            // Try to advance the ledger with the sync pool.
-            trace!("No block requests to send. Will process pending responses.");
-            let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
-                Ok(val) => val,
-                Err(err) => {
-                    error!("{err}");
-                    return;
-                }
-            };
-
-            if has_new_blocks {
-                match self.sync.get_block_locators() {
-                    Ok(locators) => self.ping.update_block_locators(locators),
-                    Err(err) => error!("Failed to get block locators: {err}"),
-                }
-            }
-        } else if block_requests.is_empty() {
+        if block_requests.is_empty() {
             let total_requests = self.sync.num_total_block_requests();
             let num_outstanding = self.sync.num_outstanding_block_requests();
             if total_requests > 0 {
@@ -353,7 +362,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     ) {
         // Issues the block requests in batches.
         for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.sync.send_block_requests(self, &sync_peers, requests).await {
+            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
                 // Stop if we fail to process a batch of requests.
                 break;
             }
@@ -367,7 +376,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     fn initialize_solution_verification(&self) {
         // Start the solution verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -434,14 +443,14 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Initializes deploy verification.
     fn initialize_deploy_verification(&self) {
         // Start the deploy verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -468,6 +477,21 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let _node = node.clone();
                     // For each deployment, spawn a task to verify it.
                     tokio::task::spawn_blocking(move || {
+                        // First collect the state root.
+                        let Some(state_root) = transaction.fee_transition().map(|t| t.global_state_root()) else {
+                            debug!("Failed to access global state root for deployment from peer_ip {peer_ip}");
+                            _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                            return;
+                        };
+                        // Check if the state root is in the ledger.
+                        if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
+                            debug!("Failed to find global state root for deployment from peer_ip {peer_ip}, propagating anyway");
+                            // Propagate the `UnconfirmedTransaction`.
+                            _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                            _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                            return;
+                            // Also skip the `check_transaction_basic` call if it is already propagated.
+                        }
                         // Check the deployment.
                         match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
                             Ok(_) => {
@@ -487,14 +511,14 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Initializes execute verification.
     fn initialize_execute_verification(&self) {
         // Start the execute verification loop.
         let node = self.clone();
-        self.handles.lock().push(tokio::spawn(async move {
+        self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
                 if node.shutdown.load(Acquire) {
@@ -521,6 +545,24 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     let _node = node.clone();
                     // For each execution, spawn a task to verify it.
                     tokio::task::spawn_blocking(move || {
+                        // First collect the state roots.
+                        let state_roots = [
+                            transaction.execution().map(|t| t.global_state_root()),
+                            transaction.fee_transition().map(|t| t.global_state_root()),
+                        ]
+                        .into_iter()
+                        .flatten();
+
+                        for state_root in state_roots {
+                            if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
+                                debug!("Failed to find global state root for execution from peer_ip {peer_ip}, propagating anyway");
+                                // Propagate the `UnconfirmedTransaction`.
+                                _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                                _node.num_verifying_executions.fetch_sub(1, Relaxed);
+                                return;
+                                // Also skip the `check_transaction_basic` call if it is already propagated.
+                            }
+                        }
                         // Check the execution.
                         match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
                             Ok(_) => {
@@ -540,7 +582,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     }
                 }
             }
-        }));
+        });
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.

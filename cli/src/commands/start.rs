@@ -21,7 +21,7 @@ use snarkos_node::{
     Node,
     bft::MEMORY_POOL_PORT,
     rest::DEFAULT_REST_PORT,
-    router::{DEFAULT_NODE_PORT, messages::NodeType},
+    router::{DEFAULT_NODE_PORT, bootstrap_peers, messages::NodeType},
 };
 use snarkvm::{
     console::{
@@ -55,6 +55,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::runtime::{self, Runtime};
+use tracing::warn;
 use ureq::http;
 
 /// The recommended minimum number of 'open files' limit for a validator.
@@ -94,6 +95,9 @@ impl FromStr for BondedBalances {
 
     // Ensure you cannot set --verbosity and --log-filter flags at the same time.
     group(clap::ArgGroup::new("log_flags").required(false).multiple(false)),
+
+    // Ensure you need to set either --jwt-secret and --jwt-timestamp or --nojwt flags.
+    group(clap::ArgGroup::new("jwt_flags").required(false).multiple(true).conflicts_with("nojwt").conflicts_with("norest")),
 )]
 pub struct Start {
     /// Specify the network ID of this node
@@ -110,6 +114,10 @@ pub struct Start {
     /// Client are "full nodes", i.e, validate and execute all blocks they receive, but they do not participate in AleoBFT consensus.
     #[clap(long, group = "node_type", verbatim_doc_comment)]
     pub client: bool,
+
+    /// Start the node as a bootstrap client.
+    #[clap(long = "bootstrap-client", group = "node_type", conflicts_with_all = ["peers", "validators"], verbatim_doc_comment)]
+    pub bootstrap_client: bool,
 
     /// Start the node as a validator.
     ///
@@ -165,16 +173,20 @@ pub struct Start {
     pub rest_rps: u32,
 
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
-    #[clap(long, group = "rest_flags")]
+    #[clap(long, group = "jwt_flags")]
     pub jwt_secret: Option<String>,
 
     /// Specify the JWT creation timestamp; can be any time in the last 10 years.
-    #[clap(long, group = "rest_flags")]
+    #[clap(long, group = "jwt_flags")]
     pub jwt_timestamp: Option<i64>,
 
     /// If the flag is set, the node will not initialize the REST server.
     #[clap(long)]
     pub norest: bool,
+
+    /// If the flag is set, the node will not require JWT authentication for the REST server.
+    #[clap(long, group = "rest_flags")]
+    pub nojwt: bool,
 
     /// Write log message to stdout instead of showing a terminal UI.
     ///
@@ -556,6 +568,8 @@ impl Start {
             NodeType::Validator
         } else if self.prover {
             NodeType::Prover
+        } else if self.bootstrap_client {
+            NodeType::BootstrapClient
         } else {
             NodeType::Client
         }
@@ -580,6 +594,21 @@ impl Start {
         // Parse the trusted validators to connect to.
         let mut trusted_validators = self.parse_trusted_addrs(&self.validators)?;
 
+        // Ensure there are no bootstrappers among the trusted peers and validators.
+        let bootstrap_peers = bootstrap_peers::<N>(self.dev.is_some());
+        for trusted in [&mut trusted_peers, &mut trusted_validators] {
+            let initial_peer_count = trusted.len();
+            trusted.retain(|addr| !bootstrap_peers.contains(addr));
+            let final_peer_count = trusted.len();
+            // Warn if this had to be corrected.
+            if final_peer_count != initial_peer_count {
+                warn!(
+                    "Removed some ({}) trusted peers due to them also being bootstrap peers.",
+                    initial_peer_count - final_peer_count
+                );
+            }
+        }
+
         // Parse the development configurations.
         self.parse_development(&mut trusted_peers, &mut trusted_validators);
 
@@ -602,6 +631,46 @@ impl Start {
             false => self.rest.or_else(|| Some("0.0.0.0:3030".parse().unwrap())),
         };
 
+        // Initialize the storage mode.
+        let storage_mode = match &self.storage {
+            Some(path) => StorageMode::Custom(path.clone()),
+            None => match self.dev {
+                Some(id) => StorageMode::Development(id),
+                None => StorageMode::Production,
+            },
+        };
+
+        // Helper function to store the JWT secret.
+        let store_jwt_secret = |network: u16, storage_mode: &StorageMode, address: &Address<N>, token: String| -> Result<()> {
+            let mut jwt_secret_path = aleo_std::aleo_ledger_dir(network, storage_mode);
+            std::fs::create_dir_all(&jwt_secret_path)?;
+            jwt_secret_path.push(format!("jwt_secret_{address}.txt"));
+            Ok(std::fs::write(jwt_secret_path, token)?)
+        };
+        // Compute the optional REST server JWT.
+        let jwt_token = if self.nojwt {
+            None
+        } else if let Some(jwt_b64) = &self.jwt_secret {
+            // Decode the JWT secret.
+            let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
+            if jwt_bytes.len() != 16 {
+                bail!("The JWT secret must be 16 bytes long");
+            }
+            // Create the JWT token based on the given secret.
+            let jwt_token = snarkos_node_rest::Claims::new(account.address(), Some(jwt_bytes), self.jwt_timestamp).to_jwt_string()?;
+            // Store the JWT secret to a file.
+            store_jwt_secret(self.network, &storage_mode, &account.address(), jwt_token.clone())?;
+            // Return the JWT token for optional printing.
+            Some(jwt_token)
+        } else {
+            // Create a random JWT token.
+            let jwt_token = snarkos_node_rest::Claims::new(account.address(), None, self.jwt_timestamp).to_jwt_string()?;
+            // Store the JWT secret to a file.
+            store_jwt_secret(self.network, &storage_mode, &account.address(), jwt_token.clone())?;
+            // Return the JWT token for optional printing.
+            Some(jwt_token)
+        };
+
         if !self.nobanner {
             // Print the Aleo address.
             println!("👛 Your Aleo address is {}.\n", account.address().to_string().bold());
@@ -612,28 +681,11 @@ impl Start {
                 N::NAME.bold(),
                 node_ip.to_string().bold()
             );
-
-            // If the node is running a REST server, print the REST IP and JWT.
-            if node_type.is_validator() || node_type.is_client() {
-                if let Some(rest_ip) = rest_ip {
-                    println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
-
-                    let jwt_secret = if let Some(jwt_b64) = &self.jwt_secret {
-                        if self.jwt_timestamp.is_none() {
-                            bail!("The '--jwt-timestamp' flag must be set if the '--jwt-secret' flag is set");
-                        }
-                        let jwt_bytes = BASE64_STANDARD.decode(jwt_b64).map_err(|_| anyhow::anyhow!("Invalid JWT secret"))?;
-                        if jwt_bytes.len() != 16 {
-                            bail!("The JWT secret must be 16 bytes long");
-                        }
-                        Some(jwt_bytes)
-                    } else {
-                        None
-                    };
-
-                    if let Ok(jwt_token) = snarkos_node_rest::Claims::new(account.address(), jwt_secret, self.jwt_timestamp).to_jwt_string() {
-                        println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
-                    }
+            // If the node is running a REST server, determine the JWT.
+            if let Some(rest_ip) = rest_ip {
+                println!("🌐 Starting the REST server at {}.\n", rest_ip.to_string().bold());
+                if let Some(jwt_token) = jwt_token {
+                    println!("🔑 Your one-time JWT token is {}\n", jwt_token.dimmed());
                 }
             }
         }
@@ -651,15 +703,6 @@ impl Start {
         if self.metrics {
             metrics::initialize_metrics(self.metrics_ip);
         }
-
-        // Initialize the storage mode.
-        let storage_mode = match &self.storage {
-            Some(path) => StorageMode::Custom(path.clone()),
-            None => match self.dev {
-                Some(id) => StorageMode::Development(id),
-                None => StorageMode::Production,
-            },
-        };
 
         // Determine whether to generate background transactions in dev mode.
         let dev_txs = match self.dev {
@@ -682,8 +725,9 @@ impl Start {
         // Initialize the node.
         match node_type {
             NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, shutdown.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, self.dev, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.dev, shutdown.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await,
+            NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }
     }
 
@@ -720,10 +764,10 @@ fn check_permissions(path: &PathBuf) -> Result<(), snarkvm::prelude::Error> {
     #[cfg(target_family = "unix")]
     {
         use std::os::unix::fs::PermissionsExt;
-        ensure!(path.exists(), "The file '{:?}' does not exist", path);
+        ensure!(path.exists(), "The file '{path:?}' does not exist");
         crate::check_parent_permissions(path)?;
         let permissions = path.metadata()?.permissions().mode();
-        ensure!(permissions & 0o777 == 0o600, "The file {:?} must be readable only by the owner (0600)", path);
+        ensure!(permissions & 0o777 == 0o600, "The file {path:?} must be readable only by the owner (0600)");
     }
     Ok(())
 }

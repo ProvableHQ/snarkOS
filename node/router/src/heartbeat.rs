@@ -15,8 +15,11 @@
 
 use crate::{
     ConnectedPeer,
+    NodeType,
     Outbound,
+    PeerPoolHandling,
     Router,
+    bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
 };
 use snarkvm::prelude::Network;
@@ -114,11 +117,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     /// Rules:
     ///     - Trusted peers and bootstrap nodes are not removable.
     ///     - Peers that we are currently syncing with are not removable.
-    ///     - Validators are considered higher priority than provers or clients.
     ///     - Connections that have not been seen in a while are considered lower priority.
     fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
-        // The hardcoded bootstrap nodes.
-        let bootstrap = self.router().bootstrap_peers();
         // Are we synced already? (cache this here, so it does not need to be recomputed)
         let is_block_synced = self.is_block_synced();
 
@@ -128,11 +128,11 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // we might want to change in the future.
         let mut peers = self.router().filter_connected_peers(|peer| {
             !peer.trusted
-                && !bootstrap.contains(&peer.listener_addr)
+                && peer.node_type != NodeType::BootstrapClient
                 && !self.router().cache.contains_inbound_block_request(&peer.listener_addr) // This peer is currently syncing from us.
                 && (is_block_synced || self.router().cache.num_outbound_block_requests(&peer.listener_addr) == 0) // We are currently syncing from this peer.
         });
-        peers.sort_by_key(|peer| (peer.node_type.is_validator(), peer.last_seen));
+        peers.sort_by_key(|peer| peer.last_seen);
 
         peers
     }
@@ -194,15 +194,10 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 "Exceeded maximum number of connected peers, disconnecting from ({num_surplus_provers} + {num_surplus_clients_validators}) peers"
             );
 
-            // Retrieve the bootstrap peers.
-            let bootstrap = self.router().bootstrap_peers();
-
             // Determine the provers to disconnect from.
             let provers_to_disconnect = self
                 .router()
-                .filter_connected_peers(|peer| {
-                    peer.node_type.is_prover() && !peer.trusted && !bootstrap.contains(&peer.listener_addr)
-                })
+                .filter_connected_peers(|peer| peer.node_type.is_prover() && !peer.trusted)
                 .into_iter()
                 .choose_multiple(rng, num_surplus_provers);
 
@@ -216,7 +211,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Proceed to send disconnect requests to these peers.
             for peer in peers_to_disconnect.chain(provers_to_disconnect) {
                 // TODO (howardwu): Remove this after specializing this function.
-                if self.router().node_type().is_prover() && peer.node_type.is_validator() {
+                if self.router().node_type().is_prover() {
                     continue;
                 }
 
@@ -237,9 +232,21 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Initialize an RNG.
             let rng = &mut OsRng;
 
-            // Attempt to connect to more peers.
-            for peer_ip in self.router().candidate_peers().into_iter().choose_multiple(rng, num_deficient) {
-                self.router().connect(peer_ip);
+            // Attempt to connect to more peers, separately choosing from those at a greater block
+            // height, and those whose height is lower or unknown to us.
+            let own_height = self.router().ledger.latest_block_height();
+            let (higher_peers, other_peers): (Vec<_>, Vec<_>) = self
+                .router()
+                .get_candidate_peers()
+                .into_iter()
+                .partition(|peer| peer.last_height_seen.map(|h| h > own_height).unwrap_or(false));
+            // We may not know of half of `num_deficient` candidates; account for it using `min`.
+            let num_higher_peers = num_deficient.div_ceil(2).min(higher_peers.len());
+            for peer in higher_peers.into_iter().choose_multiple(rng, num_higher_peers) {
+                self.router().connect(peer.listener_addr);
+            }
+            for peer in other_peers.into_iter().choose_multiple(rng, num_deficient - num_higher_peers) {
+                self.router().connect(peer.listener_addr);
             }
 
             if self.router().allow_external_peers() {
@@ -254,13 +261,12 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     /// This function keeps the number of bootstrap peers within the allowed range.
     async fn handle_bootstrap_peers(&self) {
         // Split the bootstrap peers into connected and candidate lists.
-        let mut connected_bootstrap = Vec::new();
         let mut candidate_bootstrap = Vec::new();
-        let connected_peers = self.router().connected_peers();
-        for bootstrap_ip in self.router().bootstrap_peers() {
-            match connected_peers.contains(&bootstrap_ip) {
-                true => connected_bootstrap.push(bootstrap_ip),
-                false => candidate_bootstrap.push(bootstrap_ip),
+        let connected_bootstrap =
+            self.router().filter_connected_peers(|peer| peer.node_type == NodeType::BootstrapClient);
+        for bootstrap_ip in bootstrap_peers::<N>(self.router().is_dev()) {
+            if !connected_bootstrap.iter().any(|peer| peer.listener_addr == bootstrap_ip) {
+                candidate_bootstrap.push(bootstrap_ip);
             }
         }
         // If there are not enough connected bootstrap peers, connect to more.
@@ -286,11 +292,11 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Initialize an RNG.
             let rng = &mut OsRng;
             // Proceed to send disconnect requests to these bootstrap peers.
-            for peer_ip in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
-                info!("Disconnecting from '{peer_ip}' (exceeded maximum bootstrap)");
-                self.router().send(peer_ip, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
+            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+                info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
+                self.router().send(peer.listener_addr, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
                 // Disconnect from this peer.
-                self.router().disconnect(peer_ip);
+                self.router().disconnect(peer.listener_addr);
             }
         }
     }

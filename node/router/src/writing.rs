@@ -44,7 +44,7 @@ impl<N: Network> Router<N> {
             return None;
         }
         // Resolve the listener IP to the (ambiguous) peer address.
-        let peer_addr = match self.resolve_to_ambiguous(&peer_ip) {
+        let peer_addr = match self.resolve_to_ambiguous(peer_ip) {
             Some(peer_addr) => peer_addr,
             None => {
                 warn!("Unable to resolve the listener IP address '{peer_ip}'");
@@ -80,7 +80,7 @@ impl<N: Network> Router<N> {
     /// Returns `true` if the message can be sent.
     fn can_send(&self, peer_ip: SocketAddr, message: &Message<N>) -> bool {
         // Ensure the peer is connected before sending.
-        if !self.is_connected(&peer_ip) {
+        if !self.is_connected(peer_ip) {
             warn!("Attempted to send to a non-connected peer {peer_ip}");
             return false;
         }

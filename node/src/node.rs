@@ -13,11 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Client, Prover, Validator, traits::NodeInterface};
+use crate::{BootstrapClient, Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
-use snarkos_node_router::{Router, messages::NodeType};
+use snarkos_node_router::{Outbound, Peer, PeerPoolHandling, messages::NodeType};
 use snarkvm::prelude::{
     Address,
+    Header,
     Ledger,
     Network,
     PrivateKey,
@@ -28,11 +29,17 @@ use snarkvm::prelude::{
 
 use aleo_std::StorageMode;
 use anyhow::Result;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[derive(Clone)]
 pub enum Node<N: Network> {
     /// A validator is a full node, capable of validating blocks.
     Validator(Arc<Validator<N, ConsensusDB<N>>>),
@@ -40,6 +47,8 @@ pub enum Node<N: Network> {
     Prover(Arc<Prover<N, ConsensusMemory<N>>>),
     /// A client node is a full node, capable of querying with the network.
     Client(Arc<Client<N, ConsensusDB<N>>>),
+    /// A bootstrap client node is a light node dedicated to serving lists of peers.
+    BootstrapClient(BootstrapClient<N>),
 }
 
 impl<N: Network> Node<N> {
@@ -87,10 +96,13 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
+        storage_mode: StorageMode,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
-        Ok(Self::Prover(Arc::new(Prover::new(node_ip, account, trusted_peers, genesis, dev, shutdown).await?)))
+        Ok(Self::Prover(Arc::new(
+            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, shutdown).await?,
+        )))
     }
 
     /// Initializes a new client node.
@@ -125,12 +137,23 @@ impl<N: Network> Node<N> {
         )))
     }
 
+    /// Initializes a new bootstrap client node.
+    pub async fn new_bootstrap_client(
+        listener_addr: SocketAddr,
+        account: Account<N>,
+        genesis_header: Header<N>,
+        dev: Option<u16>,
+    ) -> Result<Self> {
+        Ok(Self::BootstrapClient(BootstrapClient::new(listener_addr, account, genesis_header, dev).await?))
+    }
+
     /// Returns the node type.
     pub fn node_type(&self) -> NodeType {
         match self {
             Self::Validator(validator) => validator.node_type(),
             Self::Prover(prover) => prover.node_type(),
             Self::Client(client) => client.node_type(),
+            Self::BootstrapClient(_) => NodeType::BootstrapClient,
         }
     }
 
@@ -140,6 +163,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.private_key(),
             Self::Prover(node) => node.private_key(),
             Self::Client(node) => node.private_key(),
+            Self::BootstrapClient(node) => node.private_key(),
         }
     }
 
@@ -149,6 +173,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.view_key(),
             Self::Prover(node) => node.view_key(),
             Self::Client(node) => node.view_key(),
+            Self::BootstrapClient(node) => node.view_key(),
         }
     }
 
@@ -158,6 +183,7 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.address(),
             Self::Prover(node) => node.address(),
             Self::Client(node) => node.address(),
+            Self::BootstrapClient(node) => node.address(),
         }
     }
 
@@ -167,15 +193,17 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => node.is_dev(),
             Self::Prover(node) => node.is_dev(),
             Self::Client(node) => node.is_dev(),
+            Self::BootstrapClient(node) => node.is_dev(),
         }
     }
 
-    /// Get the router for P2P networking
-    pub fn router(&self) -> &Router<N> {
+    /// Returns a reference to the underlying peer pool.
+    pub fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         match self {
-            Self::Validator(node) => node.router(),
-            Self::Prover(node) => node.router(),
-            Self::Client(node) => node.router(),
+            Self::Validator(validator) => validator.router().peer_pool(),
+            Self::Prover(prover) => prover.router().peer_pool(),
+            Self::Client(client) => client.router().peer_pool(),
+            Self::BootstrapClient(client) => client.peer_pool(),
         }
     }
 
@@ -185,6 +213,49 @@ impl<N: Network> Node<N> {
             Self::Validator(node) => Some(node.ledger()),
             Self::Prover(_) => None,
             Self::Client(node) => Some(node.ledger()),
+            Self::BootstrapClient(_) => None,
+        }
+    }
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    pub fn is_block_synced(&self) -> bool {
+        match self {
+            Self::Validator(node) => node.is_block_synced(),
+            Self::Prover(node) => node.is_block_synced(),
+            Self::Client(node) => node.is_block_synced(),
+            Self::BootstrapClient(_) => true,
+        }
+    }
+
+    /// Returns the number of blocks this node is behind the greatest peer height,
+    /// or `None` if not connected to peers yet.
+    pub fn num_blocks_behind(&self) -> Option<u32> {
+        match self {
+            Self::Validator(node) => node.num_blocks_behind(),
+            Self::Prover(node) => node.num_blocks_behind(),
+            Self::Client(node) => node.num_blocks_behind(),
+            Self::BootstrapClient(_) => Some(0),
+        }
+    }
+
+    /// Calculates the current sync speed in blocks per second.
+    /// Returns None if sync speed cannot be calculated (e.g., not syncing or insufficient data).
+    pub fn get_sync_speed(&self) -> f64 {
+        match self {
+            Self::Validator(node) => node.get_sync_speed(),
+            Self::Prover(node) => node.get_sync_speed(),
+            Self::Client(node) => node.get_sync_speed(),
+            Self::BootstrapClient(_) => 0.0,
+        }
+    }
+
+    /// Shuts down the node.
+    pub async fn shut_down(&self) {
+        match self {
+            Self::Validator(node) => node.shut_down().await,
+            Self::Prover(node) => node.shut_down().await,
+            Self::Client(node) => node.shut_down().await,
+            Self::BootstrapClient(node) => node.shut_down().await,
         }
     }
 }

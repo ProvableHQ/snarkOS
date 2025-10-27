@@ -18,6 +18,9 @@ use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
+    Peer,
+    PeerPoolHandling,
+    Resolver,
     Router,
     Routing,
     messages::{
@@ -46,7 +49,11 @@ use snarkvm::prelude::{
 };
 
 use async_trait::async_trait;
-use std::{io, net::SocketAddr, str::FromStr};
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
+use std::{collections::HashMap, io, net::SocketAddr, str::FromStr};
 use tracing::*;
 
 #[derive(Clone)]
@@ -70,6 +77,24 @@ impl<N: Network> P2P for TestRouter<N> {
     /// Returns a reference to the TCP instance.
     fn tcp(&self) -> &Tcp {
         self.router().tcp()
+    }
+}
+
+impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
+    const MAXIMUM_POOL_SIZE: usize = 1_000;
+    const OWNER: &str = "[TestRouter]";
+    const PEER_SLASHING_COUNT: usize = 0;
+
+    fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+        self.router().peer_pool()
+    }
+
+    fn resolver(&self) -> &RwLock<Resolver<N>> {
+        self.router().resolver()
+    }
+
+    fn is_dev(&self) -> bool {
+        true
     }
 }
 
@@ -100,8 +125,8 @@ impl<N: Network> OnConnect for TestRouter<N> {
 impl<N: Network> Disconnect for TestRouter<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
-        if let Some(peer_ip) = self.router().resolve_to_listener(&peer_addr) {
-            self.router().remove_connected_peer(peer_ip);
+        if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
+            self.router().downgrade_peer_to_candidate(peer_ip);
         }
     }
 }
@@ -161,6 +186,11 @@ impl<N: Network> Outbound<N> for TestRouter<N> {
     /// Returns the number of blocks this node is behind the greatest peer height.
     fn num_blocks_behind(&self) -> Option<u32> {
         None
+    }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        0.0
     }
 }
 

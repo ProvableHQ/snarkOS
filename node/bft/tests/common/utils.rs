@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use crate::common::{CurrentNetwork, TranslucentLedgerService, primary};
+use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     Gateway,
@@ -216,7 +217,7 @@ pub fn sample_gateway<N: Network>(
     ledger: Arc<TranslucentLedgerService<N, ConsensusMemory<N>>>,
 ) -> Gateway<N> {
     // Initialize the gateway.
-    Gateway::new(account, storage, ledger, None, &[], None).unwrap()
+    Gateway::new(account, storage, ledger, None, &[], StorageMode::new_test(None), None).unwrap()
 }
 
 /// Samples a new worker with the given ledger.

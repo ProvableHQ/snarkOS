@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "4.2.2"
+version = "4.3.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -33,9 +33,11 @@ cuda = [
   "snarkos-node-cdn/cuda",
   "snarkos-node-rest/cuda"
 ]
-test_network = [ 
-  "snarkvm/test_targets", 
-  "snarkvm/test_consensus_heights",
+test_targets = [ "snarkvm/test_targets" ]
+test_consensus_heights = [ "snarkvm/test_consensus_heights" ]
+test_network = [
+  "test_targets", 
+  "test_consensus_heights",
   "snarkvm/dev-print"
 ]
 serial = [ ]
@@ -71,10 +73,6 @@ workspace = true
 features = [ "parking_lot" ]
 optional = true
 
-[dependencies.snarkos-node-metrics]
-workspace = true
-optional = true
-
 [dependencies.num_cpus]
 workspace = true
 
@@ -89,6 +87,9 @@ workspace = true
 
 [dependencies.rayon]
 workspace = true
+
+[dependencies.rpassword]
+version = "7.4.0"
 
 [dependencies.self_update]
 version = "0.42"
@@ -112,6 +113,10 @@ workspace = true
 
 [dependencies.snarkos-node-cdn]
 workspace = true
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-rest]
 workspace = true

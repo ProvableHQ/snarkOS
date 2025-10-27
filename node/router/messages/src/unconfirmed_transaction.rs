@@ -63,7 +63,7 @@ pub mod prop_tests {
     use snarkvm::{
         ledger::{
             narwhal::Data,
-            snarkvm_ledger_test_helpers::{sample_fee_public_transaction, sample_large_execution_transaction},
+            test_helpers::{sample_fee_public_transaction, sample_large_execution_transaction},
         },
         prelude::{FromBytes, TestRng, ToBytes},
     };

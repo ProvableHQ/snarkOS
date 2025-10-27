@@ -15,7 +15,10 @@
 
 use crate::{content_style, header_style};
 
-use snarkos_node::{Node, router::Peer};
+use snarkos_node::{
+    Node,
+    router::{Peer, messages::NodeType},
+};
 use snarkvm::prelude::Network;
 
 use ratatui::{
@@ -43,15 +46,37 @@ impl Overview {
         f.render_widget(&paragraph, area);
     }
 
+    fn draw_sync_status<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
+        if node.node_type() == NodeType::BootstrapClient {
+            return;
+        }
+        let is_synced = node.is_block_synced();
+        let num_blocks_behind = node.num_blocks_behind();
+
+        let status_text = if is_synced {
+            "Synced".to_string()
+        } else if let Some(behind) = num_blocks_behind {
+            let sync_speed = node.get_sync_speed();
+            format!("Syncing | {behind} blocks behind | Speed: {sync_speed:.2} blocks/sec")
+        } else {
+            "Connecting...".to_string()
+        };
+
+        let paragraph = Paragraph::new(status_text)
+            .style(content_style())
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Sync Status"));
+        f.render_widget(&paragraph, area);
+    }
+
     /// Draws a table containing all connected and connecting peers.
     fn draw_peer_table<N: Network>(&self, f: &mut Frame, area: Rect, node: &Node<N>) {
         let header = ["IP", "State", "Node Type"];
         let constraints = [Constraint::Length(20), Constraint::Length(10), Constraint::Length(10)];
 
         let rows: Vec<_> = node
-            .router()
-            .get_peers()
-            .into_iter()
+            .peer_pool()
+            .read()
+            .values()
             .filter(|peer| !peer.is_candidate()) // Too many candidate peers for overview.
             .map(|peer| {
                 let state = match peer {
@@ -60,7 +85,7 @@ impl Overview {
                     Peer::Connected(_) => "connected",
                 }.to_string();
 
-                let node_type = if let Some(node_type ) = peer.node_type() {
+                let node_type = if let Some(node_type) = peer.node_type() {
                     node_type.to_string()
                 } else {
                     "unknown".to_string()
@@ -88,15 +113,16 @@ impl Overview {
         // Initialize the layout of the page.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(10), Constraint::Length(3)]) // The box border adds a line on both sides.
+            .constraints([Constraint::Length(3), Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)]) // The box border adds a line on both sides.
             .split(area);
 
         self.draw_latest_block(f, chunks[0], node);
-        self.draw_peer_table(f, chunks[1], node);
+        self.draw_sync_status(f, chunks[1], node);
+        self.draw_peer_table(f, chunks[2], node);
 
         let help = Paragraph::new("Press ESC to quit")
             .style(content_style())
             .block(Block::default().borders(Borders::ALL).title("Help").style(header_style()));
-        f.render_widget(help, chunks[2]);
+        f.render_widget(help, chunks[3]);
     }
 }

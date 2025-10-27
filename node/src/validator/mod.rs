@@ -26,6 +26,7 @@ use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
+    PeerPoolHandling,
     Router,
     Routing,
     messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
@@ -118,6 +119,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             rotate_external_peers,
             allow_external_peers,
+            storage_mode.clone(),
             dev.is_some(),
         )
         .await?;

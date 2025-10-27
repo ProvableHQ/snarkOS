@@ -21,9 +21,10 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Resolver, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
+use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
     BlockRequest,
@@ -42,6 +43,7 @@ use snarkos_node_bft_events::{
     ValidatorsResponse,
 };
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_router::{NodeType, Peer, PeerPoolHandling, Resolver, bootstrap_peers};
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
@@ -49,8 +51,6 @@ use snarkos_node_tcp::{
     ConnectionSide,
     P2P,
     Tcp,
-    is_bogon_ip,
-    is_unspecified_or_broadcast_ip,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
 use snarkvm::{
@@ -69,11 +69,12 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::seq::{IteratorRandom, SliceRandom};
-#[cfg(not(any(test)))]
-use std::net::IpAddr;
+use rand::{
+    rngs::OsRng,
+    seq::{IteratorRandom, SliceRandom},
+};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     future::Future,
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -98,16 +99,17 @@ const MAX_CONNECTION_ATTEMPTS: usize = 10;
 /// The maximum interval to restrict a peer.
 const RESTRICTED_INTERVAL: i64 = (MAX_CONNECTION_ATTEMPTS as u64 * MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
 
-/// The minimum number of validators to maintain a connection to.
-const MIN_CONNECTED_VALIDATORS: usize = 175;
 /// The maximum number of validators to send in a validators response event.
-const MAX_VALIDATORS_TO_SEND: usize = 200;
+pub const MAX_VALIDATORS_TO_SEND: usize = 200;
 
 /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
 #[cfg(not(any(test)))]
 const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
 /// The amount of time an IP address is prohibited from connecting.
 const IP_BAN_TIME_IN_SECS: u64 = 300;
+
+/// The name of the file containing cached validators.
+const VALIDATOR_CACHE_FILENAME: &str = "cached_gateway_peers";
 
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
@@ -120,7 +122,17 @@ pub trait Transport<N: Network>: Send + Sync {
 /// The gateway maintains connections to other validators.
 /// For connections with clients and provers, the Router logic is used.
 #[derive(Clone)]
-pub struct Gateway<N: Network> {
+pub struct Gateway<N: Network>(Arc<InnerGateway<N>>);
+
+impl<N: Network> Deref for Gateway<N> {
+    type Target = Arc<InnerGateway<N>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct InnerGateway<N: Network> {
     /// The account of the node.
     account: Account<N>,
     /// The storage.
@@ -130,31 +142,43 @@ pub struct Gateway<N: Network> {
     /// The TCP stack.
     tcp: Tcp,
     /// The cache.
-    cache: Arc<Cache<N>>,
+    cache: Cache<N>,
     /// The resolver.
-    resolver: Arc<Resolver<N>>,
-    /// The set of trusted validators.
-    trusted_validators: IndexSet<SocketAddr>,
-    /// The map of connected peer IPs to their peer handlers.
-    connected_peers: Arc<RwLock<IndexSet<SocketAddr>>>,
-    /// The set of handshaking peers. While `Tcp` already recognizes the connecting IP addresses
-    /// and prevents duplicate outbound connection attempts to the same IP address, it is unable to
-    /// prevent simultaneous "two-way" connections between two peers (i.e. both nodes simultaneously
-    /// attempt to connect to each other). This set is used to prevent this from happening.
-    connecting_peers: Arc<Mutex<IndexSet<SocketAddr>>>,
-    /// The validator telemetry.
+    resolver: RwLock<Resolver<N>>,
+    /// The collection of both candidate and connected peers.
+    peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     #[cfg(feature = "telemetry")]
     validator_telemetry: Telemetry<N>,
     /// The primary sender.
-    primary_sender: Arc<OnceCell<PrimarySender<N>>>,
+    primary_sender: OnceCell<PrimarySender<N>>,
     /// The worker senders.
-    worker_senders: Arc<OnceCell<IndexMap<u8, WorkerSender<N>>>>,
+    worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
     /// The sync sender.
-    sync_sender: Arc<OnceCell<SyncSender<N>>>,
+    sync_sender: OnceCell<SyncSender<N>>,
     /// The spawned handles.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    handles: Mutex<Vec<JoinHandle<()>>>,
+    /// The storage mode.
+    storage_mode: StorageMode,
     /// The development mode.
     dev: Option<u16>,
+}
+
+impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
+    const MAXIMUM_POOL_SIZE: usize = 200;
+    const OWNER: &str = CONTEXT;
+    const PEER_SLASHING_COUNT: usize = 20;
+
+    fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+        &self.peer_pool
+    }
+
+    fn resolver(&self) -> &RwLock<Resolver<N>> {
+        &self.resolver
+    }
+
+    fn is_dev(&self) -> bool {
+        self.dev.is_some()
+    }
 }
 
 impl<N: Network> Gateway<N> {
@@ -165,6 +189,7 @@ impl<N: Network> Gateway<N> {
         ledger: Arc<dyn LedgerService<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        storage_mode: StorageMode,
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway IP.
@@ -176,25 +201,37 @@ impl<N: Network> Gateway<N> {
         // Initialize the TCP stack.
         let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
 
+        // Prepare the collection of the initial peers.
+        let mut initial_peers = HashMap::new();
+
+        // Load entries from the validator cache (if present).
+        let cached_peers = Self::load_cached_peers(&storage_mode, VALIDATOR_CACHE_FILENAME)?;
+        for addr in cached_peers {
+            initial_peers.insert(addr, Peer::new_candidate(addr, false));
+        }
+
+        // Add the trusted peers to the list of the initial peers; this may promote
+        // some of the cached validators to trusted ones.
+        initial_peers.extend(trusted_validators.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
+
         // Return the gateway.
-        Ok(Self {
+        Ok(Self(Arc::new(InnerGateway {
             account,
             storage,
             ledger,
             tcp,
             cache: Default::default(),
             resolver: Default::default(),
-            trusted_validators: trusted_validators.iter().copied().collect(),
-            connected_peers: Default::default(),
-            connecting_peers: Default::default(),
+            peer_pool: RwLock::new(initial_peers),
             #[cfg(feature = "telemetry")]
             validator_telemetry: Default::default(),
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
             handles: Default::default(),
+            storage_mode,
             dev,
-        })
+        })))
     }
 
     /// Run the gateway.
@@ -285,49 +322,27 @@ impl<N: Network> CommunicationService for Gateway<N> {
     async fn send(&self, peer_ip: SocketAddr, message: Self::Message) -> Option<oneshot::Receiver<io::Result<()>>> {
         Transport::send(self, peer_ip, message).await
     }
-
-    fn ban_peer(&self, peer_ip: SocketAddr) {
-        trace!("Banning peer {peer_ip} for timing out on block requests");
-
-        let tcp = self.tcp().clone();
-        tcp.banned_peers().update_ip_ban(peer_ip.ip());
-
-        tokio::spawn(async move {
-            tcp.disconnect(peer_ip).await;
-        });
-    }
 }
 
 impl<N: Network> Gateway<N> {
     /// Returns the account of the node.
-    pub const fn account(&self) -> &Account<N> {
+    pub fn account(&self) -> &Account<N> {
         &self.account
     }
 
     /// Returns the dev identifier of the node.
-    pub const fn dev(&self) -> Option<u16> {
+    pub fn dev(&self) -> Option<u16> {
         self.dev
     }
 
-    /// Returns the IP address of this node.
-    pub fn local_ip(&self) -> SocketAddr {
-        self.tcp.listening_addr().expect("The TCP listener is not enabled")
-    }
-
-    /// Returns `true` if the given IP is this node.
-    pub fn is_local_ip(&self, ip: SocketAddr) -> bool {
-        ip == self.local_ip()
-            || (ip.ip().is_unspecified() || ip.ip().is_loopback()) && ip.port() == self.local_ip().port()
-    }
-
-    /// Returns `true` if the given IP is not this node, is not a bogon address, and is not unspecified.
-    pub fn is_valid_peer_ip(&self, ip: SocketAddr) -> bool {
-        !self.is_local_ip(ip) && !is_bogon_ip(ip.ip()) && !is_unspecified_or_broadcast_ip(ip.ip())
-    }
-
     /// Returns the resolver.
-    pub fn resolver(&self) -> &Resolver<N> {
+    pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
+    }
+
+    /// Returns the listener IP address from the (ambiguous) peer address.
+    pub fn resolve_to_listener(&self, connected_addr: &SocketAddr) -> Option<SocketAddr> {
+        self.resolver.read().get_listener(*connected_addr)
     }
 
     /// Returns the validator telemetry.
@@ -354,32 +369,18 @@ impl<N: Network> Gateway<N> {
 
     /// Returns `true` if the node is connected to the given Aleo address.
     pub fn is_connected_address(&self, address: Address<N>) -> bool {
-        // Retrieve the peer IP of the given address.
-        match self.resolver.get_peer_ip_for_address(address) {
-            // Determine if the peer IP is connected.
-            Some(peer_ip) => self.is_connected_ip(peer_ip),
-            None => false,
-        }
-    }
-
-    /// Returns `true` if the node is connected to the given peer IP.
-    pub fn is_connected_ip(&self, ip: SocketAddr) -> bool {
-        self.connected_peers.read().contains(&ip)
-    }
-
-    /// Returns `true` if the node is connecting to the given peer IP.
-    pub fn is_connecting_ip(&self, ip: SocketAddr) -> bool {
-        self.connecting_peers.lock().contains(&ip)
+        // The resolver only contains data on connected peers.
+        self.resolver.read().get_peer_ip_for_address(address).is_some()
     }
 
     /// Returns `true` if the given peer IP is an authorized validator.
     pub fn is_authorized_validator_ip(&self, ip: SocketAddr) -> bool {
         // If the peer IP is in the trusted validators, return early.
-        if self.trusted_validators.contains(&ip) {
+        if self.trusted_peers().contains(&ip) {
             return true;
         }
         // Retrieve the Aleo address of the peer IP.
-        match self.resolver.get_address(ip) {
+        match self.resolve_to_aleo_addr(ip) {
             // Determine if the peer IP is an authorized validator.
             Some(address) => self.is_authorized_validator_address(address),
             None => false,
@@ -422,147 +423,45 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Returns the maximum number of connected peers.
-    pub fn max_connected_peers(&self) -> usize {
-        self.tcp.config().max_connections as usize
-    }
-
-    /// Returns the number of connected peers.
-    pub fn number_of_connected_peers(&self) -> usize {
-        self.connected_peers.read().len()
-    }
-
     /// Returns the list of connected addresses.
     pub fn connected_addresses(&self) -> HashSet<Address<N>> {
-        self.connected_peers.read().iter().filter_map(|peer_ip| self.resolver.get_address(*peer_ip)).collect()
-    }
-
-    /// Returns the list of connected peers.
-    pub fn connected_peers(&self) -> &RwLock<IndexSet<SocketAddr>> {
-        &self.connected_peers
-    }
-
-    /// Attempts to connect to the given peer IP.
-    pub fn connect(&self, peer_ip: SocketAddr) -> Option<JoinHandle<()>> {
-        // Return early if the attempt is against the protocol rules.
-        if let Err(forbidden_error) = self.check_connection_attempt(peer_ip) {
-            warn!("{forbidden_error}");
-            return None;
-        }
-
-        let self_ = self.clone();
-        Some(tokio::spawn(async move {
-            debug!("Connecting to validator {peer_ip}...");
-            // Attempt to connect to the peer.
-            if let Err(error) = self_.tcp.connect(peer_ip).await {
-                self_.connecting_peers.lock().shift_remove(&peer_ip);
-                warn!("Unable to connect to '{peer_ip}' - {error}");
-            }
-        }))
-    }
-
-    /// Ensure we are allowed to connect to the given peer.
-    fn check_connection_attempt(&self, peer_ip: SocketAddr) -> Result<()> {
-        // Ensure the peer IP is not this node.
-        if self.is_local_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (attempted to self-connect)")
-        }
-        // Ensure the node does not surpass the maximum number of peer connections.
-        if self.number_of_connected_peers() >= self.max_connected_peers() {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (maximum peers reached)")
-        }
-        // Ensure the node is not already connected to this peer.
-        if self.is_connected_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connected)")
-        }
-        // Ensure the node is not already connecting to this peer.
-        if self.is_connecting_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection attempt to '{peer_ip}' (already connecting)")
-        }
-        Ok(())
+        self.get_connected_peers().into_iter().map(|peer| peer.aleo_addr).collect()
     }
 
     /// Ensure the peer is allowed to connect.
-    fn ensure_peer_is_allowed(&self, peer_ip: SocketAddr) -> Result<()> {
+    fn ensure_peer_is_allowed(&self, listener_addr: SocketAddr) -> Result<()> {
         // Ensure the peer IP is not this node.
-        if self.is_local_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection request from '{peer_ip}' (attempted to self-connect)")
-        }
-        // Ensure the node is not already connecting to this peer.
-        if !self.connecting_peers.lock().insert(peer_ip) {
-            bail!("{CONTEXT} Dropping connection request from '{peer_ip}' (already shaking hands as the initiator)")
-        }
-        // Ensure the node is not already connected to this peer.
-        if self.is_connected_ip(peer_ip) {
-            bail!("{CONTEXT} Dropping connection request from '{peer_ip}' (already connected)")
+        if self.is_local_ip(listener_addr) {
+            bail!("{CONTEXT} Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
         // Ensure the peer is not spamming connection attempts.
-        if !peer_ip.ip().is_loopback() {
+        if !listener_addr.ip().is_loopback() {
             // Add this connection attempt and retrieve the number of attempts.
-            let num_attempts = self.cache.insert_inbound_connection(peer_ip.ip(), RESTRICTED_INTERVAL);
+            let num_attempts = self.cache.insert_inbound_connection(listener_addr.ip(), RESTRICTED_INTERVAL);
             // Ensure the connecting peer has not surpassed the connection attempt limit.
             if num_attempts > MAX_CONNECTION_ATTEMPTS {
-                bail!("Dropping connection request from '{peer_ip}' (tried {num_attempts} times)")
+                bail!("Dropping connection request from '{listener_addr}' (tried {num_attempts} times)");
             }
         }
         Ok(())
-    }
-
-    /// Check whether the given IP address is currently banned.
-    #[cfg(not(any(test)))]
-    fn is_ip_banned(&self, ip: IpAddr) -> bool {
-        self.tcp.banned_peers().is_ip_banned(&ip)
-    }
-
-    /// Insert or update a banned IP.
-    #[cfg(not(any(test)))]
-    fn update_ip_ban(&self, ip: IpAddr) {
-        self.tcp.banned_peers().update_ip_ban(ip);
     }
 
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
-        metrics::gauge(metrics::bft::CONNECTED, self.connected_peers.read().len() as f64);
-        metrics::gauge(metrics::bft::CONNECTING, self.connecting_peers.lock().len() as f64);
-    }
-
-    /// Inserts the given peer into the connected peers.
-    #[cfg(not(test))]
-    fn insert_connected_peer(&self, peer_ip: SocketAddr, peer_addr: SocketAddr, address: Address<N>) {
-        // Adds a bidirectional map between the listener address and (ambiguous) peer address.
-        self.resolver.insert_peer(peer_ip, peer_addr, address);
-        // Add a transmission for this peer in the connected peers.
-        self.connected_peers.write().insert(peer_ip);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
+        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_peers() as f64);
+        metrics::gauge(metrics::bft::CONNECTING, self.number_of_connecting_peers() as f64);
     }
 
     /// Inserts the given peer into the connected peers. This is only used in testing.
     #[cfg(test)]
     pub fn insert_connected_peer(&self, peer_ip: SocketAddr, peer_addr: SocketAddr, address: Address<N>) {
         // Adds a bidirectional map between the listener address and (ambiguous) peer address.
-        self.resolver.insert_peer(peer_ip, peer_addr, address);
+        self.resolver.write().insert_peer(peer_ip, peer_addr, Some(address));
         // Add a transmission for this peer in the connected peers.
-        self.connected_peers.write().insert(peer_ip);
-    }
-
-    /// Removes the connected peer and adds them to the candidate peers.
-    fn remove_connected_peer(&self, peer_ip: SocketAddr) {
-        // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-        if let Some(sync_sender) = self.sync_sender.get() {
-            let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-            tokio::spawn(async move {
-                if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                    warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
-                }
-            });
+        self.peer_pool.write().insert(peer_ip, Peer::new_connecting(peer_ip, false));
+        if let Some(peer) = self.peer_pool.write().get_mut(&peer_ip) {
+            peer.upgrade_to_connected(peer_addr, peer_ip.port(), address, NodeType::Validator, 0);
         }
-        // Removes the bidirectional map between the listener address and (ambiguous) peer address.
-        self.resolver.remove_peer(peer_ip);
-        // Remove this peer from the connected peers, if it exists.
-        self.connected_peers.write().shift_remove(&peer_ip);
-        #[cfg(feature = "metrics")]
-        self.update_metrics();
     }
 
     /// Sends the given event to specified peer.
@@ -572,7 +471,7 @@ impl<N: Network> Gateway<N> {
     /// which can be used to determine when and whether the event has been delivered.
     fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
-        let Some(peer_addr) = self.resolver.get_ambiguous(peer_ip) else {
+        let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
             warn!("Unable to resolve the listener IP address '{peer_ip}'");
             return None;
         };
@@ -590,14 +489,23 @@ impl<N: Network> Gateway<N> {
         result.ok()
     }
 
-    /// Handles the inbound event from the peer.
-    async fn inbound(&self, peer_addr: SocketAddr, event: Event<N>) -> Result<()> {
+    /// Handles the inbound event from the peer. The returned value indicates whether
+    /// the connection is still active, and errors cause a disconnect once they are
+    /// propagated to the caller.
+    async fn inbound(&self, peer_addr: SocketAddr, event: Event<N>) -> Result<bool> {
         // Retrieve the listener IP for the peer.
-        let Some(peer_ip) = self.resolver.get_listener(peer_addr) else {
-            bail!("{CONTEXT} Unable to resolve the (ambiguous) peer address '{peer_addr}'")
+        let Some(peer_ip) = self.resolver.read().get_listener(peer_addr) else {
+            // No longer connected to the peer.
+            trace!("Dropping a {} from {peer_addr} - no longer connected.", event.name());
+            return Ok(false);
         };
-        // Ensure that the peer is an authorized committee member.
-        if !self.is_authorized_validator_ip(peer_ip) {
+        // Ensure that the peer is an authorized committee member or a bootstrapper.
+        if !(self.is_authorized_validator_ip(peer_ip)
+            || self
+                .get_connected_peer(peer_ip)
+                .map(|peer| peer.node_type == NodeType::BootstrapClient)
+                .unwrap_or(false))
+        {
             bail!("{CONTEXT} Dropping '{}' from '{peer_ip}' (not authorized)", event.name())
         }
         // Drop the peer, if they have exceeded the rate limit (i.e. they are requesting too much from us).
@@ -617,7 +525,7 @@ impl<N: Network> Gateway<N> {
                 // Skip processing this certificate if the rate limit was exceed (i.e. someone is spamming a specific certificate).
                 let num_events = self.cache.insert_inbound_certificate(certificate_id, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             Event::TransmissionRequest(TransmissionRequest { transmission_id })
@@ -625,13 +533,13 @@ impl<N: Network> Gateway<N> {
                 // Skip processing this certificate if the rate limit was exceeded (i.e. someone is spamming a specific certificate).
                 let num_events = self.cache.insert_inbound_transmission(transmission_id, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             Event::BlockRequest(_) => {
                 let num_events = self.cache.insert_inbound_block_request(peer_ip, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             _ => {}
@@ -644,17 +552,17 @@ impl<N: Network> Gateway<N> {
             Event::BatchPropose(batch_propose) => {
                 // Send the batch propose to the primary.
                 let _ = self.primary_sender().tx_batch_propose.send((peer_ip, batch_propose)).await;
-                Ok(())
+                Ok(true)
             }
             Event::BatchSignature(batch_signature) => {
                 // Send the batch signature to the primary.
                 let _ = self.primary_sender().tx_batch_signature.send((peer_ip, batch_signature)).await;
-                Ok(())
+                Ok(true)
             }
             Event::BatchCertified(batch_certified) => {
                 // Send the batch certificate to the primary.
                 let _ = self.primary_sender().tx_batch_certified.send((peer_ip, batch_certified.certificate)).await;
-                Ok(())
+                Ok(true)
             }
             Event::BlockRequest(block_request) => {
                 let BlockRequest { start_height, end_height } = block_request;
@@ -689,7 +597,7 @@ impl<N: Network> Gateway<N> {
                     let event = Event::BlockResponse(BlockResponse { request: block_request, blocks });
                     Transport::send(&self_, peer_ip, event).await;
                 });
-                Ok(())
+                Ok(true)
             }
             Event::BlockResponse(block_response) => {
                 // Process the block response. Except for some tests, there is always a sync sender.
@@ -719,11 +627,11 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(e) = sync_sender.advance_with_sync_blocks(peer_ip, blocks.0).await {
-                        warn!("Unable to process block response from '{peer_ip}' - {e}");
+                    if let Err(err) = sync_sender.insert_block_response(peer_ip, blocks.0).await {
+                        warn!("Unable to process block response from '{peer_ip}' - {err}");
                     }
                 }
-                Ok(())
+                Ok(true)
             }
             Event::CertificateRequest(certificate_request) => {
                 // Send the certificate request to the sync module.
@@ -732,7 +640,7 @@ impl<N: Network> Gateway<N> {
                     // Send the certificate request to the sync module.
                     let _ = sync_sender.tx_certificate_request.send((peer_ip, certificate_request)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::CertificateResponse(certificate_response) => {
                 // Send the certificate response to the sync module.
@@ -741,14 +649,17 @@ impl<N: Network> Gateway<N> {
                     // Send the certificate response to the sync module.
                     let _ = sync_sender.tx_certificate_response.send((peer_ip, certificate_response)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::ChallengeRequest(..) | Event::ChallengeResponse(..) => {
                 // Disconnect as the peer is not following the protocol.
                 bail!("{CONTEXT} Peer '{peer_ip}' is not following the protocol")
             }
-            Event::Disconnect(disconnect) => {
-                bail!("{CONTEXT} {:?}", disconnect.reason)
+            Event::Disconnect(message) => {
+                // The peer informs us that they had disconnected. Disconnect from them too.
+                debug!("Peer '{peer_ip}' decided to disconnect due to '{:?}'", message.reason);
+                self.disconnect(peer_ip);
+                Ok(false)
             }
             Event::PrimaryPing(ping) => {
                 let PrimaryPing { version, block_locators, primary_certificate } = ping;
@@ -768,46 +679,37 @@ impl<N: Network> Gateway<N> {
 
                 // Send the batch certificates to the primary.
                 let _ = self.primary_sender().tx_primary_ping.send((peer_ip, primary_certificate)).await;
-                Ok(())
+                Ok(true)
             }
             Event::TransmissionRequest(request) => {
                 // TODO (howardwu): Add rate limiting checks on this event, on a per-peer basis.
                 // Determine the worker ID.
                 let Ok(worker_id) = assign_to_worker(request.transmission_id, self.num_workers()) else {
                     warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", request.transmission_id);
-                    return Ok(());
+                    return Ok(true);
                 };
                 // Send the transmission request to the worker.
                 if let Some(sender) = self.get_worker_sender(worker_id) {
                     // Send the transmission request to the worker.
                     let _ = sender.tx_transmission_request.send((peer_ip, request)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::TransmissionResponse(response) => {
                 // Determine the worker ID.
                 let Ok(worker_id) = assign_to_worker(response.transmission_id, self.num_workers()) else {
                     warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", response.transmission_id);
-                    return Ok(());
+                    return Ok(true);
                 };
                 // Send the transmission response to the worker.
                 if let Some(sender) = self.get_worker_sender(worker_id) {
                     // Send the transmission response to the worker.
                     let _ = sender.tx_transmission_response.send((peer_ip, response)).await;
                 }
-                Ok(())
+                Ok(true)
             }
             Event::ValidatorsRequest(_) => {
-                // Retrieve the connected peers.
-                let mut connected_peers: Vec<_> = match self.dev.is_some() {
-                    // In development mode, relax the validity requirements to make operating devnets more flexible.
-                    true => self.connected_peers.read().iter().copied().collect(),
-                    // In production mode, ensure the peer IPs are valid.
-                    false => {
-                        self.connected_peers.read().iter().copied().filter(|ip| self.is_valid_peer_ip(*ip)).collect()
-                    }
-                };
-                // Shuffle the connected peers.
+                let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
                 connected_peers.shuffle(&mut rand::thread_rng());
 
                 let self_ = self.clone();
@@ -815,18 +717,15 @@ impl<N: Network> Gateway<N> {
                     // Initialize the validators.
                     let mut validators = IndexMap::with_capacity(MAX_VALIDATORS_TO_SEND);
                     // Iterate over the validators.
-                    for validator_ip in connected_peers.into_iter().take(MAX_VALIDATORS_TO_SEND) {
-                        // Retrieve the validator address.
-                        if let Some(validator_address) = self_.resolver.get_address(validator_ip) {
-                            // Add the validator to the list of validators.
-                            validators.insert(validator_ip, validator_address);
-                        }
+                    for validator in connected_peers.into_iter() {
+                        // Add the validator to the list of validators.
+                        validators.insert(validator.listener_addr, validator.aleo_addr);
                     }
                     // Send the validators response to the peer.
                     let event = Event::ValidatorsResponse(ValidatorsResponse { validators });
                     Transport::send(&self_, peer_ip, event).await;
                 });
-                Ok(())
+                Ok(true)
             }
             Event::ValidatorsResponse(response) => {
                 let ValidatorsResponse { validators } = response;
@@ -839,46 +738,25 @@ impl<N: Network> Gateway<N> {
                 // Decrement the number of validators requests for this peer.
                 self.cache.decrement_outbound_validators_requests(peer_ip);
 
-                // If the number of connected validators is less than the minimum, connect to more validators.
-                if self.number_of_connected_peers() < MIN_CONNECTED_VALIDATORS {
-                    // Attempt to connect to any validators that are not already connected.
-                    let self_ = self.clone();
-                    tokio::spawn(async move {
-                        for (validator_ip, validator_address) in validators {
-                            if self_.dev.is_some() {
-                                // Ensure the validator IP is not this node.
-                                if self_.is_local_ip(validator_ip) {
-                                    continue;
-                                }
-                            } else {
-                                // Ensure the validator IP is not this node and is well-formed.
-                                if !self_.is_valid_peer_ip(validator_ip) {
-                                    continue;
-                                }
-                            }
-
-                            // Ensure the validator address is not this node.
-                            if self_.account.address() == validator_address {
-                                continue;
-                            }
-                            // Ensure the validator IP is not already connected or connecting.
-                            if self_.is_connected_ip(validator_ip) || self_.is_connecting_ip(validator_ip) {
-                                continue;
-                            }
-                            // Ensure the validator address is not already connected.
-                            if self_.is_connected_address(validator_address) {
-                                continue;
-                            }
-                            // Ensure the validator address is an authorized validator.
-                            if !self_.is_authorized_validator_address(validator_address) {
-                                continue;
-                            }
-                            // Attempt to connect to the validator.
-                            self_.connect(validator_ip);
-                        }
-                    });
+                // Add valid validators as candidates to the peer pool; only validator-related
+                // filters need to be applied, the rest is handled by `PeerPoolHandling`.
+                let valid_addrs = validators
+                    .into_iter()
+                    .filter_map(|(listener_addr, aleo_addr)| {
+                        (self.account.address() != aleo_addr
+                            && !self.is_connected_address(aleo_addr)
+                            && self.is_authorized_validator_address(aleo_addr))
+                        .then_some((listener_addr, None))
+                    })
+                    .collect::<Vec<_>>();
+                if !valid_addrs.is_empty() {
+                    self.insert_candidate_peers(valid_addrs);
                 }
-                Ok(())
+
+                #[cfg(feature = "metrics")]
+                self.update_metrics();
+
+                Ok(true)
             }
             Event::WorkerPing(ping) => {
                 // Ensure the number of transmissions is not too large.
@@ -901,21 +779,9 @@ impl<N: Network> Gateway<N> {
                         let _ = sender.tx_worker_ping.send((peer_ip, transmission_id)).await;
                     }
                 }
-                Ok(())
+                Ok(true)
             }
         }
-    }
-
-    /// Disconnects from the given peer IP, if the peer is connected.
-    pub fn disconnect(&self, peer_ip: SocketAddr) -> JoinHandle<()> {
-        let gateway = self.clone();
-        tokio::spawn(async move {
-            if let Some(peer_addr) = gateway.resolver.get_ambiguous(peer_ip) {
-                // Disconnect from this peer.
-                let _disconnected = gateway.tcp.disconnect(peer_addr).await;
-                debug_assert!(_disconnected);
-            }
-        })
     }
 
     /// Initialize a new instance of the heartbeat.
@@ -927,7 +793,7 @@ impl<N: Network> Gateway<N> {
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
-                self_clone.heartbeat();
+                self_clone.heartbeat().await;
                 // Sleep for the heartbeat interval.
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
@@ -943,6 +809,10 @@ impl<N: Network> Gateway<N> {
     /// Shuts down the gateway.
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
+        // Save the best peers for future use.
+        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None) {
+            warn!("Failed to persist best validators to disk: {e}");
+        }
         // Abort the tasks.
         self.handles.lock().iter().for_each(|handle| handle.abort());
         // Close the listener.
@@ -952,7 +822,7 @@ impl<N: Network> Gateway<N> {
 
 impl<N: Network> Gateway<N> {
     /// Handles the heartbeat request.
-    fn heartbeat(&self) {
+    async fn heartbeat(&self) {
         // Log the connected validators.
         self.log_connected_validators();
         // Log the validator participation scores.
@@ -960,6 +830,8 @@ impl<N: Network> Gateway<N> {
         self.log_participation_scores();
         // Keep the trusted validators connected.
         self.handle_trusted_validators();
+        // Keep the bootstrap peers within the allowed range.
+        self.handle_bootstrap_peers().await;
         // Removes any validators that not in the current committee.
         self.handle_unauthorized_validators();
         // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
@@ -971,7 +843,7 @@ impl<N: Network> Gateway<N> {
     /// Logs the connected validators.
     fn log_connected_validators(&self) {
         // Log the connected validators.
-        let connected_validators = self.connected_peers().read().clone();
+        let connected_validators = self.connected_peers();
         // Resolve the total number of connectable validators.
         let validators_total = self.ledger.current_committee().map_or(0, |c| c.num_members().saturating_sub(1));
         // Format the total validators message.
@@ -987,7 +859,7 @@ impl<N: Network> Gateway<N> {
         // Log the connected validators.
         info!("{connections_msg}");
         for peer_ip in &connected_validators {
-            let address = self.resolver.get_address(*peer_ip).map_or("Unknown".to_string(), |a| {
+            let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
@@ -1026,14 +898,55 @@ impl<N: Network> Gateway<N> {
     /// This function attempts to connect to any disconnected trusted validators.
     fn handle_trusted_validators(&self) {
         // Ensure that the trusted nodes are connected.
-        for validator_ip in &self.trusted_validators {
-            // If the trusted_validator is not connected, attempt to connect to it.
-            if !self.is_local_ip(*validator_ip)
-                && !self.is_connecting_ip(*validator_ip)
-                && !self.is_connected_ip(*validator_ip)
-            {
-                // Attempt to connect to the trusted validator.
-                self.connect(*validator_ip);
+        for validator_ip in &self.trusted_peers() {
+            // Attempt to connect to the trusted validator.
+            self.connect(*validator_ip);
+        }
+    }
+
+    /// This function keeps the number of bootstrap peers within the allowed range.
+    async fn handle_bootstrap_peers(&self) {
+        // Split the bootstrap peers into connected and candidate lists.
+        let mut candidate_bootstrap = Vec::new();
+        let connected_bootstrap = self.filter_connected_peers(|peer| peer.node_type == NodeType::BootstrapClient);
+        for bootstrap_ip in bootstrap_peers::<N>(self.is_dev()) {
+            if !connected_bootstrap.iter().any(|peer| peer.listener_addr == bootstrap_ip) {
+                candidate_bootstrap.push(bootstrap_ip);
+            }
+        }
+        // If there are not enough connected bootstrap peers, connect to more.
+        if connected_bootstrap.is_empty() {
+            // Initialize an RNG.
+            let rng = &mut OsRng;
+            // Attempt to connect to a bootstrap peer.
+            if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
+                match self.connect(peer_ip) {
+                    Some(hdl) => {
+                        let result = hdl.await;
+                        if let Err(err) = result {
+                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
+                        }
+                    }
+                    None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
+                }
+            }
+        }
+        // Determine if the node is connected to more bootstrap peers than allowed.
+        let num_surplus = connected_bootstrap.len().saturating_sub(1);
+        if num_surplus > 0 {
+            // Initialize an RNG.
+            let rng = &mut OsRng;
+            // Proceed to send disconnect requests to these bootstrap peers.
+            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+                info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
+                <Self as Transport<N>>::send(
+                    self,
+                    peer.listener_addr,
+                    Event::Disconnect(DisconnectReason::NoReasonGiven.into()),
+                )
+                .await;
+                // Disconnect from this peer.
+                self.disconnect(peer.listener_addr);
             }
         }
     }
@@ -1043,15 +956,22 @@ impl<N: Network> Gateway<N> {
         let self_ = self.clone();
         tokio::spawn(async move {
             // Retrieve the connected validators.
-            let validators = self_.connected_peers().read().clone();
+            let validators = self_.get_connected_peers();
             // Iterate over the validator IPs.
-            for peer_ip in validators {
+            for peer in validators {
+                // Skip bootstrapper peers.
+                if peer.node_type == NodeType::BootstrapClient {
+                    continue;
+                }
                 // Disconnect any validator that is not in the current committee.
-                if !self_.is_authorized_validator_ip(peer_ip) {
-                    warn!("{CONTEXT} Disconnecting from '{peer_ip}' - Validator is not in the current committee");
-                    Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
+                if !self_.is_authorized_validator_ip(peer.listener_addr) {
+                    warn!(
+                        "{CONTEXT} Disconnecting from '{}' - Validator is not in the current committee",
+                        peer.listener_addr
+                    );
+                    Transport::send(&self_, peer.listener_addr, DisconnectReason::ProtocolViolation.into()).await;
                     // Disconnect from this peer.
-                    self_.disconnect(peer_ip);
+                    self_.disconnect(peer.listener_addr);
                 }
             }
         });
@@ -1059,11 +979,21 @@ impl<N: Network> Gateway<N> {
 
     /// This function sends a `ValidatorsRequest` to a random validator,
     /// if the number of connected validators is less than the minimum.
+    /// It also attempts to connect to known unconnected validators.
     fn handle_min_connected_validators(&self) {
-        // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
-        if self.number_of_connected_peers() < MIN_CONNECTED_VALIDATORS {
+        // Attempt to connect to untrusted validators we're not connected to yet.
+        // The trusted ones are already handled by `handle_trusted_validators`.
+        let trusted_validators = self.trusted_peers();
+        if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
+            for peer in self.get_candidate_peers() {
+                if !trusted_validators.contains(&peer.listener_addr) {
+                    // Attempt to connect to unconnected validators.
+                    self.connect(peer.listener_addr);
+                }
+            }
+
             // Retrieve the connected validators.
-            let validators = self.connected_peers().read().clone();
+            let validators = self.connected_peers();
             // If there are no validator IPs to connect to, return early.
             if validators.is_empty() {
                 return;
@@ -1085,7 +1015,7 @@ impl<N: Network> Gateway<N> {
     async fn process_message_inner(&self, peer_addr: SocketAddr, message: Event<N>) {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
-            if let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
+            if let Some(peer_ip) = self.resolver.read().get_listener(peer_addr) {
                 warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
                 let self_ = self.clone();
                 tokio::spawn(async move {
@@ -1159,7 +1089,7 @@ impl<N: Network> Transport<N> for Gateway<N> {
         // Ensure there are connected peers.
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
-            let connected_peers = self.connected_peers.read().clone();
+            let connected_peers = self.connected_peers();
             tokio::spawn(async move {
                 // Iterate through all connected peers.
                 for peer_ip in connected_peers {
@@ -1238,22 +1168,40 @@ impl<N: Network> Writing for Gateway<N> {
 impl<N: Network> Disconnect for Gateway<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
-        if let Some(peer_ip) = self.resolver.get_listener(peer_addr) {
-            self.remove_connected_peer(peer_ip);
-
+        if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
+            self.downgrade_peer_to_candidate(peer_ip);
+            // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
+            if let Some(sync_sender) = self.sync_sender.get() {
+                let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
+                        warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
+                    }
+                });
+            }
             // We don't clear this map based on time but only on peer disconnect.
             // This is sufficient to avoid infinite growth as the committee has a fixed number
             // of members.
             self.cache.clear_outbound_validators_requests(peer_ip);
             self.cache.clear_outbound_block_requests(peer_ip);
+            #[cfg(feature = "metrics")]
+            self.update_metrics();
         }
     }
 }
 
 #[async_trait]
 impl<N: Network> OnConnect for Gateway<N> {
-    async fn on_connect(&self, _peer_addr: SocketAddr) {
-        return;
+    async fn on_connect(&self, peer_addr: SocketAddr) {
+        if let Some(listener_addr) = self.resolve_to_listener(&peer_addr) {
+            if let Some(peer) = self.get_connected_peer(listener_addr) {
+                if peer.node_type == NodeType::BootstrapClient {
+                    let _ =
+                        <Self as Transport<N>>::send(self, listener_addr, Event::ValidatorsRequest(ValidatorsRequest))
+                            .await;
+                }
+            }
+        }
     }
 }
 
@@ -1270,7 +1218,7 @@ impl<N: Network> Handshake for Gateway<N> {
         if self.dev().is_none() && peer_side == ConnectionSide::Initiator {
             // If the IP is already banned reject the connection.
             if self.is_ip_banned(peer_addr.ip()) {
-                trace!("{CONTEXT} Gateway rejected a connection request from banned IP '{}'", peer_addr.ip());
+                trace!("{CONTEXT} Rejected a connection request from banned IP '{}'", peer_addr.ip());
                 return Err(error(format!("'{}' is a banned IP address", peer_addr.ip())));
             }
 
@@ -1279,7 +1227,7 @@ impl<N: Network> Handshake for Gateway<N> {
             debug!("Number of connection attempts from '{}': {}", peer_addr.ip(), num_attempts);
             if num_attempts > MAX_CONNECTION_ATTEMPTS {
                 self.update_ip_ban(peer_addr.ip());
-                trace!("{CONTEXT} Gateway rejected a consecutive connection request from IP '{}'", peer_addr.ip());
+                trace!("{CONTEXT} Rejected a consecutive connection request from IP '{}'", peer_addr.ip());
                 return Err(error(format!("'{}' appears to be spamming connections", peer_addr.ip())));
             }
         }
@@ -1288,11 +1236,11 @@ impl<N: Network> Handshake for Gateway<N> {
 
         // If this is an inbound connection, we log it, but don't know the listening address yet.
         // Otherwise, we can immediately register the listening address.
-        let mut peer_ip = if peer_side == ConnectionSide::Initiator {
-            debug!("{CONTEXT} Gateway received a connection request from '{peer_addr}'");
+        let mut listener_addr = if peer_side == ConnectionSide::Initiator {
+            debug!("{CONTEXT} Received a connection request from '{peer_addr}'");
             None
         } else {
-            debug!("{CONTEXT} Gateway is connecting to {peer_addr}...");
+            debug!("{CONTEXT} Shaking hands with {peer_addr}...");
             Some(peer_addr)
         };
 
@@ -1301,17 +1249,39 @@ impl<N: Network> Handshake for Gateway<N> {
 
         // Perform the handshake; we pass on a mutable reference to peer_ip in case the process is broken at any point in time.
         let handshake_result = if peer_side == ConnectionSide::Responder {
-            self.handshake_inner_initiator(peer_addr, peer_ip, restrictions_id, stream).await
+            self.handshake_inner_initiator(peer_addr, restrictions_id, stream).await
         } else {
-            self.handshake_inner_responder(peer_addr, &mut peer_ip, restrictions_id, stream).await
+            self.handshake_inner_responder(peer_addr, &mut listener_addr, restrictions_id, stream).await
         };
 
-        // Remove the address from the collection of connecting peers (if the handshake got to the point where it's known).
-        if let Some(ip) = peer_ip {
-            self.connecting_peers.lock().shift_remove(&ip);
+        if let Some(addr) = listener_addr {
+            match handshake_result {
+                Ok(Some(ref cr)) => {
+                    let (node_type, aleo_address) = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                        (NodeType::BootstrapClient, None)
+                    } else {
+                        (NodeType::Validator, Some(cr.address))
+                    };
+                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                        self.resolver.write().insert_peer(addr, peer_addr, aleo_address);
+                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, node_type, cr.version);
+                    }
+                    #[cfg(feature = "metrics")]
+                    self.update_metrics();
+                    info!("{CONTEXT} Connected to '{addr}'");
+                }
+                Ok(None) => {
+                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                }
+                Err(error) => {
+                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                        peer.downgrade_to_candidate(addr);
+                    }
+                    // This error needs to be "repackaged" in order to conform to the return type.
+                    return Err(error);
+                }
+            }
         }
-        let (ref peer_ip, _) = handshake_result?;
-        info!("{CONTEXT} Gateway is connected to '{peer_ip}'");
 
         Ok(connection)
     }
@@ -1323,7 +1293,7 @@ macro_rules! expect_event {
         match $framed.try_next().await? {
             // Received the expected event, proceed.
             Some($event_ty(data)) => {
-                trace!("{CONTEXT} Gateway received '{}' from '{}'", data.name(), $peer_addr);
+                trace!("{CONTEXT} Received '{}' from '{}'", data.name(), $peer_addr);
                 data
             }
             // Received a disconnect event, abort.
@@ -1342,8 +1312,7 @@ macro_rules! expect_event {
             // Received nothing.
             None => {
                 return Err(error(format!(
-                    "{CONTEXT} '{}' disconnected before sending {:?}",
-                    $peer_addr,
+                    "{CONTEXT} the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
                     stringify!($event_ty)
                 )))
             }
@@ -1357,7 +1326,7 @@ async fn send_event<N: Network>(
     peer_addr: SocketAddr,
     event: Event<N>,
 ) -> io::Result<()> {
-    trace!("{CONTEXT} Gateway is sending '{}' to '{peer_addr}'", event.name());
+    trace!("{CONTEXT} Sending '{}' to '{peer_addr}'", event.name());
     framed.send(event).await
 }
 
@@ -1366,12 +1335,13 @@ impl<N: Network> Gateway<N> {
     async fn handshake_inner_initiator<'a>(
         &'a self,
         peer_addr: SocketAddr,
-        peer_ip: Option<SocketAddr>,
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
-    ) -> io::Result<(SocketAddr, Framed<&'a mut TcpStream, EventCodec<N>>)> {
-        // This value is immediately guaranteed to be present, so it can be unwrapped.
-        let peer_ip = peer_ip.unwrap();
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
+        // Introduce the peer into the peer pool.
+        if !self.add_connecting_peer(peer_addr) {
+            return Ok(None);
+        }
 
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
@@ -1421,10 +1391,7 @@ impl<N: Network> Gateway<N> {
             ChallengeResponse { restrictions_id, signature: Data::Object(our_signature), nonce: response_nonce };
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
-        // Add the peer to the gateway.
-        self.insert_connected_peer(peer_ip, peer_addr, peer_request.address);
-
-        Ok((peer_ip, framed))
+        Ok(Some(peer_request))
     }
 
     /// The connection responder side of the handshake.
@@ -1434,7 +1401,7 @@ impl<N: Network> Gateway<N> {
         peer_ip: &mut Option<SocketAddr>,
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
-    ) -> io::Result<(SocketAddr, Framed<&'a mut TcpStream, EventCodec<N>>)> {
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
 
@@ -1456,6 +1423,12 @@ impl<N: Network> Gateway<N> {
         if let Err(forbidden_message) = self.ensure_peer_is_allowed(peer_ip) {
             return Err(error(format!("{forbidden_message}")));
         }
+
+        // Introduce the peer into the peer pool.
+        if !self.add_connecting_peer(peer_ip) {
+            return Ok(None);
+        }
+
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
@@ -1496,10 +1469,8 @@ impl<N: Network> Gateway<N> {
             send_event(&mut framed, peer_addr, reason.into()).await?;
             return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
         }
-        // Add the peer to the gateway.
-        self.insert_connected_peer(peer_ip, peer_addr, peer_request.address);
 
-        Ok((peer_ip, framed))
+        Ok(Some(peer_request))
     }
 
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.
@@ -1508,17 +1479,19 @@ impl<N: Network> Gateway<N> {
         let &ChallengeRequest { version, listener_port: _, address, nonce: _ } = event;
         // Ensure the event protocol version is not outdated.
         if version < Event::<N>::VERSION {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' on version {version} (outdated)");
+            warn!("{CONTEXT} Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
-        // Ensure the address is a current committee member.
-        if !self.is_authorized_validator_address(address) {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' for being an unauthorized validator ({address})");
-            return Some(DisconnectReason::ProtocolViolation);
+        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&peer_addr) {
+            // Ensure the address is a current committee member.
+            if !self.is_authorized_validator_address(address) {
+                warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
+                return Some(DisconnectReason::ProtocolViolation);
+            }
         }
         // Ensure the address is not already connected.
         if self.is_connected_address(address) {
-            warn!("{CONTEXT} Gateway is dropping '{peer_addr}' for being already connected ({address})");
+            warn!("{CONTEXT} Dropping '{peer_addr}' for being already connected ({address})");
             return Some(DisconnectReason::ProtocolViolation);
         }
         None
@@ -1538,17 +1511,17 @@ impl<N: Network> Gateway<N> {
 
         // Verify the restrictions ID.
         if restrictions_id != expected_restrictions_id {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (incorrect restrictions ID)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (incorrect restrictions ID)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         // Perform the deferred non-blocking deserialization of the signature.
         let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (cannot deserialize the signature)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         };
         // Verify the signature.
         if !signature.verify_bytes(&peer_address, &[expected_nonce.to_le_bytes(), nonce.to_le_bytes()].concat()) {
-            warn!("{CONTEXT} Gateway handshake with '{peer_addr}' failed (invalid signature)");
+            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (invalid signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
         None
@@ -1565,9 +1538,11 @@ mod prop_tests {
         gateway::prop_tests::GatewayAddress::{Dev, Prod},
         helpers::{Storage, init_primary_channels, init_worker_channels},
     };
+    use aleo_std::StorageMode;
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
+    use snarkos_node_router::PeerPoolHandling;
     use snarkos_node_tcp::P2P;
     use snarkvm::{
         ledger::{
@@ -1638,6 +1613,7 @@ mod prop_tests {
                         storage.ledger().clone(),
                         address.ip(),
                         &[],
+                        StorageMode::new_test(None),
                         address.port(),
                     )
                     .unwrap()
@@ -1683,9 +1659,16 @@ mod prop_tests {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port())
-                .unwrap();
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            storage.ledger().clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
         let tcp_config = gateway.tcp().config();
         assert_eq!(tcp_config.listener_ip, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
         assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
@@ -1700,9 +1683,16 @@ mod prop_tests {
         let (storage, _, private_key, dev) = input;
         let account = Account::try_from(private_key).unwrap();
 
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port())
-                .unwrap();
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            storage.ledger().clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
         let tcp_config = gateway.tcp().config();
         if let Some(socket_addr) = dev.ip() {
             assert_eq!(tcp_config.listener_ip, Some(socket_addr.ip()));
@@ -1727,8 +1717,16 @@ mod prop_tests {
         let worker_storage = storage.clone();
         let account = Account::try_from(private_key).unwrap();
 
-        let gateway =
-            Gateway::new(account, storage.clone(), storage.ledger().clone(), dev.ip(), &[], dev.port()).unwrap();
+        let gateway = Gateway::new(
+            account,
+            storage.clone(),
+            storage.ledger().clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
 
         let (primary_sender, _) = init_primary_channels();
 
@@ -1792,8 +1790,16 @@ mod prop_tests {
         // Initialize the storage.
         let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
         // Initialize the gateway.
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), ledger.clone(), dev.ip(), &[], dev.port()).unwrap();
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            ledger.clone(),
+            dev.ip(),
+            &[],
+            StorageMode::new_test(None),
+            dev.port(),
+        )
+        .unwrap();
         // Insert certificate to the storage.
         for certificate in certificates.iter() {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
