@@ -174,7 +174,7 @@ impl<N: Network> Worker<N> {
             || self.ledger.contains_transmission(&transmission_id).unwrap_or(false)
     }
 
-    /// Returns the transmission if it exists in the ready queue, proposed batch, storage.
+    /// Returns the transmission if it exists in the ready queue, storage or proposed batch.
     ///
     /// Note: We explicitly forbid retrieving a transmission from the ledger, as transmissions
     /// in the ledger are not guaranteed to be invalid for the current batch.

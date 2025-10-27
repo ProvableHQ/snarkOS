@@ -98,6 +98,14 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
         Ok(missing_transmissions)
     }
 
+    /// Inserts the given transmission into storage.
+    fn insert_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
+        // Acquire the transmissions write lock.
+        let mut transmissions = self.transmissions.write();
+        // Insert the transmission.
+        transmissions.insert(transmission_id, (transmission, indexset! {})); // TODO: fix the interface.
+    }
+
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
     fn insert_transmissions(
         &self,

@@ -350,6 +350,38 @@ impl<N: Network> Consensus<N> {
         Ok(())
     }
 
+    /// Caches the given unconfirmed transaction.
+    pub async fn cache_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<()> {
+        // Calculate the transmission checksum.
+        let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
+        // Construct the transmission ID.
+        let transmission_id = TransmissionID::Transaction(transaction.id(), checksum);
+        // Queue the unconfirmed transaction.
+        {
+            let transaction_id = transaction.id();
+
+            // Check that the transaction is not a fee transaction.
+            if transaction.is_fee() {
+                bail!("Transaction '{}' is a fee transaction {}", fmt_id(transaction_id), "(skipping)".dimmed());
+            }
+            // Check if the transaction was recently seen.
+            if self.seen_transactions.lock().put(transaction_id, ()).is_some() {
+                // If the transaction was recently seen, return early.
+                return Ok(());
+            }
+            // Check if the transaction already exists in the ledger.
+            if self.ledger.contains_transmission(&transmission_id)? {
+                bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
+            }
+            // Construct the transmission.
+            let transmission = Transmission::Transaction(Data::Object(transaction));
+            // Insert the transaction into cache_transmissions.
+            // TODO: should we use a PrimarySender or jump around like this?
+            self.bft().primary().storage().insert_transmission(transmission_id, transmission);
+        }
+        Ok(())
+    }
+
     /// Adds the given unconfirmed transaction to the memory pool, which will then eventually be passed
     /// to the BFT layer for inclusion in a batch.
     pub async fn add_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<()> {
