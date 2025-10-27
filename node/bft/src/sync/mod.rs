@@ -25,8 +25,12 @@ use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+
 use snarkvm::{
-    console::{network::Network, types::Field},
+    console::{
+        network::{ConsensusVersion, Network},
+        types::Field,
+    },
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
     prelude::{cfg_into_iter, cfg_iter},
     utilities::log_error,
@@ -235,8 +239,10 @@ impl<N: Network> Sync<N> {
         // which causes the `rx_block_sync_advance_with_sync_blocks.recv()` call below to return.
         let self_ = self.clone();
         self.spawn(async move {
-            while let Some((peer_ip, blocks, callback)) = rx_block_sync_insert_block_response.recv().await {
-                callback.send(self_.insert_block_response(peer_ip, blocks).await).ok();
+            while let Some((peer_ip, blocks, latest_consensus_version, callback)) =
+                rx_block_sync_insert_block_response.recv().await
+            {
+                callback.send(self_.insert_block_response(peer_ip, blocks, latest_consensus_version).await).ok();
             }
         });
 
@@ -351,9 +357,14 @@ impl<N: Network> Sync<N> {
 // Callbacks used when receiving messages from the Gateway
 impl<N: Network> Sync<N> {
     /// We received a block response and can (possibly) advance synchronization.
-    async fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+    async fn insert_block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> Result<()> {
         // Verify that the response is valid and add it to block sync.
-        self.block_sync.insert_block_responses(peer_ip, blocks)
+        self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)
 
         // No need to advance block sync here, as the new response will
         // notify the incoming task.

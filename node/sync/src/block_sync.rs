@@ -22,7 +22,12 @@ use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
-use snarkvm::prelude::{Network, block::Block};
+
+use snarkvm::{
+    console::network::{ConsensusVersion, Network},
+    prelude::block::Block,
+    utilities::ensure_equals,
+};
 
 use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
@@ -448,7 +453,32 @@ impl<N: Network> BlockSync<N> {
     /// Note, that this only queues the response. After this, you most likely want to call `Self::try_advancing_block_synchronization`.
     ///
     #[inline]
-    pub fn insert_block_responses(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+    pub fn insert_block_responses(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> Result<()> {
+        let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
+            bail!("Empty block response");
+        };
+
+        let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
+
+        // Perform consensus version check, if possible.
+        // This check is only enabled after nodes have reached V12.
+        if expected_consensus_version >= ConsensusVersion::V12 {
+            if let Some(latest_consensus_version) = latest_consensus_version {
+                ensure_equals!(
+                    expected_consensus_version,
+                    latest_consensus_version,
+                    "the peer's consensus version for height {last_height} does not match ours"
+                );
+            } else {
+                bail!("The peer did not send a consensus version");
+            }
+        }
+
         // Insert the candidate blocks into the sync pool.
         for block in blocks {
             if let Err(error) = self.insert_block_response(peer_ip, block) {
