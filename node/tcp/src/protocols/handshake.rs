@@ -69,7 +69,7 @@ where
                             Ok(conn)
                         }
                         Ok(Err(e)) => {
-                            debug!(parent: node.tcp().span(), "handshake with {} failed: {}", addr, e);
+                            debug!(parent: node.tcp().span(), "handshake with {addr} failed: {e}");
                             Err(e)
                         }
                         Err(_) => {
