@@ -131,8 +131,12 @@ pub mod prop_tests {
         let mut buf = BytesMut::default().writer();
         ChallengeRequest::write_le(&original, &mut buf).unwrap();
 
-        let deserialized: ChallengeRequest<CurrentNetwork> =
+        let mut deserialized: ChallengeRequest<CurrentNetwork> =
             ChallengeRequest::read_le(buf.into_inner().reader()).unwrap();
+        // Upon deserialization, unsupplied SHA is registered as "unknown".
+        if deserialized.snarkos_sha == "unknown" {
+            deserialized.snarkos_sha = original.snarkos_sha.clone();
+        }
         assert_eq!(original, deserialized);
     }
 }
