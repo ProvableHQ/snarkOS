@@ -69,11 +69,11 @@ where
                             Ok(conn)
                         }
                         Ok(Err(e)) => {
-                            error!(parent: node.tcp().span(), "handshake with {} failed: {}", addr, e);
+                            debug!(parent: node.tcp().span(), "handshake with {addr} failed: {e}");
                             Err(e)
                         }
                         Err(_) => {
-                            error!(parent: node.tcp().span(), "handshake with {} timed out", addr);
+                            debug!(parent: node.tcp().span(), "handshake with {} timed out", addr);
                             Err(io::ErrorKind::TimedOut.into())
                         }
                     };
