@@ -216,7 +216,16 @@ pub mod prop_tests {
         let decoded = BlockResponse::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap();
 
         assert_eq!(block_response.request, decoded.request);
-        assert_eq!(block_response.latest_consensus_version, decoded.latest_consensus_version);
+
+        // A block response will never contain a version below 12.
+        if let Some(vno) = block_response.latest_consensus_version
+            && vno < ConsensusVersion::V12
+        {
+            assert_eq!(decoded.latest_consensus_version, None)
+        } else {
+            assert_eq!(decoded.latest_consensus_version, block_response.latest_consensus_version);
+        }
+
         assert_eq!(
             block_response.blocks.deserialize_blocking().unwrap(),
             decoded.blocks.deserialize_blocking().unwrap(),
