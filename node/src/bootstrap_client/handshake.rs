@@ -17,7 +17,7 @@ use crate::{
     BootstrapClient,
     bft::events::{self, Event},
     bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
-    network::{ConnectionMode, NodeType, PeerPoolHandling},
+    network::{ConnectionMode, NodeType, PeerPoolHandling, log_repo_sha_comparison},
     router::messages::{self, Message},
     tcp::{Connection, ConnectionSide, protocols::*},
 };
@@ -277,6 +277,8 @@ impl<N: Network> BootstrapClient<N> {
     ) -> io::Result<bool> {
         match request {
             MessageOrEvent::Message(Message::ChallengeRequest(msg)) => {
+                log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
+
                 if msg.version < Message::<N>::latest_message_version() {
                     let msg = Message::Disconnect::<N>(messages::DisconnectReason::OutdatedClientVersion.into());
                     send_msg!(msg, framed, peer_addr)?;
@@ -297,6 +299,8 @@ impl<N: Network> BootstrapClient<N> {
                 }
             }
             MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
+                log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
+
                 if msg.version < Event::<N>::VERSION {
                     let msg = Event::Disconnect::<N>(events::DisconnectReason::OutdatedClientVersion.into());
                     send_msg!(msg, framed, peer_addr)?;
