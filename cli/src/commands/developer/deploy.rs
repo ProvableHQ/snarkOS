@@ -41,7 +41,7 @@ use anyhow::Result;
 use clap::{Parser, builder::NonEmptyStringValueParser};
 use colored::Colorize;
 use snarkvm::prelude::{Address, ConsensusVersion};
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 use ureq::http::Uri;
 use zeroize::Zeroize;
 
@@ -103,9 +103,6 @@ pub struct Deploy {
     /// Timeout in seconds when waiting for transaction confirmation. Default is 60 seconds.
     #[clap(long, default_value_t = 60, requires = "wait")]
     timeout: u64,
-    /// Specify the path to a directory containing the ledger. Overrides the default path.
-    #[clap(long = "storage_path")]
-    storage_path: Option<PathBuf>,
 }
 
 impl Drop for Deploy {
@@ -181,11 +178,7 @@ impl Deploy {
             let rng = &mut rand::thread_rng();
 
             // Initialize the storage.
-            let storage_mode = match &self.storage_path {
-                Some(path) => StorageMode::Custom(path.clone()),
-                None => StorageMode::Production,
-            };
-            let store = ConsensusStore::<N, ConsensusMemory<N>>::open(storage_mode)
+            let store = ConsensusStore::<N, ConsensusMemory<N>>::open(StorageMode::Production)
                 .with_context(|| "Failed to open the consensus store")?;
 
             // Initialize the VM.

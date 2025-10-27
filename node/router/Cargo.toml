@@ -67,6 +67,9 @@ workspace = true
 workspace = true
 features = [ "ledger", "prover" ]
 
+[dependencies.snarkos-node-network]
+workspace = true
+
 [dependencies.snarkos-node-sync-communication-service]
 workspace = true
 

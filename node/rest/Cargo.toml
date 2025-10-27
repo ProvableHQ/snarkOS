@@ -80,6 +80,9 @@ workspace = true
 [dependencies.snarkos-node-consensus]
 workspace = true
 
+[dependencies.snarkos-node-network]
+workspace = true
+
 [dependencies.snarkos-node-router]
 workspace = true
 

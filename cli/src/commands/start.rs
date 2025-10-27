@@ -20,8 +20,9 @@ use snarkos_display::Display;
 use snarkos_node::{
     Node,
     bft::MEMORY_POOL_PORT,
+    network::{NodeType, bootstrap_peers},
     rest::DEFAULT_REST_PORT,
-    router::{DEFAULT_NODE_PORT, bootstrap_peers, messages::NodeType},
+    router::DEFAULT_NODE_PORT,
 };
 use snarkvm::{
     console::{

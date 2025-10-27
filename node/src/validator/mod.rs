@@ -21,15 +21,15 @@ use snarkos_account::Account;
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
+use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
-    messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
+    messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
@@ -380,7 +380,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     //     Ok(())
     // }
 
-    /// Initialize the transaction pool.
+    /// Initializes the transaction pool (if in development mode).
+    ///
+    /// Spawns a background task that periodically issues transactions to the network.
     fn initialize_transaction_pool(&self, dev: Option<u16>, dev_txs: bool) -> Result<()> {
         use snarkvm::console::{
             program::{Identifier, Literal, ProgramID, Value},

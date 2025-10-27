@@ -91,7 +91,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let connected_peers = self.router().connected_peers();
         let connected_peers_fmt = format!("{connected_peers:?}").dimmed();
         match connected_peers.len() {
-            0 => debug!("No connected peers"),
+            0 => warn!("No connected peers"),
             1 => debug!("Connected to 1 peer: {connected_peers_fmt}"),
             num_connected => debug!("Connected to {num_connected} peers {connected_peers_fmt}"),
         }

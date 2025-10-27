@@ -16,19 +16,22 @@
 mod common;
 use common::*;
 
-use snarkos_node_router::PeerPoolHandling;
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake},
 };
+use snarkvm::prelude::TestRng;
 
 use std::time::Duration;
 
 #[tokio::test]
 async fn ban_connection_responder() {
+    let mut rng = TestRng::default();
+
     // Create 2 client routers.
-    let node0 = client(0, 1).await;
-    let node1 = client(0, 1).await;
+    let node0 = client(0, 1, &mut rng).await;
+    let node1 = client(0, 1, &mut rng).await;
 
     // Start listening on both sides.
     node0.tcp().enable_listener().await.unwrap();
@@ -65,9 +68,11 @@ async fn ban_connection_responder() {
 
 #[tokio::test]
 async fn ban_connection_initiator() {
+    let mut rng = TestRng::default();
+
     // Create 2 client routers.
-    let node0 = client(0, 1).await;
-    let node1 = client(0, 1).await;
+    let node0 = client(0, 1, &mut rng).await;
+    let node1 = client(0, 1, &mut rng).await;
 
     // Start listening on both sides.
     node0.tcp().enable_listener().await.unwrap();

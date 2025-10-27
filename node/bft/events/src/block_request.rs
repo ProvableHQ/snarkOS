@@ -15,6 +15,8 @@
 
 use super::*;
 
+use snarkvm::utilities::io_error;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BlockRequest {
     /// The starting block height (inclusive).
@@ -24,9 +26,15 @@ pub struct BlockRequest {
 }
 
 impl BlockRequest {
-    /// Initializes a new block request event.
-    pub fn new(start_height: u32, end_height: u32) -> Self {
-        Self { start_height, end_height }
+    /// Creates a new block request and return an error if the range is not  well-formed.
+    pub fn new(start_height: u32, end_height: u32) -> IoResult<Self> {
+        if start_height == 0 {
+            Err(io_error("BlockRequest cannot include the genesis block"))
+        } else if start_height >= end_height {
+            Err(io_error(format!("BlockRequest must contain a valid range, but was {start_height}..{end_height}")))
+        } else {
+            Ok(Self { start_height, end_height })
+        }
     }
 }
 
@@ -56,21 +64,30 @@ impl FromBytes for BlockRequest {
         let start_height = u32::read_le(&mut reader)?;
         let end_height = u32::read_le(&mut reader)?;
 
-        Ok(Self::new(start_height, end_height))
+        Self::new(start_height, end_height)
     }
 }
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::BlockRequest;
+    use crate::{BlockRequest, DataBlocks};
+
+    use snarkvm::{
+        console::network::MainnetV0,
+        utilities::{FromBytes, ToBytes},
+    };
 
     use bytes::{Buf, BufMut, BytesMut};
-    use proptest::prelude::{BoxedStrategy, Strategy, any};
-    use snarkvm::utilities::{FromBytes, ToBytes};
+    use proptest::prelude::prop_compose;
     use test_strategy::proptest;
 
-    pub fn any_block_request() -> BoxedStrategy<BlockRequest> {
-        any::<(u32, u32)>().prop_map(|(start_height, end_height)| BlockRequest::new(start_height, end_height)).boxed()
+    const MAX_RANGE: u32 = DataBlocks::<MainnetV0>::MAXIMUM_NUMBER_OF_BLOCKS as u32;
+
+    prop_compose! {
+        /// Creates a block request with a start point and a valid range.
+        pub fn any_block_request()(start_height in 1..u32::MAX-MAX_RANGE, num_blocks in 1..MAX_RANGE) -> BlockRequest {
+            BlockRequest { start_height, end_height: start_height + num_blocks }
+        }
     }
 
     #[proptest]

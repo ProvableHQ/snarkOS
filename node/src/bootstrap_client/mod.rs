@@ -17,11 +17,9 @@ mod codec;
 mod handshake;
 mod network;
 
-use crate::{
-    router::{Peer, Resolver},
-    tcp::{self, Tcp},
-};
+use crate::tcp::{self, Tcp};
 use snarkos_account::Account;
+use snarkos_node_network::{ConnectionMode, Peer, Resolver};
 use snarkos_node_tcp::{P2P, protocols::*};
 use snarkvm::{
     ledger::committee::Committee,
@@ -59,10 +57,13 @@ impl<N: Network> Deref for BootstrapClient<N> {
     }
 }
 
+// A tuple holding the validator's Aleo address, and its connection mode.
+type KnownValidatorInfo<N> = (Address<N>, ConnectionMode);
+
 pub struct InnerBootstrapClient<N: Network> {
     tcp: Tcp,
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
-    known_validators: RwLock<HashMap<SocketAddr, Address<N>>>,
+    known_validators: RwLock<HashMap<SocketAddr, KnownValidatorInfo<N>>>,
     resolver: RwLock<Resolver<N>>,
     account: Account<N>,
     genesis_header: Header<N>,
@@ -91,7 +92,7 @@ impl<N: Network> BootstrapClient<N> {
         let tcp = Tcp::new(tcp::Config::new(listener_addr, Self::MAX_PEERS));
         // Initialize the peer pool.
         let peer_pool = Default::default();
-        // Initialize a collection of validators that had connected in Gateway mode.
+        // Initialize a collection of validators.
         let known_validators = Default::default();
         // Load the restrictions ID.
         let restrictions_id = Restrictions::load()?.restrictions_id();
@@ -165,9 +166,19 @@ impl<N: Network> BootstrapClient<N> {
     /// Returns the current validator committee or updates it from the explorer, if
     /// we are capable of obtaining it from the network.
     pub async fn get_or_update_committee(&self) -> anyhow::Result<Option<HashSet<Address<N>>>> {
-        // The current committee can't be looked up in dev mode.
-        if self.is_dev() {
-            return Ok(None);
+        // Development testing may include a list of committee Aleo addresses loaded from the environment.
+        if cfg!(feature = "test") || self.is_dev() {
+            match std::env::var("TEST_COMMITTEE_ADDRS") {
+                Ok(aleo_addrs) => {
+                    let dev_committee =
+                        aleo_addrs.split(',').map(|addr| Address::<N>::from_str(addr).unwrap()).collect();
+                    return Ok(Some(dev_committee));
+                }
+                Err(err) => {
+                    warn!("Failed to load committee peers from environment: {err}");
+                    return Ok(None);
+                }
+            }
         }
 
         let now = Instant::now();
@@ -188,9 +199,23 @@ impl<N: Network> BootstrapClient<N> {
         }
     }
 
-    /// Returns the list of known validators connected in Gateway mode.
-    pub fn get_known_validators(&self) -> HashMap<SocketAddr, Address<N>> {
-        self.known_validators.read().clone()
+    // Return the known addresses of current committee members, or all known
+    // validators if the committee info is unavailable.
+    pub async fn get_validator_addrs(&self) -> HashMap<SocketAddr, KnownValidatorInfo<N>> {
+        // First, collect info on all the validators we had connected to before.
+        let mut known_validators = self.known_validators.read().clone();
+        // If the committee info is available, prune non-committee members.
+        match self.get_or_update_committee().await {
+            Ok(Some(committee)) => {
+                known_validators.retain(|_, (aleo_addr, _)| committee.contains(aleo_addr));
+                known_validators
+            }
+            Ok(None) => known_validators,
+            Err(error) => {
+                error!("Couldn't update the validator committee: {error}");
+                known_validators
+            }
+        }
     }
 
     /// Shuts down the bootstrap client.

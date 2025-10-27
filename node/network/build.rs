@@ -13,5 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod cache;
-pub use cache::Cache;
+fn main() {
+    built::write_built_file().expect("Failed to acquire build-time information");
+}

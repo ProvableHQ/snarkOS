@@ -111,7 +111,7 @@ features = [ "ledger", "prover" ]
 workspace = true
 features = [ "memory" ]
 
-[dependencies.snarkos-node-router]
+[dependencies.snarkos-node-network]
 workspace = true
 
 [dependencies.snarkos-node-sync]
