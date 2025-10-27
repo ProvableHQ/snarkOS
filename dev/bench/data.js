@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1761333693648,
+  "lastUpdate": 1761540235111,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -4662,6 +4662,66 @@ window.BENCHMARK_DATA = {
             "value": 1.14,
             "unit": "blocks/s",
             "extra": "total_wait=218s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fa8eccee9e740b370d3a042bed2fefdebc99b2f4",
+          "message": "Merge pull request #3972 from ProvableHQ/fix/stale-transmissions\n\n[Fix] Do not tack transmissions that are added to the mempool",
+          "timestamp": "2025-10-26T23:03:38-05:00",
+          "tree_id": "173061ae3c00c78078cbd29608616a531f8c1e52",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/fa8eccee9e740b370d3a042bed2fefdebc99b2f4"
+        },
+        "date": 1761540234317,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.584000583770947,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=185.7584719657898, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 8076.075390784088,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=9.90580153465271, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.35,
+            "unit": "blocks/s",
+            "extra": "total_wait=184s, target_height=250, connect_time=22s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.362668,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=179, mean_speed=0.863128, max_speed=3.166667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.22,
+            "unit": "blocks/s",
+            "extra": "total_wait=204s, target_height=250"
           }
         ]
       }
