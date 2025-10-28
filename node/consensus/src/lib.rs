@@ -364,15 +364,6 @@ impl<N: Network> Consensus<N> {
             if transaction.is_fee() {
                 bail!("Transaction '{}' is a fee transaction {}", fmt_id(transaction_id), "(skipping)".dimmed());
             }
-            // Check if the transaction was recently seen.
-            if self.seen_transactions.lock().put(transaction_id, ()).is_some() {
-                // If the transaction was recently seen, return early.
-                return Ok(());
-            }
-            // Check if the transaction already exists in the ledger.
-            if self.ledger.contains_transmission(&transmission_id)? {
-                bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
-            }
             // Construct the transmission.
             let transmission = Transmission::Transaction(Data::Object(transaction));
             // Insert the transaction into cache_transmissions.
