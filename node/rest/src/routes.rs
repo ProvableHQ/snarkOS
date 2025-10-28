@@ -139,17 +139,23 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         // Manually parse the height or the height of the hash, axum doesn't support different types
         // for the same path param.
+        let id_name;
         let block = if let Ok(height) = height_or_hash.parse::<u32>() {
-            rest.ledger.get_block(height).with_context(|| "Failed to get block by height")?
+            id_name = "hash";
+            rest.ledger.try_get_block(height).with_context(|| "Failed to get block by height")?
         } else if let Ok(hash) = height_or_hash.parse::<N::BlockHash>() {
-            rest.ledger.get_block_by_hash(&hash).with_context(|| "Failed to get block by hash")?
+            id_name = "height";
+            rest.ledger.try_get_block_by_hash(&hash).with_context(|| "Failed to get block by hash")?
         } else {
             return Err(RestError::bad_request(anyhow!(
                 "invalid input, it is neither a block height nor a block hash"
             )));
         };
 
-        Ok(ErasedJson::pretty(block))
+        match block {
+            Some(block) => Ok(ErasedJson::pretty(block)),
+            None => Err(RestError::not_found(anyhow!("No block with {id_name} {height_or_hash} found"))),
+        }
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
