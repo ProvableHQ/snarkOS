@@ -146,8 +146,8 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         Ok(missing_transmissions)
     }
 
-    /// Inserts the given transmission into the cache.
-    fn insert_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
+    /// Caches the given transmission in storage.
+    fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
         self.cache_transmissions.lock().put(transmission_id, transmission);
     }
 

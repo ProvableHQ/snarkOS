@@ -232,6 +232,11 @@ impl<N: Network> Worker<N> {
         }
         false
     }
+
+    /// Inserts the unconfirmed transmission into the storage.
+    fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
+        self.storage.cache_transmission(transmission_id, transmission);
+    }
 }
 
 impl<N: Network> Worker<N> {
@@ -396,7 +401,12 @@ impl<N: Network> Worker<N> {
 impl<N: Network> Worker<N> {
     /// Starts the worker handlers.
     fn start_handlers(&self, receiver: WorkerReceiver<N>) {
-        let WorkerReceiver { mut rx_worker_ping, mut rx_transmission_request, mut rx_transmission_response } = receiver;
+        let WorkerReceiver {
+            mut rx_worker_ping,
+            mut rx_transmission_request,
+            mut rx_transmission_response,
+            mut rx_unconfirmed_transmission,
+        } = receiver;
 
         // Start the pending queue expiration loop.
         let self_ = self.clone();
@@ -440,6 +450,14 @@ impl<N: Network> Worker<N> {
                     self__.finish_transmission_request(peer_ip, transmission_response);
                     Ok(())
                 });
+            }
+        });
+
+        // Process the unconfirmed transmissions.
+        let self_ = self.clone();
+        self.spawn(async move {
+            while let Some((_peer_ip, transmission_id, transmission)) = rx_unconfirmed_transmission.recv().await {
+                self_.cache_transmission(transmission_id, transmission);
             }
         });
     }

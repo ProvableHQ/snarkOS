@@ -57,9 +57,9 @@ use snarkvm::{
     console::prelude::*,
     ledger::{
         committee::Committee,
-        narwhal::{BatchHeader, Data},
+        narwhal::{BatchHeader, Data, Transmission, TransmissionID},
     },
-    prelude::{Address, Field},
+    prelude::{Address, Field, Transaction},
 };
 
 use colored::Colorize;
@@ -705,6 +705,31 @@ impl<N: Network> Gateway<N> {
                 if let Some(sender) = self.get_worker_sender(worker_id) {
                     // Send the transmission response to the worker.
                     let _ = sender.tx_transmission_response.send((peer_ip, response)).await;
+                }
+                Ok(true)
+            }
+            Event::UnconfirmedTransaction(event) => {
+                // Perform the deferred non-blocking deserialization of the transaction.
+                let transaction = match event.transaction.deserialize().await {
+                    Ok(transaction) => transaction,
+                    Err(error) => bail!("[UnconfirmedTransaction] {error}"),
+                };
+                // Calculate the transmission checksum.
+                let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
+                // Construct the transmission ID.
+                let transmission_id = TransmissionID::Transaction(transaction.id(), checksum);
+                // Construct the transmission.
+                let transmission = Transmission::Transaction(Data::Object(transaction));
+
+                // Determine the worker ID.
+                let Ok(worker_id) = assign_to_worker(transmission_id, self.num_workers()) else {
+                    warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", transmission_id);
+                    return Ok(true);
+                };
+                // Send the unconfirmed transmission to the worker.
+                if let Some(sender) = self.get_worker_sender(worker_id) {
+                    // Send the unconfirmed transmission to the worker.
+                    let _ = sender.tx_unconfirmed_transmission.send((peer_ip, transmission_id, transmission)).await;
                 }
                 Ok(true)
             }

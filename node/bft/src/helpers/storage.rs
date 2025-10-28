@@ -687,10 +687,9 @@ impl<N: Network> Storage<N> {
         );
     }
 
-    /// Inserts the given `transmission` into storage.
-    pub fn insert_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
-        // Insert the transmission into storage.
-        self.transmissions.insert_transmission(transmission_id, transmission);
+    /// Caches the given `transmission` in storage.
+    pub fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) {
+        self.transmissions.cache_transmission(transmission_id, transmission);
     }
 
     /// Inserts the given unprocessed `certificate` into storage.

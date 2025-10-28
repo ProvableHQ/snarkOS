@@ -77,6 +77,9 @@ version = "3"
 [dependencies.snarkos-node-cdn]
 workspace = true
 
+[dependencies.snarkos-node-bft]
+workspace = true
+
 [dependencies.snarkos-node-consensus]
 workspace = true
 

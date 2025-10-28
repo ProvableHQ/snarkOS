@@ -368,7 +368,7 @@ impl<N: Network> Consensus<N> {
             let transmission = Transmission::Transaction(Data::Object(transaction));
             // Insert the transaction into cache_transmissions.
             // TODO: should we use a PrimarySender or jump around like this?
-            self.bft().primary().storage().insert_transmission(transmission_id, transmission);
+            self.bft().primary().storage().cache_transmission(transmission_id, transmission);
         }
         Ok(())
     }

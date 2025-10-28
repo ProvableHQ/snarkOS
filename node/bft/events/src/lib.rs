@@ -57,6 +57,9 @@ pub use transmission_request::TransmissionRequest;
 mod transmission_response;
 pub use transmission_response::TransmissionResponse;
 
+mod unconfirmed_transaction;
+pub use unconfirmed_transaction::UnconfirmedTransaction;
+
 mod validators_request;
 pub use validators_request::ValidatorsRequest;
 
@@ -108,6 +111,7 @@ pub enum Event<N: Network> {
     ValidatorsRequest(ValidatorsRequest),
     ValidatorsResponse(ValidatorsResponse<N>),
     WorkerPing(WorkerPing<N>),
+    UnconfirmedTransaction(UnconfirmedTransaction<N>),
 }
 
 impl<N: Network> From<DisconnectReason> for Event<N> {
@@ -140,6 +144,7 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(event) => event.name(),
             Self::ValidatorsResponse(event) => event.name(),
             Self::WorkerPing(event) => event.name(),
+            Self::UnconfirmedTransaction(event) => event.name(),
         }
     }
 
@@ -163,6 +168,7 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(..) => 13,
             Self::ValidatorsResponse(..) => 14,
             Self::WorkerPing(..) => 15,
+            Self::UnconfirmedTransaction(..) => 16,
         }
     }
 }
@@ -188,6 +194,7 @@ impl<N: Network> ToBytes for Event<N> {
             Self::ValidatorsRequest(event) => event.write_le(writer),
             Self::ValidatorsResponse(event) => event.write_le(writer),
             Self::WorkerPing(event) => event.write_le(writer),
+            Self::UnconfirmedTransaction(event) => event.write_le(writer),
         }
     }
 }
@@ -215,7 +222,8 @@ impl<N: Network> FromBytes for Event<N> {
             13 => Self::ValidatorsRequest(ValidatorsRequest::read_le(&mut reader)?),
             14 => Self::ValidatorsResponse(ValidatorsResponse::read_le(&mut reader)?),
             15 => Self::WorkerPing(WorkerPing::read_le(&mut reader)?),
-            16.. => return Err(error(format!("Unknown event ID {id}"))),
+            16 => Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?),
+            17.. => return Err(error(format!("Unknown event ID {id}"))),
         };
 
         // Ensure that there are no "dangling" bytes.
