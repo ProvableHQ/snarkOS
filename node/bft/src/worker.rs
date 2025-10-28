@@ -38,7 +38,6 @@ use indexmap::{IndexMap, IndexSet};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::seq::IteratorRandom;
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
@@ -232,24 +231,6 @@ impl<N: Network> Worker<N> {
             return self.ready.write().insert(transmission_id, transmission);
         }
         false
-    }
-
-    /// Broadcasts a worker ping event.
-    pub(crate) fn broadcast_ping(&self) {
-        // Retrieve the transmission IDs.
-        let transmission_ids = self
-            .ready
-            .read()
-            .transmission_ids()
-            .into_iter()
-            .choose_multiple(&mut rand::thread_rng(), Self::MAX_TRANSMISSIONS_PER_WORKER_PING)
-            .into_iter()
-            .collect::<IndexSet<_>>();
-
-        // Broadcast the ping event.
-        if !transmission_ids.is_empty() {
-            self.gateway.broadcast(Event::WorkerPing(transmission_ids.into()));
-        }
     }
 }
 

@@ -21,7 +21,6 @@ use crate::{
     PRIMARY_PING_IN_MS,
     Sync,
     Transport,
-    WORKER_PING_IN_MS,
     Worker,
     events::{BatchPropose, BatchSignature, Event},
     helpers::{
@@ -1287,23 +1286,6 @@ impl<N: Network> Primary<N> {
                             warn!("Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}");
                         }
                     });
-                }
-            }
-        });
-
-        // Start the worker ping(s).
-        let self_ = self.clone();
-        self.spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_millis(WORKER_PING_IN_MS)).await;
-                // If the primary is not synced, then do not broadcast the worker ping(s).
-                if !self_.sync.is_synced() {
-                    trace!("Skipping worker ping(s) {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-                // Broadcast the worker ping(s).
-                for worker in self_.workers.iter() {
-                    worker.broadcast_ping();
                 }
             }
         });
