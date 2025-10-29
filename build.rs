@@ -98,22 +98,22 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
 
             // Modify the lock balance based on the type of the relevant import.
             if [ImportOfInterest::ParkingLot, ImportOfInterest::Tokio].contains(&ioi) {
-                if line.contains("Mutex") {
-                    lock_balance += 1;
+                // Counts `Mutex` and `MutexGuard`.
+                lock_balance += line.matches("Mutex").count() as i8;
+                // Counts `RwLock` and its guards.
+                lock_balance += line.matches("RwLock").count() as i8;
+                // A correction in case we counted mutex guards.
+                if line.contains("MutexGuard") {
+                    lock_balance -= 1;
                 }
-                if line.contains("RwLock") {
-                    lock_balance += 1;
-                }
+                // Corrections for `use tokio::Mutex as TMutex` and `MutexGuard as TMutexGuard`.
+                lock_balance -= line.matches("TMutex").count() as i8;
             } else if ioi == ImportOfInterest::Locktick {
                 // Use `matches` instead of just `contains` here, as more than a single
                 // lock type entry is possible in a locktick import.
-                for _hit in line.matches("Mutex") {
-                    lock_balance -= 1;
-                }
-                for _hit in line.matches("RwLock") {
-                    lock_balance -= 1;
-                }
-                // A correction in case of the `use tokio::Mutex as TMutex` convention.
+                lock_balance -= line.matches("Mutex").count() as i8;
+                lock_balance -= line.matches("RwLock").count() as i8;
+                // A correction in case of the `use tokio::Mutex as TMutex`.
                 if line.contains("TMutex") {
                     lock_balance += 1;
                 }

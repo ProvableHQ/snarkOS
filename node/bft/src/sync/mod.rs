@@ -38,7 +38,7 @@ use snarkvm::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
+use locktick::{LockGuard, parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 #[cfg(not(feature = "serial"))]
@@ -53,7 +53,7 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
-    sync::{OnceCell, oneshot},
+    sync::{MutexGuard as TMutexGuard, OnceCell, oneshot},
     task::JoinHandle,
 };
 
@@ -85,8 +85,6 @@ pub struct Sync<N: Network> {
     bft_sender: Arc<OnceCell<BFTSender<N>>>,
     /// Handles to the spawned background tasks.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The response lock.
-    response_lock: Arc<TMutex<()>>,
     /// The sync lock. Ensures that only one task syncs the ledger at a time.
     sync_lock: Arc<TMutex<()>>,
     /// The latest block responses.
@@ -97,6 +95,16 @@ pub struct Sync<N: Network> {
     ///
     /// Whenever a new block is added to this map, BlockSync::set_sync_height needs to be called.
     pending_blocks: Arc<TMutex<VecDeque<PendingBlock<N>>>>,
+}
+
+/// Pauses sync from advancing until the object is dropped.
+pub struct PausedSyncHandle<'a> {
+    #[cfg(feature = "locktick")]
+    #[allow(dead_code)]
+    inner: LockGuard<TMutexGuard<'a, ()>>,
+    #[cfg(not(feature = "locktick"))]
+    #[allow(dead_code)]
+    inner: TMutexGuard<'a, ()>,
 }
 
 impl<N: Network> Sync<N> {
@@ -120,7 +128,6 @@ impl<N: Network> Sync<N> {
             pending: Default::default(),
             bft_sender: Default::default(),
             handles: Default::default(),
-            response_lock: Default::default(),
             sync_lock: Default::default(),
             pending_blocks: Default::default(),
         }
@@ -140,6 +147,11 @@ impl<N: Network> Sync<N> {
 
         debug!("Finished initial block synchronization at startup");
         Ok(())
+    }
+
+    /// Pause synchronization until the returned handle is dropped.
+    pub(crate) async fn pause<'a>(&'a self) -> PausedSyncHandle<'a> {
+        PausedSyncHandle { inner: self.sync_lock.lock().await }
     }
 
     /// Sends the given batch of block requests to peers.
@@ -536,9 +548,6 @@ impl<N: Network> Sync<N> {
     /// If the node falls behind more than GC rounds, this function calls [`Self::sync_storage_without_bft`] instead,
     /// which syncs without updating the BFT state.
     async fn try_advancing_block_synchronization_inner(&self) -> Result<bool> {
-        // Acquire the response lock.
-        let _lock = self.response_lock.lock().await;
-
         // For sanity, set the sync height again.
         // (if the sync height is already larger or equal, this is a noop)
         let ledger_height = self.ledger.latest_block_height();
@@ -989,8 +998,6 @@ impl<N: Network> Sync<N> {
     /// Shuts down the primary.
     pub async fn shut_down(&self) {
         info!("Shutting down the sync module...");
-        // Acquire the response lock.
-        let _lock = self.response_lock.lock().await;
         // Acquire the sync lock.
         let _lock = self.sync_lock.lock().await;
         // Abort the tasks.

@@ -287,6 +287,11 @@ impl<N: Network> Primary<N> {
         &self.storage
     }
 
+    /// Returns the block sync logic.
+    pub const fn block_sync(&self) -> &Sync<N> {
+        &self.sync
+    }
+
     /// Returns the ledger.
     pub const fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
         &self.ledger
@@ -1384,8 +1389,12 @@ impl<N: Network> Primary<N> {
                 tokio::spawn(async move {
                     // Process the batch proposal.
                     let round = batch_propose.round;
-                    if let Err(e) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
-                        warn!("Cannot sign a batch at round {round} from '{peer_ip}' - {e}");
+                    if let Err(err) = self_
+                        .process_batch_propose_from_peer(peer_ip, batch_propose)
+                        .await
+                        .with_context(|| format!("Cannot sign a batch at round {round} from '{peer_ip}'"))
+                    {
+                        warn!("{}", flatten_error(err));
                     }
                 });
             }

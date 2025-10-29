@@ -585,6 +585,9 @@ impl<N: Network> BFT<N> {
         &self,
         leader_certificate: BatchCertificate<N>,
     ) -> Result<()> {
+        // Ensure sync is not advancing while this commit is in progress.
+        let _pause_hdl = if !IS_SYNCING { Some(self.primary.block_sync().pause().await) } else { None };
+
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
         // Determine the list of all previous leader certificates since the last committed round.
