@@ -61,6 +61,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
+use anyhow::Context;
 use colored::Colorize;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::{IndexMap, IndexSet};
@@ -191,13 +192,11 @@ impl<N: Network> Primary<N> {
                         // skip the certificate.
                         if let Err(err) = self.sync_with_certificate_from_peer::<true>(DUMMY_SELF_IP, certificate).await
                         {
-                            warn!(
-                                "{}",
-                                &flatten_error(err.context(format!(
-                                    "Failed to load stored certificate {} from proposal cache",
-                                    fmt_id(batch_id)
-                                )))
-                            );
+                            let err = err.context(format!(
+                                "Failed to load stored certificate {} from proposal cache",
+                                fmt_id(batch_id)
+                            ));
+                            warn!("{}", &flatten_error(err));
                         }
                     }
                     Ok(())
@@ -373,8 +372,12 @@ impl<N: Network> Primary<N> {
         let mut lock_guard = self.propose_lock.lock().await;
 
         // Check if the proposed batch has expired, and clear it if it has expired.
-        if let Err(err) = self.check_proposed_batch_for_expiration().await {
-            warn!("{}", &flatten_error(err.context("Failed to check the proposed batch for expiration")));
+        if let Err(err) = self
+            .check_proposed_batch_for_expiration()
+            .await
+            .with_context(|| "Failed to check the proposed batch for expiration")
+        {
+            warn!("{}", flatten_error(&err));
             return Ok(());
         }
 
@@ -849,12 +852,10 @@ impl<N: Network> Primary<N> {
             // If the transmission is not well-formed, then return early.
             self.ledger.ensure_transmission_is_well_formed(*transmission_id, transmission)
         }) {
-            debug!(
-                "{}",
-                &flatten_error(err.context(format!(
-                    "Batch propose at round {batch_round} from '{peer_ip}' contains an invalid transmission"
-                )))
-            );
+            let err = err.context(format!(
+                "Batch propose at round {batch_round} from '{peer_ip}' contains an invalid transmission"
+            ));
+            debug!("{}", flatten_error(err));
             return Ok(());
         }
 
@@ -869,8 +870,14 @@ impl<N: Network> Primary<N> {
 
         // Ensure the batch header from the peer is valid.
         let (storage, header) = (self.storage.clone(), batch_header.clone());
-        let missing_transmissions =
-            spawn_blocking!(storage.check_batch_header(&header, missing_transmissions, Default::default()))?;
+
+        // Check the batch header, and return early if it already exists in storage.
+        let Some(missing_transmissions) =
+            spawn_blocking!(storage.check_batch_header(&header, missing_transmissions, Default::default()))?
+        else {
+            return Ok(());
+        };
+
         // Inserts the missing transmissions into the workers.
         self.insert_missing_transmissions_into_workers(peer_ip, missing_transmissions.into_iter())?;
 
@@ -1400,12 +1407,8 @@ impl<N: Network> Primary<N> {
                 // which means the RwLock for the proposed batch must become a 'tokio::sync' to be safe.
                 let id = fmt_id(batch_signature.batch_id);
                 if let Err(err) = self_.process_batch_signature_from_peer(peer_ip, batch_signature).await {
-                    warn!(
-                        "{}",
-                        &flatten_error(
-                            err.context(format!("Cannot store a signature for batch '{id}' from '{peer_ip}'"))
-                        )
-                    );
+                    let err = err.context(format!("Cannot store a signature for batch '{id}' from '{peer_ip}'"));
+                    warn!("{}", flatten_error(err));
                 }
             }
         });
@@ -1433,10 +1436,10 @@ impl<N: Network> Primary<N> {
                     if let Err(err) = self_.process_batch_certificate_from_peer(peer_ip, batch_certificate).await {
                         warn!(
                             "{}",
-                            &flatten_error(err.context(format!(
+                            flatten_error(err.context(format!(
                                 "Cannot store a certificate '{id}' for round {round} from '{peer_ip}'"
                             )))
-                        )
+                        );
                     }
                 });
             }
@@ -1477,9 +1480,9 @@ impl<N: Network> Primary<N> {
                 };
                 // Attempt to increment to the next round if the quorum threshold is reached.
                 if is_quorum_threshold_reached {
-                    debug!("Quorum threshold reached for round {}", current_round);
+                    debug!("Quorum threshold reached for round {current_round}");
                     if let Err(err) = self_.try_increment_to_the_next_round(next_round).await {
-                        warn!("{}", &flatten_error(err.context("Failed to increment to the next round")));
+                        warn!("{}", flatten_error(err.context("Failed to increment to the next round")));
                     }
                 }
             }
@@ -1582,7 +1585,7 @@ impl<N: Network> Primary<N> {
                     Ok(is_ready) => is_ready,
                     Err(err) => {
                         let err = err.context("Failed to update the BFT to the next round");
-                        warn!("{}", &flatten_error(&err));
+                        warn!("{}", flatten_error(&err));
                         return Err(err);
                     }
                 }
