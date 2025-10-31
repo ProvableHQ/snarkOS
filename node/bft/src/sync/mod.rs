@@ -14,7 +14,9 @@
 // limitations under the License.
 
 use crate::{
-    Gateway, MAX_FETCH_TIMEOUT_IN_MS, Transport,
+    Gateway,
+    MAX_FETCH_TIMEOUT_IN_MS,
+    Transport,
     events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
     helpers::{BFTSender, Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
     ledger_service::LedgerService,
@@ -860,15 +862,21 @@ impl<N: Network> Sync<N> {
             }
 
             for pending_block in pending_blocks.drain(0..num_blocks) {
+                let ledger = self.ledger.clone();
                 let hash = pending_block.hash();
                 let height = pending_block.height();
-                match self.ledger.check_block_content(pending_block) {
-                    Ok(block) => {
-                        trace!("Adding pending block {hash} at height {height} to the ledger");
-                        self.ledger.advance_to_next_block(&block)?;
+
+                spawn_blocking!({
+                    match ledger.check_block_content(pending_block) {
+                        Ok(block) => {
+                            trace!("Adding pending block {hash} at height {height} to the ledger");
+                            ledger.advance_to_next_block(&block)?;
+                        }
+                        Err(err) => bail!("Failed to check contents of pending block {hash} at height {height}: {err}"),
                     }
-                    Err(err) => bail!("Failed to check contents of pending block {hash} at height {height}: {err}"),
-                }
+
+                    Ok(())
+                })?
             }
         }
 
