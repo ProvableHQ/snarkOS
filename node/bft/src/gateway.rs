@@ -1557,7 +1557,7 @@ impl<N: Network> Gateway<N> {
         }
         // If the node is in trusted peers only mode, ensure the peer is trusted.
         if self.trusted_peers_only && !self.is_trusted(listener_addr) {
-            warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
+            warn!("{CONTEXT} Dropping '{peer_addr}' for being an untrusted validator ({address})");
             return Some(DisconnectReason::ProtocolViolation);
         }
         if !bootstrap_peers::<N>(self.dev().is_some()).contains(&listener_addr) {
