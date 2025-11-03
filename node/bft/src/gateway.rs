@@ -190,6 +190,10 @@ impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
         self.dev.is_some()
     }
 
+    fn trusted_peers_only(&self) -> bool {
+        self.trusted_peers_only
+    }
+
     fn node_type(&self) -> NodeType {
         NodeType::Validator
     }

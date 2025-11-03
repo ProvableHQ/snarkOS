@@ -56,6 +56,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Returns `true` if the owning node is in development mode.
     fn is_dev(&self) -> bool;
 
+    /// Returns `true` if the node is in trusted peers only mode.
+    fn trusted_peers_only(&self) -> bool;
+
     /// Returns the node type.
     fn node_type(&self) -> NodeType;
 
@@ -108,6 +111,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // If the IP is already banned, reject the attempt.
         if self.is_ip_banned(listener_addr.ip()) {
             bail!("{} Rejected a connection attempt to a banned IP '{}'", Self::OWNER, listener_addr.ip());
+        }
+        // If the node is in trusted peers only mode, ensure the peer is trusted.
+        if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
+            bail!("{} Dropping connection attempt to '{listener_addr}' (untrusted)", Self::OWNER);
         }
         Ok(false)
     }

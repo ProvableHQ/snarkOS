@@ -96,6 +96,10 @@ impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
         true
     }
 
+    fn trusted_peers_only(&self) -> bool {
+        false
+    }
+
     fn node_type(&self) -> NodeType {
         self.router().node_type()
     }

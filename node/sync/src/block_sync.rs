@@ -1413,6 +1413,10 @@ mod tests {
             true
         }
 
+        fn trusted_peers_only(&self) -> bool {
+            false
+        }
+
         fn node_type(&self) -> NodeType {
             NodeType::Client
         }

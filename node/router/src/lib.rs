@@ -108,6 +108,10 @@ impl<N: Network> PeerPoolHandling<N> for Router<N> {
         self.is_dev
     }
 
+    fn trusted_peers_only(&self) -> bool {
+        self.trusted_peers_only
+    }
+
     fn node_type(&self) -> NodeType {
         self.node_type
     }
