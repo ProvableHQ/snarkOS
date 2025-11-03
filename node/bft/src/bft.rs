@@ -96,11 +96,22 @@ impl<N: Network> BFT<N> {
         block_sync: Arc<BlockSync<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        trusted_peers_only: bool,
         storage_mode: StorageMode,
         dev: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
-            primary: Primary::new(account, storage, ledger, block_sync, ip, trusted_validators, storage_mode, dev)?,
+            primary: Primary::new(
+                account,
+                storage,
+                ledger,
+                block_sync,
+                ip,
+                trusted_validators,
+                trusted_peers_only,
+                storage_mode,
+                dev,
+            )?,
             dag: Default::default(),
             leader_certificate: Default::default(),
             leader_certificate_timer: Default::default(),
@@ -1000,6 +1011,7 @@ mod tests {
             block_sync,
             None,
             &[],
+            false,
             StorageMode::new_test(None),
             None,
         )

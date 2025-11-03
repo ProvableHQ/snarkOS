@@ -130,10 +130,8 @@ pub struct InnerRouter<N: Network> {
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
-    /// If the flag is set, the node will periodically evict more external peers.
-    rotate_external_peers: bool,
-    /// If the flag is set, the node will engage in P2P gossip to request more peers.
-    allow_external_peers: bool,
+    /// If the flag is set, the node will only connect to trusted peers.
+    trusted_peers_only: bool,
     /// The storage mode.
     storage_mode: StorageMode,
     /// The boolean flag for the development mode.
@@ -162,8 +160,7 @@ impl<N: Network> Router<N> {
         ledger: Arc<dyn LedgerService<N>>,
         trusted_peers: &[SocketAddr],
         max_peers: u16,
-        rotate_external_peers: bool,
-        allow_external_peers: bool,
+        trusted_peers_only: bool,
         storage_mode: StorageMode,
         is_dev: bool,
     ) -> Result<Self> {
@@ -173,10 +170,12 @@ impl<N: Network> Router<N> {
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
 
-        // Load entries from the peer cache (if present).
-        let cached_peers = Self::load_cached_peers(&storage_mode, PEER_CACHE_FILENAME)?;
-        for addr in cached_peers {
-            initial_peers.insert(addr, Peer::new_candidate(addr, false));
+        // Load entries from the peer cache (if present and if we are not in trusted peers only mode).
+        if !trusted_peers_only {
+            let cached_peers = Self::load_cached_peers(&storage_mode, PEER_CACHE_FILENAME)?;
+            for addr in cached_peers {
+                initial_peers.insert(addr, Peer::new_candidate(addr, false));
+            }
         }
 
         // Add the trusted peers to the list of the initial peers; this may promote
@@ -193,8 +192,7 @@ impl<N: Network> Router<N> {
             resolver: Default::default(),
             peer_pool: RwLock::new(initial_peers),
             handles: Default::default(),
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode,
             is_dev,
         })))
@@ -241,14 +239,9 @@ impl<N: Network> Router<N> {
         &self.cache
     }
 
-    /// Returns `true` if the node is periodically evicting more external peers.
-    pub fn rotate_external_peers(&self) -> bool {
-        self.rotate_external_peers
-    }
-
-    /// Returns `true` if the node is engaging in P2P gossip to request more peers.
-    pub fn allow_external_peers(&self) -> bool {
-        self.allow_external_peers
+    /// Returns `true` if the node is only engaging with trusted peers.
+    pub fn trusted_peers_only(&self) -> bool {
+        self.trusted_peers_only
     }
 
     /// Returns the listener IP address from the (ambiguous) peer address.

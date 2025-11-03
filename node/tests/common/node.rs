@@ -46,6 +46,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         &[],
         sample_genesis_block(),
         StorageMode::new_test(None),
+        false,
         None,
         Default::default(),
     )

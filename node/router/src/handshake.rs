@@ -339,8 +339,8 @@ impl<N: Network> Router<N> {
         if self.is_local_ip(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
-        // Unknown peers are untrusted, so check if `allow_external_peers` is true.
-        if !self.allow_external_peers() && !self.is_trusted(listener_addr) {
+        // Unknown peers are untrusted, so check if `trusted_peers_only` is true.
+        if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)");
         }
         Ok(())

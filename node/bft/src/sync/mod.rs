@@ -1246,8 +1246,16 @@ mod tests {
             Default::default(),
         ));
         // Initialize the gateway.
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], storage_mode, None)?;
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            syncing_ledger.clone(),
+            None,
+            &[],
+            false,
+            storage_mode,
+            None,
+        )?;
         // Initialize the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
         // Initialize the sync module.

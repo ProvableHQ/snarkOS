@@ -121,6 +121,7 @@ impl<N: Network> Consensus<N> {
         block_sync: Arc<BlockSync<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        trusted_peers_only: bool,
         storage_mode: StorageMode,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
@@ -132,8 +133,17 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         // Initialize the BFT.
-        let bft =
-            BFT::new(account, storage, ledger.clone(), block_sync.clone(), ip, trusted_validators, storage_mode, dev)?;
+        let bft = BFT::new(
+            account,
+            storage,
+            ledger.clone(),
+            block_sync.clone(),
+            ip,
+            trusted_validators,
+            trusted_peers_only,
+            storage_mode,
+            dev,
+        )?;
         // Create a new instance of Consensus.
         let mut _self = Self {
             ledger,

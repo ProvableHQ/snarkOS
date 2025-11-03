@@ -155,13 +155,13 @@ pub struct Start {
     #[clap(long)]
     pub validators: Option<String>,
 
-    /// Allow untrusted peers (not listed in `--peers`) to connect.
+    /// [DEPRECATED] [NO-OP] Allow untrusted peers (not listed in `--peers`) to connect.
     ///
-    /// The flag will be ignored by client and prover nodes, as tis behavior is always enabled for these types of nodes.
+    /// The flag will be ignored by client and prover nodes, as this behavior is always enabled for these types of nodes.
     #[clap(long, verbatim_doc_comment)]
     pub allow_external_peers: bool,
 
-    /// If the flag is set, a client will periodically evict more external peers
+    /// [DEPRECATED] [NO-OP] If the flag is set, a client will periodically evict more external peers
     #[clap(long)]
     pub rotate_external_peers: bool,
 
@@ -188,6 +188,10 @@ pub struct Start {
     /// If the flag is set, the node will not require JWT authentication for the REST server.
     #[clap(long, group = "rest_flags")]
     pub nojwt: bool,
+
+    /// If the flag is set, the node will only connect to trusted peers and validators.
+    #[clap(long)]
+    pub trusted_peers_only: bool,
 
     /// Write log message to stdout instead of showing a terminal UI.
     ///
@@ -725,9 +729,9 @@ impl Start {
 
         // Initialize the node.
         match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, shutdown.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.dev, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, shutdown.clone()).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, shutdown.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, shutdown).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }
     }

@@ -68,7 +68,6 @@ pub async fn client(listening_port: u16, max_peers: u16, rng: &mut TestRng) -> T
         &[],
         max_peers,
         false,
-        true,
         StorageMode::new_test(None),
         true,
     )
@@ -90,7 +89,6 @@ pub async fn prover(listening_port: u16, max_peers: u16, rng: &mut TestRng) -> T
         &[],
         max_peers,
         false,
-        true,
         StorageMode::new_test(None),
         true,
     )
@@ -105,7 +103,7 @@ pub async fn validator(
     listening_port: u16,
     max_peers: u16,
     trusted_peers: &[SocketAddr],
-    allow_external_peers: bool,
+    trusted_peers_only: bool,
     rng: &mut TestRng,
 ) -> TestRouter<CurrentNetwork> {
     let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
@@ -117,8 +115,7 @@ pub async fn validator(
         ledger_service,
         trusted_peers,
         max_peers,
-        false,
-        allow_external_peers,
+        trusted_peers_only,
         StorageMode::new_test(None),
         true,
     )
