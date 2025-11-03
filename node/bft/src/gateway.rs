@@ -751,6 +751,9 @@ impl<N: Network> Gateway<N> {
                 Ok(true)
             }
             Event::ValidatorsResponse(response) => {
+                if self.trusted_peers_only {
+                    bail!("{CONTEXT} Not accepting validators response from '{peer_ip}' (trusted peers only)");
+                }
                 let ValidatorsResponse { validators } = response;
                 // Ensure the number of validators is not too large.
                 ensure!(validators.len() <= MAX_VALIDATORS_TO_SEND, "{CONTEXT} Received too many validators");
@@ -1545,6 +1548,11 @@ impl<N: Network> Gateway<N> {
         if version < Event::<N>::VERSION {
             warn!("{CONTEXT} Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
+        }
+        // If the node is in trusted peers only mode, ensure the peer is trusted.
+        if self.trusted_peers_only && !self.is_trusted(peer_addr) {
+            warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
+            return Some(DisconnectReason::ProtocolViolation);
         }
         if !bootstrap_peers::<N>(self.dev().is_some()).contains(&peer_addr) {
             // Ensure the address is a current committee member.
