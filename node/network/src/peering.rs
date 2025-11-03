@@ -193,6 +193,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// limit on the number of peers in the pool. The listener addresses may be paired with
     /// the last known block height of the associated peer.
     fn insert_candidate_peers(&self, mut listener_addrs: Vec<(SocketAddr, Option<u32>)>) {
+        let trusted_peers = self.trusted_peers();
+
         // Hold a write guard from now on, so as not to accidentally slash multiple times
         // based on multiple batches of candidate peers, and to not overwrite any entries.
         let mut peer_pool = self.peer_pool().write();
@@ -225,7 +227,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             // Collect the addresses of prospect peers.
             let mut peers_to_slash = peer_pool
                 .iter()
-                .filter_map(|(addr, peer)| (matches!(peer, Peer::Candidate(_))).then_some(*addr))
+                .filter_map(|(addr, peer)| {
+                    (matches!(peer, Peer::Candidate(_)) && !trusted_peers.contains(addr)).then_some(*addr)
+                })
                 .collect::<Vec<_>>();
 
             // Get the low-level peer stats.
