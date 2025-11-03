@@ -1541,8 +1541,10 @@ impl<N: Network> Gateway<N> {
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, address, nonce: _, ref snarkos_sha } = event;
+        let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
         log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+
+        let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 
         // Ensure the event protocol version is not outdated.
         if version < Event::<N>::VERSION {
@@ -1550,11 +1552,11 @@ impl<N: Network> Gateway<N> {
             return Some(DisconnectReason::OutdatedClientVersion);
         }
         // If the node is in trusted peers only mode, ensure the peer is trusted.
-        if self.trusted_peers_only && !self.is_trusted(peer_addr) {
+        if self.trusted_peers_only && !self.is_trusted(listener_addr) {
             warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
             return Some(DisconnectReason::ProtocolViolation);
         }
-        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&peer_addr) {
+        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&listener_addr) {
             // Ensure the address is a current committee member.
             if !self.is_authorized_validator_address(address) {
                 warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
