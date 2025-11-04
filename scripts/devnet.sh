@@ -9,21 +9,25 @@ fi
 read -p "Enter the total number of validators (default: 4): " total_validators
 total_validators=${total_validators:-4}
 
-# Read the total number of clients from the user or use a default value of 2
-read -p "Enter the total number of clients (default: 2): " total_clients
-total_clients=${total_clients:-2}
+# Read the total number of clients from the user or use a default value of 0
+read -p "Enter the total number of clients (default: 0): " total_clients
+total_clients=${total_clients:-0}
 
 # Read the network ID from user or use a default value of 1
 read -p "Enter the network ID (mainnet = 0, testnet = 1, canary = 2) (default: 1): " network_id
 network_id=${network_id:-1}
 
 # Ask the user if they want to run 'cargo install --locked --path .' or use a pre-installed binary
-read -p "Do you want to run 'cargo install --locked --path .' to build the binary? (y/n, default: y): " build_binary
-build_binary=${build_binary:-y}
+read -p "Do you want to run build (b) or install (i) the binary? (b/i/n, default: b): " build_binary
+build_binary=${build_binary:-b}
+
+# Ask the user whether to use a custom relative path
+read -p "Do you want to run snarkos from a relative path? (default: ./target/debug/snarkos): " binary_path
+binary_path=${binary_path:-"./target/debug/snarkos"}
 
 # Ask the user whether to clear the existing ledger history
-read -p "Do you want to clear the existing ledger history? (y/n, default: n): " clear_ledger
-clear_ledger=${clear_ledger:-n}
+read -p "Do you want to clear the existing ledger history? (y/n, default: y): " clear_ledger
+clear_ledger=${clear_ledger:-y}
 
 # Log verbosity is set to 1 (DEBUG) by default.
 verbosity=1
@@ -31,27 +35,31 @@ verbosity=1
 # Binary path set to "" by default (using installed binary) 
 binary_path=""
 
-if [[ $build_binary == "y" ]]; then
+# Build command set to "" by default
+build_cmd=""
+
+if [[ $build_binary != "n" ]]; then
   # Ask the user for additional crate features (comma-separated)
   read -p "Enter crate features to enable (comma separated, default: test_network,telemetry): " crate_features
   crate_features=${crate_features:-test_network,telemetry}
 
-  # Build command
-  build_cmd="cargo install --locked --path ."
+  if [[ $build_binary == "i" ]]; then
+    # Build command
+    build_cmd="cargo install --locked --path ."
+  elif [[ $build_binary == "b" ]]; then
+    # Build command
+    build_cmd="cargo build"
+  fi
 
   # Add any extra features if provided
   if [[ -n $crate_features ]]; then
     build_cmd+=" --features ${crate_features}"
   fi
-
   # Build command
   echo "Running build command: \"$build_cmd\""
   eval "$build_cmd" || exit 1
-else
-  # Ask the user whether to use a custom relative path
-  read -p "Do you want to run snarkos from a relative path? (default: ./target/debug/snarkos): " binary_path
-  binary_path=${binary_path:-"./target/debug/snarkos"}
 fi
+
 
 # Clear the ledger logs for each validator if the user chooses to clear ledger
 if [[ $clear_ledger == "y" ]]; then
