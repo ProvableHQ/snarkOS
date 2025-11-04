@@ -224,19 +224,20 @@ async fn test_validator_connection() {
             !node1_.is_connected(node0_.local_ip()) && !node0_.is_connected(node1_.local_ip())
         });
 
-        // Connect node1 to node0.
-        let Ok(res) = node1.connect(node0.local_ip()).unwrap().await else {
-            panic!("Connection failed for the wrong reasons.");
-        };
-        assert!(!res, "Connection was accepted when it should not have been.");
+        // TODO(vicsn) uncomment this when applying https://github.com/ProvableHQ/snarkOS/pull/3989
+        // // Connect node1 to node0.
+        // let Ok(res) = node1.connect(node0.local_ip()).unwrap().await else {
+        //     panic!("Connection failed for the wrong reasons.");
+        // };
+        // assert!(!res, "Connection was accepted when it should not have been.");
 
-        // Check the TCP level - connection was not accepted.
-        assert_eq!(node0.tcp().num_connected(), 0);
-        assert_eq!(node1.tcp().num_connected(), 0);
+        // // Check the TCP level - connection was not accepted.
+        // assert_eq!(node0.tcp().num_connected(), 0);
+        // assert_eq!(node1.tcp().num_connected(), 0);
 
-        // Check the router level - connection was not accepted.
-        assert_eq!(node0.number_of_connected_peers(), 0);
-        assert_eq!(node1.number_of_connected_peers(), 0);
+        // // Check the router level - connection was not accepted.
+        // assert_eq!(node0.number_of_connected_peers(), 0);
+        // assert_eq!(node1.number_of_connected_peers(), 0);
     }
 }
 

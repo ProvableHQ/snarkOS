@@ -92,7 +92,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        allow_external_peers: bool,
+        trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
@@ -106,9 +106,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
 
-        // Determine if the validator should rotate external peers.
-        let rotate_external_peers = false;
-
         // Initialize the node router.
         let router = Router::new(
             node_ip,
@@ -117,8 +114,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode.clone(),
             dev.is_some(),
         )
@@ -136,6 +132,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync.clone(),
             bft_ip,
             trusted_validators,
+            trusted_peers_only,
             storage_mode.clone(),
             ping.clone(),
             dev,

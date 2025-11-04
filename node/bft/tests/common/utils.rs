@@ -217,7 +217,7 @@ pub fn sample_gateway<N: Network>(
     ledger: Arc<TranslucentLedgerService<N, ConsensusMemory<N>>>,
 ) -> Gateway<N> {
     // Initialize the gateway.
-    Gateway::new(account, storage, ledger, None, &[], StorageMode::new_test(None), None).unwrap()
+    Gateway::new(account, storage, ledger, None, &[], false, StorageMode::new_test(None), None).unwrap()
 }
 
 /// Samples a new worker with the given ledger.

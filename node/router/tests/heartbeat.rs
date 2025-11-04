@@ -100,11 +100,11 @@ async fn peer_priority_ordering() {
     router.enable_handshake().await;
     router.enable_on_connect().await;
 
-    let validator_peer1 = validator(0, 5, &[], true, &mut rng).await;
+    let validator_peer1 = validator(0, 5, &[], false, &mut rng).await;
     validator_peer1.enable_listener().await;
     validator_peer1.enable_handshake().await;
 
-    let validator_peer2 = validator(0, 5, &[], true, &mut rng).await;
+    let validator_peer2 = validator(0, 5, &[], false, &mut rng).await;
     validator_peer2.enable_listener().await;
     validator_peer2.enable_handshake().await;
 
@@ -157,7 +157,7 @@ async fn peer_priority_ordering() {
 async fn peer_priority_trusted_peers() {
     let mut rng = TestRng::default();
 
-    let validator_peer = validator(0, 5, &[], true, &mut rng).await;
+    let validator_peer = validator(0, 5, &[], false, &mut rng).await;
     validator_peer.enable_listener().await;
     validator_peer.enable_handshake().await;
 

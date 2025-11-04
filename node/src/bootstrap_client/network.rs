@@ -53,6 +53,10 @@ impl<N: Network> PeerPoolHandling<N> for BootstrapClient<N> {
         self.dev.is_some()
     }
 
+    fn trusted_peers_only(&self) -> bool {
+        false
+    }
+
     fn node_type(&self) -> NodeType {
         NodeType::BootstrapClient
     }

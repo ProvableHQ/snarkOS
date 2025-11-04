@@ -167,6 +167,8 @@ pub struct InnerGateway<N: Network> {
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
     storage_mode: StorageMode,
+    /// If the flag is set, the node will only connect to trusted peers.
+    trusted_peers_only: bool,
     /// The development mode.
     dev: Option<u16>,
 }
@@ -188,6 +190,10 @@ impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
         self.dev.is_some()
     }
 
+    fn trusted_peers_only(&self) -> bool {
+        self.trusted_peers_only
+    }
+
     fn node_type(&self) -> NodeType {
         NodeType::Validator
     }
@@ -195,12 +201,14 @@ impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
 
 impl<N: Network> Gateway<N> {
     /// Initializes a new gateway.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         account: Account<N>,
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        trusted_peers_only: bool,
         storage_mode: StorageMode,
         dev: Option<u16>,
     ) -> Result<Self> {
@@ -216,10 +224,12 @@ impl<N: Network> Gateway<N> {
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
 
-        // Load entries from the validator cache (if present).
-        let cached_peers = Self::load_cached_peers(&storage_mode, VALIDATOR_CACHE_FILENAME)?;
-        for addr in cached_peers {
-            initial_peers.insert(addr, Peer::new_candidate(addr, false));
+        // Load entries from the validator cache (if present and if we are not in trusted peers only mode).
+        if !trusted_peers_only {
+            let cached_peers = Self::load_cached_peers(&storage_mode, VALIDATOR_CACHE_FILENAME)?;
+            for addr in cached_peers {
+                initial_peers.insert(addr, Peer::new_candidate(addr, false));
+            }
         }
 
         // Add the trusted peers to the list of the initial peers; this may promote
@@ -242,6 +252,7 @@ impl<N: Network> Gateway<N> {
             sync_sender: Default::default(),
             handles: Default::default(),
             storage_mode,
+            trusted_peers_only,
             dev,
         })))
     }
@@ -744,6 +755,9 @@ impl<N: Network> Gateway<N> {
                 Ok(true)
             }
             Event::ValidatorsResponse(response) => {
+                if self.trusted_peers_only {
+                    bail!("{CONTEXT} Not accepting validators response from '{peer_ip}' (trusted peers only)");
+                }
                 let ValidatorsResponse { validators } = response;
                 // Ensure the number of validators is not too large.
                 ensure!(validators.len() <= MAX_VALIDATORS_TO_SEND, "{CONTEXT} Received too many validators");
@@ -937,6 +951,10 @@ impl<N: Network> Gateway<N> {
 
     /// This function keeps the number of bootstrap peers within the allowed range.
     async fn handle_bootstrap_peers(&self) {
+        // Return early if we are in trusted peers only mode.
+        if self.trusted_peers_only {
+            return;
+        }
         // Split the bootstrap peers into connected and candidate lists.
         let mut candidate_bootstrap = Vec::new();
         let connected_bootstrap = self.filter_connected_peers(|peer| peer.node_type == NodeType::BootstrapClient);
@@ -1527,15 +1545,22 @@ impl<N: Network> Gateway<N> {
     /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, address, nonce: _, ref snarkos_sha } = event;
+        let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
         log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+
+        let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 
         // Ensure the event protocol version is not outdated.
         if version < Event::<N>::VERSION {
             warn!("{CONTEXT} Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
-        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&peer_addr) {
+        // If the node is in trusted peers only mode, ensure the peer is trusted.
+        if self.trusted_peers_only && !self.is_trusted(listener_addr) {
+            warn!("{CONTEXT} Dropping '{peer_addr}' for being an untrusted validator ({address})");
+            return Some(DisconnectReason::ProtocolViolation);
+        }
+        if !bootstrap_peers::<N>(self.dev().is_some()).contains(&listener_addr) {
             // Ensure the address is a current committee member.
             if !self.is_authorized_validator_address(address) {
                 warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
@@ -1666,6 +1691,7 @@ mod prop_tests {
                         storage.ledger().clone(),
                         address.ip(),
                         &[],
+                        false,
                         StorageMode::new_test(None),
                         address.port(),
                     )
@@ -1718,6 +1744,7 @@ mod prop_tests {
             storage.ledger().clone(),
             dev.ip(),
             &[],
+            false,
             StorageMode::new_test(None),
             dev.port(),
         )
@@ -1742,6 +1769,7 @@ mod prop_tests {
             storage.ledger().clone(),
             dev.ip(),
             &[],
+            false,
             StorageMode::new_test(None),
             dev.port(),
         )
@@ -1776,6 +1804,7 @@ mod prop_tests {
             storage.ledger().clone(),
             dev.ip(),
             &[],
+            false,
             StorageMode::new_test(None),
             dev.port(),
         )
@@ -1849,6 +1878,7 @@ mod prop_tests {
             ledger.clone(),
             dev.ip(),
             &[],
+            false,
             StorageMode::new_test(None),
             dev.port(),
         )

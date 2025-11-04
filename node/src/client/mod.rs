@@ -140,7 +140,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        rotate_external_peers: bool,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
@@ -152,8 +152,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
-        // Determine if the client should allow external peers.
-        let allow_external_peers = true;
 
         // Initialize the node router.
         let router = Router::new(
@@ -163,8 +161,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode.clone(),
             dev.is_some(),
         )
