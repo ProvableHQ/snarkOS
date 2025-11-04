@@ -53,6 +53,15 @@ common_flags=(
   "--dev-num-validators=$total_validators"
 )
 
+# Set the trusted peers for the validators
+trusted_peers=()
+for ((client_index = 0; client_index < total_clients; client_index++)); do
+  node_index=$((client_index + total_validators))
+  trusted_peers+=("localhost:$((4130 + $node_index)),")
+done
+# Trim the last comma
+trusted_peers=${trusted_peers%,}
+
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"
@@ -60,10 +69,10 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --metrics --no-dev-txs &
+      --validator "--logfile=$log_file" --metrics --no-dev-txs --peers "$trusted_peers" &
   else
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" &
+      --validator "--logfile=$log_file" --peers "$trusted_peers" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
