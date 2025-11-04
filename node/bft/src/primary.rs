@@ -80,7 +80,10 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{sync::OnceCell, task::JoinHandle};
+use tokio::{
+    sync::{Notify, OnceCell},
+    task::JoinHandle,
+};
 
 /// A helper type for an optional proposed batch.
 pub type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
@@ -111,6 +114,8 @@ pub struct Primary<N: Network> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The lock for propose_batch.
     propose_lock: Arc<TMutex<u64>>,
+    /// Gets notified when a batch proposal has been generated.
+    proposal_notify: Arc<Notify>,
     /// The storage mode of the node.
     storage_mode: StorageMode,
 }
@@ -150,6 +155,7 @@ impl<N: Network> Primary<N> {
             signed_proposals: Default::default(),
             handles: Default::default(),
             propose_lock: Default::default(),
+            proposal_notify: Default::default(),
             storage_mode,
         })
     }
@@ -291,6 +297,11 @@ impl<N: Network> Primary<N> {
     /// Returns the batch proposal of our primary, if one currently exists.
     pub fn proposed_batch(&self) -> &Arc<ProposedBatch<N>> {
         &self.proposed_batch
+    }
+
+    /// Returns the proposal notify.
+    pub const fn proposal_notify(&self) -> &Arc<Notify> {
+        &self.proposal_notify
     }
 }
 
@@ -610,11 +621,11 @@ impl<N: Network> Primary<N> {
                             continue;
                         };
 
-                        // Check if the transaction is still valid.
-                        if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction).await {
-                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
-                            continue;
-                        }
+                        // // Check if the transaction is still valid.
+                        // if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction).await {
+                        //     trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
+                        //     continue;
+                        // }
 
                         // Compute the next proposal cost.
                         // Note: We purposefully discard this transaction if the proposal cost overflows.
@@ -696,6 +707,9 @@ impl<N: Network> Primary<N> {
 
         #[cfg(feature = "test_network")]
         crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated);
+
+        // Notify the consensus layer that a new batch proposal has been generated.
+        self.proposal_notify.notify_one();
 
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));

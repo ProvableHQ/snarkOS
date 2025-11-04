@@ -4333,6 +4333,7 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "colored 3.0.0",
+ "futures",
  "indexmap 2.12.0",
  "itertools 0.14.0",
  "locktick 0.3.0",

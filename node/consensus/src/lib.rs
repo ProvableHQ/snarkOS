@@ -27,7 +27,6 @@ extern crate snarkos_node_metrics as metrics;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
-    MAX_BATCH_DELAY_IN_MS,
     Primary,
     helpers::{
         ConsensusReceiver,
@@ -55,6 +54,7 @@ use snarkvm::{
 use aleo_std::StorageMode;
 use anyhow::Result;
 use colored::Colorize;
+use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -62,7 +62,7 @@ use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -377,6 +377,7 @@ impl<N: Network> Consensus<N> {
     /// to the BFT layer for inclusion in a batch.
     pub async fn add_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<()> {
         // Calculate the transmission checksum.
+        // TODO: we're calculating the checksum many times.
         let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
         // Queue the unconfirmed transaction.
         {
@@ -403,18 +404,13 @@ impl<N: Network> Consensus<N> {
                     .lock()
                     .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
             }
-            // Check that the transaction is not in the mempool.
-            if self.contains_transaction(&transaction_id) {
-                bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
-            }
             // Add the transaction to the memory pool.
             trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
             let priority_fee = transaction.priority_fee_amount()?;
             self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
         }
 
-        // Try to process the unconfirmed transactions in the memory pool.
-        self.process_unconfirmed_transactions().await
+        Ok(())
     }
 
     /// Processes unconfirmed transactions in the mempool, and passes them to the BFT layer
@@ -448,6 +444,8 @@ impl<N: Network> Consensus<N> {
                 .map(|(_, tx)| tx)
                 .collect_vec()
         };
+        // Track unordered futures.
+        let mut send_unconfirmed_transactions = FuturesUnordered::new();
         // Iterate over the transactions.
         for transaction in transactions.into_iter() {
             let transaction_id = transaction.id();
@@ -459,16 +457,12 @@ impl<N: Network> Consensus<N> {
             };
             trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
             // Send the unconfirmed transaction to the primary.
-            if let Err(e) =
-                self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await
-            {
-                // If the BFT is synced, then log the warning.
-                if self.bft.is_synced() {
-                    warn!(
-                        "Failed to add unconfirmed {tx_type_str} transaction '{}' to the memory pool - {e}",
-                        fmt_id(transaction_id)
-                    );
-                }
+            send_unconfirmed_transactions
+                .push(self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)));
+        }
+        while let Some(result) = send_unconfirmed_transactions.next().await {
+            if let Err(e) = result {
+                warn!("Failed to add unconfirmed transaction to the memory pool - {e}");
             }
         }
         Ok(())
@@ -491,14 +485,10 @@ impl<N: Network> Consensus<N> {
         });
 
         // Process the unconfirmed transactions in the memory pool.
-        //
-        // TODO (kaimast): This shouldn't happen periodically but only when new batches/blocks are accepted
-        // by the BFT layer, after which the worker's ready queue may have capacity for more transactions/solutions.
         let self_ = self.clone();
         self.spawn(async move {
+            let sleep_time = Duration::from_millis(500);
             loop {
-                // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(e) = self_.process_unconfirmed_transactions().await {
                     warn!("Cannot process unconfirmed transactions - {e}");
@@ -506,6 +496,11 @@ impl<N: Network> Consensus<N> {
                 // Process the unconfirmed solutions in the memory pool.
                 if let Err(e) = self_.process_unconfirmed_solutions().await {
                     warn!("Cannot process unconfirmed solutions - {e}");
+                }
+                // wait to be woke up, either by timer or notify
+                if timeout(sleep_time, self_.bft().primary().proposal_notify().notified()).await.is_ok() {
+                    // If the timer is not expired, it means we got woken up by a new proposal.
+                    continue;
                 }
             }
         });

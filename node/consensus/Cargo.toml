@@ -41,6 +41,9 @@ workspace = true
 [dependencies.colored]
 workspace = true
 
+[dependencies.futures]
+workspace = true
+
 [dependencies.indexmap]
 workspace = true
 features = [ "serde", "rayon" ]
