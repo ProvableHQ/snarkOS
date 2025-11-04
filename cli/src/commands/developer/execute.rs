@@ -152,7 +152,7 @@ impl Execute {
             let vm = VM::from(store)?;
 
             if !is_static_query && program_id != ProgramID::from_str("credits.aleo")? {
-                let height = query.current_block_height()?;
+                let height = query.current_block_height().with_context(|| "Failed to retrieve current block height")?;
                 let version = N::CONSENSUS_VERSION(height)?;
                 debug!("At block height {height} and consensus {version:?}");
                 let edition = Developer::get_latest_edition(&endpoint, &program_id)

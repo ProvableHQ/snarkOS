@@ -71,6 +71,7 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("tower=warn".parse().unwrap())
             .add_directive("axum=warn".parse().unwrap())
             .add_directive("ureq=warn".parse().unwrap())
+            .add_directive("rustls=warn".parse().unwrap())
     } else {
         let filter = filter.add_directive("snarkos_node_bft::gateway=debug".parse().unwrap());
 
@@ -85,6 +86,7 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("tower=off".parse().unwrap())
             .add_directive("axum=off".parse().unwrap())
             .add_directive("ureq=off".parse().unwrap())
+            .add_directive("rustls=off".parse().unwrap())
     };
 
     let filter = if verbosity >= 5 {
