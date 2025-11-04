@@ -28,7 +28,7 @@ use snarkvm::{
 #[cfg(not(feature = "test_targets"))]
 use snarkvm::prelude::FromBytes;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::{Parser, builder::NonEmptyStringValueParser};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -39,6 +39,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use tracing::debug;
 use ureq::http::Uri;
 use zeroize::Zeroize;
 
@@ -144,35 +145,42 @@ impl Scan {
 
     /// Returns the `start` and `end` blocks to scan.
     fn parse_block_range<N: Network>(&self, endpoint: &Uri) -> Result<(u32, u32)> {
-        match (self.start, self.end, self.last) {
-            (Some(start), Some(end), None) => {
-                ensure!(end > start, "The given scan range is invalid (start = {start}, end = {end})");
+        // Compute the end height.
+        let end = if let Some(end) = self.end {
+            end
+        } else {
+            // If not end height was given, request the latest block height from the endpoint.
+            let (endpoint, api_version) = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
+            let result = ureq::get(&endpoint).call().map_err(|e| e.into());
+            let end: u32 = Developer::handle_ureq_result(result, api_version)?
+                .ok_or(anyhow!("Endpoint returned 404 for latest block height"))?
+                .read_to_string()?
+                .parse()?;
 
-                Ok((start, end))
-            }
-            (Some(start), None, None) => {
-                // Request the latest block height from the endpoint.
-                let endpoint = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
-                let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_body().read_to_string()?)?;
+            debug!("Set end height to {end} based on latest block height of the endpoint");
+            end
+        };
 
-                // Print a warning message if the user is attempting to scan the whole chain.
-                if start == 0 {
-                    println!("⚠️  Attention - Scanning the entire chain. This may take a while...\n");
-                }
+        // Compute the start height.
+        let start = if let Some(start) = self.start {
+            start
+        } else if let Some(last) = self.last {
+            let start = end.saturating_sub(last);
+            debug!("Setting start height to {start} (based on last={last} and end={end})");
+            start
+        } else {
+            debug!("Picking default value (0) for start height");
+            0
+        };
 
-                Ok((start, latest_height))
-            }
-            (None, Some(end), None) => Ok((0, end)),
-            (None, None, Some(last)) => {
-                // Request the latest block height from the endpoint.
-                let endpoint = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
-                let latest_height = u32::from_str(&ureq::get(&endpoint).call()?.into_body().read_to_string()?)?;
+        ensure!(end > start, "The given scan range is invalid (start = {start}, end = {end})");
 
-                Ok((latest_height.saturating_sub(last), latest_height))
-            }
-            (None, None, None) => bail!("Missing data about block range."),
-            _ => bail!("`last` flags can't be used with `start` or `end`"),
+        // Print a warning message if the user is attempting to scan the whole chain.
+        if start == 0 && self.end.is_none() {
+            println!("⚠️  Attention - Scanning the entire chain. This may take a while...\n");
         }
+
+        Ok((start, end))
     }
 
     /// Returns the CDN to prefetch initial blocks from, from the given configurations.
@@ -215,8 +223,11 @@ impl Scan {
         #[cfg(not(feature = "test_targets"))]
         let is_development_network = {
             // Fetch the genesis block from the endpoint.
-            let endpoint = Developer::build_endpoint::<N>(endpoint, "block/0")?;
-            let endpoint_genesis_block: Block<N> = ureq::get(endpoint).call()?.into_body().read_json()?;
+            let endpoint_genesis_block: Block<N> = match Developer::http_get_json::<N, _>(endpoint, "block/0")? {
+                Some(block) => block,
+                None => bail!("Enpoint returend 404 for genesis block"),
+            };
+
             // If the endpoint's block differs from our (production) block, it is on a development network.
             endpoint_genesis_block != Block::from_bytes_le(N::genesis_bytes())?
         };
@@ -255,12 +266,11 @@ impl Scan {
                 std::cmp::min(MAX_BLOCK_RANGE, end_height.saturating_sub(request_start).saturating_add(1));
             let request_end = request_start.saturating_add(num_blocks_to_request);
 
-            // Establish the endpoint.
-            let blocks_endpoint =
-                Developer::build_endpoint::<N>(endpoint, &format!("blocks?start={request_start}&end={request_end}"))?;
-            // Fetch blocks
-            let blocks: Vec<Block<N>> = (|| ureq::get(&blocks_endpoint).call()?.into_body().read_json())()
-                .with_context(|| format!("Failed to fetch blocks range {request_start}..{request_end}"))?;
+            // Fetch blocks.
+            let blocks: Vec<Block<N>> =
+                Developer::http_get_json::<N, _>(endpoint, &format!("blocks?start={request_start}&end={request_end}"))
+                    .and_then(|blocks| blocks.ok_or(anyhow!("Enpoint returend 404 for the specified block range")))
+                    .with_context(|| format!("Failed to fetch blocks range {request_start}..{request_end}"))?;
 
             // Scan the blocks for owned records.
             for block in &blocks {
@@ -385,7 +395,8 @@ impl Scan {
             let serial_number = Record::<N, Plaintext<N>>::serial_number(private_key, commitment)?;
 
             // Establish the endpoint.
-            let endpoint = Developer::build_endpoint::<N>(endpoint, &format!("find/transitionID/{serial_number}"))?;
+            let (endpoint, _api_version) =
+                Developer::build_endpoint::<N>(endpoint, &format!("find/transitionID/{serial_number}"))?;
 
             // Check if the record is spent.
             match ureq::get(&endpoint).call() {
