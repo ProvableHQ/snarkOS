@@ -16,7 +16,7 @@
 use snarkvm::{
     ledger::{
         committee::Committee,
-        narwhal::{BatchCertificate, BatchHeader, Subdag},
+        narwhal::{BatchCertificate, BatchHeader, NarwhalCertificate, Subdag},
     },
     prelude::{Address, Field, Network, cfg_chunks, cfg_iter},
 };
@@ -109,6 +109,7 @@ impl<N: Network> Telemetry<N> {
         self.garbage_collect_certificates(next_gc_round);
 
         // Insert the subdag certificates.
+        let Subdag::Full { subdag } = subdag else { todo!() };
         cfg_iter!(subdag).for_each(|(_round, certificates)| {
             cfg_iter!(certificates).for_each(|certificate| {
                 // TODO (raychu86): Can be greatly optimized by doing a one-shot update instead of individual certificates.

@@ -25,14 +25,14 @@ use snarkos_node_sync::locators::BlockLocators;
 use snarkvm::{
     console::network::*,
     ledger::{
+        SubdagTransmissions,
         block::{Block, Transaction},
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, Data, Subdag, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::Result,
 };
 
-use indexmap::IndexMap;
 use std::net::SocketAddr;
 use tokio::sync::{mpsc, oneshot};
 
@@ -40,14 +40,12 @@ const MAX_CHANNEL_SIZE: usize = 8192;
 
 #[derive(Debug)]
 pub struct ConsensusSender<N: Network> {
-    pub tx_consensus_subdag:
-        mpsc::Sender<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
+    pub tx_consensus_subdag: mpsc::Sender<(Subdag<N>, SubdagTransmissions<N>, oneshot::Sender<Result<()>>)>,
 }
 
 #[derive(Debug)]
 pub struct ConsensusReceiver<N: Network> {
-    pub rx_consensus_subdag:
-        mpsc::Receiver<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
+    pub rx_consensus_subdag: mpsc::Receiver<(Subdag<N>, SubdagTransmissions<N>, oneshot::Sender<Result<()>>)>,
 }
 
 /// Initializes the consensus channels.

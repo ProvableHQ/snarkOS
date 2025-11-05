@@ -45,8 +45,9 @@ use snarkos_node_sync::{BlockSync, Ping};
 
 use snarkvm::{
     ledger::{
+        SubdagTransmissions,
         block::Transaction,
-        narwhal::{BatchHeader, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchHeader, Data, NarwhalCertificate, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::*,
@@ -55,7 +56,6 @@ use snarkvm::{
 use aleo_std::StorageMode;
 use anyhow::Result;
 use colored::Colorize;
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
@@ -502,7 +502,7 @@ impl<N: Network> Consensus<N> {
     async fn process_bft_subdag(
         &self,
         subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        transmissions: SubdagTransmissions<N>,
         callback: oneshot::Sender<Result<()>>,
     ) {
         // Try to advance to the next block.
@@ -522,15 +522,11 @@ impl<N: Network> Consensus<N> {
     }
 
     /// Attempts to advance the ledger to the next block, and updates the metrics (if enabled) accordingly.
-    fn try_advance_to_next_block(
-        &self,
-        subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<()> {
+    fn try_advance_to_next_block(&self, subdag: Subdag<N>, transmissions: SubdagTransmissions<N>) -> Result<()> {
         #[cfg(feature = "metrics")]
-        let start = subdag.leader_certificate().batch_header().timestamp();
+        let start = subdag.leader_batch_certificate()?.timestamp();
         #[cfg(feature = "metrics")]
-        let num_committed_certificates = subdag.values().map(|c| c.len()).sum::<usize>();
+        let num_committed_certificates = subdag.num_certificates();
         #[cfg(feature = "metrics")]
         let current_block_timestamp = self.ledger.latest_block().header().metadata().timestamp();
 
@@ -607,9 +603,9 @@ impl<N: Network> Consensus<N> {
     }
 
     /// Reinserts the given transmissions into the memory pool.
-    async fn reinsert_transmissions(&self, transmissions: IndexMap<TransmissionID<N>, Transmission<N>>) {
+    async fn reinsert_transmissions(&self, transmissions: SubdagTransmissions<N>) {
         // Iterate over the transmissions.
-        for (transmission_id, transmission) in transmissions.into_iter() {
+        for (transmission_id, transmission) in transmissions.transmissions.into_iter() {
             // Reinsert the transmission into the memory pool.
             if let Err(e) = self.reinsert_transmission(transmission_id, transmission).await {
                 warn!(

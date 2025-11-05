@@ -19,7 +19,7 @@ use snarkos_node_bft_storage_service::StorageService;
 use snarkvm::{
     ledger::{
         block::{Block, Transaction},
-        narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, BatchHeader, NarwhalCertificate, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
     utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
@@ -794,8 +794,10 @@ impl<N: Network> Storage<N> {
         let mut aborted_transmissions = HashSet::new();
 
         // Track the block's aborted solutions and transactions.
-        let aborted_solutions: IndexSet<_> = block.aborted_solution_ids().iter().collect();
-        let aborted_transactions: IndexSet<_> = block.aborted_transaction_ids().iter().collect();
+        let aborted_solutions: IndexSet<_> =
+            block.aborted_solution_ids().map(|ids| ids.iter().collect()).unwrap_or_default();
+        let aborted_transactions: IndexSet<_> =
+            block.aborted_transaction_ids().map(|ids| ids.iter().collect()).unwrap_or_default();
 
         // Iterate over the transmission IDs.
         for transmission_id in certificate.transmission_ids() {

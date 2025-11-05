@@ -95,8 +95,11 @@ pub fn update_block_metrics<N: Network>(block: &Block<N>) {
     increment_gauge(blocks::REJECTED_EXECUTE, rejected_execute.load(Ordering::Relaxed) as f64);
 
     // Update aborted transactions and solutions.
-    increment_gauge(blocks::ABORTED_TRANSACTIONS, block.aborted_transaction_ids().len() as f64);
-    increment_gauge(blocks::ABORTED_SOLUTIONS, block.aborted_solution_ids().len() as f64);
+    increment_gauge(
+        blocks::ABORTED_TRANSACTIONS,
+        block.aborted_transaction_ids().map(|ids| ids.len()).unwrap_or(0) as f64,
+    );
+    increment_gauge(blocks::ABORTED_SOLUTIONS, block.aborted_solution_ids().map(|ids| ids.len()).unwrap_or(0) as f64);
 }
 
 pub fn add_transmission_latency_metric<N: Network>(
@@ -106,13 +109,13 @@ pub fn add_transmission_latency_metric<N: Network>(
     // The age at which we consider a transmission "stale".
     const AGE_THRESHOLD_SECONDS: i32 = 30 * 60; // 30 minutes
 
-    // Retrieve all solution IDs (including aborted).
+    // Retrieve the solution IDs.
     let solution_ids: std::collections::HashSet<_> =
-        block.solutions().solution_ids().chain(block.aborted_solution_ids()).collect();
+        block.solutions().solution_ids().chain(block.aborted_solution_ids().into_iter().flatten()).collect();
 
-    // Retrieve all transaction IDs (including aborted).
+    // Retrieve the transaction IDs.
     let transaction_ids: std::collections::HashSet<_> =
-        block.transaction_ids().chain(block.aborted_transaction_ids()).collect();
+        block.transaction_ids().chain(block.aborted_transaction_ids().into_iter().flatten()).collect();
 
     let mut transmissions_tracker = transmissions_tracker.lock();
     let ts_now = OffsetDateTime::now_utc().unix_timestamp();

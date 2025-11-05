@@ -255,7 +255,7 @@ impl<N: Network> FromBytes for Proposal<N> {
 pub(crate) mod tests {
     use super::*;
     use crate::helpers::storage::tests::sample_transmissions;
-    use snarkvm::{console::network::MainnetV0, utilities::TestRng};
+    use snarkvm::{console::network::MainnetV0, ledger::narwhal::NarwhalCertificate, utilities::TestRng};
 
     type CurrentNetwork = MainnetV0;
 

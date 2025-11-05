@@ -15,15 +15,15 @@
 
 use snarkvm::{
     ledger::{
+        SubdagTransmissions,
         block::{Block, Transaction},
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result},
 };
 
-use indexmap::IndexMap;
 use std::{fmt::Debug, ops::Range};
 
 #[async_trait]
@@ -71,9 +71,6 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// Returns the unconfirmed transaction for the given transaction ID.
     fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>>;
 
-    /// Returns the batch certificate for the given batch certificate ID.
-    fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
-
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>>;
 
@@ -114,7 +111,7 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     fn prepare_advance_to_next_quorum_block(
         &self,
         subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        subdag_transmissions: SubdagTransmissions<N>,
     ) -> Result<Block<N>>;
 
     /// Adds the given block as the next block in the ledger.

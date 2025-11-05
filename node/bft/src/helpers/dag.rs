@@ -15,7 +15,7 @@
 
 use snarkvm::{
     console::types::{Address, Field},
-    ledger::narwhal::BatchCertificate,
+    ledger::narwhal::{BatchCertificate, NarwhalCertificate},
     prelude::Network,
 };
 

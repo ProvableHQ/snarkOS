@@ -35,10 +35,6 @@ workspace = true
 [dependencies.async-trait]
 version = "0.1"
 
-[dependencies.indexmap]
-workspace = true
-features = [ "serde", "rayon" ]
-
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]
