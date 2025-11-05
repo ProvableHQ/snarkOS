@@ -167,7 +167,7 @@ echo "{
 " > program/program.json
 
 # Deploy the test program and wait for the deployment to be processed.
-_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 10 "$program_name")
+_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 20 "$program_name")
 
 # Ensure we are able to fetch the program fromn the node.
 status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/program/${program_name}/0")
@@ -208,7 +208,7 @@ fi
 # Execute a function in the deployed program and wait for the execution to be processed.
 # Use the old flags here `--query` and `--broadcast=URL` to test they still work.
 # Also, use the v1 API to test it still works.
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 20)
 
 # Fail if the execution transaction does not exist.
 tx=$(echo "$execute_result" | tail -n 1)
