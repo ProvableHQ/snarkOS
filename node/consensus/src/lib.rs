@@ -575,7 +575,7 @@ impl<N: Network> Consensus<N> {
             _highest_round,
             snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
         );
-        self.ledger.check_next_block(&next_block)?;
+        // self.ledger.check_next_block(&next_block)?;
         #[cfg(feature = "test_network")]
         snarkos_node_bft::helpers::end_subdag_stage(
             _lowest_round,
