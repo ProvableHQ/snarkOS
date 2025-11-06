@@ -32,9 +32,6 @@ clear_ledger=${clear_ledger:-y}
 # Log verbosity is set to 1 (DEBUG) by default.
 verbosity=1
 
-# Binary path set to "" by default (using installed binary) 
-binary_path=""
-
 # Build command set to "" by default
 build_cmd=""
 
