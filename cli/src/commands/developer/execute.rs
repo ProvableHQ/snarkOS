@@ -183,33 +183,34 @@ impl Execute {
             .with_context(|| "VM failed to execute transaction locally")?
         };
 
-        // Check if the public balance is sufficient.
-        if self.record.is_none() && !is_static_query {
-            // Fetch the public balance.
-            let address = Address::try_from(&private_key)?;
-            let public_balance = Developer::get_public_balance::<N>(&endpoint, &address)
-                .with_context(|| "Failed to check for sufficient funds to send transaction")?;
+        // TODO: needs to be tested with different explorers before re-enabling.
+        // // Check if the public balance is sufficient.
+        // if self.record.is_none() && !is_static_query {
+        //     // Fetch the public balance.
+        //     let address = Address::try_from(&private_key)?;
+        //     let public_balance = Developer::get_public_balance::<N>(&endpoint, &address)
+        //         .with_context(|| "Failed to check for sufficient funds to send transaction")?;
 
-            // Check if the public balance is sufficient.
-            let storage_cost = transaction
-                .execution()
-                .with_context(|| "Failed to get execution cost of transaction")?
-                .size_in_bytes()?;
+        //     // Check if the public balance is sufficient.
+        //     let storage_cost = transaction
+        //         .execution()
+        //         .with_context(|| "Failed to get execution cost of transaction")?
+        //         .size_in_bytes()?;
 
-            // Calculate the base fee.
-            // This fee is the minimum fee required to pay for the transaction,
-            // excluding any finalize fees that the execution may incur.
-            let base_fee = storage_cost.saturating_add(self.priority_fee);
+        //     // Calculate the base fee.
+        //     // This fee is the minimum fee required to pay for the transaction,
+        //     // excluding any finalize fees that the execution may incur.
+        //     let base_fee = storage_cost.saturating_add(self.priority_fee);
 
-            // If the public balance is insufficient, return an error.
-            if public_balance < base_fee {
-                bail!(
-                    "The public balance of {} is insufficient to pay the base fee for `{}`",
-                    public_balance,
-                    locator.to_string().bold()
-                );
-            }
-        }
+        //     // If the public balance is insufficient, return an error.
+        //     if public_balance < base_fee {
+        //         bail!(
+        //             "The public balance of {} is insufficient to pay the base fee for `{}`",
+        //             public_balance,
+        //             locator.to_string().bold()
+        //         );
+        //     }
+        // }
 
         println!("✅ Created execution transaction for '{}'", locator.to_string().bold());
 

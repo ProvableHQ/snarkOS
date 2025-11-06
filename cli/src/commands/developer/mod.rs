@@ -297,23 +297,23 @@ impl Developer {
         }
     }
 
-    /// Gets the public account balance of an Aleo Address (in microcredits).
-    fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<u64> {
-        // Initialize the program id and account identifier.
-        let account_mapping = Identifier::<N>::from_str("account")?;
-        let credits = ProgramID::<N>::from_str("credits.aleo")?;
+    // /// Gets the public account balance of an Aleo Address (in microcredits).
+    // fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<u64> {
+    //     // Initialize the program id and account identifier.
+    //     let account_mapping = Identifier::<N>::from_str("account")?;
+    //     let credits = ProgramID::<N>::from_str("credits.aleo")?;
 
-        // Send a request to the query node.
-        let result: Option<Value<N>> =
-            Self::http_get_json::<N, _>(endpoint, &format!("program/{credits}/mapping/{account_mapping}/{address}"))?;
+    //     // Send a request to the query node.
+    //     let result: Option<Value<N>> =
+    //         Self::http_get_json::<N, _>(endpoint, &format!("program/{credits}/mapping/{account_mapping}/{address}"))?;
 
-        // Return the balance in microcredits.
-        match result {
-            Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(*amount),
-            Some(..) => bail!("Failed to deserialize balance for {address}"),
-            None => Ok(0),
-        }
-    }
+    //     // Return the balance in microcredits.
+    //     match result {
+    //         Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(*amount),
+    //         Some(..) => bail!("Failed to deserialize balance for {address}"),
+    //         None => Ok(0),
+    //     }
+    // }
 
     /// Determine if the transaction should be broadcast or displayed to user.
     ///
