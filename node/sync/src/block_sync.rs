@@ -1064,12 +1064,12 @@ impl<N: Network> BlockSync<N> {
         // Avoid locking `locators` and `requests` at the same time.
         drop(requests);
 
-        // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
         // Now remove and ban any unresponsive peers
-        // for peer_ip in peers_to_ban {
-        //     self.remove_peer(&peer_ip);
-        //     peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
-        // }
+        for peer_ip in peers_to_ban {
+            self.remove_peer(&peer_ip);
+            // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
+            // peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
+        }
 
         // Determine if we need to re-issue any timed-out requests.
         // If there are no requests remaining or no gap at the beginning,
