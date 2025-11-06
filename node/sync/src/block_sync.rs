@@ -1005,7 +1005,7 @@ impl<N: Network> BlockSync<N> {
     /// In this case, the current iteration of block synchronization should not continue and the node should re-try later instead.
     pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
-        peer_pool_handler: &P,
+        _peer_pool_handler: &P,
     ) -> Result<Option<BlockRequestBatch<N>>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
@@ -1064,11 +1064,12 @@ impl<N: Network> BlockSync<N> {
         // Avoid locking `locators` and `requests` at the same time.
         drop(requests);
 
+        // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
         // Now remove and ban any unresponsive peers
-        for peer_ip in peers_to_ban {
-            self.remove_peer(&peer_ip);
-            peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
-        }
+        // for peer_ip in peers_to_ban {
+        //     self.remove_peer(&peer_ip);
+        //     peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
+        // }
 
         // Determine if we need to re-issue any timed-out requests.
         // If there are no requests remaining or no gap at the beginning,
