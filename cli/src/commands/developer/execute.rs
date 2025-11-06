@@ -74,6 +74,8 @@ pub struct Execute {
     /// to fit the network type and query.
     /// For example, the base URL may extend to "http://mynode.com/testnet/transaction/unconfirmed/ID" to retrieve
     /// an unconfirmed transaction on the test network.
+    ///
+    /// The given value may also be a JSON serialized `StaticQuery` struct.
     #[clap(short, long, alias="query", default_value=DEFAULT_ENDPOINT, verbatim_doc_comment)]
     endpoint: Uri,
     /// The priority fee in microcredits.
@@ -122,7 +124,7 @@ impl Execute {
         // Specify the query
         let query = Query::<N, BlockMemory<N>>::from(endpoint.clone());
 
-        // TODO (kaimast): can this ever be true?
+        // Check if the query is a static query.
         let is_static_query = matches!(query, Query::STATIC(_));
 
         // Retrieve the private key.
