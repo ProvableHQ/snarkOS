@@ -409,17 +409,23 @@ impl Start {
         // and add each of them to the trusted peers. In addition, set the node IP to `4130 + dev`,
         // and the REST port to `3030 + dev`.
 
+        let num_validators = self.dev_num_validators;
+
         if let Some(dev) = self.dev {
             // Add the dev nodes to the trusted peers.
             if trusted_peers.is_empty() {
-                for i in 0..dev {
+                for i in 0..num_validators {
+                    // Don't connect to yourself.
+                    if i == dev {
+                        continue;
+                    }
+
                     trusted_peers.push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_NODE_PORT + i)));
                 }
             }
             // Add the dev nodes to the trusted validators.
             if trusted_validators.is_empty() {
-                // To avoid ambiguity, we define the first few nodes to be the trusted validators to connect to.
-                for i in 0..2 {
+                for i in 0..num_validators {
                     // Don't connect to yourself.
                     if i == dev {
                         continue;
