@@ -54,15 +54,15 @@ common_flags=(--nodisplay --nobanner --noupdater "--network=$network_id"
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-  snarkos clean --dev $validator_index "--network=${network_id}"
+  snarkos clean "--dev=$validator_index" "--network=$network_id"
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
-    snarkos start "${common_flags[@]}" --dev "$validator_index" \
-      --validator --logfile "$log_file" --metrics --no-dev-txs &
+    snarkos start "${common_flags[@]}" "--dev=$validator_index" \
+      --validator "--logfile=$log_file" --metrics --no-dev-txs &
   else
-    snarkos start "${common_flags[@]}" --dev "$validator_index" \
-      --validator --logfile "$log_file" &
+    snarkos start "${common_flags[@]}" "--dev=$validator_index" \
+      --validator "--logfile=$log_file" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
