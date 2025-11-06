@@ -155,11 +155,9 @@ impl Execute {
                 let height = query.current_block_height()?;
                 let version = N::CONSENSUS_VERSION(height)?;
                 debug!("At block height {height} and consensus {version:?}");
-                let edition = Developer::get_latest_edition(&endpoint, &program_id)
-                    .with_context(|| format!("Failed to get latest edition for program {program_id}"))?;
 
                 // Load the program and it's imports into the process.
-                load_program(&query, &mut vm.process().write(), &program_id, edition)?;
+                load_program(&query, &mut vm.process().write(), &program_id, &endpoint)?;
             }
 
             // Prepare the fee.
@@ -233,10 +231,13 @@ fn load_program<N: Network>(
     query: &Query<N, BlockMemory<N>>,
     process: &mut Process<N>,
     program_id: &ProgramID<N>,
-    edition: u16,
+    endpoint: &Uri,
 ) -> Result<()> {
     // Fetch the program.
     let program = query.get_program(program_id).with_context(|| "Failed to fetch program")?;
+    // Fetch the latest edition of the program.
+    let edition = Developer::get_latest_edition(endpoint, program_id)
+        .with_context(|| format!("Failed to get latest edition for program {program_id}"))?;
 
     // Return early if the program is already loaded.
     if process.contains_program(program.id()) {
@@ -248,13 +249,14 @@ fn load_program<N: Network>(
         // Add the imports to the process if does not exist yet.
         if !process.contains_program(import_program_id) {
             // Recursively load the program and its imports.
-            load_program(query, process, import_program_id, edition)
+            load_program(query, process, import_program_id, endpoint)
                 .with_context(|| format!("Failed to load imported program {import_program_id}"))?;
         }
     }
 
     // Add the program to the process if it does not already exist.
     if !process.contains_program(program.id()) {
+        debug!("Adding program {program_id} with edition {edition}");
         process
             .add_programs_with_editions(&[(program, edition)])
             .with_context(|| format!("Failed to add program {program_id}"))?;
