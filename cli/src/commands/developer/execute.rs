@@ -23,7 +23,6 @@ use snarkvm::{
     console::network::Network,
     ledger::{query::QueryTrait, store::helpers::memory::BlockMemory},
     prelude::{
-        Address,
         Identifier,
         Locator,
         Process,
@@ -36,7 +35,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, builder::NonEmptyStringValueParser};
 use colored::Colorize;
 use std::str::FromStr;
@@ -272,6 +271,7 @@ fn load_program<N: Network>(
 mod tests {
     use super::*;
     use crate::commands::{CLI, Command, DeveloperCommand};
+    use anyhow::bail;
 
     #[test]
     fn clap_snarkos_execute() -> Result<()> {

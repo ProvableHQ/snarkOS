@@ -30,7 +30,6 @@ pub use transfer_private::*;
 
 use crate::helpers::{args::network_id_parser, logger::initialize_terminal_logger};
 
-use snarkos_node_rest::{API_VERSION_V1, API_VERSION_V2};
 use snarkvm::{package::Package, prelude::*};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -43,6 +42,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tracing::debug;
 use ureq::http::{self, Uri};
 
 /// The format to store a generated transaction as.
@@ -187,23 +187,13 @@ impl Developer {
         // This function is only called internally but check for additional sanity.
         ensure!(!route.starts_with('/'), "path cannot start with a slash");
 
-        // If the route already ends with a version segment (v1 or v2), don't prepend a version.
-        let route_has_version_suffix = {
-            let r = base_url.path().trim_end_matches('/');
-            r.ends_with(API_VERSION_V1) || r.ends_with(API_VERSION_V2)
-        };
-
         // Work around a bug in the `http` crate where empty paths will be set to '/'
         // but other paths are not appended with a slash.
         // See https://github.com/hyperium/http/issues/507
         let sep = if base_url.path().ends_with('/') { "" } else { "/" };
 
-        // Build "{base}/{maybe_version}/{network}/{route}"
-        let prefix = if route_has_version_suffix {
-            format!("{}/", N::SHORT_NAME)
-        } else {
-            format!("{}/{}/", API_VERSION_V2, N::SHORT_NAME)
-        };
+        // Build "{base}/{network}/{route}"
+        let prefix = format!("{}/", N::SHORT_NAME);
 
         Ok(format!("{base_url}{sep}{prefix}{route}"))
     }
@@ -242,10 +232,12 @@ impl Developer {
     /// Helper function to send a GET request to an endpoint and await a JSON response.
     fn http_get_json<N: Network, O: DeserializeOwned>(base_url: &http::Uri, route: &str) -> Result<Option<O>> {
         let endpoint = Self::build_endpoint::<N>(base_url, route)?;
+        debug!("HTTP GET request to {endpoint}");
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
         match Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")? {
             Some(mut body) => {
+                debug!("HTTP GET response with body {body:?} succeeded");
                 let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
                 Ok(Some(json))
             }
