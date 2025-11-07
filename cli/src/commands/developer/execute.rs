@@ -36,7 +36,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, builder::NonEmptyStringValueParser};
 use colored::Colorize;
 use std::str::FromStr;
@@ -188,7 +188,13 @@ impl Execute {
             // Fetch the public balance.
             let address = Address::try_from(&private_key)?;
             let public_balance = Developer::get_public_balance::<N>(&endpoint, &address)
-                .with_context(|| "Failed to check for sufficient funds to send transaction")?;
+                .with_context(|| "Failed to check for sufficient funds to send transaction")?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "No public balance found for sending account `{}`. It may not exist.",
+                        address.to_string().bold()
+                    )
+                })?;
 
             // Check if the public balance is sufficient.
             let storage_cost = transaction
