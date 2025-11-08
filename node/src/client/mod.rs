@@ -18,7 +18,7 @@ mod router;
 use crate::traits::NodeInterface;
 
 use snarkos_account::Account;
-use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService};
+use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
@@ -148,7 +148,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let signal_node = Self::handle_signals(shutdown.clone());
 
         // Initialize the ledger.
-        let ledger = Ledger::<N, C>::load(genesis.clone(), storage_mode.clone())?;
+        let genesis_clone = genesis.clone();
+        let mode = storage_mode.clone();
+        let ledger = spawn_blocking!(Ledger::<N, C>::load(genesis_clone, mode))?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
