@@ -19,7 +19,8 @@ sudo apt-get install -y \
 	pkg-config \
 	tmux \
 	xz-utils \
-	ufw
+	ufw \
+	cargo
 
 
 # Install Rust
