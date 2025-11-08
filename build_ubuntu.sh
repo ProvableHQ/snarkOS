@@ -20,7 +20,8 @@ sudo apt-get install -y \
 	tmux \
 	xz-utils \
 	ufw \
-	cargo
+	cargo \
+	rustup
 
 
 # Install Rust
