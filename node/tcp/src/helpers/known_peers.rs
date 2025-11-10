@@ -55,6 +55,14 @@ impl KnownPeers {
         self.0.write().remove(&addr)
     }
 
+    /// Removes a batch of addresses all at once.
+    pub fn batch_remove<I: Iterator<Item = IpAddr>>(&self, addrs: I) {
+        let mut peers = self.0.write();
+        for addr in addrs {
+            peers.remove(&addr);
+        }
+    }
+
     /// Returns the list of all known peers and their stats.
     pub fn snapshot(&self) -> HashMap<IpAddr, Arc<Stats>> {
         self.0.read().clone()

@@ -14,13 +14,11 @@
 // limitations under the License.
 
 use crate::common::sample_genesis_block;
+use snarkos_node_network::{NodeType, Peer, PeerPoolHandling, Resolver};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    Peer,
-    PeerPoolHandling,
-    Resolver,
     Router,
     Routing,
     messages::{
@@ -42,6 +40,7 @@ use snarkos_node_tcp::{
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
 use snarkvm::prelude::{
+    ConsensusVersion,
     Field,
     Network,
     block::{Block, Header, Transaction},
@@ -95,6 +94,14 @@ impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
 
     fn is_dev(&self) -> bool {
         true
+    }
+
+    fn trusted_peers_only(&self) -> bool {
+        false
+    }
+
+    fn node_type(&self) -> NodeType {
+        self.router().node_type()
     }
 }
 
@@ -207,7 +214,12 @@ impl<N: Network> Inbound<N> for TestRouter<N> {
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, _peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
+    fn block_response(
+        &self,
+        _peer_ip: SocketAddr,
+        _blocks: Vec<Block<N>>,
+        _latest_consensus_version: Option<ConsensusVersion>,
+    ) -> bool {
         true
     }
 

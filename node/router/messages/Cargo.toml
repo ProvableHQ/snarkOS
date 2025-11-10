@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router-messages"
-version = "4.2.2"
+version = "4.3.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Node messages for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -23,7 +23,7 @@ test = [ ]
 [dependencies.bytes]
 workspace = true
 
-[dependencies.serde]
+[dependencies.snarkos-node-network]
 workspace = true
 
 [dependencies.snarkos-node-bft-events]

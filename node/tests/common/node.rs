@@ -31,7 +31,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         sample_genesis_block(),
         None, // No CDN.
         StorageMode::new_test(None),
-        false, // No extra peer rotation.
+        false, // Connect to untrusted peers.
         None,
         Default::default(),
     )
@@ -46,6 +46,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         &[],
         sample_genesis_block(),
         StorageMode::new_test(None),
+        false,
         None,
         Default::default(),
     )
@@ -65,7 +66,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         sample_genesis_block(), // Should load the current network's genesis block.
         None,                   // No CDN.
         StorageMode::new_test(None),
-        true,  // This test requires validators to connect to peers.
+        false, // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
         Default::default(),

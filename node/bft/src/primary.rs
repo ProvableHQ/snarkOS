@@ -44,7 +44,7 @@ use crate::{
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;
-use snarkos_node_router::PeerPoolHandling;
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
 use snarkvm::{
     console::{
@@ -129,12 +129,21 @@ impl<N: Network> Primary<N> {
         block_sync: Arc<BlockSync<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        trusted_peers_only: bool,
         storage_mode: StorageMode,
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway.
-        let gateway =
-            Gateway::new(account, storage.clone(), ledger.clone(), ip, trusted_validators, storage_mode.clone(), dev)?;
+        let gateway = Gateway::new(
+            account,
+            storage.clone(),
+            ledger.clone(),
+            ip,
+            trusted_validators,
+            trusted_peers_only,
+            storage_mode.clone(),
+            dev,
+        )?;
         // Initialize the sync module.
         let sync = Sync::new(gateway.clone(), storage.clone(), ledger.clone(), block_sync);
 
@@ -2003,7 +2012,8 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
         let mut primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], StorageMode::new_test(None), None).unwrap();
+            Primary::new(account, storage, ledger, block_sync, None, &[], false, StorageMode::new_test(None), None)
+                .unwrap();
 
         // Construct a worker instance.
         primary.workers = Arc::from([Worker::new(

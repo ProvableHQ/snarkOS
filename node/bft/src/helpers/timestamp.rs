@@ -23,6 +23,16 @@ pub fn now() -> i64 {
     OffsetDateTime::now_utc().unix_timestamp()
 }
 
+/// Returns the current UTC epoch time.
+pub fn now_utc() -> OffsetDateTime {
+    OffsetDateTime::now_utc()
+}
+
+/// Converts the given timestamp to an `OffsetDateTime`, defaulting to the current UTC time if invalid.
+pub fn to_utc_datetime(timestamp: i64) -> OffsetDateTime {
+    OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or_else(|_| OffsetDateTime::now_utc())
+}
+
 /// Sanity checks the timestamp for liveness.
 pub fn check_timestamp_for_liveness(timestamp: i64) -> Result<()> {
     // Ensure the timestamp is within range.

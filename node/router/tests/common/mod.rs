@@ -19,16 +19,16 @@ pub use router::*;
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    str::FromStr,
     sync::Arc,
 };
 
 use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::MockLedgerService;
-use snarkos_node_router::{Router, messages::NodeType};
+use snarkos_node_network::NodeType;
+use snarkos_node_router::Router;
 use snarkvm::{
-    prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, block::Block},
+    prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, PrivateKey, block::Block},
     utilities::TestRng,
 };
 
@@ -46,8 +46,9 @@ macro_rules! print_tcp {
 }
 
 /// Returns a fixed account.
-pub fn sample_account() -> Account<CurrentNetwork> {
-    Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap()
+pub fn sample_account(rng: &mut TestRng) -> Account<CurrentNetwork> {
+    let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+    Account::<CurrentNetwork>::try_from(&private_key).unwrap()
 }
 
 /// Loads the current network's genesis block.
@@ -56,18 +57,17 @@ pub fn sample_genesis_block<N: Network>() -> Block<N> {
 }
 
 /// Initializes a client router. Setting the `listening_port = 0` will result in a random port being assigned.
-pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNetwork> {
-    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
+pub async fn client(listening_port: u16, max_peers: u16, rng: &mut TestRng) -> TestRouter<CurrentNetwork> {
+    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
     let ledger_service = Arc::new(MockLedgerService::new(committee));
     Router::new(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listening_port),
         NodeType::Client,
-        sample_account(),
+        sample_account(rng),
         ledger_service,
         &[],
         max_peers,
         false,
-        true,
         StorageMode::new_test(None),
         true,
     )
@@ -78,18 +78,17 @@ pub async fn client(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNe
 
 /// Initializes a prover router. Setting the `listening_port = 0` will result in a random port being assigned.
 #[allow(dead_code)]
-pub async fn prover(listening_port: u16, max_peers: u16) -> TestRouter<CurrentNetwork> {
-    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
+pub async fn prover(listening_port: u16, max_peers: u16, rng: &mut TestRng) -> TestRouter<CurrentNetwork> {
+    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
     let ledger_service = Arc::new(MockLedgerService::new(committee));
     Router::new(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listening_port),
         NodeType::Prover,
-        sample_account(),
+        sample_account(rng),
         ledger_service,
         &[],
         max_peers,
         false,
-        true,
         StorageMode::new_test(None),
         true,
     )
@@ -104,19 +103,19 @@ pub async fn validator(
     listening_port: u16,
     max_peers: u16,
     trusted_peers: &[SocketAddr],
-    allow_external_peers: bool,
+    trusted_peers_only: bool,
+    rng: &mut TestRng,
 ) -> TestRouter<CurrentNetwork> {
-    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(&mut TestRng::default());
+    let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
     let ledger_service = Arc::new(MockLedgerService::new(committee));
     Router::new(
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listening_port),
         NodeType::Validator,
-        sample_account(),
+        sample_account(rng),
         ledger_service,
         trusted_peers,
         max_peers,
-        false,
-        allow_external_peers,
+        trusted_peers_only,
         StorageMode::new_test(None),
         true,
     )

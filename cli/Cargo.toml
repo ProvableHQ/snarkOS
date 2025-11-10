@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "4.2.2"
+version = "4.3.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -41,6 +41,7 @@ test_network = [
   "snarkvm/dev-print"
 ]
 serial = [ ]
+tokio_console = [ "dep:console-subscriber", "tokio/tracing" ]
 
 [dependencies.aleo-std]
 workspace = true
@@ -60,6 +61,10 @@ features = [ "derive", "color", "unstable-styles", "help", "cargo", "usage", "su
 
 [dependencies.colored]
 workspace = true
+
+[dependencies.console-subscriber]
+version = "0.4.1"
+optional = true
 
 [dependencies.crossterm]
 workspace = true

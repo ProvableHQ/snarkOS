@@ -27,7 +27,7 @@ use snarkos_node_bft::{
     helpers::{PrimarySender, Storage, init_primary_channels},
 };
 use snarkos_node_bft_storage_service::BFTMemoryService;
-use snarkos_node_router::PeerPoolHandling;
+use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{
@@ -176,6 +176,7 @@ impl TestNetwork {
                     block_sync,
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
+                    false,
                     StorageMode::new_test(None),
                     None,
                 )
@@ -189,6 +190,7 @@ impl TestNetwork {
                     block_sync,
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
+                    false,
                     StorageMode::new_test(None),
                     None,
                 )

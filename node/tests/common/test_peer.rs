@@ -14,9 +14,10 @@
 // limitations under the License.
 
 use snarkos_account::Account;
+use snarkos_node_network::NodeType;
 use snarkos_node_router::{
     expect_message,
-    messages::{ChallengeRequest, ChallengeResponse, Message, MessageCodec, MessageTrait, NodeType},
+    messages::{ChallengeRequest, ChallengeResponse, Message, MessageCodec, MessageTrait},
 };
 use snarkvm::{
     ledger::narwhal::Data,

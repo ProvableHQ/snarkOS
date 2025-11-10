@@ -18,14 +18,14 @@ mod router;
 use crate::traits::NodeInterface;
 use snarkos_account::Account;
 use snarkos_node_bft::ledger_service::ProverLedgerService;
+use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
-    messages::{Message, NodeType, UnconfirmedSolution},
+    messages::{Message, UnconfirmedSolution},
 };
 use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
@@ -99,6 +99,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
         storage_mode: StorageMode,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
@@ -107,10 +108,6 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(ProverLedgerService::new());
-        // Determine if the prover should allow external peers.
-        let allow_external_peers = true;
-        // Determine if the prover should rotate external peers.
-        let rotate_external_peers = false;
 
         // Initialize the node router.
         let router = Router::new(
@@ -120,8 +117,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode,
             dev.is_some(),
         )

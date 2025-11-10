@@ -15,6 +15,7 @@
 
 use super::*;
 
+use snarkos_node_network::NodeType;
 use snarkvm::prelude::{FromBytes, ToBytes};
 
 use std::borrow::Cow;

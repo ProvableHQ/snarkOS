@@ -68,8 +68,7 @@ pub enum DeveloperCommand {
 }
 
 /// Use the Provable explorer's API by default.
-/// Note, the `v1` here is not the API version, but the explorer's version.
-const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com/v1";
+const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com";
 
 #[derive(Debug, Parser)]
 pub struct Developer {
