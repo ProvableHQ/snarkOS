@@ -30,7 +30,7 @@ use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
-    utilities::{error, log_error},
+    utilities::{flatten_error, io_error},
 };
 
 use std::{io, net::SocketAddr};
@@ -50,7 +50,7 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Validator<N, C> {
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
-        let genesis_header = self.ledger.get_header(0).map_err(|e| error(format!("{e}")))?;
+        let genesis_header = self.ledger.get_header(0).map_err(io_error)?;
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
         self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
@@ -180,7 +180,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         let latest_consensus_version = match N::CONSENSUS_VERSION(end_height.saturating_sub(1)) {
             Ok(version) => version,
             Err(err) => {
-                log_error(err.context("Failed to retrieve consensus version"));
+                error!("{}", flatten_error(err.context("Failed to retrieve consensus version")));
                 return false;
             }
         };
@@ -188,8 +188,10 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         // Retrieve the blocks within the requested range.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => DataBlocks(blocks),
-            Err(error) => {
-                error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
+            Err(err) => {
+                let err =
+                    err.context(format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"));
+                error!("{}", flatten_error(err));
                 return false;
             }
         };
