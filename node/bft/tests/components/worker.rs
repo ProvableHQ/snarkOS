@@ -110,8 +110,6 @@ async fn test_resend_transmission_request() {
         // Ensure the number of sent requests is correct.
         assert_eq!(pending.num_sent_requests(transmission_id), (1 + i).min(max_redundancy), "Incorrect number of sent requests for transmission");
     }
-
-    tokio::task::spawn_blocking(move || { drop(ledger); });
 }
 
 #[tokio::test]
@@ -203,6 +201,4 @@ async fn test_flood_transmission_requests() {
         // Ensure the number of sent requests is correct.
         assert_eq!(pending.num_sent_requests(transmission_id), max_redundancy, "Incorrect number of sent requests for transmission");
     }
-
-    tokio::task::spawn_blocking(move || { drop(ledger); });
 }
