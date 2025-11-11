@@ -22,7 +22,7 @@ for word in "$@"; do
 done
 
 # Build the command
-COMMAND="cargo run --release -- start --nodisplay --prover --private-key ${PROVER_PRIVATE_KEY}"
+COMMAND="cargo run --release -- start --nodisplay --prover --private-key ${PROVER_PRIVATE_KEY} --node 0.0.0.0:4132"
 
 # Append the arguments
 for arg in "${ARGS[@]}"; do

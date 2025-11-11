@@ -31,7 +31,7 @@ source $HOME/.cargo/env
 
 # Install snarkOS
 # cargo clean
-cargo install --locked --path .
+cargo install --locked --path . --features cuda
 
 echo "=================================================="
 echo " Attention - Please ensure ports 4130 and 3030"
