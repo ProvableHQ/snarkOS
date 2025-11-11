@@ -97,7 +97,9 @@ cargo install --locked --path .
 
 #### Optional: CUDA Acceleration for Provers
 
-> **Heads-up:** This CUDA build is optional. The current snarkOS puzzle does not leverage CUDA acceleration—it is a leftover from a previous event, although CUDA may become relevant again with ARC-43.
+> This CUDA build is optional. The current snarkOS puzzle does not leverage CUDA acceleration—it is a leftover from a previous event, although CUDA may become relevant again with ARC-43.
+>
+> The CUDA feature is considered unstable and experimental; expect breaking changes.
 
 For prover operators who want to experiment with GPU support:
 ```
