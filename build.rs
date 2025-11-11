@@ -19,6 +19,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::Path,
+    path::PathBuf,
     process,
 };
 use toml::Value;
@@ -272,6 +273,46 @@ fn check_tokio_console_flags() {
     }
 }
 
+/// When the "cuda" feature is enabled, add CUDA library search paths and link the CUDA runtime.
+/// This keeps changes minimal and avoids touching any other build behavior.
+fn setup_cuda_linking_if_needed() {
+    // Only act when the feature is enabled.
+    if env::var_os("CARGO_FEATURE_CUDA").is_none() {
+        return;
+    }
+
+    // Locate CUDA toolkit root. On Ubuntu, nvcc is often in /usr/bin with libs in /usr/lib/x86_64-linux-gnu.
+    let cuda_root = env::var("CUDA_HOME")
+        .or_else(|_| env::var("CUDA_PATH"))
+        .unwrap_or_else(|_| "/usr/local/cuda".to_string());
+
+    // Candidate library directories (Linux + common Windows layout + Debian/Ubuntu path).
+    let mut lib_dirs: Vec<PathBuf> = vec![
+        PathBuf::from(&cuda_root).join("lib64"),
+        PathBuf::from(&cuda_root).join("lib"),
+        PathBuf::from(&cuda_root).join("lib/x64"),
+        PathBuf::from("/usr/lib/x86_64-linux-gnu"),
+    ];
+
+    // Emit link-search for any that exist.
+    for dir in lib_dirs.drain(..) {
+        if dir.exists() {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+        }
+    }
+
+    // Link the CUDA runtime; many nvcc builds also need libstdc++.
+    println!("cargo:rustc-link-lib=cudart");
+    println!("cargo:rustc-link-lib=stdc++");
+
+    // Some environments aggressively use --as-needed; keep these from being dropped.
+    println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
+
+    // Rebuild triggers.
+    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    println!("cargo:rerun-if-env-changed=CUDA_PATH");
+}
+
 // The build script.
 fn main() {
     // Check licenses in the current folder.
@@ -282,6 +323,9 @@ fn main() {
     check_locktick_profile();
     // Check if the tokio_console feature is correctly enabled.
     check_tokio_console_flags();
+
+    // Ensure CUDA libs are visible to the final link when the feature is enabled.
+    setup_cuda_linking_if_needed();
 
     // Register build-time information.
     built::write_built_file().expect("Failed to acquire build-time information");
