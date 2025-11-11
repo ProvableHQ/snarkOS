@@ -50,6 +50,7 @@ use snarkos_node_network::{
     PeerPoolHandling,
     Resolver,
     bootstrap_peers,
+    built_info,
     log_repo_sha_comparison,
 };
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
@@ -1412,8 +1413,14 @@ impl<N: Network> Gateway<N> {
 
         // Sample a random nonce.
         let our_nonce = rng.r#gen();
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
+            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
         // Send a challenge request to the peer.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce);
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha.clone());
         send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
 
         /* Step 2: Receive the peer's challenge response followed by the challenge request. */
@@ -1522,8 +1529,13 @@ impl<N: Network> Gateway<N> {
 
         // Sample a random nonce.
         let our_nonce = rng.r#gen();
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
+            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
         // Send the challenge request.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce);
+        let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha);
         send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
 
         /* Step 3: Receive the challenge response. */
@@ -1546,7 +1558,7 @@ impl<N: Network> Gateway<N> {
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
         let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
-        log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+        log_repo_sha_comparison(peer_addr, snarkos_sha.as_ref(), CONTEXT);
 
         let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 

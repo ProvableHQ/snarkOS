@@ -80,9 +80,11 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
 }
 
 /// Logs the peer's snarkOS repo SHA and how it compares to ours.
-pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &str, ctx: &str) {
+pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: Option<&String>, ctx: &str) {
     let our_sha = built_info::GIT_COMMIT_HASH.unwrap_or_default();
-    let sha_cmp = if peer_sha == "unknown" {
+    let unknown_sha = "unknown".to_owned();
+    let peer_sha = peer_sha.unwrap_or(&unknown_sha);
+    let sha_cmp = if peer_sha == &unknown_sha {
         " with an unknown repo SHA".to_owned()
     } else if peer_sha == our_sha {
         format!("@{peer_sha} (same as us)")

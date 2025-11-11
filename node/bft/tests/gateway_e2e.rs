@@ -107,7 +107,7 @@ async fn handshake_responder_side_invalid_challenge_request() {
     let listener_port = test_peer.listening_addr().port();
     let address = accounts.get(1).unwrap().address();
     let nonce = rng.r#gen();
-    let snarkos_sha = String::new();
+    let snarkos_sha = None;
     // Set the wrong version so the challenge request is invalid.
     let challenge_request = ChallengeRequest { version: 0, listener_port, address, nonce, snarkos_sha };
 
@@ -147,7 +147,7 @@ async fn handshake_responder_side_invalid_challenge_response() {
     let listener_port = test_peer.listening_addr().port();
     let address = accounts.get(1).unwrap().address();
     let our_nonce = rng.r#gen();
-    let snarkos_sha = String::new();
+    let snarkos_sha = None;
     let version = Event::<CurrentNetwork>::VERSION;
     let challenge_request = ChallengeRequest { version, listener_port, address, nonce: our_nonce, snarkos_sha };
 

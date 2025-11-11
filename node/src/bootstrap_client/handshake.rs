@@ -234,6 +234,8 @@ impl<N: Network> BootstrapClient<N> {
 
         // Sample a random nonce.
         let our_nonce: u64 = rng.r#gen();
+        // Do not send a snarkOS SHA as the bootstrap client is not aware of height.
+        let snarkos_sha = None;
         // Send the challenge request.
         if connection_mode == ConnectionMode::Router {
             let our_request = messages::ChallengeRequest::new(
@@ -241,11 +243,13 @@ impl<N: Network> BootstrapClient<N> {
                 NodeType::BootstrapClient,
                 self.account.address(),
                 our_nonce,
+                snarkos_sha,
             );
             let msg = Message::ChallengeRequest(our_request);
             send_msg!(msg, framed, peer_addr)?;
         } else {
-            let our_request = events::ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce);
+            let our_request =
+                events::ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha);
             let msg = Event::ChallengeRequest(our_request);
             send_msg!(msg, framed, peer_addr)?;
         }
@@ -277,7 +281,7 @@ impl<N: Network> BootstrapClient<N> {
     ) -> io::Result<bool> {
         match request {
             MessageOrEvent::Message(Message::ChallengeRequest(msg)) => {
-                log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
+                log_repo_sha_comparison(peer_addr, msg.snarkos_sha.as_ref(), Self::OWNER);
 
                 if msg.version < Message::<N>::latest_message_version() {
                     let msg = Message::Disconnect::<N>(messages::DisconnectReason::OutdatedClientVersion.into());
@@ -299,7 +303,7 @@ impl<N: Network> BootstrapClient<N> {
                 }
             }
             MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
-                log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
+                log_repo_sha_comparison(peer_addr, msg.snarkos_sha.as_ref(), Self::OWNER);
 
                 if msg.version < Event::<N>::VERSION {
                     let msg = Event::Disconnect::<N>(events::DisconnectReason::OutdatedClientVersion.into());
