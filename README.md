@@ -94,6 +94,11 @@ Lastly, install `snarkOS`:
 ```
 cargo install --locked --path .
 ```
+If you are running a prover and want to experiment with the optional CUDA feature, you can install with:
+```
+cargo install --locked --path . --features cuda
+```
+This CUDA build is not required for most users, and the current snarkOS puzzle does not leverage CUDA acceleration (the puzzle is a leftover from a previous event, though CUDA may become relevant again in the future because of ARC-43).
 
 Please ensure ports `4130/tcp` and `3030/tcp` are open on your router and OS firewall.
 ### 2.4 Port Configuration
