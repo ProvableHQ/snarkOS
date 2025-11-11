@@ -15,7 +15,7 @@
 
 use super::*;
 
-use snarkos_node_network::{NodeType, built_info};
+use snarkos_node_network::NodeType;
 use snarkvm::prelude::{FromBytes, ToBytes};
 
 use std::borrow::Cow;
@@ -27,7 +27,7 @@ pub struct ChallengeRequest<N: Network> {
     pub node_type: NodeType,
     pub address: Address<N>,
     pub nonce: u64,
-    pub snarkos_sha: String,
+    pub snarkos_sha: Option<String>,
 }
 
 impl<N: Network> MessageTrait for ChallengeRequest<N> {
@@ -45,7 +45,10 @@ impl<N: Network> ToBytes for ChallengeRequest<N> {
         self.node_type.write_le(&mut writer)?;
         self.address.write_le(&mut writer)?;
         self.nonce.write_le(&mut writer)?;
-        self.snarkos_sha.as_bytes().write_le(&mut writer)?;
+
+        if let Some(snarkos_sha) = &self.snarkos_sha {
+            snarkos_sha.as_bytes().write_le(&mut writer)?;
+        }
 
         Ok(())
     }
@@ -63,20 +66,19 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
             .map_err(|_| error("Invalid snarkOS SHA"))?
             .to_owned();
 
-        Ok(Self { version, listener_port, node_type, address, nonce, snarkos_sha })
+        Ok(Self { version, listener_port, node_type, address, nonce, snarkos_sha: Some(snarkos_sha) })
     }
 }
 
 impl<N: Network> ChallengeRequest<N> {
-    pub fn new(listener_port: u16, node_type: NodeType, address: Address<N>, nonce: u64) -> Self {
-        Self {
-            version: Message::<N>::latest_message_version(),
-            listener_port,
-            node_type,
-            address,
-            nonce,
-            snarkos_sha: built_info::GIT_COMMIT_HASH.unwrap_or_default().into(),
-        }
+    pub fn new(
+        listener_port: u16,
+        node_type: NodeType,
+        address: Address<N>,
+        nonce: u64,
+        snarkos_sha: Option<String>,
+    ) -> Self {
+        Self { version: Message::<N>::latest_message_version(), listener_port, node_type, address, nonce, snarkos_sha }
     }
 }
 
@@ -121,7 +123,7 @@ pub mod prop_tests {
                 version,
                 listener_port,
                 node_type,
-                snarkos_sha: sha.into_iter().map(|b| b as char).collect(),
+                snarkos_sha: Some(sha.into_iter().map(|b| b as char).collect()),
             })
             .boxed()
     }
@@ -134,7 +136,7 @@ pub mod prop_tests {
         let mut deserialized: ChallengeRequest<CurrentNetwork> =
             ChallengeRequest::read_le(buf.into_inner().reader()).unwrap();
         // Upon deserialization, unsupplied SHA is registered as "unknown".
-        if deserialized.snarkos_sha == "unknown" {
+        if deserialized.snarkos_sha.as_ref().unwrap() == "unknown" {
             deserialized.snarkos_sha = original.snarkos_sha.clone();
         }
         assert_eq!(original, deserialized);
