@@ -23,11 +23,7 @@ use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
-    Heartbeat,
-    Inbound,
-    Outbound,
-    Router,
-    Routing,
+    Heartbeat, Inbound, Outbound, Router, Routing,
     messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
@@ -48,7 +44,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -62,8 +58,7 @@ use std::{
     sync::{
         Arc,
         atomic::{
-            AtomicBool,
-            AtomicUsize,
+            AtomicBool, AtomicUsize,
             Ordering::{Acquire, Relaxed},
         },
     },
@@ -148,9 +143,13 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let signal_node = Self::handle_signals(shutdown.clone());
 
         // Initialize the ledger.
-        let genesis_clone = genesis.clone();
-        let mode = storage_mode.clone();
-        let ledger = spawn_blocking!(Ledger::<N, C>::load(genesis_clone, mode))?;
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));

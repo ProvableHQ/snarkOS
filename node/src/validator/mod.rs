@@ -24,11 +24,7 @@ use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
-    Heartbeat,
-    Inbound,
-    Outbound,
-    Router,
-    Routing,
+    Heartbeat, Inbound, Outbound, Router, Routing,
     messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, Ping};
@@ -37,15 +33,14 @@ use snarkos_node_tcp::{
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
 use snarkvm::prelude::{
-    Ledger,
-    Network,
+    Ledger, Network,
     block::{Block, Header},
     puzzle::Solution,
     store::ConsensusStorage,
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
@@ -101,8 +96,13 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         let signal_node = Self::handle_signals(shutdown.clone());
 
         // Initialize the ledger.
-        let mode = storage_mode.clone();
-        let ledger = spawn_blocking!(Ledger::load(genesis, mode))?;
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
@@ -483,8 +483,7 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 mod tests {
     use super::*;
     use snarkvm::prelude::{
-        MainnetV0,
-        VM,
+        MainnetV0, VM,
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     };
 
