@@ -351,12 +351,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             bail!("Invalid transaction - 'Transaction::fee' type is not valid at this stage ({})", transaction.id());
         }
         // Check the transaction is well-formed.
-        let ledger_ = self.ledger.clone();
-        let tx_ = transaction.clone();
-        tokio::spawn(async move {
-            let _ = ledger_.check_transaction_basic(&tx_, None, &mut rand::thread_rng());
-        });
-        Ok(())
+        let ledger = self.ledger.clone();
+        spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()))
     }
 
     /// Checks the given block is valid next block.

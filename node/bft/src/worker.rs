@@ -383,8 +383,11 @@ impl<N: Network> Worker<N> {
             }
         })?;
 
+        let ledger_ = self.ledger.clone();
         // Check that the transaction is well-formed and unique.
-        self.ledger.check_transaction_basic(transaction_id, transaction).await?;
+        tokio::spawn(async move {
+            let _ = ledger_.check_transaction_basic(transaction_id, transaction).await;
+        });
         // Adds the transaction to the ready queue.
         if self.ready.write().insert(transmission_id, transmission) {
             trace!(
