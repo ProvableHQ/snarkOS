@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1762969943112,
+  "lastUpdate": 1762970129471,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -5856,6 +5856,66 @@ window.BENCHMARK_DATA = {
             "value": 1.21,
             "unit": "blocks/s",
             "extra": "total_wait=205s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b327259203d93dc09f3dbe677dc20bdfaec45afd",
+          "message": "Merge pull request #4007 from ProvableHQ/refactor/sequential-ops-drops\n\n[Refactor] simplify shutting down the sequential ops thread",
+          "timestamp": "2025-11-12T12:19:44-05:00",
+          "tree_id": "6b87ed9ae37faf82cf7c5937b63aaad343818eab",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/b327259203d93dc09f3dbe677dc20bdfaec45afd"
+        },
+        "date": 1762970128662,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.6225828997728633,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=183.02567291259766, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7924.137082169745,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.095736503601074, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.32,
+            "unit": "blocks/s",
+            "extra": "total_wait=188s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.152055,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=183, mean_speed=0.863752, max_speed=2.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
