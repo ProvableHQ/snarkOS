@@ -366,6 +366,7 @@ commands:
           cache_key: << parameters.cache_key >>
       - run:
           name: "Install snarkos"
+          no_output_timeout: 20m
           command: |
             cargo install --locked --path . --features test_network
       - run:

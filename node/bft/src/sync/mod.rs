@@ -1041,7 +1041,6 @@ mod tests {
     type CurrentConsensusStore = ConsensusStore<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 
     #[tokio::test]
-    #[tracing_test::traced_test]
     async fn test_commit_via_is_linked() -> anyhow::Result<()> {
         let rng = &mut TestRng::default();
         // Initialize the round parameters.
@@ -1282,12 +1281,6 @@ mod tests {
         assert!(syncing_ledger.contains_block_height(1));
         assert!(syncing_ledger.contains_block_height(2));
 
-        tokio::task::spawn_blocking(move || {
-            drop(core_ledger);
-            drop(syncing_ledger);
-            drop(sync);
-        });
-
         Ok(())
     }
 
@@ -1477,10 +1470,6 @@ mod tests {
         // Check that the set of pending certificates is equal to the set of candidate pending certificates.
         assert_eq!(pending_certificates, candidate_pending_certificates);
 
-        tokio::task::spawn_blocking(move || {
-            drop(core_ledger);
-            drop(storage);
-        });
         Ok(())
     }
 }
