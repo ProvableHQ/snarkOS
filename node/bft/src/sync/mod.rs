@@ -33,7 +33,7 @@ use snarkvm::{
     },
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
     prelude::{cfg_into_iter, cfg_iter},
-    utilities::log_error,
+    utilities::flatten_error,
 };
 
 use anyhow::{Result, anyhow, bail};
@@ -318,7 +318,7 @@ impl<N: Network> Sync<N> {
             Ok(None) => {}
             Err(err) => {
                 // Abort and retry later.
-                log_error(&err);
+                error!("{}", &flatten_error(err));
                 return;
             }
         }

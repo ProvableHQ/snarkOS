@@ -44,7 +44,7 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
-    utilities::log_error,
+    utilities::flatten_error,
 };
 
 use aleo_std::StorageMode;
@@ -328,7 +328,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Ok(None) => {}
             Err(err) => {
                 // Abort and retry later.
-                log_error(&err);
+                error!("{}", flatten_error(&err));
                 return;
             }
         }
