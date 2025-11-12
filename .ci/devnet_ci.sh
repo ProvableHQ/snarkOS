@@ -53,6 +53,15 @@ common_flags=(
   "--dev-num-validators=$total_validators"
 )
 
+# Set the trusted peers for the validators
+trusted_peers=()
+for ((client_index = 0; client_index < total_clients; client_index++)); do
+  node_index=$((client_index + total_validators))
+  trusted_peers+=("localhost:$((4130 + $node_index)),")
+done
+# Trim the last comma
+trusted_peers=${trusted_peers%,}
+
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"
@@ -60,10 +69,10 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --metrics --no-dev-txs &
+      --validator "--logfile=$log_file" --metrics --no-dev-txs --peers "$trusted_peers" &
   else
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" &
+      --validator "--logfile=$log_file" --peers "$trusted_peers" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -158,7 +167,7 @@ echo "{
 " > program/program.json
 
 # Deploy the test program and wait for the deployment to be processed.
-_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 10 "$program_name")
+_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 20 "$program_name")
 
 # Ensure we are able to fetch the program fromn the node.
 status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/program/${program_name}/0")
@@ -199,7 +208,7 @@ fi
 # Execute a function in the deployed program and wait for the execution to be processed.
 # Use the old flags here `--query` and `--broadcast=URL` to test they still work.
 # Also, use the v1 API to test it still works.
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 20)
 
 # Fail if the execution transaction does not exist.
 tx=$(echo "$execute_result" | tail -n 1)

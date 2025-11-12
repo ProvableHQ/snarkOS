@@ -339,7 +339,14 @@ impl<N: Network> Router<N> {
         if self.is_local_ip(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
-        // Unknown peers are untrusted, so check if `trusted_peers_only` is true.
+        // As a validator, only accept connections from trusted peers and bootstrap nodes.
+        if self.node_type() == NodeType::Validator
+            && !self.is_trusted(listener_addr)
+            && !crate::bootstrap_peers::<N>(self.is_dev()).contains(&listener_addr)
+        {
+            bail!("Dropping connection request from '{listener_addr}' (untrusted)");
+        }
+        // If the node is in trusted peers only mode, ensure the peer is explicitly trusted.
         if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)");
         }
