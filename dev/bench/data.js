@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1762911681593,
+  "lastUpdate": 1762942519167,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -5676,6 +5676,66 @@ window.BENCHMARK_DATA = {
             "value": 1.19,
             "unit": "blocks/s",
             "extra": "total_wait=209s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f8d4731528aa805844c4aa82a9d04848f71d044e",
+          "message": "Merge pull request #4009 from mikenike360/staging\n\nDocument optional CUDA install path and caveats for provers",
+          "timestamp": "2025-11-12T10:44:44+01:00",
+          "tree_id": "7df568756599709bfb604f7d15273f0da3adf630",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f8d4731528aa805844c4aa82a9d04848f71d044e"
+        },
+        "date": 1762942518227,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.7246257676422685,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=176.17098307609558, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 8106.549330582899,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=9.868563890457153, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.36,
+            "unit": "blocks/s",
+            "extra": "total_wait=183s, target_height=250, connect_time=23s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.123205,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=178, mean_speed=0.821348, max_speed=3.000000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.24,
+            "unit": "blocks/s",
+            "extra": "total_wait=201s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
