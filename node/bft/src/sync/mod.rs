@@ -36,7 +36,7 @@ use snarkvm::{
     utilities::flatten_error,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -472,9 +472,11 @@ impl<N: Network> Sync<N> {
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(bft_sender) = self.bft_sender.get() {
             // Await the callback to continue.
-            if let Err(e) = bft_sender.tx_sync_bft_dag_at_bootup.send(certificates).await {
-                bail!("Failed to update the BFT DAG from sync: {e}");
-            }
+            bft_sender
+                .tx_sync_bft_dag_at_bootup
+                .send(certificates)
+                .await
+                .with_context(|| "Failed to update the BFT DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
