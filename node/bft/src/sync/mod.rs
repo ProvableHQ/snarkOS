@@ -1192,12 +1192,15 @@ mod tests {
                 subdag_map.insert(leader_round - 2, previous_commit_cert_map);
             }
 
-            let subdag = Subdag::from(subdag_map.clone())?;
-            let block = core_ledger.prepare_advance_to_next_quorum_block(subdag, Default::default())?;
-
             previous_leader_cert = Some(leader_certificate);
 
-            core_ledger.advance_to_next_block(&block)?;
+            let core_ledger = core_ledger.clone();
+            let block = spawn_blocking!({
+                let subdag = Subdag::from(subdag_map.clone())?;
+                let block = core_ledger.prepare_advance_to_next_quorum_block(subdag, Default::default())?;
+                core_ledger.advance_to_next_block(&block)?;
+                Ok(block)
+            })?;
             blocks.push(block);
         }
 
