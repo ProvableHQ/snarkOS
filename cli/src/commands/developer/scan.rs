@@ -191,7 +191,7 @@ impl Scan {
     ) -> Result<Vec<Record<N, Plaintext<N>>>> {
         // Check the bounds of the request.
         if start_height > end_height {
-            bail!("Invalid block range");
+            bail!("Invalid block range. Start height ({start_height}) is not smaller than end height ({end_height}).");
         }
 
         // Derive the x-coordinate of the address corresponding to the given view key.
@@ -259,7 +259,8 @@ impl Scan {
             let blocks_endpoint =
                 Developer::build_endpoint::<N>(endpoint, &format!("blocks?start={request_start}&end={request_end}"))?;
             // Fetch blocks
-            let blocks: Vec<Block<N>> = ureq::get(&blocks_endpoint).call()?.into_body().read_json()?;
+            let blocks: Vec<Block<N>> = (|| ureq::get(&blocks_endpoint).call()?.into_body().read_json())()
+                .with_context(|| format!("Failed to fetch blocks range {request_start}..{request_end}"))?;
 
             // Scan the blocks for owned records.
             for block in &blocks {

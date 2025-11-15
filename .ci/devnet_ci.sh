@@ -47,7 +47,7 @@ trap child_exit_handler CHLD
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
-# Flags used by all ndoes
+# Flags used by all nodes.
 common_flags=(
   --nodisplay --nobanner --noupdater "--network=$network_id" --verbosity=1
   "--dev-num-validators=$total_validators"
@@ -81,11 +81,12 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   sleep 1
 done
 
-# Start all client nodes in the background
+# Start all client nodes in the background.
 for ((client_index = 0; client_index < total_clients; client_index++)); do
+  # compute the absolute index for this node.
   node_index=$((client_index + total_validators))
 
-  snarkos clean --dev $node_index
+  snarkos clean "--dev=$node_index" "--network=$network_id"
 
   log_file="$log_dir/client-$client_index.log"
   snarkos start "${common_flags[@]}" "--dev=$node_index" \
