@@ -891,34 +891,42 @@ impl<N: Network> Gateway<N> {
             0 => "No connected validators".to_string(),
             num_connected => format!("Connected to {num_connected} validators {total_validators}"),
         };
-        // Collect the connected validator addresses.
-        let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
-        // Include our own address, so we do not log ourself as disconnected and include ourself in the check
-        // for the quorum threshold.
-        connected_validator_addresses.insert(self.account.address());
-
-        // Log the connected validators and count the total connected stake.
         info!("{connections_msg}");
+
+        // Collect the connected validator addresses and stake.
+        let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
+        // Include our own address.
+        connected_validator_addresses.insert(self.account.address());
+        // Include and log the connected validators.
         for peer_ip in &connected_validators {
             let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
-            debug!("{}", format!("  {peer_ip} - {address}").dimmed());
+            debug!("{}", format!("Connected to: {peer_ip} - {address}").dimmed());
         }
 
         // Log the validators that are not connected.
         let num_not_connected = validators_total.saturating_sub(connected_validators.len());
         if num_not_connected > 0 {
-            info!("Not connected to {num_not_connected} validators {total_validators}");
             // Collect the committee members.
             let committee_members: HashSet<_> =
                 self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
 
-            // Log the validators that are not connected.
+            let mut not_connected_stake = 0;
             for address in committee_members.difference(&connected_validator_addresses) {
-                debug!("{}", format!("  Not connected to {address}").dimmed());
+                let address_stake = committee.get_stake(*address);
+                let address_stake_as_percentage = address_stake as f64 / committee.total_stake() as f64 * 100.0;
+                not_connected_stake += address_stake;
+                debug!(
+                    "{}",
+                    format!("  Not connected to {address} ({address_stake_as_percentage:.2}% of total stake)").dimmed()
+                );
             }
+            let not_connected_stake_as_percentage = not_connected_stake as f64 / committee.total_stake() as f64 * 100.0;
+            warn!(
+                "Not connected to {num_not_connected} validators {total_validators} ({not_connected_stake_as_percentage:.2}% of total stake not connected)"
+            );
         }
 
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
