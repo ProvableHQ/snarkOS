@@ -24,7 +24,11 @@ use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
-    Heartbeat, Inbound, Outbound, Router, Routing,
+    Heartbeat,
+    Inbound,
+    Outbound,
+    Router,
+    Routing,
     messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, Ping};
@@ -33,7 +37,8 @@ use snarkos_node_tcp::{
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
 use snarkvm::prelude::{
-    Ledger, Network,
+    Ledger,
+    Network,
     block::{Block, Header},
     puzzle::Solution,
     store::ConsensusStorage,
@@ -491,7 +496,8 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 mod tests {
     use super::*;
     use snarkvm::prelude::{
-        MainnetV0, VM,
+        MainnetV0,
+        VM,
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     };
 

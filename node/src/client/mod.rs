@@ -23,7 +23,11 @@ use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
-    Heartbeat, Inbound, Outbound, Router, Routing,
+    Heartbeat,
+    Inbound,
+    Outbound,
+    Router,
+    Routing,
     messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
@@ -58,7 +62,8 @@ use std::{
     sync::{
         Arc,
         atomic::{
-            AtomicBool, AtomicUsize,
+            AtomicBool,
+            AtomicUsize,
             Ordering::{Acquire, Relaxed},
         },
     },
