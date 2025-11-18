@@ -152,6 +152,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             shutdown: shutdown.clone(),
         };
 
+        // Pass the node to the signal handler.
+        let _ = signal_node.set(node.clone());
+
         // Perform sync with CDN (if enabled).
         let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown)));
 
@@ -187,8 +190,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         node.initialize_routing().await;
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
         // Return the node.
         Ok(node)
     }
@@ -474,6 +475,13 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         // Shut down consensus.
         trace!("Shutting down consensus...");
         self.consensus.shut_down().await;
+
+        // Cache the block tree.
+        let ledger = self.ledger.clone();
+        let _ = spawn_blocking!(ledger.cache_block_tree().map_err(|e| {
+            error!("Couldn't cache the block tree: {e}");
+            e
+        }));
 
         info!("Node has shut down.");
     }
