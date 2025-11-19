@@ -225,10 +225,7 @@ impl Developer {
 
     /// Converts the returned JSON error (if any) into an anyhow Error chain.
     /// If the error was 404, this simply returns `Ok(None)`.
-    fn handle_ureq_result(
-        result: Result<http::Response<ureq::Body>>,
-        api_version: ApiVersion,
-    ) -> Result<Option<ureq::Body>> {
+    fn handle_ureq_result(result: Result<http::Response<ureq::Body>>) -> Result<Option<ureq::Body>> {
         let response = result?;
 
         if response.status().is_success() {
@@ -236,19 +233,23 @@ impl Developer {
         } else if response.status() == http::StatusCode::NOT_FOUND {
             Ok(None)
         } else {
-            match api_version {
-                ApiVersion::V1 => {
-                    // V1 returns the error message a string.
-                    let err_msg = response.into_body().read_to_string()?;
-                    Err(anyhow!(err_msg))
-                }
-                ApiVersion::V2 => {
-                    // V2 returns the error in JSON format.
-                    let rest_error: RestError =
-                        response.into_body().read_json().with_context(|| "Failed to parse error JSON")?;
+            // V2 returns the error in JSON format.
+            let is_json = response
+                .headers()
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|h| h.to_str().ok())
+                .map(|ct| ct.contains("json"))
+                .unwrap_or(false);
 
-                    Err(rest_error.parse())
-                }
+            if is_json {
+                let rest_error: RestError =
+                    response.into_body().read_json().with_context(|| "Failed to parse error JSON")?;
+
+                Err(rest_error.parse())
+            } else {
+                // V1 returns the error message a string.
+                let err_msg = response.into_body().read_to_string()?;
+                Err(anyhow!(err_msg))
             }
         }
     }
@@ -257,28 +258,22 @@ impl Developer {
     fn parse_custom_endpoint<N: Network>(url: &Uri) -> (String, ApiVersion) {
         // Determine API version for custom endpoint.
         if let Some(pq) = url.path_and_query()
-            && pq.path().ends_with(&format!("{API_VERSION_V1}/{}/transaction/broadcast", N::SHORT_NAME))
+            && pq.path().ends_with(&format!("{API_VERSION_V2}/{}/transaction/broadcast", N::SHORT_NAME))
         {
-            debug!("Custom endpoint contains `v1`. Will fall back V1 API handling.");
-            (url.to_string(), ApiVersion::V1)
-        } else {
-            // Default to API version 2
             (url.to_string(), ApiVersion::V2)
+        } else {
+            (url.to_string(), ApiVersion::V1)
         }
     }
 
     /// Helper function to send a POST request with a JSON body to an endpoint and await a JSON response.
-    fn http_post_json<I: Serialize, O: DeserializeOwned>(
-        path: &str,
-        arg: &I,
-        api_version: ApiVersion,
-    ) -> Result<Option<O>> {
-        debug!("Issuing POST request ({api_version:?}) to \"{path}\"");
+    fn http_post_json<I: Serialize, O: DeserializeOwned>(path: &str, arg: &I) -> Result<Option<O>> {
+        debug!("Issuing POST request to \"{path}\"");
 
         let result =
             ureq::post(path).config().http_status_as_error(false).build().send_json(arg).map_err(|err| err.into());
 
-        match Self::handle_ureq_result(result, api_version).with_context(|| "HTTP POST request failed")? {
+        match Self::handle_ureq_result(result).with_context(|| "HTTP POST request failed")? {
             Some(mut body) => {
                 let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
                 Ok(Some(json))
@@ -289,12 +284,12 @@ impl Developer {
 
     /// Helper function to send a GET request to an endpoint and await a JSON response.
     fn http_get_json<N: Network, O: DeserializeOwned>(base_url: &http::Uri, route: &str) -> Result<Option<O>> {
-        let (endpoint, api_version) = Self::build_endpoint::<N>(base_url, route)?;
-        debug!("Issuing GET request ({api_version:?}) to \"{endpoint}\"");
+        let (endpoint, _api_version) = Self::build_endpoint::<N>(base_url, route)?;
+        debug!("Issuing GET request to \"{endpoint}\"");
 
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
-        match Self::handle_ureq_result(result, api_version).with_context(|| "HTTP GET request failed")? {
+        match Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")? {
             Some(mut body) => {
                 let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
                 Ok(Some(json))
@@ -305,12 +300,12 @@ impl Developer {
 
     /// Helper function to send a GET request to an endpoint and await the response.
     fn http_get<N: Network>(base_url: &http::Uri, route: &str) -> Result<Option<ureq::Body>> {
-        let (endpoint, api_version) = Self::build_endpoint::<N>(base_url, route)?;
-        debug!("Issuing GET request ({api_version:?}) to \"{endpoint}\"");
+        let (endpoint, _api_version) = Self::build_endpoint::<N>(base_url, route)?;
+        debug!("Issuing GET request to \"{endpoint}\"");
 
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
-        Self::handle_ureq_result(result, api_version).with_context(|| "HTTP GET request failed")
+        Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")
     }
 
     /// Wait for a transaction to be confirmed by the network.
@@ -443,7 +438,7 @@ impl Developer {
                 Self::build_endpoint::<N>(endpoint, "transaction/broadcast")?
             };
 
-            let result: Result<String> = match Self::http_post_json(&broadcast_endpoint, &transaction, api_version) {
+            let result: Result<String> = match Self::http_post_json(&broadcast_endpoint, &transaction) {
                 Ok(Some(s)) => Ok(s),
                 Ok(None) => Err(anyhow!("Got unexpected 404 error")),
                 Err(err) => Err(err),

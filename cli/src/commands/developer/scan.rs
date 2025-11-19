@@ -150,10 +150,10 @@ impl Scan {
             end
         } else {
             // If not end height was given, request the latest block height from the endpoint.
-            let (endpoint, api_version) = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
+            let (endpoint, _api_version) = Developer::build_endpoint::<N>(endpoint, "block/height/latest")?;
             let result = ureq::get(&endpoint).call().map_err(|e| e.into());
-            let end: u32 = Developer::handle_ureq_result(result, api_version)?
-                .ok_or(anyhow!("Endpoint returned 404 for latest block height"))?
+            let end: u32 = Developer::handle_ureq_result(result)
+                .and_then(|body| body.ok_or(anyhow!("Endpoint returned 404 for latest block height")))?
                 .read_to_string()?
                 .parse()?;
 
