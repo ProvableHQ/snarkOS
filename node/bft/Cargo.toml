@@ -120,6 +120,9 @@ workspace = true
 [dependencies.snarkos-node-tcp]
 workspace = true
 
+[dependencies.snarkos-utilities]
+workspace = true
+
 [dependencies.snarkvm]
 workspace = true
 features = [ "utilities" ]

@@ -18,7 +18,12 @@ edition = "2024"
 
 [features]
 test = [ ]
-locktick = [ "dep:locktick", "snarkos-node-tcp/locktick", "snarkvm/locktick" ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-tcp/locktick",
+  "snarkvm/locktick",
+  "snarkos-node-network/locktick"
+]
 metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
