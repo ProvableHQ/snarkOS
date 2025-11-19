@@ -28,6 +28,9 @@ version = "0.29"
 [dependencies.snarkos-node]
 workspace = true
 
+[dependencies.snarkos-utilities]
+workspace = true
+
 [dependencies.snarkvm]
 workspace = true
 

@@ -36,11 +36,7 @@ async fn test_resend_transmission_request() {
     // Initialize the accounts and the committee.
     let (accounts, committee) = new_test_committee(num_nodes, &mut rng);
     // Sample a ledger.
-    let accounts_ = accounts.clone();
-    let committee_ = committee.clone();
-    let ledger = tokio::task::spawn_blocking(move || {
-        sample_ledger(&accounts_, &committee_, &mut rng)
-    }).await.unwrap();
+    let ledger = sample_ledger(&accounts, &committee, &mut rng);
     // Sample a worker.
     let worker = sample_worker(0, accounts[0].clone(), ledger.clone());
 
@@ -122,11 +118,7 @@ async fn test_flood_transmission_requests() {
     // Initialize the accounts and the committee.
     let (accounts, committee) = new_test_committee(num_nodes, &mut rng);
     // Sample a ledger.
-    let accounts_ = accounts.clone();
-    let committee_ = committee.clone();
-    let ledger = tokio::task::spawn_blocking(move || {
-        sample_ledger(&accounts_, &committee_, &mut rng)
-    }).await.unwrap();
+    let ledger = sample_ledger(&accounts, &committee, &mut rng);
     // Sample a worker.
     let worker = sample_worker(0, accounts[0].clone(), ledger.clone());
 

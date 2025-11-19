@@ -24,7 +24,11 @@ use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
-    Heartbeat, Inbound, Outbound, Router, Routing,
+    Heartbeat,
+    Inbound,
+    Outbound,
+    Router,
+    Routing,
     messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, Ping};
@@ -32,8 +36,11 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::prelude::{
-    Ledger, Network,
+    Ledger,
+    Network,
     block::{Block, Header},
     puzzle::Solution,
     store::ConsensusStorage,
@@ -46,11 +53,7 @@ use core::future::Future;
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
 /// A validator is a full node, capable of validating blocks.
@@ -68,8 +71,6 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     sync: Arc<BlockSync<N>>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The shutdown signal.
-    shutdown: Arc<AtomicBool>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
 }
@@ -90,11 +91,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
-
         // Initialize the ledger.
         let ledger = {
             let storage_mode = storage_mode.clone();
@@ -105,7 +103,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
+        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
 
         // Initialize the node router.
         let router = Router::new(
@@ -149,11 +147,10 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync: sync.clone(),
             ping,
             handles: Default::default(),
-            shutdown: shutdown.clone(),
         };
 
         // Perform sync with CDN (if enabled).
-        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown)));
+        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler)));
 
         // Initialize the transaction pool.
         node.initialize_transaction_pool(dev, dev_txs)?;
@@ -187,8 +184,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         node.initialize_routing().await;
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
+
         // Return the node.
         Ok(node)
     }
@@ -462,7 +458,6 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
-        self.shutdown.store(true, std::sync::atomic::Ordering::Release);
 
         // Abort the tasks.
         trace!("Shutting down the validator...");
@@ -483,7 +478,8 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 mod tests {
     use super::*;
     use snarkvm::prelude::{
-        MainnetV0, VM,
+        MainnetV0,
+        VM,
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     };
 
@@ -531,7 +527,7 @@ mod tests {
             false,
             dev_txs,
             None,
-            Default::default(),
+            SignalHandler::new(),
         )
         .await
         .unwrap();

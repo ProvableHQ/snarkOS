@@ -33,7 +33,6 @@ use std::time::Duration;
 
 use deadline::deadline;
 use rand::Rng;
-use tokio::task;
 
 async fn new_test_gateway(
     num_nodes: u16,
@@ -42,7 +41,7 @@ async fn new_test_gateway(
     let (accounts, committee) = new_test_committee(num_nodes, rng);
     let accounts_ = accounts.clone();
     let mut rng_ = TestRng::fixed(rng.r#gen());
-    let ledger = task::spawn_blocking(move || sample_ledger(&accounts_, &committee, &mut rng_)).await.unwrap();
+    let ledger = sample_ledger(&accounts_, &committee, &mut rng_);
     let storage = sample_storage(ledger.clone());
     let gateway = sample_gateway(accounts[0].clone(), storage, ledger);
 

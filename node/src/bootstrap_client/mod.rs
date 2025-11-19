@@ -21,6 +21,7 @@ use crate::tcp::{self, Tcp};
 use snarkos_account::Account;
 use snarkos_node_network::{ConnectionMode, Peer, Resolver};
 use snarkos_node_tcp::{P2P, protocols::*};
+use snarkos_utilities::SignalHandler;
 use snarkvm::{
     ledger::committee::Committee,
     prelude::{Address, Field, Header, Network, PrivateKey, ViewKey},
@@ -229,5 +230,22 @@ impl<N: Network> BootstrapClient<N> {
         if let Some(shutdown_tx) = self.shutdown_tx.lock().take() {
             let _ = shutdown_tx.send(());
         }
+    }
+
+    /// Blocks until a shutdown signal was received or manual shutdown was triggered.
+    pub async fn wait_for_signals(&self, handler: &SignalHandler) {
+        handler.wait_for_signals().await;
+
+        warn!("==========================================================================================");
+        warn!("⚠️  Attention - Starting the graceful shutdown procedure (ETA: 30 seconds)...");
+        warn!("⚠️  Attention - To avoid DATA CORRUPTION, do NOT interrupt snarkOS (or press Ctrl+C again)");
+        warn!("⚠️  Attention - Please wait until the shutdown gracefully completes (ETA: 30 seconds)");
+        warn!("==========================================================================================");
+
+        // If the node is already initialized, then shut it down.
+        self.shut_down().await;
+
+        // A best-effort attempt to let any ongoing activity conclude.
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }
