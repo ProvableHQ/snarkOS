@@ -355,8 +355,8 @@ impl<N: Network> Consensus<N> {
                     fmt_id(solution_id)
                 ),
                 Err(err) => {
-                    // If the BFT is synced, then log the warning.
-                    if self.bft.is_synced() {
+                    // If the node is synced and the occurs after the first 10 blocks of an epoch, log it as a warning, otherwise ignore.
+                    if self.bft.is_synced() && self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
                         let err = err.context(format!(
                             "Unable to add unconfirmed solution '{}' to the memory pool",
                             fmt_id(solution_id)
