@@ -903,7 +903,7 @@ impl<N: Network> Gateway<N> {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
-            debug!("{}", format!("Connected to: {peer_ip} - {address}").dimmed());
+            debug!("{}", format!("  Connected to: {peer_ip} - {address}").dimmed());
         }
 
         // Log the validators that are not connected.
@@ -913,16 +913,20 @@ impl<N: Network> Gateway<N> {
             let committee_members: HashSet<_> =
                 self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
 
-            let mut not_connected_stake = 0;
-            for address in committee_members.difference(&connected_validator_addresses) {
-                let address_stake = committee.get_stake(*address);
-                let address_stake_as_percentage = address_stake as f64 / committee.total_stake() as f64 * 100.0;
-                not_connected_stake += address_stake;
-                debug!(
-                    "{}",
-                    format!("  Not connected to {address} ({address_stake_as_percentage:.2}% of total stake)").dimmed()
-                );
-            }
+            let not_connected_stake: u64 = committee_members
+                .difference(&connected_validator_addresses)
+                .map(|address| {
+                    let address_stake = committee.get_stake(*address);
+                    let address_stake_as_percentage = address_stake as f64 / committee.total_stake() as f64 * 100.0;
+                    debug!(
+                        "{}",
+                        format!("  Not connected to {address} ({address_stake_as_percentage:.2}% of total stake)")
+                            .dimmed()
+                    );
+                    address_stake
+                })
+                .sum();
+
             let not_connected_stake_as_percentage = not_connected_stake as f64 / committee.total_stake() as f64 * 100.0;
             warn!(
                 "Not connected to {num_not_connected} validators {total_validators} ({not_connected_stake_as_percentage:.2}% of total stake not connected)"
