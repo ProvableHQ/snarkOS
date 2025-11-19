@@ -199,16 +199,17 @@ impl Developer {
         ensure!(!route.starts_with('/'), "path cannot start with a slash");
 
         // If the route already ends with a version segment (v1 or v2), don't prepend a version.
-        let (route_has_version_suffix, api_version) = {
+        let api_version = {
             let r = base_url.path().trim_end_matches('/');
 
             if r.ends_with(API_VERSION_V1) {
-                (true, ApiVersion::V1)
+                ApiVersion::V1
             } else if r.ends_with(API_VERSION_V2) {
-                (true, ApiVersion::V2)
+                ApiVersion::V2
             } else {
-                // Default to v2.
-                (false, ApiVersion::V2)
+                // Default to v1.
+                // Note: If the snarkos-node-rest switches default to v2, this needs to be updated.
+                ApiVersion::V1
             }
         };
 
@@ -218,13 +219,7 @@ impl Developer {
         let sep = if base_url.path().ends_with('/') { "" } else { "/" };
 
         // Build "{base}/{maybe_version}/{network}/{route}"
-        let prefix = if route_has_version_suffix {
-            format!("{}/", N::SHORT_NAME)
-        } else {
-            format!("{}/{}/", API_VERSION_V2, N::SHORT_NAME)
-        };
-
-        let full_uri = format!("{base_url}{sep}{prefix}{route}");
+        let full_uri = format!("{base_url}{sep}{network}/{route}", network = N::SHORT_NAME);
         Ok((full_uri, api_version))
     }
 
@@ -529,6 +524,21 @@ mod tests {
 
     use snarkvm::ledger::test_helpers::CurrentNetwork;
 
+    /// Test that the default endpoints (V1) work as expected.
+    ///
+    /// Note, if the default endpoint ever changes, this test needs to be updated.
+    #[test]
+    fn test_build_endpoint_default_v1() {
+        let base_uri_str = "http://localhost:3030";
+        let base_uri = Uri::try_from(base_uri_str).unwrap();
+        let (endpoint, api_version) =
+            Developer::build_endpoint::<CurrentNetwork>(&base_uri, "transaction/broadcast").unwrap();
+
+        assert_eq!(endpoint, format!("{base_uri_str}/{}/transaction/broadcast", CurrentNetwork::SHORT_NAME));
+        assert_eq!(api_version, ApiVersion::V1);
+    }
+
+    /// Ensure that the V1 endpoints work as expected.
     #[test]
     fn test_build_endpoint_v1() {
         let base_uri_str = "http://localhost:3030/v1";
@@ -540,6 +550,7 @@ mod tests {
         assert_eq!(api_version, ApiVersion::V1);
     }
 
+    /// Ensure that the V2 endpoints work as expected.
     #[test]
     fn test_build_endpoint_v2() {
         let base_uri_str = "http://localhost:3030/v2";
