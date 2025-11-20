@@ -161,7 +161,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
             }
             Message::Disconnect(message) => {
                 // The peer informs us that they had disconnected. Disconnect from them too.
-                debug!("Peer '{peer_ip}' decided to disconnect due to '{:?}'", message.reason);
+                debug!("Peer '{peer_ip}' decided to disconnect due to '{}'", message.reason);
                 self.router().disconnect(peer_ip);
                 Ok(false)
             }

@@ -247,7 +247,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
 
     /// Disconnects on receipt of a `PuzzleResponse` message.
     fn puzzle_response(&self, peer_ip: SocketAddr, _epoch_hash: N::BlockHash, _header: Header<N>) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 

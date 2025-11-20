@@ -24,7 +24,7 @@ use snarkos_node_network::log_repo_sha_comparison;
 use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, Field, Network, block::Header, error},
+    prelude::{Address, Field, Network, block::Header, error, io_error},
 };
 
 use anyhow::{Result, bail};
@@ -55,8 +55,8 @@ macro_rules! expect_message {
                 data
             }
             // Received a disconnect message, abort.
-            Some(Message::Disconnect(reason)) => {
-                return Err(io_error(format!("'{}' disconnected: {reason:?}", $peer_addr)));
+            Some(Message::Disconnect($crate::messages::Disconnect { reason })) => {
+                return Err(io_error(format!("'{}' disconnected: {reason}", $peer_addr)));
             }
             // Received an unexpected message, abort.
             Some(ty) => {
@@ -219,12 +219,12 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 3: Send the challenge response. */
@@ -282,7 +282,7 @@ impl<N: Network> Router<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 2: Send the challenge response followed by own challenge request. */
@@ -329,7 +329,7 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         Ok(Some(peer_request))
