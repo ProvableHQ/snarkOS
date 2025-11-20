@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkvm::prelude::{FromBytes, ToBytes, error};
+use snarkvm::prelude::{FromBytes, ToBytes, io_error};
 
 use std::io;
 
@@ -50,6 +50,8 @@ pub enum DisconnectReason {
     YouNeedToSyncFirst,
     /// The peer's listening port is closed.
     YourPortIsClosed(u16),
+    /// The disconnect reason is not know. This is used for when the peers sends a disconnect reason that is not known to us.
+    UnknownReason,
 }
 
 impl ToBytes for DisconnectReason {
@@ -73,32 +75,66 @@ impl ToBytes for DisconnectReason {
                 14u8.write_le(&mut writer)?;
                 port.write_le(writer)
             }
+            Self::UnknownReason => Err(io_error("Cannot serialize unknown disconnect reason")),
         }
     }
 }
 
 impl FromBytes for DisconnectReason {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
-        match u8::read_le(&mut reader)? {
-            0 => Ok(Self::ExceededForkRange),
-            1 => Ok(Self::InvalidChallengeResponse),
-            2 => Ok(Self::InvalidForkDepth),
-            3 => Ok(Self::INeedToSyncFirst),
-            4 => Ok(Self::NoReasonGiven),
-            5 => Ok(Self::ProtocolViolation),
-            6 => Ok(Self::OutdatedClientVersion),
-            7 => Ok(Self::PeerHasDisconnected),
-            8 => Ok(Self::PeerRefresh),
-            9 => Ok(Self::ShuttingDown),
-            10 => Ok(Self::SyncComplete),
-            11 => Ok(Self::TooManyFailures),
-            12 => Ok(Self::TooManyPeers),
-            13 => Ok(Self::YouNeedToSyncFirst),
+        let index = match u8::read_le(&mut reader) {
+            Ok(index) => index,
+            Err(err) => return Err(io_error(format!("Failed to deserialize disconnect reason: {err}"))),
+        };
+
+        let reason = match index {
+            0 => Self::ExceededForkRange,
+            1 => Self::InvalidChallengeResponse,
+            2 => Self::InvalidForkDepth,
+            3 => Self::INeedToSyncFirst,
+            4 => Self::NoReasonGiven,
+            5 => Self::ProtocolViolation,
+            6 => Self::OutdatedClientVersion,
+            7 => Self::PeerHasDisconnected,
+            8 => Self::PeerRefresh,
+            9 => Self::ShuttingDown,
+            10 => Self::SyncComplete,
+            11 => Self::TooManyFailures,
+            12 => Self::TooManyPeers,
+            13 => Self::YouNeedToSyncFirst,
             14 => {
                 let port = u16::read_le(reader)?;
-                Ok(Self::YourPortIsClosed(port))
+                Self::YourPortIsClosed(port)
             }
-            _ => Err(error("Invalid disconnect reason")),
+            val => {
+                warn!("Received unknown disconnect reason (id={val})");
+                Self::UnknownReason
+            }
+        };
+
+        Ok(reason)
+    }
+}
+
+impl std::fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExceededForkRange => write!(f, "exceeded fork range"),
+            Self::InvalidChallengeResponse => write!(f, "invalid challenge response"),
+            Self::InvalidForkDepth => write!(f, "invalid fork depth"),
+            Self::INeedToSyncFirst => write!(f, "I need to sync first"),
+            Self::NoReasonGiven => write!(f, "no reason given"),
+            Self::ProtocolViolation => write!(f, "protocol violation"),
+            Self::OutdatedClientVersion => write!(f, "outdated client version"),
+            Self::PeerHasDisconnected => write!(f, "peer has disconnected"),
+            Self::PeerRefresh => write!(f, "periodical peerrefresh"),
+            Self::ShuttingDown => write!(f, "shutting down"),
+            Self::SyncComplete => write!(f, "block sync complete"),
+            Self::TooManyFailures => write!(f, "too manyfailures"),
+            Self::TooManyPeers => write!(f, "too many peers"),
+            Self::YouNeedToSyncFirst => write!(f, "you need to sync first"),
+            Self::YourPortIsClosed(port) => write!(f, "your port is closed ({port})"),
+            Self::UnknownReason => write!(f, "unknown reason"),
         }
     }
 }
