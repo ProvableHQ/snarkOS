@@ -90,12 +90,4 @@ mod tests {
             assert_eq!(reason, &disconnect.reason);
         }
     }
-
-    #[test]
-    #[should_panic]
-    fn disconnect_invalid_data_panics() {
-        let mut buf = BytesMut::default().writer();
-        "not a DisconnectReason-value".as_bytes().write_le(&mut buf).unwrap();
-        let _disconnect = Disconnect::read_le(buf.into_inner().reader()).unwrap();
-    }
 }

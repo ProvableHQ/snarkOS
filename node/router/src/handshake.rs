@@ -45,7 +45,9 @@ impl<N: Network> P2P for Router<N> {
 /// A macro unwrapping the expected handshake message or returning an error for unexpected messages.
 #[macro_export]
 macro_rules! expect_message {
-    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {
+    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {{
+        use snarkvm::utilities::io_error;
+
         match $framed.try_next().await? {
             // Received the expected message, proceed.
             Some($msg_ty(data)) => {
@@ -54,26 +56,26 @@ macro_rules! expect_message {
             }
             // Received a disconnect message, abort.
             Some(Message::Disconnect(reason)) => {
-                return Err(error(format!("'{}' disconnected: {reason:?}", $peer_addr)))
+                return Err(io_error(format!("'{}' disconnected: {reason:?}", $peer_addr)));
             }
             // Received an unexpected message, abort.
             Some(ty) => {
-                return Err(error(format!(
+                return Err(io_error(format!(
                     "'{}' did not follow the handshake protocol: received {:?} instead of {}",
                     $peer_addr,
                     ty.name(),
                     stringify!($msg_ty),
-                )))
+                )));
             }
             // Received nothing.
             None => {
-                return Err(error(format!(
+                return Err(io_error(format!(
                     "the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
                     stringify!($msg_ty),
-                )))
+                )));
             }
         }
-    };
+    }};
 }
 
 /// Send the given message to the peer.
