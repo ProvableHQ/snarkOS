@@ -515,10 +515,14 @@ impl<N: Network> Sync<N> {
     /// BFT-version of [`snarkos_node_client::Client::try_advancing_block_synchronization`].
     async fn try_advancing_block_synchronization(&self, ping: &Option<Arc<Ping<N>>>) {
         // Process block responses and advance the ledger.
-        let new_blocks = match self.try_advancing_block_synchronization_inner().await {
+        let new_blocks = match self
+            .try_advancing_block_synchronization_inner()
+            .await
+            .with_context(|| "Failed to advance block synchronization")
+        {
             Ok(new_blocks) => new_blocks,
             Err(err) => {
-                error!("Block synchronization failed - {err}");
+                error!("{}", flatten_error(err));
                 false
             }
         };
@@ -701,7 +705,7 @@ impl<N: Network> Sync<N> {
     /// It syncs the batch certificates with the BFT, if the block's authority is a sub-DAG.
     ///
     /// Note that the block authority is always a sub-DAG in production; beacon signatures are only used for testing,
-    /// and as placeholder (irrelevant) block authority in the genesis block.i
+    /// and as placeholder (irrelevant) block authority in the genesis block.
     async fn add_block_subdag_to_bft(&self, block: &Block<N>) -> Result<()> {
         // Nothing to do if this is a beacon block
         let Authority::Quorum(subdag) = block.authority() else {
@@ -872,6 +876,7 @@ impl<N: Network> Sync<N> {
 
             for pending_block in pending_blocks.drain(0..num_blocks) {
                 let ledger = self.ledger.clone();
+                let storage = self.storage.clone();
                 let hash = pending_block.hash();
                 let height = pending_block.height();
 
@@ -880,6 +885,10 @@ impl<N: Network> Sync<N> {
                         Ok(block) => {
                             trace!("Adding pending block {hash} at height {height} to the ledger");
                             ledger.advance_to_next_block(&block)?;
+                            // Sync the height with the block.
+                            storage.sync_height_with_block(block.height());
+                            // Sync the round with the block.
+                            storage.sync_round_with_block(block.round());
                         }
                         Err(err) => bail!("Failed to check contents of pending block {hash} at height {height}: {err}"),
                     }
@@ -1212,7 +1221,7 @@ mod tests {
         }
 
         // ### Test that sync works as expected ###
-        let storage_mode = StorageMode::Test(None);
+        let storage_mode = StorageMode::new_test(None);
 
         // Create a new ledger to test with, but use the existing storage
         // so that the certificates exist.
