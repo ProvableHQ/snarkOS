@@ -20,7 +20,7 @@ use crate::{
     MAX_BATCH_DELAY_IN_MS,
     MEMORY_POOL_PORT,
     Worker,
-    events::{EventCodec, PrimaryPing},
+    events::{Disconnect as DisconnectEvent, DisconnectReason, EventCodec, PrimaryPing},
     helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
@@ -34,7 +34,6 @@ use snarkos_node_bft_events::{
     ChallengeRequest,
     ChallengeResponse,
     DataBlocks,
-    DisconnectReason,
     Event,
     EventTrait,
     TransmissionRequest,
@@ -684,7 +683,7 @@ impl<N: Network> Gateway<N> {
             }
             Event::Disconnect(message) => {
                 // The peer informs us that they had disconnected. Disconnect from them too.
-                debug!("Peer '{peer_ip}' decided to disconnect due to '{:?}'", message.reason);
+                debug!("Peer '{peer_ip}' decided to disconnect due to '{}'", message.reason);
                 self.disconnect(peer_ip);
                 Ok(false)
             }
@@ -1368,8 +1367,8 @@ macro_rules! expect_event {
                 data
             }
             // Received a disconnect event, abort.
-            Some(Event::Disconnect(reason)) => {
-                return Err(error(format!("{CONTEXT} '{}' disconnected: {reason:?}", $peer_addr)));
+            Some(Event::Disconnect(DisconnectEvent { reason })) => {
+                return Err(error(format!("{CONTEXT} '{}' disconnected: {reason}", $peer_addr)));
             }
             // Received an unexpected event, abort.
             Some(ty) => {
@@ -1441,7 +1440,7 @@ impl<N: Network> Gateway<N> {
             .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
@@ -1450,7 +1449,7 @@ impl<N: Network> Gateway<N> {
                 // The Aleo address is already connected; no reason to return an error.
                 return Ok(None);
             } else {
-                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason}")));
             }
         }
 
@@ -1512,7 +1511,7 @@ impl<N: Network> Gateway<N> {
                 // The Aleo address is already connected; no reason to return an error.
                 return Ok(None);
             } else {
-                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+                return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
             }
         }
 
@@ -1548,7 +1547,7 @@ impl<N: Network> Gateway<N> {
             .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         Ok(Some(peer_request))
