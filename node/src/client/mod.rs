@@ -70,6 +70,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
+    sync::oneshot,
     task::JoinHandle,
     time::{sleep, timeout},
 };
@@ -143,9 +144,10 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: oneshot::Sender<()>,
     ) -> Result<Self> {
         // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
+        let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
 
         // Initialize the ledger.
         let ledger = {

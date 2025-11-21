@@ -57,6 +57,7 @@ use std::{
 };
 use tokio::{
     runtime::{self, Runtime},
+    sync::oneshot,
     task,
 };
 use tracing::warn;
@@ -287,13 +288,18 @@ impl Start {
             let node_parse_error = || "Failed to parse node arguments";
             let display_start_error = || "Failed to initialize the display";
 
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
             // Clone the configurations.
             let mut cli = self.clone();
             // Parse the network.
             match cli.network {
                 MainnetV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<MainnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
+                    let node = cli
+                        .parse_node::<MainnetV0>(shutdown.clone(), shutdown_tx)
+                        .await
+                        .with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
@@ -302,7 +308,10 @@ impl Start {
                 }
                 TestnetV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<TestnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
+                    let node = cli
+                        .parse_node::<TestnetV0>(shutdown.clone(), shutdown_tx)
+                        .await
+                        .with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
@@ -311,7 +320,10 @@ impl Start {
                 }
                 CanaryV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<CanaryV0>(shutdown.clone()).await.with_context(node_parse_error)?;
+                    let node = cli
+                        .parse_node::<CanaryV0>(shutdown.clone(), shutdown_tx)
+                        .await
+                        .with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
@@ -320,9 +332,10 @@ impl Start {
                 }
                 _ => panic!("Invalid network ID specified"),
             };
-            // Note: Do not move this. The pending await must be here otherwise
-            // other snarkOS commands will not exit.
-            std::future::pending::<()>().await;
+
+            // Wait for the shutdown signal.
+            let _ = shutdown_rx.await;
+
             Ok(String::new())
         })
     }
@@ -589,7 +602,7 @@ impl Start {
 
     /// Returns the node type corresponding to the given configurations.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>) -> Result<Node<N>> {
+    async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>, shutdown_tx: oneshot::Sender<()>) -> Result<Node<N>> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
@@ -737,9 +750,9 @@ impl Start {
 
         // Initialize the node.
         match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, shutdown.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, shutdown).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, shutdown.clone(), shutdown_tx).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, shutdown.clone(), shutdown_tx).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, shutdown, shutdown_tx).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }
     }

@@ -39,6 +39,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, atomic::AtomicBool},
 };
+use tokio::sync::oneshot;
 
 #[derive(Clone)]
 pub enum Node<N: Network> {
@@ -69,6 +70,7 @@ impl<N: Network> Node<N> {
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: oneshot::Sender<()>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
             Validator::new(
@@ -86,6 +88,7 @@ impl<N: Network> Node<N> {
                 dev_txs,
                 dev,
                 shutdown,
+                shutdown_tx,
             )
             .await?,
         )))
@@ -101,10 +104,21 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: oneshot::Sender<()>,
     ) -> Result<Self> {
         Ok(Self::Prover(Arc::new(
-            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, trusted_peers_only, dev, shutdown)
-                .await?,
+            Prover::new(
+                node_ip,
+                account,
+                trusted_peers,
+                genesis,
+                storage_mode,
+                trusted_peers_only,
+                dev,
+                shutdown,
+                shutdown_tx,
+            )
+            .await?,
         )))
     }
 
@@ -121,6 +135,7 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: oneshot::Sender<()>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
             Client::new(
@@ -135,6 +150,7 @@ impl<N: Network> Node<N> {
                 trusted_peers_only,
                 dev,
                 shutdown,
+                shutdown_tx,
             )
             .await?,
         )))
