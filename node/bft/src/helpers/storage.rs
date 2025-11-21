@@ -22,9 +22,10 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
-    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
+    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by, flatten_error},
 };
 
+use anyhow::Context;
 use indexmap::{IndexMap, IndexSet, map::Entry};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -124,7 +125,7 @@ impl<N: Network> Storage<N> {
         let storage = Self(Arc::new(StorageInner {
             ledger,
             current_height: Default::default(),
-            current_round: Default::default(),
+            current_round: AtomicU64::new(current_round),
             gc_round: Default::default(),
             max_gc_rounds,
             rounds: Default::default(),
@@ -133,8 +134,6 @@ impl<N: Network> Storage<N> {
             batch_ids: Default::default(),
             transmissions,
         }));
-        // Update the storage to the current round.
-        storage.update_current_round(current_round);
         // Perform GC on the current round.
         // Since there are no certificates yet, this only sets `gc_round`.
         storage.garbage_collect_certificates(current_round);
@@ -183,6 +182,8 @@ impl<N: Network> Storage<N> {
             if next_round < storage_round {
                 return Ok(storage_round);
             }
+
+            trace!("Incrementing storage from round {storage_round} to {next_round}");
         }
 
         // Retrieve the current committee.
@@ -788,7 +789,7 @@ impl<N: Network> Storage<N> {
 
     /// Syncs the current round with the block.
     pub(crate) fn sync_round_with_block(&self, next_round: u64) {
-        // Retrieve the current round in the block.
+        // Ensure we sync to at least round 1.
         let next_round = next_round.max(1);
         // If the round in the block is greater than the current round in storage, sync the round.
         if next_round > self.current_round() {
@@ -796,6 +797,11 @@ impl<N: Network> Storage<N> {
             self.update_current_round(next_round);
             // Log the updated round.
             info!("Synced to round {next_round}...");
+        } else {
+            trace!(
+                "Skipping sync to round {next_round} as it is less than the current round ({})",
+                self.current_round()
+            );
         }
     }
 
@@ -900,8 +906,12 @@ impl<N: Network> Storage<N> {
             certificate.round(),
             certificate.transmission_ids().len()
         );
-        if let Err(error) = self.insert_certificate(certificate, missing_transmissions, aborted_transmissions) {
-            error!("Failed to insert certificate '{certificate_id}' from block {} - {error}", block.height());
+
+        if let Err(error) = self
+            .insert_certificate(certificate, missing_transmissions, aborted_transmissions)
+            .with_context(|| format!("Failed to insert certificate '{certificate_id}' from block {}", block.height()))
+        {
+            error!("{}", &flatten_error(&error));
         }
     }
 }

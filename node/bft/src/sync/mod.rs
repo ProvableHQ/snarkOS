@@ -136,7 +136,9 @@ impl<N: Network> Sync<N> {
         info!("Syncing storage with the ledger...");
 
         // Sync the storage with the ledger.
-        self.sync_storage_with_ledger_at_bootup().await?;
+        self.sync_storage_with_ledger_at_bootup()
+            .await
+            .with_context(|| "Syncing storage with the ledger at bootup failed")?;
 
         debug!("Finished initial block synchronization at startup");
         Ok(())
@@ -519,10 +521,14 @@ impl<N: Network> Sync<N> {
     /// BFT-version of [`snarkos_node_client::Client::try_advancing_block_synchronization`].
     async fn try_advancing_block_synchronization(&self, ping: &Option<Arc<Ping<N>>>) {
         // Process block responses and advance the ledger.
-        let new_blocks = match self.try_advancing_block_synchronization_inner().await {
+        let new_blocks = match self
+            .try_advancing_block_synchronization_inner()
+            .await
+            .with_context(|| "Block synchronization failed")
+        {
             Ok(new_blocks) => new_blocks,
             Err(err) => {
-                error!("Block synchronization failed - {err}");
+                error!("{}", &flatten_error(err));
                 false
             }
         };
@@ -662,9 +668,9 @@ impl<N: Network> Sync<N> {
             let within_gc = (current_height + 1) > max_gc_height;
             if within_gc {
                 info!("Finished catching up with the network. Switching back to BFT sync.");
-                if let Err(err) = self.sync_storage_with_ledger_at_bootup().await {
-                    error!("BFT sync (with bootup routine) failed - {err}");
-                }
+                self.sync_storage_with_ledger_at_bootup()
+                    .await
+                    .with_context(|| "BFT sync (with bootup routine) failed")?;
             }
 
             cleanup(start_height, current_height, None)
