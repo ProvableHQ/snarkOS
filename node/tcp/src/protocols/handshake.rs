@@ -18,7 +18,7 @@ use std::{io, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite, split},
     net::TcpStream,
-    sync::{mpsc, oneshot},
+    sync::mpsc,
     time::timeout,
 };
 use tracing::*;
@@ -46,14 +46,10 @@ where
     async fn enable_handshake(&self) {
         let (from_node_sender, mut from_node_receiver) = mpsc::unbounded_channel::<ReturnableConnection>();
 
-        // use a channel to know when the handshake task is ready
-        let (tx, rx) = oneshot::channel();
-
         // spawn a background task dedicated to handling the handshakes
         let self_clone = self.clone();
         let handshake_task = tokio::spawn(async move {
             trace!(parent: self_clone.tcp().span(), "spawned the Handshake handler task");
-            tx.send(()).unwrap(); // safe; the channel was just opened
 
             while let Some((conn, result_sender)) = from_node_receiver.recv().await {
                 let addr = conn.addr();
@@ -65,7 +61,7 @@ where
 
                     let ret = match result {
                         Ok(Ok(conn)) => {
-                            debug!(parent: node.tcp().span(), "successfully handshaken with {}", addr);
+                            debug!(parent: node.tcp().span(), "successfully handshaken with {addr}");
                             Ok(conn)
                         }
                         Ok(Err(e)) => {
@@ -73,7 +69,7 @@ where
                             Err(e)
                         }
                         Err(_) => {
-                            debug!(parent: node.tcp().span(), "handshake with {} timed out", addr);
+                            debug!(parent: node.tcp().span(), "handshake with {addr} timed out");
                             Err(io::ErrorKind::TimedOut.into())
                         }
                     };
@@ -84,8 +80,10 @@ where
                     }
                 });
             }
+
+            trace!(parent: self_clone.tcp().span(), "handshake task finished");
         });
-        let _ = rx.await;
+
         self.tcp().tasks.lock().push(handshake_task);
 
         // register the Handshake handler with the Tcp

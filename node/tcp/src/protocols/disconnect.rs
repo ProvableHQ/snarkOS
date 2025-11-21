@@ -36,14 +36,10 @@ where
     async fn enable_disconnect(&self) {
         let (from_node_sender, mut from_node_receiver) = mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<()>)>();
 
-        // use a channel to know when the disconnect task is ready
-        let (tx, rx) = oneshot::channel::<()>();
-
         // spawn a background task dedicated to handling disconnect events
         let self_clone = self.clone();
         let disconnect_task = tokio::spawn(async move {
             trace!(parent: self_clone.tcp().span(), "spawned the Disconnect handler task");
-            tx.send(()).unwrap(); // safe; the channel was just opened
 
             while let Some((peer_addr, notifier)) = from_node_receiver.recv().await {
                 let self_clone2 = self_clone.clone();
@@ -55,8 +51,9 @@ where
                     let _ = notifier.send(()); // can't really fail
                 });
             }
+
+            trace!(parent: self_clone.tcp().span(), "disconnect handler task finished");
         });
-        let _ = rx.await;
         self.tcp().tasks.lock().push(disconnect_task);
 
         // register the Disconnect handler with the Tcp

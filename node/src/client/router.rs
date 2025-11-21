@@ -91,6 +91,10 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Client<N, C> {
             self.router.cache().clear_peer_entries(peer_ip);
             #[cfg(feature = "metrics")]
             self.router.update_metrics();
+
+            trace!("Disconnected from peer {peer_addr}");
+        } else {
+            trace!("Got disconnect for unknown peer {peer_addr}");
         }
     }
 }

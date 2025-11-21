@@ -111,6 +111,9 @@ version = "=1.6.0" # Remove this once we upgrade to rand 0.9
 [workspace.dependencies.rayon]
 version = "1"
 
+[workspace.dependencies.test-log]
+version = "0.2"
+
 [workspace.dependencies.thiserror]
 version = "2"
 

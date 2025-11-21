@@ -302,18 +302,16 @@ impl Tcp {
     ///
     /// Returns true if the we were connected to the given address.
     pub async fn disconnect(&self, addr: SocketAddr) -> bool {
-        if let Some(handler) = self.protocols.disconnect.get() {
-            if self.is_connected(addr) {
+        if let Some(ref conn) = self.connections.remove(addr) {
+            debug!(parent: self.span(), "Disconnecting from {}", conn.addr());
+
+            if let Some(handler) = self.protocols.disconnect.get() {
                 let (sender, receiver) = oneshot::channel();
                 handler.trigger((addr, sender));
                 let _ = receiver.await; // can't really fail
+            } else {
+                trace!(parent: self.span(), "no disconnect handler enabled");
             }
-        }
-
-        let conn = self.connections.remove(addr);
-
-        if let Some(ref conn) = conn {
-            debug!(parent: self.span(), "Disconnecting from {}", conn.addr());
 
             // Shut down the associated tasks of the peer.
             for task in conn.tasks.iter().rev() {
@@ -321,11 +319,11 @@ impl Tcp {
             }
 
             debug!(parent: self.span(), "Disconnected from {}", conn.addr());
+            true
         } else {
             warn!(parent: self.span(), "Failed to disconnect, was not connected to {addr}");
+            false
         }
-
-        conn.is_some()
     }
 }
 
