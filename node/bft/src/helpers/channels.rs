@@ -129,17 +129,23 @@ pub struct PrimarySender<N: Network> {
     pub tx_batch_signature: mpsc::Sender<(SocketAddr, BatchSignature<N>)>,
     pub tx_batch_certified: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
     pub tx_primary_ping: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub tx_unconfirmed_solution: mpsc::Sender<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
-    pub tx_unconfirmed_transaction: mpsc::Sender<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
+    pub tx_unconfirmed_solution: mpsc::Sender<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<bool>>)>,
+    pub tx_unconfirmed_transaction:
+        mpsc::Sender<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 impl<N: Network> PrimarySender<N> {
     /// Sends the unconfirmed solution to the primary.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the solution was added to the ready queue.
+    /// - `Ok(false)` if the solution was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the solution was invalid.
     pub async fn send_unconfirmed_solution(
         &self,
         solution_id: SolutionID<N>,
         solution: Data<Solution<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the unconfirmed solution to the primary.
@@ -149,11 +155,16 @@ impl<N: Network> PrimarySender<N> {
     }
 
     /// Sends the unconfirmed transaction to the primary.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the transaction was added to the ready queue.
+    /// - `Ok(false)` if the transaction was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the transaction was invalid.
     pub async fn send_unconfirmed_transaction(
         &self,
         transaction_id: N::TransactionID,
         transaction: Data<Transaction<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the unconfirmed transaction to the primary.
@@ -169,9 +180,9 @@ pub struct PrimaryReceiver<N: Network> {
     pub rx_batch_signature: mpsc::Receiver<(SocketAddr, BatchSignature<N>)>,
     pub rx_batch_certified: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
     pub rx_primary_ping: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub rx_unconfirmed_solution: mpsc::Receiver<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
+    pub rx_unconfirmed_solution: mpsc::Receiver<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<bool>>)>,
     pub rx_unconfirmed_transaction:
-        mpsc::Receiver<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
+        mpsc::Receiver<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 /// Initializes the primary channels.
