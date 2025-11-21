@@ -96,7 +96,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
-        shutdown_tx: oneshot::Sender<()>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         // Initialize the signal handler.
         let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
@@ -539,6 +539,7 @@ mod tests {
             dev_txs,
             None,
             Default::default(),
+            None,
         )
         .await
         .unwrap();

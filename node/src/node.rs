@@ -70,7 +70,7 @@ impl<N: Network> Node<N> {
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
-        shutdown_tx: oneshot::Sender<()>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
             Validator::new(
@@ -104,7 +104,7 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
-        shutdown_tx: oneshot::Sender<()>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         Ok(Self::Prover(Arc::new(
             Prover::new(
@@ -135,7 +135,7 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
-        shutdown_tx: oneshot::Sender<()>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
             Client::new(

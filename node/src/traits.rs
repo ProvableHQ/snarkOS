@@ -58,7 +58,7 @@ pub trait NodeInterface<N: Network>: Routing<N> {
 
     /// Handles OS signals for the node to intercept and perform a clean shutdown.
     /// The optional `shutdown_flag` flag can be used to cleanly terminate the syncing process.
-    fn handle_signals(shutdown_flag: Arc<AtomicBool>, shutdown_tx: oneshot::Sender<()>) -> Arc<OnceCell<Self>> {
+    fn handle_signals(shutdown_flag: Arc<AtomicBool>, shutdown_tx: Option<oneshot::Sender<()>>) -> Arc<OnceCell<Self>> {
         // In order for the signal handler to be started as early as possible, a reference to the node needs
         // to be passed to it at a later time.
         let node: Arc<OnceCell<Self>> = Default::default();
@@ -110,7 +110,9 @@ pub trait NodeInterface<N: Network>: Routing<N> {
                     tokio::time::sleep(Duration::from_secs(3)).await;
 
                     // Terminate the process.
-                    shutdown_tx.send(()).unwrap();
+                    if let Some(tx) = shutdown_tx {
+                        let _ = tx.send(());
+                    }
                 }
                 Err(error) => error!("tokio::signal::ctrl_c encountered an error: {}", error),
             }

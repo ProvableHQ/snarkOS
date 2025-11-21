@@ -34,6 +34,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         false, // Connect to untrusted peers.
         None,
         Default::default(),
+        None,
     )
     .await
     .expect("couldn't create client instance")
@@ -49,6 +50,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         false,
         None,
         Default::default(),
+        None,
     )
     .await
     .expect("couldn't create prover instance")
@@ -70,6 +72,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         false, // No dev traffic in production mode.
         None,
         Default::default(),
+        None,
     )
     .await
     .expect("couldn't create validator instance")
