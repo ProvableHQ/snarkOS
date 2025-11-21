@@ -169,23 +169,33 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Downgrades a connected peer to candidate status.
-    fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) {
-        if let Some(peer) = self.peer_pool().write().get_mut(&listener_addr) {
-            if let Peer::Connected(peer) = peer {
-                // Exception: the BootstrapClient only has a single Resolver,
-                // so it may only map a validator's Aleo address once, for its
-                // Gateway-mode connection. This also means that the Router-mode
-                // connection may not remove that mapping.
-                let aleo_addr = if self.node_type() == NodeType::BootstrapClient
-                    && peer.connection_mode == ConnectionMode::Router
-                {
-                    None
-                } else {
-                    Some(peer.aleo_addr)
-                };
-                self.resolver().write().remove_peer(peer.connected_addr, aleo_addr);
-            }
+    ///
+    /// Returns true if the peer was fully connected.
+    fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) -> bool {
+        let mut peer_pool = self.peer_pool().write();
+        let Some(peer) = peer_pool.get_mut(&listener_addr) else {
+            trace!("{} Downgrade peer to candidate failed - peer not found", Self::OWNER);
+            return false;
+        };
+
+        if let Peer::Connected(conn_peer) = peer {
+            // Exception: the BootstrapClient only has a single Resolver,
+            // so it may only map a validator's Aleo address once, for its
+            // Gateway-mode connection. This also means that the Router-mode
+            // connection may not remove that mapping.
+            let aleo_addr = if self.node_type() == NodeType::BootstrapClient
+                && conn_peer.connection_mode == ConnectionMode::Router
+            {
+                None
+            } else {
+                Some(conn_peer.aleo_addr)
+            };
+            self.resolver().write().remove_peer(conn_peer.connected_addr, aleo_addr);
             peer.downgrade_to_candidate(listener_addr);
+            true
+        } else {
+            peer.downgrade_to_candidate(listener_addr);
+            false
         }
     }
 

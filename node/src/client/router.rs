@@ -86,7 +86,9 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Client<N, C> {
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
             self.sync.remove_peer(&peer_ip);
+
             self.router.downgrade_peer_to_candidate(peer_ip);
+
             // Clear cached entries applicable to the peer.
             self.router.cache().clear_peer_entries(peer_ip);
             #[cfg(feature = "metrics")]
