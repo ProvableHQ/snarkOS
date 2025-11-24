@@ -329,7 +329,7 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         Ok(Some(peer_request))
