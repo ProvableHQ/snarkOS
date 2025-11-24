@@ -340,11 +340,16 @@ impl<N: Network> Worker<N> {
 
     /// Handles the incoming unconfirmed solution.
     /// Note: This method assumes the incoming solution is valid and does not exist in the ledger.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the solution was added to the ready queue.
+    /// - `Ok(false)` if the solution was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the solution is invalid.
     pub(crate) async fn process_unconfirmed_solution(
         &self,
         solution_id: SolutionID<N>,
         solution: Data<Solution<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Construct the transmission.
         let transmission = Transmission::Solution(solution.clone());
         // Compute the checksum.
@@ -355,7 +360,7 @@ impl<N: Network> Worker<N> {
         self.pending.remove(transmission_id, Some(transmission.clone()));
         // Check if the solution exists.
         if self.contains_transmission(transmission_id) {
-            bail!("Solution '{}.{}' already exists.", fmt_id(solution_id), fmt_id(checksum).dimmed());
+            return Ok(false);
         }
         // Check that the solution is well-formed and unique.
         self.ledger.check_solution_basic(solution_id, solution).await?;
@@ -368,15 +373,20 @@ impl<N: Network> Worker<N> {
                 fmt_id(checksum).dimmed()
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Handles the incoming unconfirmed transaction.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the transaction was added to the ready queue.
+    /// - `Ok(false)` if the transaction was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the transaction was invalid.
     pub(crate) async fn process_unconfirmed_transaction(
         &self,
         transaction_id: N::TransactionID,
         transaction: Data<Transaction<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Construct the transmission.
         let transmission = Transmission::Transaction(transaction.clone());
         // Compute the checksum.
@@ -387,7 +397,7 @@ impl<N: Network> Worker<N> {
         self.pending.remove(transmission_id, Some(transmission.clone()));
         // Check if the transaction ID exists.
         if self.contains_transmission(transmission_id) {
-            bail!("Transaction '{}.{}' already exists.", fmt_id(transaction_id), fmt_id(checksum).dimmed());
+            return Ok(false);
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
         let transaction = spawn_blocking!({
@@ -408,7 +418,7 @@ impl<N: Network> Worker<N> {
                 fmt_id(checksum).dimmed()
             );
         }
-        Ok(())
+        Ok(true)
     }
 }
 

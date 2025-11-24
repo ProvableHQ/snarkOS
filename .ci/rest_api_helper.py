@@ -42,9 +42,14 @@ async def make_request(session, worker_id, mode):
     """Make a single async request to the block endpoint"""
 
     if mode == "get-block":
+        # Checks that any block can be retrieved in a reasonable time.
         block_id = random.randint(MIN_BLOCK, MAX_BLOCK)
         url = f"{GET_BLOCK_BASE_URL}/{block_id}"
+    elif mode == "get-latest-block":
+        # Tests that the most recent block(s) are cached and can be retrieved even quicker.
+        url = f"{GET_BLOCK_BASE_URL}/{MAX_BLOCK}"
     elif mode == "block-height":
+        # Fetches the current block height as a basline for the REST API speed.
         url = BLOCK_HEIGHT_URL
     else:
         raise RuntimeError(f'Unknown REST mode "{mode}"')
@@ -96,15 +101,15 @@ async def worker(session, worker_id, mode, reqs_per_worker):
 async def main(mode, num_workers, reqs_per_worker):
     """Main async function to coordinate the workers"""
 
-    if mode == "get-block":
+    if mode in ["get-block", "get-latest-block"]:
         base_url = GET_BLOCK_BASE_URL
     elif mode == "block-height":
         base_url = BLOCK_HEIGHT_URL
     else:
         raise RuntimeError(f'Unknown REST mode "{mode}"')
 
-    print(f'Starting {num_workers} async workers, each making '
-          f'{reqs_per_worker} requests...')
+    print(f'Starting {num_workers} async workers for "{mode}", '
+          f' each making {reqs_per_worker} requests...')
     print(f"Target endpoint: {base_url}")
     print("")
 
