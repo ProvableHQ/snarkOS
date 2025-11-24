@@ -1827,9 +1827,7 @@ impl<N: Network> Primary<N> {
         let (missing_transmissions, missing_previous_certificates) = tokio::try_join!(
             missing_transmissions_handle,
             missing_previous_certificates_handle,
-        ).map_err(|e| {
-            anyhow!("Failed to fetch missing transmissions and previous certificates for round {batch_round} from '{peer_ip}' - {e}")
-        })?;
+        ).with_context(|| format!("Failed to fetch missing transmissions and previous certificates for round {batch_round} from '{peer_ip}"))?;
 
         // Iterate through the missing previous certificates.
         for batch_certificate in missing_previous_certificates {

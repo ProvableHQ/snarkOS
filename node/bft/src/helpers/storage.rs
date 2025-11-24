@@ -416,6 +416,12 @@ impl<N: Network> Storage<N> {
 
     /// Checks the given `batch_header` for validity, returning the missing transmissions from storage.
     ///
+    /// # Arguments
+    /// - `batch_header`: The batch header to check.
+    /// - `transmissions`: All transmissions referenced by the certificate.
+    /// - `aborted_transmissions`: The set of aborted transmissions in this certificate.
+    ///
+    /// # Invariants
     /// This method ensures the following invariants:
     /// - The batch ID does not already exist in storage.
     /// - The author is a member of the committee for the batch round.
@@ -560,6 +566,12 @@ impl<N: Network> Storage<N> {
 
     /// Checks the given `certificate` for validity, returning the missing transmissions from storage.
     ///
+    /// # Arguments
+    /// - `certificate`: The certificate to check.
+    /// - `transmissions`: The transmissions contained in the certificate.
+    /// - `aborted_transmissions`: The aborted transmission contained in the certificate.
+    ///
+    /// # Invariants
     /// This method ensures the following invariants:
     /// - The certificate ID does not already exist in storage.
     /// - The batch ID does not already exist in storage.
@@ -640,6 +652,12 @@ impl<N: Network> Storage<N> {
     ///
     /// This method triggers updates to the `rounds`, `certificates`, `batch_ids`, and `transmissions` maps.
     ///
+    /// # Arguments
+    /// - `certificate`: The certificate to insert.
+    /// - `transmissions`: The transmissions contained in the certificate, or the subset of the transmissions that in the certificate that do not yet exist in storage.
+    /// - `aborted_transmissions`: The aborted transmission contained in the certificate.
+    ///
+    /// # Invariants
     /// This method ensures the following invariants:
     /// - The certificate ID does not already exist in storage.
     /// - The batch ID does not already exist in storage.
@@ -712,7 +730,7 @@ impl<N: Network> Storage<N> {
         Ok(())
     }
 
-    /// Removes the given `certificate ID` from storage.
+    /// Removes the given `certificate ID` from storage. This method is used to garbage collect individual certificates once blocks are committed.
     ///
     /// This method triggers updates to the `rounds`, `certificates`, `batch_ids`, and `transmissions` maps.
     ///

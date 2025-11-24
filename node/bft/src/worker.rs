@@ -32,6 +32,7 @@ use snarkvm::{
     },
 };
 
+use anyhow::Context;
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -508,12 +509,25 @@ impl<N: Network> Worker<N> {
             );
         }
         // Wait for the transmission to be fetched.
-        match timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the transmission was fetched, return it.
-            Ok(result) => Ok((transmission_id, result?)),
-            // If the transmission was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch transmission - (timeout) {e}"),
-        }
+
+        let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| {
+                format!(
+                    "Unable to fetch transmission {}.{} (timeout)",
+                    fmt_id(transmission_id),
+                    fmt_id(transmission_id.checksum().unwrap_or_default())
+                )
+            })?
+            .with_context(|| {
+                format!(
+                    "Unable to fetch transmission {}.{}",
+                    fmt_id(transmission_id),
+                    fmt_id(transmission_id.checksum().unwrap_or_default())
+                )
+            })?;
+
+        Ok((transmission_id, transmission))
     }
 
     /// Handles the incoming transmission response.
