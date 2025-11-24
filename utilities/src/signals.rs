@@ -13,11 +13,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::RwLock;
+
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tokio::sync::Notify;
+use tokio::sync::oneshot;
 
 use tracing::{debug, error};
 
@@ -59,14 +64,22 @@ impl Stoppable for SimpleStoppable {
 /// This struct will set itself to "stopped" as soon as the process receives Ctrl+C.
 /// It can also be manually stopped (e.g., when the node encounters a fatal error).
 pub struct SignalHandler {
-    stopped: AtomicBool,
-    notify: Notify,
+    /// This sender is used to notify a waiting task that the node has been stopped.
+    /// If this is `None`, the node is in the process of shutting down.
+    stopped_sender: RwLock<Option<oneshot::Sender<()>>>,
+
+    /// This receiver is used to wait for the node to be stopped.
+    stopped_receiver: RwLock<Option<oneshot::Receiver<()>>>,
 }
 
 impl SignalHandler {
     /// Spawns a background tasks that listens for Ctrl+C and returns `Self`.
     pub fn new() -> Arc<Self> {
-        let obj = Arc::new(Self { stopped: AtomicBool::new(false), notify: Default::default() });
+        let (stopped_sender, stopped_receiver) = oneshot::channel();
+        let obj = Arc::new(Self {
+            stopped_sender: RwLock::new(Some(stopped_sender)),
+            stopped_receiver: RwLock::new(Some(stopped_receiver)),
+        });
 
         {
             let obj = obj.clone();
@@ -119,22 +132,30 @@ impl SignalHandler {
         self.stop();
     }
 
-    /// Blocks until the signal handler was invoked or the stopped flag was set some other way.
+    /// Waits until the signal handler was invoked or the stopped flag was set some other way.
+    ///
     /// Note: This can only be called once, and must not be called concurrently.
     pub async fn wait_for_signals(&self) {
-        while !self.is_stopped() {
-            self.notify.notified().await
+        let receiver = self.stopped_receiver.write().take();
+
+        if let Some(receiver) = receiver {
+            if let Err(err) = receiver.await {
+                error!("wait_for_signals encountered an error: {err}");
+            }
+        } else {
+            panic!("wait_for_signals must be called at most once");
         }
     }
 }
 
 impl Stoppable for SignalHandler {
     fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
-        self.notify.notify_one();
+        if let Some(stopped_sender) = self.stopped_sender.write().take() {
+            let _ = stopped_sender.send(());
+        }
     }
 
     fn is_stopped(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst)
+        self.stopped_sender.read().is_none()
     }
 }

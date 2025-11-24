@@ -1264,7 +1264,7 @@ mod tests {
             None,
             &[],
             false,
-            StorageMode::Test(None),
+            StorageMode::new_test(None),
             None,
         )?;
         // Initialize the block synchronization logic.
