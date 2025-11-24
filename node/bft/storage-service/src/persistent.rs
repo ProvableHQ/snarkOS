@@ -118,7 +118,8 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         }
     }
 
-    /// Returns the missing transmissions in storage from the given transmissions.
+    /// Takes a certificate and its transmissions, and returns the subset of transmissions that
+    /// did not yet exists in the storage.
     fn find_missing_transmissions(
         &self,
         batch_header: &BatchHeader<N>,

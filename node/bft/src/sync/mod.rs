@@ -842,11 +842,21 @@ impl<N: Network> Sync<N> {
                 break;
             }
 
+            trace!(
+                "Pending block {hash} at height {height} became obsolete",
+                hash = pending_block.hash(),
+                height = pending_block.height()
+            );
             pending_blocks.pop_front();
         }
 
         // Check the block against the chain of pending blocks and append it on success.
         let new_block = self.ledger.check_block_subdag(new_block, pending_blocks.make_contiguous())?;
+        trace!(
+            "Adding new pending block {hash} at height {height}",
+            hash = new_block.hash(),
+            height = new_block.height()
+        );
         pending_blocks.push_back(new_block);
 
         // Now, figure out if and which pending block we can commit.
@@ -883,21 +893,22 @@ impl<N: Network> Sync<N> {
                 let height = pending_block.height();
 
                 spawn_blocking!({
-                    match ledger.check_block_content(pending_block) {
-                        Ok(block) => {
-                            trace!("Adding pending block {hash} at height {height} to the ledger");
-                            ledger.advance_to_next_block(&block)?;
-                            // Sync the height with the block.
-                            storage.sync_height_with_block(block.height());
-                            // Sync the round with the block.
-                            storage.sync_round_with_block(block.round());
-                        }
-                        Err(err) => bail!("Failed to check contents of pending block {hash} at height {height}: {err}"),
-                    }
+                    let block = ledger.check_block_content(pending_block).with_context(|| {
+                        format!("Failed to check contents of pending block {hash} at height {height}")
+                    })?;
+
+                    trace!("Adding pending block {hash} at height {height} to the ledger");
+                    ledger.advance_to_next_block(&block)?;
+                    // Sync the height with the block.
+                    storage.sync_height_with_block(block.height());
+                    // Sync the round with the block.
+                    storage.sync_round_with_block(block.round());
 
                     Ok(())
                 })?
             }
+        } else {
+            trace!("No pending block are ready to be committed ({} block(s) are pending)", pending_blocks.len());
         }
 
         Ok(())
@@ -955,7 +966,7 @@ impl<N: Network> Sync<N> {
         if should_send_request {
             // Send the certificate request to the peer.
             if self.gateway.send(peer_ip, Event::CertificateRequest(certificate_id.into())).await.is_none() {
-                bail!("Unable to fetch batch certificate {certificate_id} - failed to send request")
+                bail!("Unable to fetch batch certificate {certificate_id} (failed to send request)")
             }
         } else {
             debug!(
@@ -965,12 +976,10 @@ impl<N: Network> Sync<N> {
         }
         // Wait for the certificate to be fetched.
         // TODO (raychu86): Consider making the timeout dynamic based on network traffic and/or the number of validators.
-        match tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the certificate was fetched, return it.
-            Ok(result) => Ok(result?),
-            // If the certificate was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch certificate {} - (timeout) {e}", fmt_id(certificate_id)),
-        }
+        tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| format!("Unable to fetch batch certificate {} (timeout)", fmt_id(certificate_id)))?
+            .with_context(|| format!("Unable to fetch batch certificate {}", fmt_id(certificate_id)))
     }
 
     /// Handles the incoming certificate request.
