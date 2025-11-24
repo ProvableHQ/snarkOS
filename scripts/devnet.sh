@@ -22,8 +22,13 @@ read -p "Do you want to run build (b) or install (i) the binary? (b/i/n, default
 build_binary=${build_binary:-b}
 
 # Ask the user whether to use a custom relative path
-read -p "Do you want to run snarkos from a relative path? (default: ./target/debug/snarkos): " binary_path
-binary_path=${binary_path:-"./target/debug/snarkos"}
+if [[ $build_binary == "i" ]]; then
+  read -p "Do you want to run snarkos from a custom path? (default: snarkos): " binary_path
+  binary_path=${binary_path:-"snarkos"}
+else
+  read -p "Do you want to run snarkos from a custom path? (default: ./target/debug/snarkos): " binary_path
+  binary_path=${binary_path:-"./target/debug/snarkos"}
+fi
 
 # Ask the user whether to clear the existing ledger history
 read -p "Do you want to clear the existing ledger history? (y/n, default: y): " clear_ledger
