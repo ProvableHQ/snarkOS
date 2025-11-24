@@ -56,7 +56,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::oneshot, task::JoinHandle};
 
 /// A validator is a full node, capable of validating blocks.
 #[derive(Clone)]
@@ -96,9 +96,10 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
+        let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
 
         // Initialize the ledger.
         let ledger = {
@@ -538,6 +539,7 @@ mod tests {
             dev_txs,
             None,
             Default::default(),
+            None,
         )
         .await
         .unwrap();
