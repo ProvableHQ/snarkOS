@@ -236,16 +236,7 @@ impl<N: Network> BootstrapClient<N> {
     pub async fn wait_for_signals(&self, handler: &SignalHandler) {
         handler.wait_for_signals().await;
 
-        warn!("==========================================================================================");
-        warn!("⚠️  Attention - Starting the graceful shutdown procedure (ETA: 30 seconds)...");
-        warn!("⚠️  Attention - To avoid DATA CORRUPTION, do NOT interrupt snarkOS (or press Ctrl+C again)");
-        warn!("⚠️  Attention - Please wait until the shutdown gracefully completes (ETA: 30 seconds)");
-        warn!("==========================================================================================");
-
         // If the node is already initialized, then shut it down.
         self.shut_down().await;
-
-        // A best-effort attempt to let any ongoing activity conclude.
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }
