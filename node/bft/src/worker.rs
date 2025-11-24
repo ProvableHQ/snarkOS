@@ -512,10 +512,24 @@ impl<N: Network> Worker<N> {
                 fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
             );
         }
+
         // Wait for the transmission to be fetched.
         let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
             .await
-            .with_context(|| "Unable to fetch transmission - (timeout)")??;
+            .with_context(|| {
+                format!(
+                    "Unable to fetch transmission {}.{} (timeout)",
+                    fmt_id(transmission_id),
+                    fmt_id(transmission_id.checksum().unwrap_or_default())
+                )
+            })?
+            .with_context(|| {
+                format!(
+                    "Unable to fetch transmission {}.{}",
+                    fmt_id(transmission_id),
+                    fmt_id(transmission_id.checksum().unwrap_or_default())
+                )
+            })?;
 
         Ok((transmission_id, transmission))
     }
