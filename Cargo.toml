@@ -216,7 +216,7 @@ version = "=4.4.0"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
-version = "=4.2.2"
+version = "=4.4.0"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"

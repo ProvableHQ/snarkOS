@@ -4342,7 +4342,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-network"
-version = "4.2.2"
+version = "4.4.0"
 dependencies = [
  "aleo-std",
  "anyhow",
