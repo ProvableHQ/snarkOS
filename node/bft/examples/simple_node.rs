@@ -141,14 +141,24 @@ pub async fn start_bft(
     let storage_mode = StorageMode::new_test(None);
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
+    let trusted_peers_only = false;
     // Initialize the consensus channels.
     let (consensus_sender, consensus_receiver) = init_consensus_channels::<CurrentNetwork>();
     // Initialize the consensus receiver handler.
     consensus_handler(consensus_receiver);
     // Initialize the BFT instance.
     let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-    let mut bft =
-        BFT::<CurrentNetwork>::new(account, storage, ledger, block_sync, ip, &trusted_validators, storage_mode, None)?;
+    let mut bft = BFT::<CurrentNetwork>::new(
+        account,
+        storage,
+        ledger,
+        block_sync,
+        ip,
+        &trusted_validators,
+        trusted_peers_only,
+        storage_mode,
+        None,
+    )?;
     // Run the BFT instance.
     bft.run(None, Some(consensus_sender), sender.clone(), receiver).await?;
     // Retrieve the BFT's primary.
@@ -185,6 +195,7 @@ pub async fn start_primary(
     let storage_mode = StorageMode::new_test(None);
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
+    let trusted_peers_only = false;
     // Initialize the primary instance.
     let block_sync = Arc::new(BlockSync::new(ledger.clone()));
     let mut primary = Primary::<CurrentNetwork>::new(
@@ -194,6 +205,7 @@ pub async fn start_primary(
         block_sync,
         ip,
         &trusted_validators,
+        trusted_peers_only,
         storage_mode,
         None,
     )?;

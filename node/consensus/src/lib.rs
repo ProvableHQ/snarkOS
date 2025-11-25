@@ -121,6 +121,7 @@ impl<N: Network> Consensus<N> {
         block_sync: Arc<BlockSync<N>>,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
+        trusted_peers_only: bool,
         storage_mode: StorageMode,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
@@ -132,8 +133,17 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         // Initialize the BFT.
-        let bft =
-            BFT::new(account, storage, ledger.clone(), block_sync.clone(), ip, trusted_validators, storage_mode, dev)?;
+        let bft = BFT::new(
+            account,
+            storage,
+            ledger.clone(),
+            block_sync.clone(),
+            ip,
+            trusted_validators,
+            trusted_peers_only,
+            storage_mode,
+            dev,
+        )?;
         // Create a new instance of Consensus.
         let mut _self = Self {
             ledger,
@@ -372,6 +382,10 @@ impl<N: Network> Consensus<N> {
             if self.ledger.contains_transmission(&TransmissionID::Transaction(transaction_id, checksum))? {
                 bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
             }
+            // Check that the transaction is not in the mempool.
+            if self.contains_transaction(&transaction_id) {
+                bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
+            }
             #[cfg(feature = "metrics")]
             {
                 metrics::increment_gauge(metrics::consensus::UNCONFIRMED_TRANSACTIONS, 1f64);
@@ -379,10 +393,6 @@ impl<N: Network> Consensus<N> {
                 self.transmissions_tracker
                     .lock()
                     .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
-            }
-            // Check that the transaction is not in the mempool.
-            if self.contains_transaction(&transaction_id) {
-                bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
             }
             // Add the transaction to the memory pool.
             trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
@@ -554,18 +564,24 @@ impl<N: Network> Consensus<N> {
 
         #[cfg(feature = "metrics")]
         {
-            let elapsed = std::time::Duration::from_secs((snarkos_node_bft::helpers::now() - start) as u64);
+            let now_utc = snarkos_node_bft::helpers::now_utc();
+            let elapsed = std::time::Duration::from_secs((now_utc.unix_timestamp() - start) as u64);
             let next_block_timestamp = next_block.header().metadata().timestamp();
+            let next_block_utc = snarkos_node_bft::helpers::to_utc_datetime(next_block_timestamp);
             let block_latency = next_block_timestamp - current_block_timestamp;
+            let block_lag = (now_utc - next_block_utc).whole_milliseconds();
+
             let proof_target = next_block.header().proof_target();
             let coinbase_target = next_block.header().coinbase_target();
             let cumulative_proof_target = next_block.header().cumulative_proof_target();
 
+            // Calculate latency for all transmissions included in this block.
             metrics::add_transmission_latency_metric(&self.transmissions_tracker, &next_block);
 
             metrics::gauge(metrics::consensus::COMMITTED_CERTIFICATES, num_committed_certificates as f64);
             metrics::histogram(metrics::consensus::CERTIFICATE_COMMIT_LATENCY, elapsed.as_secs_f64());
             metrics::histogram(metrics::consensus::BLOCK_LATENCY, block_latency as f64);
+            metrics::histogram(metrics::consensus::BLOCK_LAG, block_lag as f64);
             metrics::gauge(metrics::blocks::PROOF_TARGET, proof_target as f64);
             metrics::gauge(metrics::blocks::COINBASE_TARGET, coinbase_target as f64);
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);

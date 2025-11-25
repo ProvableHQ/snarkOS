@@ -1,8 +1,8 @@
 [package]
-name = "snarkos-node-metrics"
+name = "snarkos-node-network"
 version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
-description = "A node for a decentralized operating system"
+description = "Network-related objects and traits for nodes"
 homepage = "https://aleo.org"
 repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
@@ -17,29 +17,42 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-default = [ "rayon", "snarkvm/metrics" ]
-locktick = [ "dep:locktick", "snarkvm/locktick" ]
-metrics = [ "snarkvm/metrics" ]
-serial = [ ]
+locktick = [ "dep:locktick", "snarkos-node-tcp/locktick" ]
+test = [ ]
+
+[dependencies.aleo-std]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
 
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]
 optional = true
 
-[dependencies.metrics-exporter-prometheus]
-version = "0.13"
-
 [dependencies.parking_lot]
 workspace = true
 
-[dependencies.rayon]
+[dependencies.tracing]
 workspace = true
-optional = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.snarkos-node-tcp]
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console", "ledger", "metrics" ]
+features = [ "console" ]
 
-[dependencies.time]
+[dependencies.tokio]
+workspace = true
+
+[dev-dependencies.snarkos-node-network]
+path = "."
+features = [ "test" ]
+
+[build-dependencies.built]
 workspace = true

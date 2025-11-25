@@ -14,15 +14,17 @@
 // limitations under the License.
 
 use crate::{
+    ConnectionMode,
     NodeType,
     PeerPoolHandling,
     Router,
     messages::{ChallengeRequest, ChallengeResponse, DisconnectReason, Message, MessageCodec, MessageTrait},
 };
+use snarkos_node_network::{built_info, log_repo_sha_comparison};
 use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, Field, Network, block::Header, error},
+    prelude::{Address, ConsensusVersion, Field, Network, block::Header, error},
 };
 
 use anyhow::{Result, bail};
@@ -135,19 +137,29 @@ impl<N: Network> Router<N> {
             match handshake_result {
                 Ok(Some(ref cr)) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, None);
-                        peer.upgrade_to_connected(peer_addr, cr.listener_port, cr.address, cr.node_type, cr.version);
+                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, Some(cr.address));
+                        peer.upgrade_to_connected(
+                            peer_addr,
+                            cr.listener_port,
+                            cr.address,
+                            cr.node_type,
+                            cr.version,
+                            ConnectionMode::Router,
+                        );
                     }
                     #[cfg(feature = "metrics")]
                     self.update_metrics();
                     debug!("Completed the handshake with '{peer_addr}'");
                 }
                 Ok(None) => {
-                    return Err(error("Duplicate handshake attempt with '{addr}'"));
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
                 }
                 Err(_) => {
                     if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        peer.downgrade_to_candidate(addr);
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
                     }
                 }
             }
@@ -176,12 +188,19 @@ impl<N: Network> Router<N> {
         // Initialize an RNG.
         let rng = &mut OsRng;
 
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
+            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
+
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
         let our_nonce = rng.r#gen();
         // Send a challenge request to the peer.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce);
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
         send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
 
         /* Step 2: Receive the peer's challenge response followed by the challenge request. */
@@ -250,6 +269,12 @@ impl<N: Network> Router<N> {
         // Listen for the challenge request message.
         let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
 
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
+            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
+
         // Obtain the peer's listening address.
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_request.listener_port));
         let listener_addr = listener_addr.unwrap();
@@ -294,7 +319,8 @@ impl<N: Network> Router<N> {
         // Sample a random nonce.
         let our_nonce = rng.r#gen();
         // Send the challenge request.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce);
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
         send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
 
         /* Step 3: Receive the challenge response. */
@@ -327,8 +353,8 @@ impl<N: Network> Router<N> {
         if self.is_local_ip(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
-        // Unknown peers are untrusted, so check if `allow_external_peers` is true.
-        if !self.allow_external_peers() && !self.is_trusted(listener_addr) {
+        // Unknown peers are untrusted, so check if `trusted_peers_only` is true.
+        if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)");
         }
         Ok(())
@@ -341,13 +367,24 @@ impl<N: Network> Router<N> {
         message: &ChallengeRequest<N>,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, node_type: _, address: _, nonce: _ } = message;
+        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _, ref snarkos_sha } = message;
+        log_repo_sha_comparison(peer_addr, snarkos_sha.as_ref(), Self::OWNER);
 
         // Ensure the message protocol version is not outdated.
         if !self.is_valid_message_version(version) {
             warn!("Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
+
+        // Ensure there are no validators connected with the given Aleo address.
+        if self.node_type() == NodeType::Validator
+            && node_type == NodeType::Validator
+            && self.is_connected_address(address)
+        {
+            warn!("Dropping '{peer_addr}' for being already connected ({address})");
+            return Some(DisconnectReason::NoReasonGiven);
+        }
+
         None
     }
 

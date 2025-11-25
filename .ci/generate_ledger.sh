@@ -50,7 +50,7 @@ trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" fail
 
 # Flags used by all ndoes
 common_flags=(--nodisplay --nobanner --noupdater "--network=$network_id"
-  "--log-filter=$log_filter" --allow-external-peers "--dev-num-validators=$total_validators")
+  "--log-filter=$log_filter" "--dev-num-validators=$total_validators")
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do

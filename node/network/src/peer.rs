@@ -15,11 +15,12 @@
 
 use crate::NodeType;
 use snarkvm::prelude::{Address, Network};
+use tracing::*;
 
 use std::{net::SocketAddr, time::Instant};
 
 /// A peer of any connection status.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Peer<N: Network> {
     /// A candidate peer that's currently not connected to.
     Candidate(CandidatePeer),
@@ -30,7 +31,7 @@ pub enum Peer<N: Network> {
 }
 
 /// A connecting peer.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConnectingPeer {
     /// The listening address of a connecting peer.
     pub listener_addr: SocketAddr,
@@ -39,7 +40,7 @@ pub struct ConnectingPeer {
 }
 
 /// A candidate peer.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CandidatePeer {
     /// The listening address of a candidate peer.
     pub listener_addr: SocketAddr,
@@ -50,12 +51,14 @@ pub struct CandidatePeer {
 }
 
 /// A fully connected peer.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConnectedPeer<N: Network> {
     /// The listener address of the peer.
     pub listener_addr: SocketAddr,
     /// The connected address of the peer.
     pub connected_addr: SocketAddr,
+    /// Indicates whether this is a Router or a Gateway connection for the peer.
+    pub connection_mode: ConnectionMode,
     /// Indicates whether the peer is considered trusted.
     pub trusted: bool,
     /// The Aleo address of the peer.
@@ -70,6 +73,13 @@ pub struct ConnectedPeer<N: Network> {
     pub first_seen: Instant,
     /// The timestamp of the last message received from this peer.
     pub last_seen: Instant,
+}
+
+/// Indicates whether a peer is connected via the Gateway or the Router.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionMode {
+    Gateway,
+    Router,
 }
 
 impl<N: Network> Peer<N> {
@@ -91,6 +101,7 @@ impl<N: Network> Peer<N> {
         aleo_address: Address<N>,
         node_type: NodeType,
         node_version: u32,
+        connection_mode: ConnectionMode,
     ) {
         let timestamp = Instant::now();
         let listener_addr = SocketAddr::from((connected_addr.ip(), listener_port));
@@ -104,6 +115,7 @@ impl<N: Network> Peer<N> {
         *self = Self::Connected(ConnectedPeer {
             listener_addr,
             connected_addr,
+            connection_mode,
             aleo_addr: aleo_address,
             node_type,
             trusted: self.is_trusted(),

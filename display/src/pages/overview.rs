@@ -17,7 +17,7 @@ use crate::{content_style, header_style};
 
 use snarkos_node::{
     Node,
-    router::{Peer, messages::NodeType},
+    network::{NodeType, Peer},
 };
 use snarkvm::prelude::Network;
 

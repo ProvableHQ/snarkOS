@@ -239,7 +239,40 @@ fn check_locktick_profile() {
     }
 }
 
-// The build script; it currently only checks the licenses.
+fn is_clippy() -> bool {
+    env::var("RUSTC_WORKSPACE_WRAPPER").is_ok_and(|var| var.contains("clippy"))
+}
+
+fn check_tokio_console_flags() {
+    // Don't run this check under clippy, otherwise it will cause issues with --all-features.
+    if is_clippy() {
+        return;
+    }
+
+    // Skip if the feature is not used.
+    let feature_enabled = env::var("CARGO_FEATURE_TOKIO_CONSOLE").is_ok();
+    if !feature_enabled {
+        return;
+    }
+
+    // Check for the presence of RUSTFLAGS.
+    let Ok(rustflags) = env::var("CARGO_ENCODED_RUSTFLAGS") else {
+        eprintln!(
+            "🔴 When enabling the tokio_console feature, you must run with `RUSTFLAGS=\"--cfg tokio_unstable\"`."
+        );
+        process::exit(1);
+    };
+
+    // Check for the presence of `tokio_unstable` within RUSTFLAGS.
+    if !rustflags.contains("tokio_unstable") {
+        eprintln!(
+            "🔴 When enabling the tokio_console feature, you must run with `RUSTFLAGS=\"--cfg tokio_unstable\"`."
+        );
+        process::exit(1);
+    }
+}
+
+// The build script.
 fn main() {
     // Check licenses in the current folder.
     check_file_licenses(".");
@@ -247,6 +280,8 @@ fn main() {
     check_locktick_imports(".");
     // Check if locktick feature is correctly enabled.
     check_locktick_profile();
+    // Check if the tokio_console feature is correctly enabled.
+    check_tokio_console_flags();
 
     // Register build-time information.
     built::write_built_file().expect("Failed to acquire build-time information");

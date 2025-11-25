@@ -21,15 +21,15 @@ use snarkos_account::Account;
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
+use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
     Outbound,
-    PeerPoolHandling,
     Router,
     Routing,
-    messages::{NodeType, PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
+    messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
 use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
@@ -92,7 +92,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        allow_external_peers: bool,
+        trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
@@ -106,9 +106,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
 
-        // Determine if the validator should rotate external peers.
-        let rotate_external_peers = false;
-
         // Initialize the node router.
         let router = Router::new(
             node_ip,
@@ -117,8 +114,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode.clone(),
             dev.is_some(),
         )
@@ -136,6 +132,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync.clone(),
             bft_ip,
             trusted_validators,
+            trusted_peers_only,
             storage_mode.clone(),
             ping.clone(),
             dev,
@@ -380,7 +377,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     //     Ok(())
     // }
 
-    /// Initialize the transaction pool.
+    /// Initializes the transaction pool (if in development mode).
+    ///
+    /// Spawns a background task that periodically issues transactions to the network.
     fn initialize_transaction_pool(&self, dev: Option<u16>, dev_txs: bool) -> Result<()> {
         use snarkvm::console::{
             program::{Identifier, Literal, ProgramID, Value},

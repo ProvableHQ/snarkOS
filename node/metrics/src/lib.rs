@@ -103,13 +103,14 @@ pub fn add_transmission_latency_metric<N: Network>(
     transmissions_tracker: &Arc<Mutex<HashMap<TransmissionID<N>, i64>>>,
     block: &Block<N>,
 ) {
-    const AGE_THRESHOLD_SECONDS: i32 = 30 * 60; // 30 minutes set as stale transmission threshold
+    // The age at which we consider a transmission "stale".
+    const AGE_THRESHOLD_SECONDS: i32 = 30 * 60; // 30 minutes
 
-    // Retrieve the solution IDs.
+    // Retrieve all solution IDs (including aborted).
     let solution_ids: std::collections::HashSet<_> =
         block.solutions().solution_ids().chain(block.aborted_solution_ids()).collect();
 
-    // Retrieve the transaction IDs.
+    // Retrieve all transaction IDs (including aborted).
     let transaction_ids: std::collections::HashSet<_> =
         block.transaction_ids().chain(block.aborted_transaction_ids()).collect();
 
@@ -126,7 +127,7 @@ pub fn add_transmission_latency_metric<N: Network>(
                 match transmission_id {
                     TransmissionID::Solution(..) => increment_counter(consensus::STALE_UNCONFIRMED_SOLUTIONS),
                     TransmissionID::Transaction(..) => increment_counter(consensus::STALE_UNCONFIRMED_TRANSACTIONS),
-                    _ => {}
+                    TransmissionID::Ratification => {}
                 }
                 Some(*transmission_id)
             } else {
@@ -135,6 +136,7 @@ pub fn add_transmission_latency_metric<N: Network>(
                     TransmissionID::Transaction(transaction_id, _) if transaction_ids.contains(transaction_id) => {
                         Some("transaction")
                     }
+                    // Either a ratification, or the transmission was not included in the block
                     _ => None,
                 };
 

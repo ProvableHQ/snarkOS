@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "4.3.0"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -66,6 +66,9 @@ workspace = true
 [dependencies.snarkos-node-bft-ledger-service]
 workspace = true
 features = [ "ledger", "prover" ]
+
+[dependencies.snarkos-node-network]
+workspace = true
 
 [dependencies.snarkos-node-sync-communication-service]
 workspace = true

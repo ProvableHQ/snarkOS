@@ -14,9 +14,10 @@
 // limitations under the License.
 
 use snarkos_account::Account;
+use snarkos_node_network::NodeType;
 use snarkos_node_router::{
     expect_message,
-    messages::{ChallengeRequest, ChallengeResponse, Message, MessageCodec, MessageTrait, NodeType},
+    messages::{ChallengeRequest, ChallengeResponse, Message, MessageCodec, MessageTrait},
 };
 use snarkvm::{
     ledger::narwhal::Data,
@@ -137,7 +138,8 @@ impl Handshake for TestPeer {
         match node_side {
             ConnectionSide::Initiator => {
                 // Send a challenge request to the peer.
-                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen());
+                let our_request =
+                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen(), None);
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Receive the peer's challenge bundle.
@@ -175,7 +177,8 @@ impl Handshake for TestPeer {
                     nonce: response_nonce,
                 };
                 framed.send(Message::ChallengeResponse(our_response)).await?;
-                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen());
+                let our_request =
+                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen(), None);
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Listen for the challenge response.

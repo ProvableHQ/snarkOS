@@ -138,7 +138,7 @@ impl<R: Reading> ReadingInternal for R {
 
         // the task for processing parsed messages
         let self_clone = self.clone();
-        let inbound_processing_task = tokio::spawn(async move {
+        let inbound_processing_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
             trace!(parent: node.span(), "spawned a task for processing messages from {addr}");
             tx_processing.send(()).unwrap(); // safe; the channel was just opened
@@ -151,7 +151,7 @@ impl<R: Reading> ReadingInternal for R {
                 #[cfg(feature = "metrics")]
                 metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
             }
-        });
+        }));
         let _ = rx_processing.await;
         conn.tasks.push(inbound_processing_task);
 
@@ -160,7 +160,7 @@ impl<R: Reading> ReadingInternal for R {
 
         // the task for reading messages from a stream
         let node = self.tcp().clone();
-        let reader_task = tokio::spawn(async move {
+        let reader_task = tokio::spawn(Box::pin(async move {
             trace!(parent: node.span(), "spawned a task for reading messages from {addr}");
             tx_reader.send(()).unwrap(); // safe; the channel was just opened
 
@@ -190,7 +190,7 @@ impl<R: Reading> ReadingInternal for R {
             }
 
             let _ = node.disconnect(addr).await;
-        });
+        }));
         let _ = rx_reader.await;
         conn.tasks.push(reader_task);
 

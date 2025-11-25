@@ -20,11 +20,9 @@ use crate::{
         events::{self, Event},
     },
     bootstrap_client::codec::BootstrapClientCodec,
+    network::{ConnectionMode, NodeType, Peer, PeerPoolHandling, Resolver},
     router::{
         MAX_PEERS_TO_SEND,
-        Peer,
-        PeerPoolHandling,
-        Resolver,
         messages::{self, Message},
     },
     tcp::{ConnectionSide, P2P, Tcp, protocols::*},
@@ -55,6 +53,14 @@ impl<N: Network> PeerPoolHandling<N> for BootstrapClient<N> {
         self.dev.is_some()
     }
 
+    fn trusted_peers_only(&self) -> bool {
+        false
+    }
+
+    fn node_type(&self) -> NodeType {
+        NodeType::BootstrapClient
+    }
+
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
         &self.peer_pool
     }
@@ -78,8 +84,8 @@ impl<N: Network> OnConnect for BootstrapClient<N> {
         // of known validators.
         if let Some(listener_addr) = self.resolve_to_listener(peer_addr) {
             if let Some(peer) = self.get_connected_peer(listener_addr) {
-                if self.resolver().read().get_peer_ip_for_address(peer.aleo_addr).is_some() {
-                    self.known_validators.write().insert(listener_addr, peer.aleo_addr);
+                if peer.node_type == NodeType::Validator {
+                    self.known_validators.write().insert(listener_addr, (peer.aleo_addr, peer.connection_mode));
                 }
             }
         }
@@ -128,9 +134,25 @@ impl<N: Network> Reading for BootstrapClient<N> {
                 debug!("Received a PeerRequest from '{listener_addr}'");
                 let mut peers = self.get_candidate_peers();
 
-                // Filter out peers who had been connected via the Gateway.
-                let known_validators = self.get_known_validators();
-                peers.retain(|peer| !known_validators.contains_key(&peer.listener_addr));
+                // In order to filter out validators properly, we'll need the
+                // peer's node type and the list of validators.
+                let Some(peer) = self.get_connected_peer(listener_addr) else {
+                    return Ok(());
+                };
+                let validators = self.get_validator_addrs().await;
+
+                if peer.node_type == NodeType::Validator {
+                    // Filter out Gateway addresses.
+                    peers.retain(|peer| {
+                        validators
+                            .get(&peer.listener_addr)
+                            .map(|(_, connection_mode)| *connection_mode != ConnectionMode::Gateway)
+                            .unwrap_or(true)
+                    });
+                } else {
+                    // Filter out all validator addresses.
+                    peers.retain(|peer| !validators.contains_key(&peer.listener_addr));
+                }
                 peers.truncate(MAX_PEERS_TO_SEND);
                 let peers = peers.into_iter().map(|peer| (peer.listener_addr, None)).collect::<Vec<_>>();
 
@@ -146,21 +168,17 @@ impl<N: Network> Reading for BootstrapClient<N> {
             }
             MessageOrEvent::Event(Event::ValidatorsRequest(_)) => {
                 debug!("Received a ValidatorsRequest from '{listener_addr}'");
-                let current_committee = match self.get_or_update_committee().await {
-                    Ok(new_committee) => new_committee,
-                    Err(error) => {
-                        error!("Couldn't update the validator committee: {error}");
-                        None
-                    }
-                };
 
-                // Return the known addresses of current committee members, or all known
-                // validators if the committee info is unavailable.
-                let mut known_validators = self.get_known_validators();
-                if let Some(committee) = &current_committee {
-                    known_validators.retain(|_, aleo_addr| committee.contains(aleo_addr));
-                }
-                let validators = known_validators.into_iter().take(MAX_VALIDATORS_TO_SEND).collect::<IndexMap<_, _>>();
+                // Procure a list of applicable validator addresses.
+                let validators = self.get_validator_addrs().await;
+                let validators = validators
+                    .into_iter()
+                    .filter_map(|(listener_addr, (aleo_addr, connection_mode))| {
+                        // Only pick addresses connected in Gateway mode.
+                        (connection_mode == ConnectionMode::Gateway).then_some((listener_addr, aleo_addr))
+                    })
+                    .take(MAX_VALIDATORS_TO_SEND)
+                    .collect::<IndexMap<_, _>>();
 
                 debug!("Sending {} validator address(es) to '{listener_addr}'", validators.len());
                 let msg = MessageOrEvent::Event(Event::ValidatorsResponse(events::ValidatorsResponse { validators }));

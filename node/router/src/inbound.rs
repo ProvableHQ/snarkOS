@@ -30,6 +30,7 @@ use crate::{
 };
 use snarkos_node_tcp::protocols::Reading;
 use snarkvm::prelude::{
+    ConsensusVersion,
     Network,
     block::{Block, Header, Transaction},
     puzzle::Solution,
@@ -124,13 +125,12 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     false => bail!("Peer '{peer_ip}' sent an invalid block request"),
                 }
             }
-            Message::BlockResponse(message) => {
-                let BlockResponse { request, blocks } = message;
-
+            Message::BlockResponse(BlockResponse { request, latest_consensus_version, blocks, .. }) => {
                 // Remove the block request, checking if this node previously sent a block request to this peer.
                 if !self.router().cache.remove_outbound_block_request(peer_ip, &request) {
                     bail!("Peer '{peer_ip}' is not following the protocol (unexpected block response)")
                 }
+
                 // Perform the deferred non-blocking deserialization of the blocks.
                 // The deserialization can take a long time (minutes). We should not be running
                 // this on a blocking task, but on a rayon thread pool.
@@ -150,7 +150,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
                 // Process the block response.
                 let node = self.clone();
-                match spawn_blocking(move || node.block_response(peer_ip, blocks.0)).await? {
+                match spawn_blocking(move || node.block_response(peer_ip, blocks.0, latest_consensus_version)).await? {
                     true => Ok(true),
                     false => bail!("Peer '{peer_ip}' sent an invalid block response"),
                 }
@@ -174,8 +174,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     bail!("Peer '{peer_ip}' is not following the protocol (unexpected peer response)")
                 }
                 self.router().cache.decrement_outbound_peer_requests(peer_ip);
-                if !self.router().allow_external_peers() {
-                    bail!("Not accepting peer response from '{peer_ip}' (validator gossip is disabled)");
+                if self.router().trusted_peers_only() {
+                    bail!("Not accepting peer response from '{peer_ip}' (trusted peers only)");
                 }
 
                 match self.peer_response(peer_ip, message.peers) {
@@ -310,7 +310,12 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> bool;
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool;
+    fn block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> bool;
 
     /// Handles a `PeerRequest` message.
     fn peer_request(&self, peer_ip: SocketAddr) -> bool {

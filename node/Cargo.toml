@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "4.3.0"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -25,6 +25,7 @@ locktick = [
   "snarkos-node-bft/locktick",
   "snarkos-node-cdn/locktick",
   "snarkos-node-consensus/locktick",
+  "snarkos-node-network/locktick",
   "snarkos-node-rest/locktick",
   "snarkos-node-router/locktick",
   "snarkos-node-sync/locktick",
@@ -50,6 +51,7 @@ cuda = [
   "snarkos-node-sync/cuda"
 ]
 serial = [ "snarkos-node-bft/serial" ]
+test = []
 
 [dependencies.aleo-std]
 workspace = true
@@ -111,6 +113,9 @@ workspace = true
 workspace = true
 
 [dependencies.snarkos-node-consensus]
+workspace = true
+
+[dependencies.snarkos-node-network]
 workspace = true
 
 [dependencies.snarkos-node-rest]

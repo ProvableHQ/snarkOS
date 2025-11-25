@@ -15,7 +15,8 @@
 
 use crate::{BootstrapClient, Client, Prover, Validator, traits::NodeInterface};
 use snarkos_account::Account;
-use snarkos_node_router::{Outbound, Peer, PeerPoolHandling, messages::NodeType};
+use snarkos_node_network::{NodeType, Peer, PeerPoolHandling};
+use snarkos_node_router::Outbound;
 use snarkvm::prelude::{
     Address,
     Header,
@@ -64,7 +65,7 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        allow_external_peers: bool,
+        trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
@@ -81,7 +82,7 @@ impl<N: Network> Node<N> {
                 genesis,
                 cdn,
                 storage_mode,
-                allow_external_peers,
+                trusted_peers_only,
                 dev_txs,
                 dev,
                 shutdown,
@@ -97,11 +98,13 @@ impl<N: Network> Node<N> {
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
         storage_mode: StorageMode,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self::Prover(Arc::new(
-            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, shutdown).await?,
+            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, trusted_peers_only, dev, shutdown)
+                .await?,
         )))
     }
 
@@ -115,7 +118,7 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        rotate_external_peers: bool,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
@@ -129,7 +132,7 @@ impl<N: Network> Node<N> {
                 genesis,
                 cdn,
                 storage_mode,
-                rotate_external_peers,
+                trusted_peers_only,
                 dev,
                 shutdown,
             )
