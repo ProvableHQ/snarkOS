@@ -170,6 +170,9 @@ version = "=0.3.19"
 [workspace.dependencies.test-strategy]
 version = "0.4"
 
+[workspace.dependencies.test-log]
+version = "0.2"
+
 [workspace.dependencies.snarkos-account]
 path = "account"
 version = "=4.3.0"

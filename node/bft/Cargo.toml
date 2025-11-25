@@ -190,6 +190,9 @@ features = [ "test" ]
 [dev-dependencies.test-strategy]
 workspace = true
 
+[dev-dependencies.test-log]
+workspace = true
+
 [dev-dependencies.tower-http]
 version = "0.6"
 features = [ "fs", "trace" ]

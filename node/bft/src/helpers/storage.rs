@@ -241,7 +241,9 @@ impl<N: Network> Storage<N> {
             for gc_round in current_gc_round..=next_gc_round {
                 // Iterate over the certificates for the GC round.
                 for id in self.get_certificate_ids_for_round(gc_round).into_iter() {
-                    trace!("Garbage collecting certificate {id}");
+                    trace!(
+                        "Garbage collecting certificate {id} at round {gc_round} (cut-off is round {next_gc_round})"
+                    );
                     self.remove_certificate(id);
                 }
             }
