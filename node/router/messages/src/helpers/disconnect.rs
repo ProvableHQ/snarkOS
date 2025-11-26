@@ -50,7 +50,7 @@ pub enum DisconnectReason {
     YouNeedToSyncFirst,
     /// The peer's listening port is closed.
     YourPortIsClosed(u16),
-    /// The disconnect reason is not know. This is used for when the peers sends a disconnect reason that is not known to us.
+    /// The disconnect reason is not known. This is used for when the peers sends a disconnect reason that is not known to us.
     UnknownReason,
 }
 
