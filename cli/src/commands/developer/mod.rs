@@ -198,7 +198,7 @@ impl Developer {
         // This function is only called internally but check for additional sanity.
         ensure!(!route.starts_with('/'), "path cannot start with a slash");
 
-        // If the route already ends with a version segment (v1 or v2), don't prepend a version.
+        // Determine the API version we are interacting with.
         let api_version = {
             let r = base_url.path().trim_end_matches('/');
 
