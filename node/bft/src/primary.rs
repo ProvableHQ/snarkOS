@@ -26,7 +26,6 @@ use crate::{
     events::{BatchPropose, BatchSignature, Event},
     helpers::{
         BFTSender,
-        ConsensusStage,
         PrimaryReceiver,
         PrimarySender,
         Proposal,
@@ -39,10 +38,11 @@ use crate::{
         init_sync_channels,
         init_worker_channels,
         now,
-        record_event,
     },
     spawn_blocking,
 };
+#[cfg(feature = "test_consensus_tracking")]
+use crate::helpers::{ConsensusStage, record_event};
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;

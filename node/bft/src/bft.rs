@@ -19,19 +19,17 @@ use crate::{
     helpers::{
         BFTReceiver,
         ConsensusSender,
-        ConsensusStage,
         DAG,
         PrimaryReceiver,
         PrimarySender,
         Storage,
-        SubdagStage,
         fmt_id,
         init_bft_channels,
         now,
-        record_event,
-        start_subdag_stage,
     },
 };
+#[cfg(feature = "test_consensus_tracking")]
+use crate::helpers::{ConsensusStage, SubdagStage, record_event, start_subdag_stage};
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_sync::{BlockSync, Ping};

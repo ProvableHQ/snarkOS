@@ -33,15 +33,14 @@ use snarkos_node_bft::{
         ConsensusReceiver,
         PrimarySender,
         Storage as NarwhalStorage,
-        SubdagStage::*,
-        end_subdag_stage,
         fmt_id,
         init_consensus_channels,
         init_primary_channels,
-        start_subdag_stage,
     },
     spawn_blocking,
 };
+#[cfg(feature = "test_consensus_tracking")]
+use snarkos_node_bft::helpers::{SubdagStage, end_subdag_stage, start_subdag_stage};
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_bft_storage_service::BFTPersistentStorage;
 use snarkos_node_sync::{BlockSync, Ping};
@@ -536,8 +535,8 @@ impl<N: Network> Consensus<N> {
             // NOTE: we use `_highest_round.saturating_sub(2)` because this is
             // the only information available to us at the respective
             // start_subdag_stage.
-            end_subdag_stage(_highest_round.saturating_sub(2), _highest_round, SubdagProcessing);
-            start_subdag_stage(_lowest_round, _highest_round, PrepareAdvanceToNextQuorumBlock);
+            end_subdag_stage(_highest_round.saturating_sub(2), _highest_round, SubdagStage::SubdagProcessing);
+            start_subdag_stage(_lowest_round, _highest_round, SubdagStage::PrepareAdvanceToNextQuorumBlock);
         }
 
         // Create the candidate next block.
@@ -545,8 +544,8 @@ impl<N: Network> Consensus<N> {
 
         #[cfg(feature = "test_consensus_tracking")]
         {
-            end_subdag_stage(_lowest_round, _highest_round, PrepareAdvanceToNextQuorumBlock);
-            start_subdag_stage(_lowest_round, _highest_round, CheckNextBlock);
+            end_subdag_stage(_lowest_round, _highest_round, SubdagStage::PrepareAdvanceToNextQuorumBlock);
+            start_subdag_stage(_lowest_round, _highest_round, SubdagStage::CheckNextBlock);
         }
 
         // Check that the block is well-formed.
@@ -554,8 +553,8 @@ impl<N: Network> Consensus<N> {
 
         #[cfg(feature = "test_consensus_tracking")]
         {
-            end_subdag_stage(_lowest_round, _highest_round, CheckNextBlock);
-            start_subdag_stage(_lowest_round, _highest_round, AdvanceToNextBlock);
+            end_subdag_stage(_lowest_round, _highest_round, SubdagStage::CheckNextBlock);
+            start_subdag_stage(_lowest_round, _highest_round, SubdagStage::AdvanceToNextBlock);
         }
 
         // Advance to the next block.
@@ -564,7 +563,7 @@ impl<N: Network> Consensus<N> {
         // Finalize subdag stage tracking and export timing data to JSON after block generation
         #[cfg(feature = "test_consensus_tracking")]
         {
-            end_subdag_stage(_lowest_round, _highest_round, AdvanceToNextBlock);
+            end_subdag_stage(_lowest_round, _highest_round, SubdagStage::AdvanceToNextBlock);
             let json_filename = match self.bft().primary().gateway().dev() {
                 Some(dev) => format!("consensus_timing_block_{dev}.json"),
                 None => "consensus_timing_block_prod.json".to_string(),
