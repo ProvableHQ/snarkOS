@@ -20,7 +20,7 @@ use crate::{
     MAX_BATCH_DELAY_IN_MS,
     MEMORY_POOL_PORT,
     Worker,
-    events::{EventCodec, PrimaryPing},
+    events::{Disconnect as DisconnectEvent, DisconnectReason, EventCodec, PrimaryPing},
     helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
@@ -34,7 +34,6 @@ use snarkos_node_bft_events::{
     ChallengeRequest,
     ChallengeResponse,
     DataBlocks,
-    DisconnectReason,
     Event,
     EventTrait,
     TransmissionRequest,
@@ -50,7 +49,7 @@ use snarkos_node_network::{
     PeerPoolHandling,
     Resolver,
     bootstrap_peers,
-    built_info,
+    get_repo_commit_hash,
     log_repo_sha_comparison,
 };
 use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
@@ -685,7 +684,7 @@ impl<N: Network> Gateway<N> {
             }
             Event::Disconnect(message) => {
                 // The peer informs us that they had disconnected. Disconnect from them too.
-                debug!("Peer '{peer_ip}' decided to disconnect due to '{:?}'", message.reason);
+                debug!("Peer '{peer_ip}' decided to disconnect due to '{}'", message.reason);
                 self.disconnect(peer_ip);
                 Ok(false)
             }
@@ -892,34 +891,46 @@ impl<N: Network> Gateway<N> {
             0 => "No connected validators".to_string(),
             num_connected => format!("Connected to {num_connected} validators {total_validators}"),
         };
-        // Collect the connected validator addresses.
-        let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
-        // Include our own address, so we do not log ourself as disconnected and include ourself in the check
-        // for the quorum threshold.
-        connected_validator_addresses.insert(self.account.address());
-
-        // Log the connected validators and count the total connected stake.
         info!("{connections_msg}");
+
+        // Collect the connected validator addresses and stake.
+        let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
+        // Include our own address.
+        connected_validator_addresses.insert(self.account.address());
+        // Include and log the connected validators.
         for peer_ip in &connected_validators {
             let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
                 connected_validator_addresses.insert(a);
                 a.to_string()
             });
-            debug!("{}", format!("  {peer_ip} - {address}").dimmed());
+            debug!("{}", format!("  Connected to: {peer_ip} - {address}").dimmed());
         }
 
         // Log the validators that are not connected.
         let num_not_connected = validators_total.saturating_sub(connected_validators.len());
         if num_not_connected > 0 {
-            info!("Not connected to {num_not_connected} validators {total_validators}");
             // Collect the committee members.
             let committee_members: HashSet<_> =
                 self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
 
-            // Log the validators that are not connected.
-            for address in committee_members.difference(&connected_validator_addresses) {
-                debug!("{}", format!("  Not connected to {address}").dimmed());
-            }
+            let not_connected_stake: u64 = committee_members
+                .difference(&connected_validator_addresses)
+                .map(|address| {
+                    let address_stake = committee.get_stake(*address);
+                    let address_stake_as_percentage = address_stake as f64 / committee.total_stake() as f64 * 100.0;
+                    debug!(
+                        "{}",
+                        format!("  Not connected to {address} ({address_stake_as_percentage:.2}% of total stake)")
+                            .dimmed()
+                    );
+                    address_stake
+                })
+                .sum();
+
+            let not_connected_stake_as_percentage = not_connected_stake as f64 / committee.total_stake() as f64 * 100.0;
+            warn!(
+                "Not connected to {num_not_connected} validators {total_validators} ({not_connected_stake_as_percentage:.2}% of total stake not connected)"
+            );
         }
 
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
@@ -1357,8 +1368,8 @@ macro_rules! expect_event {
                 data
             }
             // Received a disconnect event, abort.
-            Some(Event::Disconnect(reason)) => {
-                return Err(error(format!("{CONTEXT} '{}' disconnected: {reason:?}", $peer_addr)));
+            Some(Event::Disconnect(DisconnectEvent { reason })) => {
+                return Err(error(format!("{CONTEXT} '{}' disconnected: {reason}", $peer_addr)));
             }
             // Received an unexpected event, abort.
             Some(ty) => {
@@ -1416,11 +1427,12 @@ impl<N: Network> Gateway<N> {
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
-        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
-            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
         // Send a challenge request to the peer.
-        let our_request =
-            ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha.clone());
+        let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha);
         send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
 
         /* Step 2: Receive the peer's challenge response followed by the challenge request. */
@@ -1436,7 +1448,7 @@ impl<N: Network> Gateway<N> {
             .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
@@ -1445,7 +1457,7 @@ impl<N: Network> Gateway<N> {
                 // The Aleo address is already connected; no reason to return an error.
                 return Ok(None);
             } else {
-                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason}")));
             }
         }
 
@@ -1507,7 +1519,7 @@ impl<N: Network> Gateway<N> {
                 // The Aleo address is already connected; no reason to return an error.
                 return Ok(None);
             } else {
-                return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+                return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
             }
         }
 
@@ -1532,8 +1544,10 @@ impl<N: Network> Gateway<N> {
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
-        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
-            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
         // Send the challenge request.
         let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha);
         send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
@@ -1548,7 +1562,7 @@ impl<N: Network> Gateway<N> {
             .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         Ok(Some(peer_request))
@@ -1558,7 +1572,7 @@ impl<N: Network> Gateway<N> {
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
         let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
-        log_repo_sha_comparison(peer_addr, snarkos_sha.as_ref(), CONTEXT);
+        log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
 
         let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 

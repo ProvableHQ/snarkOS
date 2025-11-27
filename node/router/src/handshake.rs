@@ -20,11 +20,11 @@ use crate::{
     Router,
     messages::{ChallengeRequest, ChallengeResponse, DisconnectReason, Message, MessageCodec, MessageTrait},
 };
-use snarkos_node_network::{built_info, log_repo_sha_comparison};
+use snarkos_node_network::{get_repo_commit_hash, log_repo_sha_comparison};
 use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, ConsensusVersion, Field, Network, block::Header, error},
+    prelude::{Address, ConsensusVersion, Field, Network, block::Header, error, io_error},
 };
 
 use anyhow::{Result, bail};
@@ -45,7 +45,9 @@ impl<N: Network> P2P for Router<N> {
 /// A macro unwrapping the expected handshake message or returning an error for unexpected messages.
 #[macro_export]
 macro_rules! expect_message {
-    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {
+    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {{
+        use snarkvm::utilities::io_error;
+
         match $framed.try_next().await? {
             // Received the expected message, proceed.
             Some($msg_ty(data)) => {
@@ -53,27 +55,27 @@ macro_rules! expect_message {
                 data
             }
             // Received a disconnect message, abort.
-            Some(Message::Disconnect(reason)) => {
-                return Err(error(format!("'{}' disconnected: {reason:?}", $peer_addr)))
+            Some(Message::Disconnect($crate::messages::Disconnect { reason })) => {
+                return Err(io_error(format!("'{}' disconnected: {reason}", $peer_addr)));
             }
             // Received an unexpected message, abort.
             Some(ty) => {
-                return Err(error(format!(
+                return Err(io_error(format!(
                     "'{}' did not follow the handshake protocol: received {:?} instead of {}",
                     $peer_addr,
                     ty.name(),
                     stringify!($msg_ty),
-                )))
+                )));
             }
             // Received nothing.
             None => {
-                return Err(error(format!(
+                return Err(io_error(format!(
                     "the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
                     stringify!($msg_ty),
-                )))
+                )));
             }
         }
-    };
+    }};
 }
 
 /// Send the given message to the peer.
@@ -191,8 +193,10 @@ impl<N: Network> Router<N> {
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
-        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
-            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
 
         /* Step 1: Send the challenge request. */
 
@@ -224,12 +228,12 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 3: Send the challenge response. */
@@ -272,8 +276,10 @@ impl<N: Network> Router<N> {
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
-        let snarkos_sha = (consensus_version >= ConsensusVersion::V12)
-            .then(|| built_info::GIT_COMMIT_HASH.unwrap_or_default().into());
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
 
         // Obtain the peer's listening address.
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_request.listener_port));
@@ -293,7 +299,7 @@ impl<N: Network> Router<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 2: Send the challenge response followed by own challenge request. */
@@ -341,7 +347,7 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         Ok(Some(peer_request))
@@ -353,7 +359,14 @@ impl<N: Network> Router<N> {
         if self.is_local_ip(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
-        // Unknown peers are untrusted, so check if `trusted_peers_only` is true.
+        // As a validator, only accept connections from trusted peers and bootstrap nodes.
+        if self.node_type() == NodeType::Validator
+            && !self.is_trusted(listener_addr)
+            && !crate::bootstrap_peers::<N>(self.is_dev()).contains(&listener_addr)
+        {
+            bail!("Dropping connection request from '{listener_addr}' (untrusted)");
+        }
+        // If the node is in trusted peers only mode, ensure the peer is explicitly trusted.
         if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
             bail!("Dropping connection request from '{listener_addr}' (untrusted)");
         }
@@ -368,7 +381,7 @@ impl<N: Network> Router<N> {
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
         let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _, ref snarkos_sha } = message;
-        log_repo_sha_comparison(peer_addr, snarkos_sha.as_ref(), Self::OWNER);
+        log_repo_sha_comparison(peer_addr, snarkos_sha, Self::OWNER);
 
         // Ensure the message protocol version is not outdated.
         if !self.is_valid_message_version(version) {

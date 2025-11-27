@@ -88,6 +88,9 @@ async fn connect_to(router: &TestRouter<Network>, other: &TestRouter<Network>) {
     while !router.is_connected(other.local_ip()) {
         sleep(Duration::from_millis(10)).await;
     }
+    while !other.is_connected(router.local_ip()) {
+        sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// Checks that clients are ordered before nodes and that ordering is based on when a peer was last seen.
@@ -100,11 +103,11 @@ async fn peer_priority_ordering() {
     router.enable_handshake().await;
     router.enable_on_connect().await;
 
-    let validator_peer1 = validator(0, 5, &[], false, &mut rng).await;
+    let validator_peer1 = validator(0, 5, &[router.local_ip()], false, &mut rng).await;
     validator_peer1.enable_listener().await;
     validator_peer1.enable_handshake().await;
 
-    let validator_peer2 = validator(0, 5, &[], false, &mut rng).await;
+    let validator_peer2 = validator(0, 5, &[router.local_ip()], false, &mut rng).await;
     validator_peer2.enable_listener().await;
     validator_peer2.enable_handshake().await;
 
@@ -165,15 +168,15 @@ async fn peer_priority_trusted_peers() {
     client_peer.enable_listener().await;
     client_peer.enable_handshake().await;
 
-    let router = validator(0, 5, &[validator_peer.local_ip(), client_peer.local_ip()], false, &mut rng).await;
-    router.enable_listener().await;
-    router.enable_handshake().await;
-    router.enable_on_connect().await;
+    let validator_peer_2 = validator(0, 5, &[validator_peer.local_ip(), client_peer.local_ip()], false, &mut rng).await;
+    validator_peer_2.enable_listener().await;
+    validator_peer_2.enable_handshake().await;
+    validator_peer_2.enable_on_connect().await;
 
-    connect_to(&router, &client_peer).await;
-    connect_to(&router, &validator_peer).await;
+    connect_to(&client_peer, &validator_peer_2).await;
+    connect_to(&validator_peer, &validator_peer_2).await;
 
-    let heartbeat = HeartbeatTest { router };
+    let heartbeat = HeartbeatTest { router: validator_peer_2 };
 
     let removable_peers = heartbeat.get_removable_peers();
 

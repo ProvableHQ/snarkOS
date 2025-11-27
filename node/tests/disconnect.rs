@@ -150,8 +150,8 @@ async fn duplicate_disconnect_attempts() {
     // common::initialise_logger(3);
 
     // Spin up 2 full nodes.
-    let node1 = validator().await;
-    let node2 = validator().await;
+    let node1 = client().await;
+    let node2 = client().await;
     let addr2 = node2.tcp().listening_addr().unwrap();
 
     // Connect node1 to node2.

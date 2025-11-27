@@ -46,9 +46,9 @@ default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-#git = "https://github.com/ProvableHQ/snarkVM.git"
-#rev = "250ced4"
-version = "=4.4.0"
+git = "https://github.com/ProvableHQ/snarkVM.git"
+rev = "b176b1409"
+#version = "=4.4.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -169,6 +169,9 @@ version = "=0.3.19"
 [workspace.dependencies.test-strategy]
 version = "0.4"
 
+[workspace.dependencies.test-log]
+version = "0.2"
+
 [workspace.dependencies.snarkos-account]
 path = "account"
 version = "=4.4.0"
@@ -277,7 +280,17 @@ locktick = [
   "snarkos-node-tcp/locktick",
   "snarkvm/locktick"
 ]
-serial = [ "snarkos-cli/serial" ]
+serial = [
+  "snarkos-cli/serial",
+  "snarkos-node/serial",
+  "snarkos-node-bft/serial",
+  "snarkos-node-consensus/serial",
+  "snarkos-node-metrics/serial",
+  "snarkos-node-rest/serial",
+  "snarkos-node-router/serial",
+  "snarkos-node-sync/serial",
+  "snarkvm/serial"
+]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network" ]

@@ -162,6 +162,10 @@ default-features = true
 version = "1"
 features = [ "derive" ]
 
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "test-helpers" ]
+
 [target."cfg(target_family = \"unix\")".dependencies.nix]
 version = "0.30"
 default-features = false
