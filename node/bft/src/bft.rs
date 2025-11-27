@@ -19,13 +19,17 @@ use crate::{
     helpers::{
         BFTReceiver,
         ConsensusSender,
+        ConsensusStage,
         DAG,
         PrimaryReceiver,
         PrimarySender,
         Storage,
+        SubdagStage,
         fmt_id,
         init_bft_channels,
         now,
+        record_event,
+        start_subdag_stage,
     },
 };
 use snarkos_account::Account;
@@ -481,7 +485,7 @@ impl<N: Network> BFT<N> {
         self.dag.write().insert(certificate);
 
         #[cfg(feature = "test_consensus_tracking")]
-        crate::helpers::record_event(certificate_round, crate::helpers::ConsensusStage::CertificateAdded);
+        record_event(certificate_round, ConsensusStage::CertificateAdded);
 
         // Get the previous round number.
         let commit_round = certificate_round.saturating_sub(1);
@@ -567,11 +571,7 @@ impl<N: Network> BFT<N> {
         let latest_leader_round = leader_certificate.round();
 
         #[cfg(feature = "test_consensus_tracking")]
-        crate::helpers::start_subdag_stage(
-            latest_leader_round.saturating_sub(2),
-            latest_leader_round,
-            crate::helpers::SubdagStage::SubdagProcessing,
-        );
+        start_subdag_stage(latest_leader_round.saturating_sub(2), latest_leader_round, SubdagStage::SubdagProcessing);
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];

@@ -26,6 +26,7 @@ use crate::{
     events::{BatchPropose, BatchSignature, Event},
     helpers::{
         BFTSender,
+        ConsensusStage,
         PrimaryReceiver,
         PrimarySender,
         Proposal,
@@ -38,6 +39,7 @@ use crate::{
         init_sync_channels,
         init_worker_channels,
         now,
+        record_event,
     },
     spawn_blocking,
 };
@@ -696,7 +698,7 @@ impl<N: Network> Primary<N> {
         })?;
 
         #[cfg(feature = "test_consensus_tracking")]
-        crate::helpers::record_event(round, crate::helpers::ConsensusStage::ProposalCreated);
+        record_event(round, ConsensusStage::ProposalCreated);
 
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
@@ -766,7 +768,7 @@ impl<N: Network> Primary<N> {
         }
 
         #[cfg(feature = "test_consensus_tracking")]
-        crate::helpers::record_event(batch_round, crate::helpers::ConsensusStage::ProposalSeen);
+        record_event(batch_round, ConsensusStage::ProposalSeen);
 
         // Retrieve the cached round and batch ID for this validator.
         if let Some((signed_round, signed_batch_id, signature)) =

@@ -33,9 +33,12 @@ use snarkos_node_bft::{
         ConsensusReceiver,
         PrimarySender,
         Storage as NarwhalStorage,
+        SubdagStage::*,
+        end_subdag_stage,
         fmt_id,
         init_consensus_channels,
         init_primary_channels,
+        start_subdag_stage,
     },
     spawn_blocking,
 };
@@ -529,60 +532,43 @@ impl<N: Network> Consensus<N> {
         let _highest_round = subdag.last_key_value().map(|(k, _)| *k).unwrap_or(0);
 
         #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::end_subdag_stage(
-            _highest_round.saturating_sub(2),
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::SubdagProcessing,
-        );
-        // Create the candidate next block.
-        #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::start_subdag_stage(
-            _lowest_round,
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::PrepareAdvanceToNextQuorumBlock,
-        );
-        let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
-        let _next_block_height = next_block.height();
-        #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::end_subdag_stage(
-            _lowest_round,
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::PrepareAdvanceToNextQuorumBlock,
-        );
-        // Check that the block is well-formed.
-        #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::start_subdag_stage(
-            _lowest_round,
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
-        );
-        self.ledger.check_next_block(&next_block)?;
-        #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::end_subdag_stage(
-            _lowest_round,
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::CheckNextBlock,
-        );
-        // Advance to the next block.
-        #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::start_subdag_stage(
-            _lowest_round,
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::AdvanceToNextBlock,
-        );
-        self.ledger.advance_to_next_block(&next_block)?;
-        #[cfg(feature = "test_consensus_tracking")]
-        snarkos_node_bft::helpers::end_subdag_stage(
-            _lowest_round,
-            _highest_round,
-            snarkos_node_bft::helpers::SubdagStage::AdvanceToNextBlock,
-        );
+        {
+            // NOTE: we use `_highest_round.saturating_sub(2)` because this is
+            // the only information available to us at the respective
+            // start_subdag_stage.
+            end_subdag_stage(_highest_round.saturating_sub(2), _highest_round, SubdagProcessing);
+            start_subdag_stage(_lowest_round, _highest_round, PrepareAdvanceToNextQuorumBlock);
+        }
 
-        // Export timing data to JSON after block generation
+        // Create the candidate next block.
+        let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+
         #[cfg(feature = "test_consensus_tracking")]
         {
-            let dev_index = self.bft().primary().gateway().dev().unwrap_or_default();
-            let json_filename = format!("consensus_timing_block_{dev_index}.json");
+            end_subdag_stage(_lowest_round, _highest_round, PrepareAdvanceToNextQuorumBlock);
+            start_subdag_stage(_lowest_round, _highest_round, CheckNextBlock);
+        }
+
+        // Check that the block is well-formed.
+        self.ledger.check_next_block(&next_block)?;
+
+        #[cfg(feature = "test_consensus_tracking")]
+        {
+            end_subdag_stage(_lowest_round, _highest_round, CheckNextBlock);
+            start_subdag_stage(_lowest_round, _highest_round, AdvanceToNextBlock);
+        }
+
+        // Advance to the next block.
+        self.ledger.advance_to_next_block(&next_block)?;
+
+        // Finalize subdag stage tracking and export timing data to JSON after block generation
+        #[cfg(feature = "test_consensus_tracking")]
+        {
+            end_subdag_stage(_lowest_round, _highest_round, AdvanceToNextBlock);
+            let json_filename = match self.bft().primary().gateway().dev() {
+                Some(dev) => format!("consensus_timing_block_{dev}.json"),
+                None => "consensus_timing_block_prod.json".to_string(),
+            };
             if let Err(e) = snarkos_node_bft::helpers::export_to_json(&json_filename) {
                 warn!("Failed to export timing data to {}: {}", json_filename, e);
             } else {
