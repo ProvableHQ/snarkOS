@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1764212719027,
+  "lastUpdate": 1764244159813,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -6570,6 +6570,72 @@ window.BENCHMARK_DATA = {
             "value": 1.19,
             "unit": "blocks/s",
             "extra": "total_wait=210s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1848cee4c23bc4cde940a3c69fd21349294518cd",
+          "message": "Merge pull request #3996 from ProvableHQ/fix/query-v1-api\n\n[Fix] Ensure `dev execute` works with a v1 API",
+          "timestamp": "2025-11-27T12:18:57+01:00",
+          "tree_id": "cb42f2438b84e6b10f7ae4da42ddfb003a707568",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/1848cee4c23bc4cde940a3c69fd21349294518cd"
+        },
+        "date": 1764244159246,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 2.8627875708164257,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=167.66874527931213, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7960.12161838856,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.050097703933716, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1001.158325926337,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7990744113922119, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.39,
+            "unit": "blocks/s",
+            "extra": "total_wait=179s, target_height=250, connect_time=17s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.328886,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=175, mean_speed=0.898000, max_speed=3.116667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.21,
+            "unit": "blocks/s",
+            "extra": "total_wait=205s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250"
           }
         ]
       }
