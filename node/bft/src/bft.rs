@@ -521,7 +521,11 @@ impl<N: Network> BFT<N> {
         }
 
         /* Proceeding to check if the leader is ready to be committed. */
-        trace!("Checking if the leader is ready to be committed for round {commit_round}...");
+        if IS_SYNCING {
+            trace!("Checking if the leader is ready to be committed for round {commit_round} (from sync)...");
+        } else {
+            trace!("Checking if the leader is ready to be committed for round {commit_round}...");
+        }
 
         // Retrieve the committee lookback for the commit round.
         let committee_lookback = self.ledger().get_committee_lookback_for_round(commit_round).with_context(|| {
@@ -591,9 +595,6 @@ impl<N: Network> BFT<N> {
         &self,
         leader_certificate: BatchCertificate<N>,
     ) -> Result<()> {
-        // Ensure sync is not advancing while this commit is in progress.
-        let _pause_hdl = if !IS_SYNCING { Some(self.primary.block_sync().pause().await) } else { None };
-
         #[cfg(debug_assertions)]
         trace!("Attempting to commit leader certificate for round {}...", leader_certificate.round());
 

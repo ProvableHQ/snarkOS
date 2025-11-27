@@ -38,7 +38,7 @@ use snarkvm::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::{LockGuard, parking_lot::Mutex, tokio::Mutex as TMutex};
+use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 #[cfg(not(feature = "serial"))]
@@ -53,7 +53,7 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
-    sync::{MutexGuard as TMutexGuard, OnceCell, oneshot},
+    sync::{OnceCell, oneshot},
     task::JoinHandle,
 };
 
@@ -95,16 +95,6 @@ pub struct Sync<N: Network> {
     ///
     /// Whenever a new block is added to this map, BlockSync::set_sync_height needs to be called.
     pending_blocks: Arc<TMutex<VecDeque<PendingBlock<N>>>>,
-}
-
-/// Pauses sync from advancing until the object is dropped.
-pub struct PausedSyncHandle<'a> {
-    #[cfg(feature = "locktick")]
-    #[allow(dead_code)]
-    inner: LockGuard<TMutexGuard<'a, ()>>,
-    #[cfg(not(feature = "locktick"))]
-    #[allow(dead_code)]
-    inner: TMutexGuard<'a, ()>,
 }
 
 impl<N: Network> Sync<N> {
@@ -149,11 +139,6 @@ impl<N: Network> Sync<N> {
 
         debug!("Finished initial block synchronization at startup");
         Ok(())
-    }
-
-    /// Pause synchronization until the returned handle is dropped.
-    pub(crate) async fn pause<'a>(&'a self) -> PausedSyncHandle<'a> {
-        PausedSyncHandle { inner: self.sync_lock.lock().await }
     }
 
     /// Sends the given batch of block requests to peers.
