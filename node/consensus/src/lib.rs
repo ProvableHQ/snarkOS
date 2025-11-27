@@ -525,9 +525,8 @@ impl<N: Network> Consensus<N> {
         let current_block_timestamp = self.ledger.latest_block().header().metadata().timestamp();
 
         // Extract lowest and highest rounds from the subdag
-        let rounds: Vec<u64> = subdag.keys().copied().collect();
-        let _lowest_round = rounds.iter().min().copied().unwrap_or(0);
-        let _highest_round = rounds.iter().max().copied().unwrap_or(0);
+        let _lowest_round = subdag.first_key_value().map(|(k, _)| *k).unwrap_or(0);
+        let _highest_round = subdag.last_key_value().map(|(k, _)| *k).unwrap_or(0);
 
         #[cfg(feature = "test_consensus_tracking")]
         snarkos_node_bft::helpers::end_subdag_stage(

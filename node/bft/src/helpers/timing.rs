@@ -24,11 +24,10 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 /// Global storage for round-based event data
-static ROUND_EVENTS: Lazy<Arc<RwLock<HashMap<u64, RoundEvents>>>> = Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+static ROUND_EVENTS: Lazy<Arc<RwLock<HashMap<u64, RoundEvents>>>> = Lazy::new(Default::default);
 
 /// Global storage for subdag-based timing data (using lowest/highest rounds from subdag)
-static SUBDAG_TIMINGS: Lazy<Arc<RwLock<HashMap<(u64, u64), SubdagTimings>>>> =
-    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+static SUBDAG_TIMINGS: Lazy<Arc<RwLock<HashMap<(u64, u64), SubdagTimings>>>> = Lazy::new(Default::default);
 
 /// Consensus stages that occur per round
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
