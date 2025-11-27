@@ -25,14 +25,18 @@ use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+
 use snarkvm::{
-    console::{network::Network, types::Field},
+    console::{
+        network::{ConsensusVersion, Network},
+        types::Field,
+    },
     ledger::{authority::Authority, block::Block, narwhal::BatchCertificate},
     prelude::{cfg_into_iter, cfg_iter},
-    utilities::log_error,
+    utilities::flatten_error,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -235,8 +239,10 @@ impl<N: Network> Sync<N> {
         // which causes the `rx_block_sync_advance_with_sync_blocks.recv()` call below to return.
         let self_ = self.clone();
         self.spawn(async move {
-            while let Some((peer_ip, blocks, callback)) = rx_block_sync_insert_block_response.recv().await {
-                callback.send(self_.insert_block_response(peer_ip, blocks).await).ok();
+            while let Some((peer_ip, blocks, latest_consensus_version, callback)) =
+                rx_block_sync_insert_block_response.recv().await
+            {
+                callback.send(self_.insert_block_response(peer_ip, blocks, latest_consensus_version).await).ok();
             }
         });
 
@@ -312,7 +318,7 @@ impl<N: Network> Sync<N> {
             Ok(None) => {}
             Err(err) => {
                 // Abort and retry later.
-                log_error(&err);
+                error!("{}", &flatten_error(err));
                 return;
             }
         }
@@ -351,9 +357,14 @@ impl<N: Network> Sync<N> {
 // Callbacks used when receiving messages from the Gateway
 impl<N: Network> Sync<N> {
     /// We received a block response and can (possibly) advance synchronization.
-    async fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+    async fn insert_block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> Result<()> {
         // Verify that the response is valid and add it to block sync.
-        self.block_sync.insert_block_responses(peer_ip, blocks)
+        self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)
 
         // No need to advance block sync here, as the new response will
         // notify the incoming task.
@@ -461,9 +472,11 @@ impl<N: Network> Sync<N> {
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(bft_sender) = self.bft_sender.get() {
             // Await the callback to continue.
-            if let Err(e) = bft_sender.tx_sync_bft_dag_at_bootup.send(certificates).await {
-                bail!("Failed to update the BFT DAG from sync: {e}");
-            }
+            bft_sender
+                .tx_sync_bft_dag_at_bootup
+                .send(certificates)
+                .await
+                .with_context(|| "Failed to update the BFT DAG from sync")?;
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -1030,7 +1043,6 @@ mod tests {
     type CurrentConsensusStore = ConsensusStore<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 
     #[tokio::test]
-    #[tracing_test::traced_test]
     async fn test_commit_via_is_linked() -> anyhow::Result<()> {
         let rng = &mut TestRng::default();
         // Initialize the round parameters.
@@ -1043,8 +1055,9 @@ mod tests {
 
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
         let seed: u64 = rng.r#gen();
-        let genesis_rng = &mut TestRng::from_seed(seed);
-        let genesis = VM::from(store).unwrap().genesis_beacon(account.private_key(), genesis_rng).unwrap();
+        let vm = VM::from(store).unwrap();
+        let genesis_pk = *account.private_key();
+        let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
 
         // Extract the private keys from the genesis committee by using the same RNG to sample private keys.
         let genesis_rng = &mut TestRng::from_seed(seed);
@@ -1056,7 +1069,8 @@ mod tests {
         ];
 
         // Initialize the ledger with the genesis block.
-        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
+        let genesis_clone = genesis.clone();
+        let ledger = spawn_blocking!(CurrentLedger::load(genesis_clone, StorageMode::new_test(None))).unwrap();
         // Initialize the ledger.
         let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
 
@@ -1169,10 +1183,13 @@ mod tests {
             subdag_map.insert(commit_round, leader_cert_map.clone());
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
             let subdag = Subdag::from(subdag_map.clone())?;
-            core_ledger.prepare_advance_to_next_quorum_block(subdag, Default::default())?
+            let ledger = core_ledger.clone();
+            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))?
         };
         // Insert block 1.
-        core_ledger.advance_to_next_block(&block_1)?;
+        let ledger = core_ledger.clone();
+        let block = block_1.clone();
+        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
         // Create block 2.
         let leader_round_2 = commit_round + 2;
@@ -1196,10 +1213,13 @@ mod tests {
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
             subdag_map_2.insert(leader_round_2 - 2, prev_commit_cert_map_2.clone());
             let subdag_2 = Subdag::from(subdag_map_2.clone())?;
-            core_ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default())?
+            let ledger = core_ledger.clone();
+            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default()))?
         };
         // Insert block 2.
-        core_ledger.advance_to_next_block(&block_2)?;
+        let ledger = core_ledger.clone();
+        let block = block_2.clone();
+        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
         // Create block 3
         let leader_round_3 = commit_round + 4;
@@ -1223,24 +1243,33 @@ mod tests {
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
             subdag_map_3.insert(leader_round_3 - 2, prev_commit_cert_map_3.clone());
             let subdag_3 = Subdag::from(subdag_map_3.clone())?;
-            core_ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default())?
+            let ledger = core_ledger.clone();
+            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default()))?
         };
         // Insert block 3.
-        core_ledger.advance_to_next_block(&block_3)?;
+        let ledger = core_ledger.clone();
+        let block = block_3.clone();
+        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
         // Initialize the syncing ledger.
-        let storage_mode = StorageMode::new_test(None);
-        let syncing_ledger = Arc::new(CoreLedgerService::new(
-            CurrentLedger::load(genesis, storage_mode.clone()).unwrap(),
-            Default::default(),
-        ));
+        let syncing_ledger = spawn_blocking!(CurrentLedger::load(genesis, StorageMode::new_test(None))).unwrap();
+        let syncing_ledger = Arc::new(CoreLedgerService::new(syncing_ledger, Default::default()));
         // Initialize the gateway.
-        let gateway =
-            Gateway::new(account.clone(), storage.clone(), syncing_ledger.clone(), None, &[], storage_mode, None)?;
+        let storage_mode = StorageMode::new_test(None);
+        let gateway = Gateway::new(
+            account.clone(),
+            storage.clone(),
+            syncing_ledger.clone(),
+            None,
+            &[],
+            false,
+            storage_mode,
+            None,
+        )?;
         // Initialize the block synchronization logic.
         let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
         // Initialize the sync module.
-        let sync = Sync::new(gateway.clone(), storage.clone(), syncing_ledger.clone(), block_sync);
+        let sync = Sync::new(gateway, storage, syncing_ledger.clone(), block_sync);
         // Try to sync block 1.
         sync.sync_storage_with_block(block_1).await?;
         assert_eq!(syncing_ledger.latest_block_height(), 1);
@@ -1271,8 +1300,9 @@ mod tests {
 
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
         let seed: u64 = rng.r#gen();
-        let genesis_rng = &mut TestRng::from_seed(seed);
-        let genesis = VM::from(store).unwrap().genesis_beacon(account.private_key(), genesis_rng).unwrap();
+        let vm = VM::from(store).unwrap();
+        let genesis_pk = *account.private_key();
+        let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
 
         // Extract the private keys from the genesis committee by using the same RNG to sample private keys.
         let genesis_rng = &mut TestRng::from_seed(seed);
@@ -1283,13 +1313,13 @@ mod tests {
             PrivateKey::new(genesis_rng)?,
         ];
         // Initialize the ledger with the genesis block.
-        let ledger = CurrentLedger::load(genesis.clone(), StorageMode::new_test(None)).unwrap();
+        let ledger = spawn_blocking!(CurrentLedger::load(genesis, StorageMode::new_test(None))).unwrap();
         // Initialize the ledger.
-        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), Default::default()));
+        let core_ledger = Arc::new(CoreLedgerService::new(ledger, Default::default()));
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
             // Initialize the committee.
-            let committee = ledger.latest_committee().unwrap();
+            let committee = core_ledger.current_committee().unwrap();
             // Initialize a mapping from the round number to the set of batch certificates in the round.
             let mut round_to_certificates_map: HashMap<u64, IndexSet<BatchCertificate<CurrentNetwork>>> =
                 HashMap::new();
@@ -1358,10 +1388,13 @@ mod tests {
             subdag_map.insert(commit_round, leader_cert_map.clone());
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
             let subdag = Subdag::from(subdag_map.clone())?;
-            core_ledger.prepare_advance_to_next_quorum_block(subdag, Default::default())?
+            let ledger = core_ledger.clone();
+            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))?
         };
         // Insert block 1.
-        core_ledger.advance_to_next_block(&block_1)?;
+        let ledger = core_ledger.clone();
+        let block = block_1.clone();
+        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
         // Create block 2.
         let leader_round_2 = commit_round + 2;
@@ -1378,10 +1411,13 @@ mod tests {
             subdag_map_2.insert(leader_round_2, leader_cert_map_2.clone());
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
             let subdag_2 = Subdag::from(subdag_map_2.clone())?;
-            core_ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default())?
+            let ledger = core_ledger.clone();
+            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default()))?
         };
         // Insert block 2.
-        core_ledger.advance_to_next_block(&block_2)?;
+        let ledger = core_ledger.clone();
+        let block = block_2.clone();
+        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
         // Create block 3
         let leader_round_3 = commit_round + 4;
@@ -1398,10 +1434,13 @@ mod tests {
             subdag_map_3.insert(leader_round_3, leader_cert_map_3.clone());
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
             let subdag_3 = Subdag::from(subdag_map_3.clone())?;
-            core_ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default())?
+            let ledger = core_ledger.clone();
+            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default()))?
         };
         // Insert block 3.
-        core_ledger.advance_to_next_block(&block_3)?;
+        let ledger = core_ledger.clone();
+        let block = block_3.clone();
+        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
         /*
             Check that the pending certificates are computed correctly.
@@ -1432,6 +1471,7 @@ mod tests {
         }
         // Check that the set of pending certificates is equal to the set of candidate pending certificates.
         assert_eq!(pending_certificates, candidate_pending_certificates);
+
         Ok(())
     }
 }

@@ -60,7 +60,7 @@ use std::{
         atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::oneshot, task::JoinHandle};
 
 /// A prover is a light node, capable of producing proofs for consensus.
 #[derive(Clone)]
@@ -99,18 +99,16 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
         storage_mode: StorageMode,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
+        let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(ProverLedgerService::new());
-        // Determine if the prover should allow external peers.
-        let allow_external_peers = true;
-        // Determine if the prover should rotate external peers.
-        let rotate_external_peers = false;
 
         // Initialize the node router.
         let router = Router::new(
@@ -120,8 +118,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode,
             dev.is_some(),
         )

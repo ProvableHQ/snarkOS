@@ -129,17 +129,23 @@ pub struct PrimarySender<N: Network> {
     pub tx_batch_signature: mpsc::Sender<(SocketAddr, BatchSignature<N>)>,
     pub tx_batch_certified: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
     pub tx_primary_ping: mpsc::Sender<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub tx_unconfirmed_solution: mpsc::Sender<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
-    pub tx_unconfirmed_transaction: mpsc::Sender<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
+    pub tx_unconfirmed_solution: mpsc::Sender<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<bool>>)>,
+    pub tx_unconfirmed_transaction:
+        mpsc::Sender<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 impl<N: Network> PrimarySender<N> {
     /// Sends the unconfirmed solution to the primary.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the solution was added to the ready queue.
+    /// - `Ok(false)` if the solution was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the solution was invalid.
     pub async fn send_unconfirmed_solution(
         &self,
         solution_id: SolutionID<N>,
         solution: Data<Solution<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the unconfirmed solution to the primary.
@@ -149,11 +155,16 @@ impl<N: Network> PrimarySender<N> {
     }
 
     /// Sends the unconfirmed transaction to the primary.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the transaction was added to the ready queue.
+    /// - `Ok(false)` if the transaction was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the transaction was invalid.
     pub async fn send_unconfirmed_transaction(
         &self,
         transaction_id: N::TransactionID,
         transaction: Data<Transaction<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the unconfirmed transaction to the primary.
@@ -169,9 +180,9 @@ pub struct PrimaryReceiver<N: Network> {
     pub rx_batch_signature: mpsc::Receiver<(SocketAddr, BatchSignature<N>)>,
     pub rx_batch_certified: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
     pub rx_primary_ping: mpsc::Receiver<(SocketAddr, Data<BatchCertificate<N>>)>,
-    pub rx_unconfirmed_solution: mpsc::Receiver<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<()>>)>,
+    pub rx_unconfirmed_solution: mpsc::Receiver<(SolutionID<N>, Data<Solution<N>>, oneshot::Sender<Result<bool>>)>,
     pub rx_unconfirmed_transaction:
-        mpsc::Receiver<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<()>>)>,
+        mpsc::Receiver<(N::TransactionID, Data<Transaction<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 /// Initializes the primary channels.
@@ -231,7 +242,8 @@ pub fn init_worker_channels<N: Network>() -> (WorkerSender<N>, WorkerReceiver<N>
 
 #[derive(Debug)]
 pub struct SyncSender<N: Network> {
-    pub tx_block_sync_insert_block_response: mpsc::Sender<(SocketAddr, Vec<Block<N>>, oneshot::Sender<Result<()>>)>,
+    pub tx_block_sync_insert_block_response:
+        mpsc::Sender<(SocketAddr, Vec<Block<N>>, Option<ConsensusVersion>, oneshot::Sender<Result<()>>)>,
     pub tx_block_sync_remove_peer: mpsc::Sender<SocketAddr>,
     pub tx_block_sync_update_peer_locators: mpsc::Sender<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub tx_certificate_request: mpsc::Sender<(SocketAddr, CertificateRequest<N>)>,
@@ -253,14 +265,21 @@ impl<N: Network> SyncSender<N> {
     }
 
     /// Sends the request to insert a new block response.
-    pub async fn insert_block_response(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+    pub async fn insert_block_response(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> Result<()> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the request to advance with sync blocks.
         // This `tx_block_sync_advance_with_sync_blocks.send()` call
         // causes the `rx_block_sync_advance_with_sync_blocks.recv()` call
         // in one of the loops in [`Sync::run()`] to return.
-        self.tx_block_sync_insert_block_response.send((peer_ip, blocks, callback_sender)).await?;
+        self.tx_block_sync_insert_block_response
+            .send((peer_ip, blocks, latest_consensus_version, callback_sender))
+            .await?;
         // Await the callback to continue.
         callback_receiver.await?
     }
@@ -268,7 +287,8 @@ impl<N: Network> SyncSender<N> {
 
 #[derive(Debug)]
 pub struct SyncReceiver<N: Network> {
-    pub rx_block_sync_insert_block_response: mpsc::Receiver<(SocketAddr, Vec<Block<N>>, oneshot::Sender<Result<()>>)>,
+    pub rx_block_sync_insert_block_response:
+        mpsc::Receiver<(SocketAddr, Vec<Block<N>>, Option<ConsensusVersion>, oneshot::Sender<Result<()>>)>,
     pub rx_block_sync_remove_peer: mpsc::Receiver<SocketAddr>,
     pub rx_block_sync_update_peer_locators: mpsc::Receiver<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub rx_certificate_request: mpsc::Receiver<(SocketAddr, CertificateRequest<N>)>,

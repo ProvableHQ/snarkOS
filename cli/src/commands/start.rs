@@ -55,7 +55,11 @@ use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
 };
-use tokio::runtime::{self, Runtime};
+use tokio::{
+    runtime::{self, Runtime},
+    sync::oneshot,
+    task,
+};
 use tracing::warn;
 use ureq::http;
 
@@ -155,13 +159,13 @@ pub struct Start {
     #[clap(long)]
     pub validators: Option<String>,
 
-    /// Allow untrusted peers (not listed in `--peers`) to connect.
+    /// [DEPRECATED] [NO-OP] Allow untrusted peers (not listed in `--peers`) to connect.
     ///
-    /// The flag will be ignored by client and prover nodes, as tis behavior is always enabled for these types of nodes.
+    /// The flag will be ignored by client and prover nodes, as this behavior is always enabled for these types of nodes.
     #[clap(long, verbatim_doc_comment)]
     pub allow_external_peers: bool,
 
-    /// If the flag is set, a client will periodically evict more external peers
+    /// [DEPRECATED] [NO-OP] If the flag is set, a client will periodically evict more external peers
     #[clap(long)]
     pub rotate_external_peers: bool,
 
@@ -188,6 +192,10 @@ pub struct Start {
     /// If the flag is set, the node will not require JWT authentication for the REST server.
     #[clap(long, group = "rest_flags")]
     pub nojwt: bool,
+
+    /// If the flag is set, the node will only connect to trusted peers and validators.
+    #[clap(long)]
+    pub trusted_peers_only: bool,
 
     /// Write log message to stdout instead of showing a terminal UI.
     ///
@@ -280,13 +288,18 @@ impl Start {
             let node_parse_error = || "Failed to parse node arguments";
             let display_start_error = || "Failed to initialize the display";
 
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
             // Clone the configurations.
             let mut cli = self.clone();
             // Parse the network.
             match cli.network {
                 MainnetV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<MainnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
+                    let node = cli
+                        .parse_node::<MainnetV0>(shutdown.clone(), shutdown_tx)
+                        .await
+                        .with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
@@ -295,7 +308,10 @@ impl Start {
                 }
                 TestnetV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<TestnetV0>(shutdown.clone()).await.with_context(node_parse_error)?;
+                    let node = cli
+                        .parse_node::<TestnetV0>(shutdown.clone(), shutdown_tx)
+                        .await
+                        .with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
@@ -304,7 +320,10 @@ impl Start {
                 }
                 CanaryV0::ID => {
                     // Parse the node from the configurations.
-                    let node = cli.parse_node::<CanaryV0>(shutdown.clone()).await.with_context(node_parse_error)?;
+                    let node = cli
+                        .parse_node::<CanaryV0>(shutdown.clone(), shutdown_tx)
+                        .await
+                        .with_context(node_parse_error)?;
                     // If the display is enabled, render the display.
                     if !cli.nodisplay {
                         // Initialize the display.
@@ -313,9 +332,10 @@ impl Start {
                 }
                 _ => panic!("Invalid network ID specified"),
             };
-            // Note: Do not move this. The pending await must be here otherwise
-            // other snarkOS commands will not exit.
-            std::future::pending::<()>().await;
+
+            // Wait for the shutdown signal.
+            let _ = shutdown_rx.await;
+
             Ok(String::new())
         })
     }
@@ -556,7 +576,11 @@ impl Start {
             }
 
             // Construct the genesis block.
-            load_or_compute_genesis(dev_keys[0], committee, public_balances, bonded_balances, &mut rng)
+            std::thread::spawn(move || {
+                load_or_compute_genesis(dev_keys[0], committee, public_balances, bonded_balances, &mut rng)
+            })
+            .join()
+            .unwrap()
         } else {
             Block::from_bytes_le(N::genesis_bytes())
         }
@@ -578,7 +602,7 @@ impl Start {
 
     /// Returns the node type corresponding to the given configurations.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>) -> Result<Node<N>> {
+    async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>, shutdown_tx: oneshot::Sender<()>) -> Result<Node<N>> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
@@ -617,7 +641,8 @@ impl Start {
         let cdn = self.parse_cdn::<N>().with_context(|| "Failed to parse given CDN URL")?;
 
         // Parse the genesis block.
-        let genesis = self.parse_genesis::<N>()?;
+        let start = self.clone();
+        let genesis = task::spawn_blocking(move || start.parse_genesis::<N>()).await??;
         // Parse the private key of the node.
         let account = self.parse_private_key::<N>()?;
         // Parse the node type.
@@ -723,11 +748,13 @@ impl Start {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
 
+        let shutdown_tx = Some(shutdown_tx);
+
         // Initialize the node.
         match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.allow_external_peers, dev_txs, self.dev, shutdown.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.dev, shutdown.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.rotate_external_peers, self.dev, shutdown).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, shutdown.clone(), shutdown_tx).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, shutdown.clone(), shutdown_tx).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, shutdown, shutdown_tx).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }
     }

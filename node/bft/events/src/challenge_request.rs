@@ -15,18 +15,23 @@
 
 use super::*;
 
+use snarkos_node_network::get_repo_commit_hash;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeRequest<N: Network> {
     pub version: u32,
     pub listener_port: u16,
     pub address: Address<N>,
     pub nonce: u64,
+    pub snarkos_sha: Option<[u8; 40]>,
 }
 
 impl<N: Network> ChallengeRequest<N> {
-    /// Creates a new `ChallengeRequest` event.
+    /// Constant for an unknown commit hash.
+    const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
+
     pub fn new(listener_port: u16, address: Address<N>, nonce: u64) -> Self {
-        Self { version: Event::<N>::VERSION, listener_port, address, nonce }
+        Self { version: Event::<N>::VERSION, listener_port, address, nonce, snarkos_sha: get_repo_commit_hash() }
     }
 }
 
@@ -39,36 +44,48 @@ impl<N: Network> EventTrait for ChallengeRequest<N> {
 }
 
 impl<N: Network> ToBytes for ChallengeRequest<N> {
-    fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
+    fn write_le<W: Write>(&self, mut writer: W) -> io::Result<()> {
         self.version.write_le(&mut writer)?;
         self.listener_port.write_le(&mut writer)?;
         self.address.write_le(&mut writer)?;
         self.nonce.write_le(&mut writer)?;
+        // Serialize `None` as a constant.
+        self.snarkos_sha.unwrap_or(Self::UNKNOWN_COMMIT_HASH).write_le(&mut writer)?;
+
         Ok(())
     }
 }
 
 impl<N: Network> FromBytes for ChallengeRequest<N> {
-    fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
+    fn read_le<R: Read>(mut reader: R) -> io::Result<Self> {
         let version = u32::read_le(&mut reader)?;
         let listener_port = u16::read_le(&mut reader)?;
         let address = Address::<N>::read_le(&mut reader)?;
         let nonce = u64::read_le(&mut reader)?;
+        let snarkos_sha = {
+            let bytes =
+                <[u8; 40]>::read_le(&mut reader).map_err(|err| io_error(format!("Invalid snarkOS SHA - {err}")))?;
+            if bytes == Self::UNKNOWN_COMMIT_HASH { None } else { Some(bytes) }
+        };
 
-        Ok(Self { version, listener_port, address, nonce })
+        Ok(Self { version, listener_port, address, nonce, snarkos_sha })
     }
 }
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::ChallengeRequest;
+    use super::*;
+
     use snarkvm::{
         console::prelude::{FromBytes, ToBytes},
         prelude::{Address, TestRng, Uniform},
     };
 
     use bytes::{Buf, BufMut, BytesMut};
-    use proptest::prelude::{BoxedStrategy, Strategy, any};
+    use proptest::{
+        collection,
+        prelude::{BoxedStrategy, Strategy, any},
+    };
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -78,12 +95,12 @@ pub mod prop_tests {
     }
 
     pub fn any_challenge_request() -> BoxedStrategy<ChallengeRequest<CurrentNetwork>> {
-        (any_valid_address(), any::<u64>(), any::<u32>(), any::<u16>())
-            .prop_map(|(address, nonce, version, listener_port)| ChallengeRequest {
-                address,
-                nonce,
-                version,
-                listener_port,
+        (any_valid_address(), any::<u64>(), any::<u32>(), any::<u16>(), collection::vec(0u8..=127, 40))
+            .prop_map(|(address, nonce, version, listener_port, sha)| {
+                let sha: [u8; 40] = sha.try_into().unwrap();
+                let snarkos_sha =
+                    if sha == ChallengeRequest::<CurrentNetwork>::UNKNOWN_COMMIT_HASH { None } else { Some(sha) };
+                ChallengeRequest { address, nonce, version, listener_port, snarkos_sha }
             })
             .boxed()
     }

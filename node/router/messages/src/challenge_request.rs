@@ -15,8 +15,8 @@
 
 use super::*;
 
-use snarkos_node_network::NodeType;
-use snarkvm::prelude::{FromBytes, ToBytes};
+use snarkos_node_network::{NodeType, get_repo_commit_hash};
+use snarkvm::prelude::{FromBytes, ToBytes, io_error};
 
 use std::borrow::Cow;
 
@@ -27,6 +27,7 @@ pub struct ChallengeRequest<N: Network> {
     pub node_type: NodeType,
     pub address: Address<N>,
     pub nonce: u64,
+    pub snarkos_sha: Option<[u8; 40]>,
 }
 
 impl<N: Network> MessageTrait for ChallengeRequest<N> {
@@ -44,6 +45,8 @@ impl<N: Network> ToBytes for ChallengeRequest<N> {
         self.node_type.write_le(&mut writer)?;
         self.address.write_le(&mut writer)?;
         self.nonce.write_le(&mut writer)?;
+        self.snarkos_sha.unwrap_or(Self::UNKNOWN_COMMIT_HASH).write_le(&mut writer)?;
+
         Ok(())
     }
 }
@@ -56,27 +59,46 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
         let address = Address::<N>::read_le(&mut reader)?;
         let nonce = u64::read_le(&mut reader)?;
 
-        Ok(Self { version, listener_port, node_type, address, nonce })
+        let snarkos_sha = {
+            let bytes =
+                <[u8; 40]>::read_le(&mut reader).map_err(|err| io_error(format!("Invalid snarkOS SHA - {err}")))?;
+            if bytes == Self::UNKNOWN_COMMIT_HASH { None } else { Some(bytes) }
+        };
+
+        Ok(Self { version, listener_port, node_type, address, nonce, snarkos_sha })
     }
 }
 
 impl<N: Network> ChallengeRequest<N> {
+    /// Constant for an unknown commit hash.
+    const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
+
     pub fn new(listener_port: u16, node_type: NodeType, address: Address<N>, nonce: u64) -> Self {
-        Self { version: Message::<N>::latest_message_version(), listener_port, node_type, address, nonce }
+        Self {
+            version: Message::<N>::latest_message_version(),
+            listener_port,
+            node_type,
+            address,
+            nonce,
+            snarkos_sha: get_repo_commit_hash(),
+        }
     }
 }
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::ChallengeRequest;
-    use snarkos_node_network::NodeType;
+    use super::*;
+
     use snarkvm::{
         console::prelude::{FromBytes, ToBytes},
         prelude::{Address, TestRng, Uniform},
     };
 
     use bytes::{Buf, BufMut, BytesMut};
-    use proptest::prelude::{BoxedStrategy, Strategy, any};
+    use proptest::{
+        collection,
+        prelude::{BoxedStrategy, Strategy, any},
+    };
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -97,13 +119,12 @@ pub mod prop_tests {
     }
 
     pub fn any_challenge_request() -> BoxedStrategy<ChallengeRequest<CurrentNetwork>> {
-        (any_valid_address(), any::<u64>(), any::<u32>(), any::<u16>(), any_node_type())
-            .prop_map(|(address, nonce, version, listener_port, node_type)| ChallengeRequest {
-                address,
-                nonce,
-                version,
-                listener_port,
-                node_type,
+        (any_valid_address(), any::<u64>(), any::<u32>(), any::<u16>(), any_node_type(), collection::vec(0u8..=127, 40))
+            .prop_map(|(address, nonce, version, listener_port, node_type, sha)| {
+                let sha: [u8; 40] = sha.try_into().unwrap();
+                let snarkos_sha =
+                    if sha == ChallengeRequest::<CurrentNetwork>::UNKNOWN_COMMIT_HASH { None } else { Some(sha) };
+                ChallengeRequest { address, nonce, version, listener_port, node_type, snarkos_sha }
             })
             .boxed()
     }

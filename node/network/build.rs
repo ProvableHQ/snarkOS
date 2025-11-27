@@ -13,19 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::*;
-
-use snarkos_node_bft_events::EventTrait;
-
-use std::borrow::Cow;
-
-// Re-export BlockResponse from BFT
-pub use snarkos_node_bft_events::BlockResponse;
-
-impl<N: Network> MessageTrait for BlockResponse<N> {
-    /// Returns the event name.
-    #[inline]
-    fn name(&self) -> Cow<'static, str> {
-        EventTrait::name(self)
-    }
+fn main() {
+    built::write_built_file().expect("Failed to acquire build-time information");
 }

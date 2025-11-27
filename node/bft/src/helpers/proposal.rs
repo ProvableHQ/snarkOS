@@ -149,28 +149,34 @@ impl<N: Network> Proposal<N> {
     /// Adds an endorsing signature to the proposal, if the signature is valid
     /// and the signer is a committee member that has not already signed the proposal
     /// (this implicitly checks that the signature is not from the author).
+    ///
+    /// # Returns
+    ///  - `Ok(true)` for a new and valid signature.
+    ///  - `Ok(false)` for a valid but already existing signature.
+    ///  - `Err(err)` for invalid signatures and other errors.
     pub fn add_signature(
         &mut self,
         signer: Address<N>,
         signature: Signature<N>,
         committee: &Committee<N>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Ensure the signer is in the committee.
         if !committee.is_committee_member(signer) {
             bail!("Signature from a non-committee member - '{signer}'")
         }
         // Ensure the signer is new.
         if self.signers().contains(&signer) {
-            bail!("Duplicate signature from '{signer}'")
+            return Ok(false);
         }
         // Verify the signature. If the signature is not valid, return an error.
         // Note: This check ensures the peer's address matches the address of the signature.
         if !signature.verify(&signer, &[self.batch_id()]) {
             bail!("Signature verification failed")
         }
-        // Insert the signature.
+
+        // Insert the new signature and return success.
         self.signatures.insert(signature);
-        Ok(())
+        Ok(true)
     }
 
     /// Returns the batch certificate and transmissions.

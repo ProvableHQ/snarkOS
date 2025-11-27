@@ -56,6 +56,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Returns `true` if the owning node is in development mode.
     fn is_dev(&self) -> bool;
 
+    /// Returns `true` if the node is in trusted peers only mode.
+    fn trusted_peers_only(&self) -> bool;
+
     /// Returns the node type.
     fn node_type(&self) -> NodeType;
 
@@ -108,6 +111,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // If the IP is already banned, reject the attempt.
         if self.is_ip_banned(listener_addr.ip()) {
             bail!("{} Rejected a connection attempt to a banned IP '{}'", Self::OWNER, listener_addr.ip());
+        }
+        // If the node is in trusted peers only mode, ensure the peer is trusted.
+        if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
+            bail!("{} Dropping connection attempt to '{listener_addr}' (untrusted)", Self::OWNER);
         }
         Ok(false)
     }
@@ -186,6 +193,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// limit on the number of peers in the pool. The listener addresses may be paired with
     /// the last known block height of the associated peer.
     fn insert_candidate_peers(&self, mut listener_addrs: Vec<(SocketAddr, Option<u32>)>) {
+        let trusted_peers = self.trusted_peers();
+
         // Hold a write guard from now on, so as not to accidentally slash multiple times
         // based on multiple batches of candidate peers, and to not overwrite any entries.
         let mut peer_pool = self.peer_pool().write();
@@ -218,7 +227,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             // Collect the addresses of prospect peers.
             let mut peers_to_slash = peer_pool
                 .iter()
-                .filter_map(|(addr, peer)| (matches!(peer, Peer::Candidate(_))).then_some(*addr))
+                .filter_map(|(addr, peer)| {
+                    (matches!(peer, Peer::Candidate(_)) && !trusted_peers.contains(addr)).then_some(*addr)
+                })
                 .collect::<Vec<_>>();
 
             // Get the low-level peer stats.
@@ -523,6 +534,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
     /// optional reason for the ban. This also removes the peer from the candidate pool.
     fn ip_ban_peer(&self, listener_addr: SocketAddr, reason: Option<&str>) {
+        // Ignore IP-banning if we are in dev mode.
+        if self.is_dev() {
+            return;
+        }
+
         let ip = listener_addr.ip();
         debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
 

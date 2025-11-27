@@ -32,6 +32,11 @@ use snarkvm::prelude::Network;
 use std::{net::SocketAddr, str::FromStr};
 use tracing::*;
 
+// Include the generated build information.
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 /// Returns the list of bootstrap peers.
 #[allow(clippy::if_same_then_else)]
 pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
@@ -72,4 +77,34 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
         // Unrecognized networks contain no bootstrap peers.
         vec![]
     }
+}
+
+/// Get our SHA from the build information (or None if it is not set or does not 40 bytes long).
+pub fn get_repo_commit_hash() -> Option<[u8; 40]> {
+    built_info::GIT_COMMIT_HASH.and_then(|sha| sha.as_bytes().try_into().ok())
+}
+
+/// Logs the peer's snarkOS repo SHA and how it compares to ours.
+pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &Option<[u8; 40]>, ctx: &str) {
+    let our_sha = get_repo_commit_hash();
+
+    // Generate a string representation for the peers hash.
+    let peer_sha_str: Option<&str> = peer_sha.as_ref().and_then(|h| str::from_utf8(h).ok());
+
+    let sha_cmp = match (&our_sha, peer_sha, peer_sha_str) {
+        // They sent no hash, or an invalid string.
+        (_, _, None) | (_, None, _) => " with an unknown repo SHA".to_owned(),
+        // Our hash cannot be retrieved.
+        (None, _, Some(theirs_str)) => format!("@{theirs_str} (potentially different than us)"),
+        // Both hashes are valid. Compare.
+        (Some(ours), Some(theirs), Some(theirs_str)) => {
+            if ours == theirs {
+                format!("@{theirs_str} (same as us)")
+            } else {
+                format!("@{theirs_str} (different than us)")
+            }
+        }
+    };
+
+    debug!("{ctx} Peer '{peer_addr}' uses snarkOS{sha_cmp}");
 }

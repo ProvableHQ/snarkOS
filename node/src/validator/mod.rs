@@ -45,7 +45,7 @@ use snarkvm::prelude::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
@@ -56,7 +56,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::oneshot, task::JoinHandle};
 
 /// A validator is a full node, capable of validating blocks.
 #[derive(Clone)]
@@ -92,22 +92,26 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        allow_external_peers: bool,
+        trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
+        let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
 
         // Initialize the ledger.
-        let ledger = Ledger::load(genesis, storage_mode.clone())?;
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
-
-        // Determine if the validator should rotate external peers.
-        let rotate_external_peers = false;
 
         // Initialize the node router.
         let router = Router::new(
@@ -117,8 +121,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode.clone(),
             dev.is_some(),
         )
@@ -136,6 +139,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync.clone(),
             bft_ip,
             trusted_validators,
+            trusted_peers_only,
             storage_mode.clone(),
             ping.clone(),
             dev,
@@ -380,7 +384,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     //     Ok(())
     // }
 
-    /// Initialize the transaction pool.
+    /// Initializes the transaction pool (if in development mode).
+    ///
+    /// Spawns a background task that periodically issues transactions to the network.
     fn initialize_transaction_pool(&self, dev: Option<u16>, dev_txs: bool) -> Result<()> {
         use snarkvm::console::{
             program::{Identifier, Literal, ProgramID, Value},
@@ -533,6 +539,7 @@ mod tests {
             dev_txs,
             None,
             Default::default(),
+            None,
         )
         .await
         .unwrap();

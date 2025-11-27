@@ -18,7 +18,7 @@ mod router;
 use crate::traits::NodeInterface;
 
 use snarkos_account::Account;
-use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService};
+use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
@@ -44,11 +44,11 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
-    utilities::log_error,
+    utilities::flatten_error,
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -70,6 +70,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
+    sync::oneshot,
     task::JoinHandle,
     time::{sleep, timeout},
 };
@@ -140,20 +141,25 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        rotate_external_peers: bool,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
+        let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
 
         // Initialize the ledger.
-        let ledger = Ledger::<N, C>::load(genesis.clone(), storage_mode.clone())?;
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
-        // Determine if the client should allow external peers.
-        let allow_external_peers = true;
 
         // Initialize the node router.
         let router = Router::new(
@@ -163,8 +169,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
-            rotate_external_peers,
-            allow_external_peers,
+            trusted_peers_only,
             storage_mode.clone(),
             dev.is_some(),
         )
@@ -329,7 +334,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Ok(None) => {}
             Err(err) => {
                 // Abort and retry later.
-                log_error(&err);
+                error!("{}", flatten_error(&err));
                 return;
             }
         }

@@ -53,3 +53,6 @@ workspace = true
 [dev-dependencies.snarkos-node-network]
 path = "."
 features = [ "test" ]
+
+[build-dependencies.built]
+workspace = true

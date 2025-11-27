@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.2.2"
+version = "4.3.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -47,8 +47,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "31fcaaca"
-#version = "=4.2.1"
+rev = "fbd99608f"
+#version = "=4.3.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -169,50 +169,53 @@ version = "=0.3.19"
 [workspace.dependencies.test-strategy]
 version = "0.4"
 
+[workspace.dependencies.test-log]
+version = "0.2"
+
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.2.2"
+version = "=4.3.0"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
@@ -220,31 +223,31 @@ version = "=4.2.2"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.2.2"
+version = "=4.3.0"
 
 [[bin]]
 name = "snarkos"
@@ -277,7 +280,17 @@ locktick = [
   "snarkos-node-tcp/locktick",
   "snarkvm/locktick"
 ]
-serial = [ "snarkos-cli/serial" ]
+serial = [
+  "snarkos-cli/serial",
+  "snarkos-node/serial",
+  "snarkos-node-bft/serial",
+  "snarkos-node-consensus/serial",
+  "snarkos-node-metrics/serial",
+  "snarkos-node-rest/serial",
+  "snarkos-node-router/serial",
+  "snarkos-node-sync/serial",
+  "snarkvm/serial"
+]
 tokio_console = [ "snarkos-cli/tokio_console" ]
 # Set low puzzle targets for easier testing.
 test_targets = [ "snarkos-cli/test_targets" ]

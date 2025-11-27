@@ -22,7 +22,12 @@ use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
-use snarkvm::prelude::{Network, block::Block};
+
+use snarkvm::{
+    console::network::{ConsensusVersion, Network},
+    prelude::block::Block,
+    utilities::ensure_equals,
+};
 
 use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
@@ -448,7 +453,32 @@ impl<N: Network> BlockSync<N> {
     /// Note, that this only queues the response. After this, you most likely want to call `Self::try_advancing_block_synchronization`.
     ///
     #[inline]
-    pub fn insert_block_responses(&self, peer_ip: SocketAddr, blocks: Vec<Block<N>>) -> Result<()> {
+    pub fn insert_block_responses(
+        &self,
+        peer_ip: SocketAddr,
+        blocks: Vec<Block<N>>,
+        latest_consensus_version: Option<ConsensusVersion>,
+    ) -> Result<()> {
+        let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
+            bail!("Empty block response");
+        };
+
+        let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
+
+        // Perform consensus version check, if possible.
+        // This check is only enabled after nodes have reached V12.
+        if expected_consensus_version >= ConsensusVersion::V12 {
+            if let Some(latest_consensus_version) = latest_consensus_version {
+                ensure_equals!(
+                    expected_consensus_version,
+                    latest_consensus_version,
+                    "the peer's consensus version for height {last_height} does not match ours"
+                );
+            } else {
+                bail!("The peer did not send a consensus version");
+            }
+        }
+
         // Insert the candidate blocks into the sync pool.
         for block in blocks {
             if let Err(error) = self.insert_block_response(peer_ip, block) {
@@ -975,7 +1005,7 @@ impl<N: Network> BlockSync<N> {
     /// In this case, the current iteration of block synchronization should not continue and the node should re-try later instead.
     pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
-        peer_pool_handler: &P,
+        _peer_pool_handler: &P,
     ) -> Result<Option<BlockRequestBatch<N>>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
@@ -1037,7 +1067,8 @@ impl<N: Network> BlockSync<N> {
         // Now remove and ban any unresponsive peers
         for peer_ip in peers_to_ban {
             self.remove_peer(&peer_ip);
-            peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
+            // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
+            // peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
         }
 
         // Determine if we need to re-issue any timed-out requests.
@@ -1381,6 +1412,10 @@ mod tests {
 
         fn is_dev(&self) -> bool {
             true
+        }
+
+        fn trusted_peers_only(&self) -> bool {
+            false
         }
 
         fn node_type(&self) -> NodeType {
@@ -1941,9 +1976,9 @@ mod tests {
         let c = DummyPeerPoolHandler::default();
         sync.handle_block_request_timeouts(&c).unwrap();
 
-        let ban_list = c.peers_to_ban.write();
-        assert_eq!(ban_list.len(), 1);
-        assert_eq!(ban_list.iter().next(), Some(&peer_ip));
+        // let ban_list = c.peers_to_ban.write();
+        // assert_eq!(ban_list.len(), 1);
+        // assert_eq!(ban_list.iter().next(), Some(&peer_ip));
 
         assert!(sync.requests.read().is_empty());
         assert!(sync.locators.read().is_empty());
@@ -1989,9 +2024,9 @@ mod tests {
 
         let re_requests = sync.handle_block_request_timeouts(&c).unwrap();
 
-        let ban_list = c.peers_to_ban.write();
-        assert_eq!(ban_list.len(), 1);
-        assert_eq!(ban_list.iter().next(), Some(&peer_ip1));
+        // let ban_list = c.peers_to_ban.write();
+        // assert_eq!(ban_list.len(), 1);
+        // assert_eq!(ban_list.iter().next(), Some(&peer_ip1));
 
         assert_eq!(sync.requests.read().len(), 1);
         assert_eq!(sync.locators.read().len(), 2);

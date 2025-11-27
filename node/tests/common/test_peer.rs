@@ -21,7 +21,7 @@ use snarkos_node_router::{
 };
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, Field, FromBytes, MainnetV0 as CurrentNetwork, Network, TestRng, block::Block, error},
+    prelude::{Address, Field, FromBytes, MainnetV0 as CurrentNetwork, Network, TestRng, block::Block},
 };
 
 use std::{

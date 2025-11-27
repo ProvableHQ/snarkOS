@@ -176,6 +176,7 @@ impl TestNetwork {
                     block_sync,
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
+                    false,
                     StorageMode::new_test(None),
                     None,
                 )
@@ -189,6 +190,7 @@ impl TestNetwork {
                     block_sync,
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
+                    false,
                     StorageMode::new_test(None),
                     None,
                 )

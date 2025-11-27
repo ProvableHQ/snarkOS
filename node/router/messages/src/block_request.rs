@@ -15,72 +15,17 @@
 
 use super::*;
 
-use snarkvm::prelude::{FromBytes, ToBytes};
+use snarkos_node_bft_events::EventTrait;
 
 use std::borrow::Cow;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct BlockRequest {
-    /// The starting block height (inclusive).
-    pub start_height: u32,
-    /// The ending block height (exclusive).
-    pub end_height: u32,
-}
+/// Re-export the BlockRequest structure from BFT.
+pub use snarkos_node_bft_events::BlockRequest;
 
 impl MessageTrait for BlockRequest {
     /// Returns the message name.
     #[inline]
     fn name(&self) -> Cow<'static, str> {
-        let start = self.start_height;
-        let end = self.end_height;
-        match start + 1 == end {
-            true => format!("BlockRequest {start}"),
-            false => format!("BlockRequest {start}..{end}"),
-        }
-        .into()
-    }
-}
-
-impl ToBytes for BlockRequest {
-    fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
-        self.start_height.write_le(&mut writer)?;
-        self.end_height.write_le(&mut writer)?;
-        Ok(())
-    }
-}
-
-impl FromBytes for BlockRequest {
-    fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
-        let start_height = u32::read_le(&mut reader)?;
-        let end_height = u32::read_le(&mut reader)?;
-        Ok(Self { start_height, end_height })
-    }
-}
-
-impl Display for BlockRequest {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}..{}", self.start_height, self.end_height)
-    }
-}
-
-#[cfg(test)]
-pub mod prop_tests {
-    use crate::BlockRequest;
-    use snarkvm::utilities::{FromBytes, ToBytes};
-
-    use bytes::{Buf, BufMut, BytesMut};
-    use proptest::prelude::{BoxedStrategy, Strategy, any};
-    use test_strategy::proptest;
-
-    pub fn any_block_request() -> BoxedStrategy<BlockRequest> {
-        any::<(u32, u32)>().prop_map(|(start_height, end_height)| BlockRequest { start_height, end_height }).boxed()
-    }
-
-    #[proptest]
-    fn block_request_roundtrip(#[strategy(any_block_request())] block_request: BlockRequest) {
-        let mut bytes = BytesMut::default().writer();
-        block_request.write_le(&mut bytes).unwrap();
-        let decoded = BlockRequest::read_le(&mut bytes.into_inner().reader()).unwrap();
-        assert_eq![decoded, block_request];
+        EventTrait::name(self)
     }
 }

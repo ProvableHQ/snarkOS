@@ -39,6 +39,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, atomic::AtomicBool},
 };
+use tokio::sync::oneshot;
 
 #[derive(Clone)]
 pub enum Node<N: Network> {
@@ -65,10 +66,11 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        allow_external_peers: bool,
+        trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
             Validator::new(
@@ -82,10 +84,11 @@ impl<N: Network> Node<N> {
                 genesis,
                 cdn,
                 storage_mode,
-                allow_external_peers,
+                trusted_peers_only,
                 dev_txs,
                 dev,
                 shutdown,
+                shutdown_tx,
             )
             .await?,
         )))
@@ -98,11 +101,24 @@ impl<N: Network> Node<N> {
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
         storage_mode: StorageMode,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         Ok(Self::Prover(Arc::new(
-            Prover::new(node_ip, account, trusted_peers, genesis, storage_mode, dev, shutdown).await?,
+            Prover::new(
+                node_ip,
+                account,
+                trusted_peers,
+                genesis,
+                storage_mode,
+                trusted_peers_only,
+                dev,
+                shutdown,
+                shutdown_tx,
+            )
+            .await?,
         )))
     }
 
@@ -116,9 +132,10 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
-        rotate_external_peers: bool,
+        trusted_peers_only: bool,
         dev: Option<u16>,
         shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
             Client::new(
@@ -130,9 +147,10 @@ impl<N: Network> Node<N> {
                 genesis,
                 cdn,
                 storage_mode,
-                rotate_external_peers,
+                trusted_peers_only,
                 dev,
                 shutdown,
+                shutdown_tx,
             )
             .await?,
         )))

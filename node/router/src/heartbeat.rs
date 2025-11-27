@@ -27,7 +27,7 @@ use snarkvm::prelude::Network;
 use snarkos_node_tcp::P2P;
 
 use colored::Colorize;
-use rand::{Rng, prelude::IteratorRandom, rngs::OsRng};
+use rand::{prelude::IteratorRandom, rngs::OsRng};
 
 /// A helper function to compute the maximum of two numbers.
 /// See Rust issue 92391: https://github.com/rust-lang/rust/issues/92391.
@@ -91,7 +91,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let connected_peers = self.router().connected_peers();
         let connected_peers_fmt = format!("{connected_peers:?}").dimmed();
         match connected_peers.len() {
-            0 => debug!("No connected peers"),
+            0 => warn!("No connected peers"),
             1 => debug!("Connected to 1 peer: {connected_peers_fmt}"),
             num_connected => debug!("Connected to {num_connected} peers {connected_peers_fmt}"),
         }
@@ -142,7 +142,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     /// It only triggers if the router is above the minimum number of connected peers.
     fn remove_oldest_connected_peer(&self) {
         // Skip if the node is not requesting peers.
-        if !self.router().allow_external_peers() {
+        if self.router().trusted_peers_only() {
             return;
         }
 
@@ -171,14 +171,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Obtain the number of connected provers.
         let num_connected_provers = self.router().filter_connected_peers(|peer| peer.node_type.is_prover()).len();
 
-        // Consider rotating more external peers every ~10 heartbeats.
-        let reduce_peers = self.router().rotate_external_peers() && rng.gen_range(0..10) == 0;
         // Determine the maximum number of peers and provers to keep.
-        let (max_peers, max_provers) = if reduce_peers {
-            (Self::MEDIAN_NUMBER_OF_PEERS, 0)
-        } else {
-            (Self::MAXIMUM_NUMBER_OF_PEERS, Self::MAXIMUM_NUMBER_OF_PROVERS)
-        };
+        let (max_peers, max_provers) = (Self::MAXIMUM_NUMBER_OF_PEERS, Self::MAXIMUM_NUMBER_OF_PROVERS);
 
         // Compute the number of surplus peers.
         let num_surplus_peers = num_connected.saturating_sub(max_peers);
@@ -249,7 +243,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 self.router().connect(peer.listener_addr);
             }
 
-            if self.router().allow_external_peers() {
+            if !self.router().trusted_peers_only() {
                 // Request more peers from the connected peers.
                 for peer_ip in self.router().connected_peers().into_iter().choose_multiple(rng, 3) {
                     self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
@@ -260,6 +254,10 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
 
     /// This function keeps the number of bootstrap peers within the allowed range.
     async fn handle_bootstrap_peers(&self) {
+        // Return early if we are in trusted peers only mode.
+        if self.router().trusted_peers_only() {
+            return;
+        }
         // Split the bootstrap peers into connected and candidate lists.
         let mut candidate_bootstrap = Vec::new();
         let connected_bootstrap =
