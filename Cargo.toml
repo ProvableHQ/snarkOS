@@ -278,11 +278,15 @@ locktick = [
   "snarkvm/locktick"
 ]
 serial = [ "snarkos-cli/serial" ]
-test_targets = [ "snarkos-cli/test_targets" ]
-test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
-test_network = [ "snarkos-cli/test_network" ]
-test_consensus_tracking = [ "snarkos-node/test_consensus_tracking" ]
 tokio_console = [ "snarkos-cli/tokio_console" ]
+# Set low puzzle targets for easier testing.
+test_targets = [ "snarkos-cli/test_targets" ]
+# Set custom consensus heights for easier testing.
+test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
+# Set low puzzle targets and custom consensus heights for easier testing.
+test_network = [ "snarkos-cli/test_network" ]
+# Track duration of consensus stages.
+test_consensus_tracking = [ "snarkos-node/test_consensus_tracking" ]
 
 [dependencies.clap]
 workspace = true
