@@ -24,7 +24,7 @@ use snarkos_node_network::log_repo_sha_comparison;
 use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, Field, Network, block::Header, error},
+    prelude::{Address, Field, Network, block::Header, error, io_error},
 };
 
 use anyhow::{Result, bail};
@@ -45,7 +45,9 @@ impl<N: Network> P2P for Router<N> {
 /// A macro unwrapping the expected handshake message or returning an error for unexpected messages.
 #[macro_export]
 macro_rules! expect_message {
-    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {
+    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {{
+        use snarkvm::utilities::io_error;
+
         match $framed.try_next().await? {
             // Received the expected message, proceed.
             Some($msg_ty(data)) => {
@@ -53,27 +55,27 @@ macro_rules! expect_message {
                 data
             }
             // Received a disconnect message, abort.
-            Some(Message::Disconnect(reason)) => {
-                return Err(error(format!("'{}' disconnected: {reason:?}", $peer_addr)))
+            Some(Message::Disconnect($crate::messages::Disconnect { reason })) => {
+                return Err(io_error(format!("'{}' disconnected: {reason}", $peer_addr)));
             }
             // Received an unexpected message, abort.
             Some(ty) => {
-                return Err(error(format!(
+                return Err(io_error(format!(
                     "'{}' did not follow the handshake protocol: received {:?} instead of {}",
                     $peer_addr,
                     ty.name(),
                     stringify!($msg_ty),
-                )))
+                )));
             }
             // Received nothing.
             None => {
-                return Err(error(format!(
+                return Err(io_error(format!(
                     "the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
                     stringify!($msg_ty),
-                )))
+                )));
             }
         }
-    };
+    }};
 }
 
 /// Send the given message to the peer.
@@ -217,12 +219,12 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 3: Send the challenge response. */
@@ -280,7 +282,7 @@ impl<N: Network> Router<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 2: Send the challenge response followed by own challenge request. */
@@ -327,7 +329,7 @@ impl<N: Network> Router<N> {
             .await
         {
             send(&mut framed, peer_addr, reason.into()).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         Ok(Some(peer_request))

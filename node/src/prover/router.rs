@@ -162,7 +162,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
 
     /// Handles a `BlockRequest` message.
     fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 
@@ -173,7 +173,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
         _blocks: Vec<Block<N>>,
         _latest_consensus_version: Option<ConsensusVersion>,
     ) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 
@@ -201,7 +201,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
 
     /// Disconnects on receipt of a `PuzzleRequest` message.
     fn puzzle_request(&self, peer_ip: SocketAddr) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 
