@@ -524,10 +524,14 @@ impl<N: Network> Sync<N> {
     /// BFT-version of [`snarkos_node_client::Client::try_advancing_block_synchronization`].
     async fn try_advancing_block_synchronization(&self, ping: &Option<Arc<Ping<N>>>) {
         // Process block responses and advance the ledger.
-        let new_blocks = match self.try_advancing_block_synchronization_inner().await {
+        let new_blocks = match self
+            .try_advancing_block_synchronization_inner()
+            .await
+            .with_context(|| "Block synchronization failed")
+        {
             Ok(new_blocks) => new_blocks,
             Err(err) => {
-                error!("Block synchronization failed - {err}");
+                error!("{}", &flatten_error(err));
                 false
             }
         };

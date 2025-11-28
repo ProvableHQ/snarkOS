@@ -22,9 +22,10 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
-    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
+    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by, flatten_error},
 };
 
+use anyhow::Context;
 use indexmap::{IndexMap, IndexSet, map::Entry};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -905,8 +906,12 @@ impl<N: Network> Storage<N> {
             certificate.round(),
             certificate.transmission_ids().len()
         );
-        if let Err(error) = self.insert_certificate(certificate, missing_transmissions, aborted_transmissions) {
-            error!("Failed to insert certificate '{certificate_id}' from block {} - {error}", block.height());
+
+        if let Err(error) = self
+            .insert_certificate(certificate, missing_transmissions, aborted_transmissions)
+            .with_context(|| format!("Failed to insert certificate '{certificate_id}' from block {}", block.height()))
+        {
+            error!("{}", &flatten_error(&error));
         }
     }
 }
