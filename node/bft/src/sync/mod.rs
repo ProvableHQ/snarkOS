@@ -810,11 +810,11 @@ impl<N: Network> Sync<N> {
             return Ok(());
         }
 
-        // Append the certificates to the storage.
-        self.add_block_subdag_to_bft(&new_block).await?;
-
         // Acquire the pending blocks lock.
         let mut pending_blocks = self.pending_blocks.lock().await;
+
+        // Append the certificates to the storage.
+        self.add_block_subdag_to_bft(&new_block).await?;
 
         // Fetch the latest block height.
         let ledger_block_height = self.ledger.latest_block_height();
