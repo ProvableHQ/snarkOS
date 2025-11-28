@@ -587,9 +587,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.47"
+version = "1.2.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd405d82c84ff7f35739f175f67d8b9fb7687a0e84ccdc78bd3568839827cf07"
+checksum = "c481bdbf0ed3b892f6f806287d72acd515b352a4ec27a208489b8c1bc839633a"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3651,9 +3651,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94182ad936a0c91c324cd46c6511b9510ed16af436d7b5bab34beab0afd55f7a"
+checksum = "708c0f9d5f54ba0272468c1d306a52c495b31fa155e91bc25371e6df7996908c"
 dependencies = [
  "web-time",
  "zeroize",
@@ -4542,7 +4542,7 @@ dependencies = [
 [[package]]
 name = "snarkvm"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4565,7 +4565,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-algorithms"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4593,7 +4593,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-algorithms-cuda"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "blst",
  "cc",
@@ -4604,7 +4604,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -4618,7 +4618,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-account"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-network",
  "snarkvm-circuit-types",
@@ -4628,7 +4628,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-algorithms"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-types",
  "snarkvm-console-algorithms",
@@ -4638,7 +4638,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-collections"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-types",
@@ -4648,7 +4648,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-environment"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "indexmap 2.12.1",
  "itertools 0.14.0",
@@ -4666,12 +4666,12 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-environment-witness"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 
 [[package]]
 name = "snarkvm-circuit-network"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-algorithms",
  "snarkvm-circuit-collections",
@@ -4682,7 +4682,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-program"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-account",
  "snarkvm-circuit-algorithms",
@@ -4696,7 +4696,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-address",
@@ -4711,7 +4711,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-address"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4724,7 +4724,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-boolean"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-console-types-boolean",
@@ -4733,7 +4733,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-field"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4743,7 +4743,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-group"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4755,7 +4755,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-integers"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4767,7 +4767,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-scalar"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4778,7 +4778,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-circuit-types-string"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-circuit-environment",
  "snarkvm-circuit-types-boolean",
@@ -4790,7 +4790,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-account",
  "snarkvm-console-algorithms",
@@ -4803,7 +4803,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-account"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "bs58",
  "snarkvm-console-network",
@@ -4814,7 +4814,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-algorithms"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "blake2s_simd",
  "hex",
@@ -4829,7 +4829,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-collections"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "rayon",
@@ -4840,7 +4840,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-network"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "enum-iterator",
@@ -4860,7 +4860,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-network-environment"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "bech32",
@@ -4878,7 +4878,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-program"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "enum-iterator",
  "enum_index",
@@ -4899,7 +4899,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-address",
@@ -4914,7 +4914,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-address"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4925,7 +4925,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-boolean"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
 ]
@@ -4933,7 +4933,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-field"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4943,7 +4943,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-group"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4954,7 +4954,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-integers"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4965,7 +4965,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-scalar"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4976,7 +4976,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-console-types-string"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console-network-environment",
  "snarkvm-console-types-boolean",
@@ -4987,7 +4987,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-curves"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "rand 0.8.5",
  "rayon",
@@ -5001,7 +5001,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-fields"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5018,7 +5018,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5048,7 +5048,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-authority"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "rand 0.8.5",
@@ -5060,7 +5060,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-block"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "indexmap 2.12.1",
@@ -5082,7 +5082,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-committee"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "indexmap 2.12.1",
@@ -5101,7 +5101,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-ledger-narwhal-batch-certificate",
  "snarkvm-ledger-narwhal-batch-header",
@@ -5114,7 +5114,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-certificate"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "indexmap 2.12.1",
  "rayon",
@@ -5127,7 +5127,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-batch-header"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "indexmap 2.12.1",
  "rayon",
@@ -5140,7 +5140,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-data"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "bytes",
  "serde_json",
@@ -5151,7 +5151,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-subdag"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "indexmap 2.12.1",
  "rayon",
@@ -5166,7 +5166,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "bytes",
  "serde_json",
@@ -5179,7 +5179,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-narwhal-transmission-id"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "snarkvm-console",
  "snarkvm-ledger-puzzle",
@@ -5188,7 +5188,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-puzzle"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5208,7 +5208,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-puzzle-epoch"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5231,7 +5231,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-query"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5248,7 +5248,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-store"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std-storage",
  "anyhow",
@@ -5276,7 +5276,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-ledger-test-helpers"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5294,7 +5294,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-metrics"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "metrics",
 ]
@@ -5302,7 +5302,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-parameters"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5325,7 +5325,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5359,7 +5359,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-process"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "colored 3.0.0",
@@ -5384,7 +5384,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-program"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "enum-iterator",
  "indexmap 2.12.1",
@@ -5403,7 +5403,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-synthesizer-snark"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "bincode",
  "serde_json",
@@ -5416,7 +5416,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-utilities"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -5440,7 +5440,7 @@ dependencies = [
 [[package]]
 name = "snarkvm-utilities-derives"
 version = "4.3.0"
-source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#e232046b40355560412af42644a76d404f8ecbcd"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?branch=fix%2Frestore-pending-blocks-with-track-error#ad53fe53ebda37c940679a5951ab97260167fdd4"
 dependencies = [
  "proc-macro2",
  "quote 1.0.42",
@@ -6148,9 +6148,9 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.41"
+version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
+checksum = "2d15d90a0b5c19378952d479dc858407149d7bb45a14de0142f6c534b16fc647"
 dependencies = [
  "log",
  "pin-project-lite",
