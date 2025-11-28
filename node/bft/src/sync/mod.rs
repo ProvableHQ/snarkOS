@@ -801,14 +801,12 @@ impl<N: Network> Sync<N> {
     async fn sync_storage_with_block(&self, new_block: Block<N>) -> Result<()> {
         // Acquire the sync lock.
         let _lock = self.sync_lock.lock().await;
+        let new_block_height = new_block.height();
 
         // If this block has already been processed, return early.
         // TODO(kaimast): Should we remove the response here?
         if self.ledger.contains_block_height(new_block.height()) {
-            debug!(
-                "Ledger is already synced with block at height {height}. Will not sync.",
-                height = new_block.height()
-            );
+            debug!("Ledger is already synced with block at height {new_block_height}. Will not sync.",);
             return Ok(());
         }
 
@@ -863,7 +861,20 @@ impl<N: Network> Sync<N> {
         }
 
         // Check the block against the chain of pending blocks and append it on success.
-        let new_block = self.ledger.check_block_subdag(new_block, pending_blocks.make_contiguous())?;
+        let new_block = match self.ledger.check_block_subdag(new_block, pending_blocks.make_contiguous()) {
+            Ok(new_block) => new_block,
+            Err(err) => {
+                // TODO(kaimast): this shoud not return an error on the snarkVM side.
+                if err.to_string().contains("already in the ledger") {
+                    debug!("Ledger is already synced with block at height {new_block_height}. Will not sync.",);
+
+                    return Ok(());
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+
         trace!(
             "Adding new pending block {hash} at height {height}",
             hash = new_block.hash(),
