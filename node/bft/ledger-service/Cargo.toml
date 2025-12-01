@@ -20,12 +20,18 @@ edition = "2024"
 default = [ ]
 ledger = [ "parking_lot", "rand", "rayon", "tokio", "tracing" ]
 ledger-write = [ ]
-locktick = [ "dep:locktick", "snarkvm/locktick" ]
+locktick = [
+  "dep:locktick",
+  "snarkvm/locktick",
+  "snarkos-utilities/locktick"
+]
 metrics = [ "dep:snarkos-node-metrics", "snarkvm/metrics" ]
 mock = [ "parking_lot", "tracing" ]
 prover = [ ]
 cuda = [ "snarkvm/cuda" ]
-serial = [ ]
+serial = [
+  "snarkvm/serial"
+]
 test = [ "mock", "translucent" ]
 translucent = [ "ledger" ]
 

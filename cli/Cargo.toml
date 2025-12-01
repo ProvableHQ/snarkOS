@@ -17,12 +17,15 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-async = []
+default = [ ]
+async = [ ]
 locktick = [
   "dep:locktick",
+  "snarkos-display/locktick",
   "snarkos-node/locktick",
   "snarkos-node-cdn/locktick",
   "snarkos-node-rest/locktick",
+  "snarkos-utilities/locktick",
   "snarkvm/locktick"
 ]
 metrics = [ "dep:snarkos-node-metrics", "snarkos-node/metrics" ]
@@ -40,7 +43,11 @@ test_network = [
   "test_consensus_heights",
   "snarkvm/dev-print"
 ]
-serial = [ ]
+serial = [
+  "snarkvm/serial",
+  "snarkos-node/serial",
+  "snarkos-display/serial",
+]
 tokio_console = [ "dep:console-subscriber", "tokio/tracing" ]
 
 [dependencies.aleo-std]

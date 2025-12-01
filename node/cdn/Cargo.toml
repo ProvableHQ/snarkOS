@@ -17,9 +17,17 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-default = [ "parallel" ]
-locktick = [ "dep:locktick", "snarkvm/locktick" ]
-parallel = [ "rayon" ]
+default = [ ]
+serial = [ 
+  "snarkos-node-metrics/locktick",
+  "snarkvm/serial",
+]
+locktick = [
+  "dep:locktick",
+  "snarkvm/locktick",
+  "snarkos-node-metrics/locktick",
+  "snarkos-utilities/locktick"
+]
 cuda = [ "snarkvm/cuda" ]
 metrics = [ "dep:snarkos-node-metrics" ]
 
@@ -50,7 +58,6 @@ workspace = true
 
 [dependencies.rayon]
 workspace = true
-optional = true
 
 [dependencies.reqwest]
 version = "0.12"

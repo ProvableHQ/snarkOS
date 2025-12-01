@@ -17,8 +17,7 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-default = [ "parallel" ]
-parallel = [ ] #TODO(kaimast): is this still used?
+default = [ ]
 timer = [ "aleo-std/timer" ]
 locktick = [
   "dep:locktick",
@@ -30,6 +29,7 @@ locktick = [
   "snarkos-node-router/locktick",
   "snarkos-node-sync/locktick",
   "snarkos-node-tcp/locktick",
+  "snarkos-utilities/locktick",
   "snarkvm/locktick"
 ]
 metrics = [
@@ -50,7 +50,10 @@ cuda = [
   "snarkos-node-router/cuda",
   "snarkos-node-sync/cuda"
 ]
-serial = [ "snarkos-node-bft/serial" ]
+serial = [
+  "snarkvm/serial",
+  "snarkos-node-bft/serial"
+]
 test = []
 
 [dependencies.aleo-std]
