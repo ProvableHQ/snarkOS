@@ -150,10 +150,10 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         let epoch_number = serialized.epoch_challenge.epoch_number();
         // Retrieve the block height.
         let block_height = header.height();
-        if let Some(block_header) = self.latest_block_header.read().as_ref() {
-            let latest_height = block_header.height();
-            if latest_height >= block_height {
-                info!(
+        // Determine if the puzzle response is stale.
+        if let Some(latest_block_header) = self.latest_block_header.read().as_ref() {
+            if latest_block_header.height() >= block_height {
+                trace!(
                     "Received stale PuzzleResponse from {peer_ip}, Current Height {block_height}, Received {latest_height}"
                 );
                 return true;
