@@ -359,6 +359,7 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Send a batch of block requests.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip_all))]
     pub async fn send_block_requests<C: CommunicationService>(
         &self,
         communication: &C,
@@ -453,6 +454,7 @@ impl<N: Network> BlockSync<N> {
     /// Note, that this only queues the response. After this, you most likely want to call `Self::try_advancing_block_synchronization`.
     ///
     #[inline]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, blocks)))]
     pub fn insert_block_responses(
         &self,
         peer_ip: SocketAddr,
@@ -520,6 +522,7 @@ impl<N: Network> BlockSync<N> {
     /// Validators do not call this function, and instead invoke
     /// [`snarkos_node_bft::Sync::try_advancing_block_synchronization`] which also updates the BFT state.
     #[inline]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn try_advancing_block_synchronization(&self) -> Result<bool> {
         // Acquire the lock to ensure this function is called only once at a time.
         // If the lock is already acquired, return early.
@@ -556,18 +559,24 @@ impl<N: Network> BlockSync<N> {
             let ledger = self.ledger.clone();
             let advanced = tokio::task::spawn_blocking(move || {
                 // Try to check the next block and advance to it.
-                match ledger.check_next_block(&block) {
-                    Ok(_) => match ledger.advance_to_next_block(&block) {
-                        Ok(_) => true,
-                        Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
-                                block.height(),
-                                block.hash()
-                            );
-                            false
+                let check_result = ledger.check_next_block(&block);
+
+                match check_result {
+                    Ok(_) => {
+                        let result = ledger.advance_to_next_block(&block);
+
+                        match result {
+                            Ok(_) => true,
+                            Err(err) => {
+                                warn!(
+                                    "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                                    block.height(),
+                                    block.hash()
+                                );
+                                false
+                            }
                         }
-                    },
+                    }
                     Err(err) => {
                         warn!(
                             "The next block (height: {}, hash: '{}') is invalid - {err}",
@@ -635,6 +644,7 @@ impl<N: Network> BlockSync<N> {
     ///
     /// This function does **not** check
     /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, locators)))]
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: &BlockLocators<N>) -> Result<()> {
         // Update the locators entry for the given peer IP.
         // We perform this update atomically, and drop the lock as soon as we are done with the update.
@@ -886,6 +896,7 @@ impl<N: Network> BlockSync<N> {
 
     /// Inserts the given block response, after checking that the request exists and the response is well-formed.
     /// On success, this function removes the peer IP from the request sync peers and inserts the response.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, block), fields(height = block.height(), peer_ip = %peer_ip)))]
     fn insert_block_response(&self, peer_ip: SocketAddr, block: Block<N>) -> Result<()> {
         // Retrieve the block height.
         let height = block.height();

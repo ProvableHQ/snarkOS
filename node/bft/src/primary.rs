@@ -1014,6 +1014,7 @@ impl<N: Network> Primary<N> {
     /// 3. Store the signature.
     /// 4. Certify the batch if enough signatures have been received.
     /// 5. Broadcast the batch certificate to all validators.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, batch_signature), fields(batch_id = %batch_signature.batch_id)))]
     async fn process_batch_signature_from_peer(
         &self,
         peer_ip: SocketAddr,
@@ -1664,6 +1665,7 @@ impl<N: Network> Primary<N> {
     }
 
     /// Stores the certified batch and broadcasts it to all validators, returning the certificate.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, proposal, committee), fields(round = proposal.round())))]
     async fn store_and_broadcast_certificate(&self, proposal: &Proposal<N>, committee: &Committee<N>) -> Result<()> {
         // Create the batch certificate and transmissions.
         let (certificate, transmissions) = tokio::task::block_in_place(|| proposal.to_certificate(committee))?;

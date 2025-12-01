@@ -249,6 +249,7 @@ impl<N: Network> Node<N> {
     /// Returns the number of blocks this node is behind the greatest peer height,
     /// or `None` if not connected to peers yet.
     pub fn num_blocks_behind(&self) -> Option<u32> {
+        use snarkos_node_router::Outbound;
         match self {
             Self::Validator(node) => node.num_blocks_behind(),
             Self::Prover(node) => node.num_blocks_behind(),

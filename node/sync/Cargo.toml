@@ -23,6 +23,7 @@ locktick = [
   "snarkos-node-bft-ledger-service/locktick",
   "snarkos-node-router/locktick",
 ]
+instrumentation = [ ]
 serial = ["snarkos-node-bft-ledger-service/serial"]
 metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]

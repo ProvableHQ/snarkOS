@@ -243,6 +243,10 @@ pub struct Start {
     #[clap(long)]
     pub nocdn: bool,
 
+    #[clap(long, hide = true)]
+    /// Generate a flamegraph using `tracing`. Only works if the `flamegraph` feature is enabled.
+    pub enable_flamegraph: bool,
+
     /// Enables development mode used to set up test networks.
     ///
     /// The purpose of this flag is to run multiple nodes on the same machine and in the same working directory.
@@ -273,11 +277,12 @@ impl Start {
         let shutdown: Arc<AtomicBool> = Default::default();
 
         // Initialize the logger.
-        let log_receiver = crate::helpers::initialize_logger(
+        let (log_receiver, _log_guard) = crate::helpers::initialize_logger(
             self.verbosity,
-            &self.log_filter,
+            self.log_filter.clone(),
             self.nodisplay,
             self.logfile.clone(),
+            self.enable_flamegraph,
             shutdown.clone(),
         )
         .with_context(|| "Failed to set up logger")?;

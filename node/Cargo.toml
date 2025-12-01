@@ -50,6 +50,11 @@ cuda = [
   "snarkos-node-router/cuda",
   "snarkos-node-sync/cuda"
 ]
+instrumentation = [
+  "snarkvm/instrumentation",
+  "snarkos-node-router/instrumentation",
+  "snarkos-node-bft/instrumentation"
+]
 serial = [ "snarkos-node-bft/serial" ]
 test = []
 

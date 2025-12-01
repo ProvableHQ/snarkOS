@@ -60,10 +60,18 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
         let listener_port = u16::read_le(&mut reader)?;
         let address = Address::<N>::read_le(&mut reader)?;
         let nonce = u64::read_le(&mut reader)?;
-        let snarkos_sha = {
-            let bytes =
-                <[u8; 40]>::read_le(&mut reader).map_err(|err| io_error(format!("Invalid snarkOS SHA - {err}")))?;
-            if bytes == Self::UNKNOWN_COMMIT_HASH { None } else { Some(bytes) }
+        let snarkos_sha = match <[u8; 40]>::read_le(&mut reader) {
+            Ok(bytes) => {
+                if bytes == Self::UNKNOWN_COMMIT_HASH {
+                    None
+                } else {
+                    Some(bytes)
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Invalid snarkOS SHA - {err}");
+                None
+            }
         };
 
         Ok(Self { version, listener_port, address, nonce, snarkos_sha })

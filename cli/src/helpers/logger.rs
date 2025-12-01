@@ -17,6 +17,7 @@ use crate::helpers::{DynamicFormatter, LogWriter};
 
 use anyhow::{Result, bail};
 
+use anyhow::Context;
 use crossterm::tty::IsTty;
 use std::{
     fs::File,
@@ -25,12 +26,16 @@ use std::{
     str::FromStr,
     sync::{Arc, atomic::AtomicBool},
 };
+use time::{UtcDateTime, macros::format_description};
 use tokio::sync::mpsc;
 use tracing_subscriber::{
     EnvFilter,
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
 };
+
+#[cfg(feature = "flamegraph")]
+use tracing_flame::FlameLayer;
 
 fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
     // First, set default log verbosity.
@@ -105,7 +110,30 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
 }
 
 fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
-    EnvFilter::from_str(filter_str).map_err(|err| err.into())
+    EnvFilter::from_str(filter_str).with_context(|| "Failed to set up log filter")
+}
+
+/// Holds any logging state that needs to be kept alive during the nodes execution.
+/// Dropping this guard will flush the logs and close the flamegraph file (if any).
+#[derive(Default)]
+pub struct LogGuard {
+    #[cfg(feature = "flamegraph")]
+    flame_guard: Option<(String, tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>)>,
+}
+
+impl Drop for LogGuard {
+    fn drop(&mut self) {
+        #[cfg(feature = "flamegraph")]
+        if let Some((filename, flame_guard)) = &mut self.flame_guard {
+            // Flush the flamegraph file and a message on what to do with it.
+            match flame_guard.flush() {
+                Ok(()) => println!(
+                    "Written folded tracing data to disk. Run `inferno-flamegraph {filename} > flamegraph.svg` to generate a graph from it."
+                ),
+                Err(err) => eprintln!("Failed to flush flamegraph file at {filename}: {err}"),
+            }
+        }
+    }
 }
 
 /// Sets the log filter based on the given verbosity level.
@@ -120,15 +148,18 @@ fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
 /// 5 => info, debug, trace, snarkos_node_router=trace
 /// 6 => info, debug, trace, snarkos_node_tcp=trace
 /// ```
+///
+/// Do not drop the returned log guard until shutdown.
 pub fn initialize_logger<P: AsRef<Path>>(
     verbosity: u8,
-    log_filter: &Option<String>,
+    log_filter: Option<String>,
     nodisplay: bool,
     logfile: P,
+    enable_flamegraph: bool,
     shutdown: Arc<AtomicBool>,
-) -> Result<mpsc::Receiver<Vec<u8>>> {
+) -> Result<(mpsc::Receiver<Vec<u8>>, LogGuard)> {
     let [stdout_filter, logfile_filter] = std::array::from_fn(|_| {
-        if let Some(filter) = log_filter { parse_log_filter(filter) } else { parse_log_verbosity(verbosity) }
+        if let Some(filter) = &log_filter { parse_log_filter(filter) } else { parse_log_verbosity(verbosity) }
     });
 
     // Create the directories tree for a logfile if it doesn't exist.
@@ -159,8 +190,8 @@ pub fn initialize_logger<P: AsRef<Path>>(
     // of the log event, i.e., the file/module where the log message was created.
     let show_target = verbosity > 2 || log_filter.is_some();
 
-    // Attach tracing-subscriber.
-    let layered = tracing_subscriber::registry()
+    // Initialize tracing.
+    let registry = tracing_subscriber::registry()
         .with(
             // Add layer using LogWriter for stdout / terminal
             tracing_subscriber::fmt::Layer::default()
@@ -179,14 +210,24 @@ pub fn initialize_logger<P: AsRef<Path>>(
                 .with_filter(logfile_filter?),
         );
 
-    // Attach console-subscriber, if enabled.
-    #[cfg(feature = "tokio_console")]
-    let layered = layered.with(console_subscriber::spawn());
+    if enable_flamegraph {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "flamegraph")] {
+                // Add a timestamp to the trace file name, so we do not overwrite an existing one.
+                let timestamp = UtcDateTime::now().format(format_description!("[year][month][day]-[hour][minute][second]")).with_context(|| "Failed to format timestamp")?;
+                let trace_file_name = format!("snarkos-trace-{timestamp}.folded");
+                let (flame_layer, log_guard) = FlameLayer::with_file(trace_file_name.clone()).with_context(|| format!("Failed to create flamegraph file at {trace_file_name}"))?;
+                let _ = registry.with(flame_layer).try_init();
 
-    // Initialize tracing.
-    let _ = layered.try_init();
-
-    Ok(log_receiver)
+                Ok((log_receiver, LogGuard { flame_guard: Some((trace_file_name, log_guard)) }))
+            } else {
+                bail!("Cannot enable flamegraph. Disabled at compile time.");
+            }
+        }
+    } else {
+        let _ = registry.try_init();
+        Ok((log_receiver, LogGuard::default()))
+    }
 }
 
 /// Set up only terminal logging

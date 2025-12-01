@@ -47,8 +47,10 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "b176b1409"
+#rev = "b176b1409"
 #version = "=4.4.0"
+branch = "feat/tracing-instrument"
+#version = "=4.2.1"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -295,6 +297,13 @@ test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network" ]
 tokio_console = [ "snarkos-cli/tokio_console" ]
+instrumentation  = [
+  "snarkos-node/instrumentation",
+  "snarkos-node-router/instrumentation",
+  "snarkos-node-sync/instrumentation",
+  "snarkos-node-cdn/instrumentation"
+]
+flamegraph = [ "instrumentation", "snarkos-cli/flamegraph" ]
 
 [dependencies.clap]
 workspace = true

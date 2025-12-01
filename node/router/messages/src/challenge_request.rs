@@ -16,7 +16,7 @@
 use super::*;
 
 use snarkos_node_network::NodeType;
-use snarkvm::prelude::{FromBytes, ToBytes, io_error};
+use snarkvm::prelude::{FromBytes, ToBytes};
 
 use std::borrow::Cow;
 
@@ -59,10 +59,18 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
         let address = Address::<N>::read_le(&mut reader)?;
         let nonce = u64::read_le(&mut reader)?;
 
-        let snarkos_sha = {
-            let bytes =
-                <[u8; 40]>::read_le(&mut reader).map_err(|err| io_error(format!("Invalid snarkOS SHA - {err}")))?;
-            if bytes == Self::UNKNOWN_COMMIT_HASH { None } else { Some(bytes) }
+        let snarkos_sha = match <[u8; 40]>::read_le(&mut reader) {
+            Ok(bytes) => {
+                if bytes == Self::UNKNOWN_COMMIT_HASH {
+                    None
+                } else {
+                    Some(bytes)
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Invalid snarkOS SHA - {err}");
+                None
+            }
         };
 
         Ok(Self { version, listener_port, node_type, address, nonce, snarkos_sha })
