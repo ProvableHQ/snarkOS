@@ -113,12 +113,27 @@ fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
     EnvFilter::from_str(filter_str).with_context(|| "Failed to set up log filter")
 }
 
-#[cfg(not(feature = "flamegraph"))]
-pub struct EmptyLogGuard {}
+/// Holds any logging state that needs to be kept alive during the nodes execution.
+/// Dropping this guard will flush the logs and close the flamegraph file (if any).
+#[derive(Default)]
+pub struct LogGuard {
+    #[cfg(feature = "flamegraph")]
+    flame_guard: Option<(String, tracing_flame::FlushGuard<std::io::BufWriter<std::fs::File>>)>,
+}
 
-#[cfg(not(feature = "flamegraph"))]
-impl Drop for EmptyLogGuard {
-    fn drop(&mut self) {}
+impl Drop for LogGuard {
+    fn drop(&mut self) {
+        #[cfg(feature = "flamegraph")]
+        if let Some((filename, flame_guard)) = &mut self.flame_guard {
+            // Flush the flamegraph file and a message on what to do with it.
+            match flame_guard.flush() {
+                Ok(()) => println!(
+                    "Written folded tracing data to disk. Run `inferno-flamegraph {filename} > flamegraph.svg` to generate a graph from it."
+                ),
+                Err(err) => eprintln!("Failed to flush flamegraph file at {filename}: {err}"),
+            }
+        }
+    }
 }
 
 /// Sets the log filter based on the given verbosity level.
@@ -140,8 +155,9 @@ pub fn initialize_logger<P: AsRef<Path>>(
     log_filter: Option<String>,
     nodisplay: bool,
     logfile: P,
+    enable_flamegraph: bool,
     shutdown: Arc<AtomicBool>,
-) -> Result<(mpsc::Receiver<Vec<u8>>, impl Drop)> {
+) -> Result<(mpsc::Receiver<Vec<u8>>, LogGuard)> {
     let [stdout_filter, logfile_filter] = std::array::from_fn(|_| {
         if let Some(filter) = &log_filter { parse_log_filter(filter) } else { parse_log_verbosity(verbosity) }
     });
@@ -194,19 +210,23 @@ pub fn initialize_logger<P: AsRef<Path>>(
                 .with_filter(logfile_filter?),
         );
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "flamegraph")] {
-            // Add a timestamp to the trace file name, so we do not overwrite an existing one.
-            let timestamp = UtcDateTime::now().format(format_description!("[year][month][day]-[hour][minute][second]")).with_context(|| "Failed to format timestamp")?;
-            let trace_file_name = format!("snarkos-trace-{timestamp}.folded");
-            let (flame_layer, log_guard) = FlameLayer::with_file(trace_file_name.clone()).with_context(|| format!("Failed to create flamegraph file at {trace_file_name}"))?;
-            let _ = registry.with(flame_layer).try_init();
+    if enable_flamegraph {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "flamegraph")] {
+                // Add a timestamp to the trace file name, so we do not overwrite an existing one.
+                let timestamp = UtcDateTime::now().format(format_description!("[year][month][day]-[hour][minute][second]")).with_context(|| "Failed to format timestamp")?;
+                let trace_file_name = format!("snarkos-trace-{timestamp}.folded");
+                let (flame_layer, log_guard) = FlameLayer::with_file(trace_file_name.clone()).with_context(|| format!("Failed to create flamegraph file at {trace_file_name}"))?;
+                let _ = registry.with(flame_layer).try_init();
 
-            Ok((log_receiver, log_guard))
-        } else {
-            let _ = registry.try_init();
-            Ok((log_receiver, EmptyLogGuard{}))
+                Ok((log_receiver, LogGuard { flame_guard: Some((trace_file_name, log_guard)) }))
+            } else {
+                bail!("Cannot enable flamegraph. Disabled at compile time.");
+            }
         }
+    } else {
+        let _ = registry.try_init();
+        Ok((log_receiver, LogGuard::default()))
     }
 }
 
