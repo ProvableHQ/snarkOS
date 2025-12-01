@@ -15,6 +15,7 @@
 
 use super::*;
 
+use snarkos_node_router_messages::{ChunkIter, Message};
 use snarkos_node_sync_locators::BlockLocators;
 use snarkos_node_tcp::protocols::Writing;
 
@@ -37,7 +38,8 @@ impl<N: Network> Router<N> {
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the message has been delivered.
     ///
-    /// This returns None, if the peer does not exist or disconnected.
+    /// This returns None if the given Message wasn't delivered, which may be caused
+    /// by the peer having disconnected, or the Message being split into chunks.
     pub fn send(&self, peer_ip: SocketAddr, message: Message<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Determine whether to send the message.
         if !self.can_send(peer_ip, &message) {
@@ -63,6 +65,17 @@ impl<N: Network> Router<N> {
         if matches!(message, Message::PeerRequest(_)) {
             self.cache.increment_outbound_peer_requests(peer_ip);
         }
+
+        // TODO: decide which messages to chunk
+        if matches!(message, Message::BlockResponse(_)) {
+            let chunk_iter = ChunkIter::<N>::new(&message).ok()?;
+            for chunk in chunk_iter {
+                self.send(peer_ip, Message::Chunk(chunk))?;
+            }
+
+            return None;
+        }
+
         // Retrieve the message name.
         let name = message.name();
         // Send the message to the peer.
