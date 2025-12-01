@@ -696,6 +696,9 @@ impl<N: Network> Gateway<N> {
                     bail!("Dropping '{peer_ip}' on event version {version} (outdated)");
                 }
 
+                // Log the validator's height.
+                debug!("Validator '{peer_ip}' is at height {}", block_locators.latest_locator_height());
+
                 // Update the peer locators. Except for some tests, there is always a sync sender.
                 if let Some(sync_sender) = self.sync_sender.get() {
                     // Check the block locators are valid, and update the validators in the sync module.
