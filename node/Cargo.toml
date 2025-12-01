@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-node"
-version = "2.0.2"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,99 +12,167 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
-license = "GPL-3.0"
-edition = "2021"
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
 
 [features]
-default = [ ]
-timer = [ "aleo-std/timer", "snarkos-node-ledger/timer" ]
+default = [ "parallel" ]
+parallel = [ ] #TODO(kaimast): is this still used?
+timer = [ "aleo-std/timer" ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-bft/locktick",
+  "snarkos-node-cdn/locktick",
+  "snarkos-node-consensus/locktick",
+  "snarkos-node-network/locktick",
+  "snarkos-node-rest/locktick",
+  "snarkos-node-router/locktick",
+  "snarkos-node-sync/locktick",
+  "snarkos-node-tcp/locktick",
+  "snarkvm/locktick"
+]
+metrics = [
+  "snarkos-node-bft/metrics",
+  "snarkos-node-consensus/metrics",
+  "snarkos-node-router/metrics",
+  "snarkos-node-tcp/metrics"
+]
+history = [ "snarkos-node-rest/history" ]
+telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
+cuda = [
+  "snarkvm/cuda",
+  "snarkos-account/cuda",
+  "snarkos-node-bft/cuda",
+  "snarkos-node-cdn/cuda",
+  "snarkos-node-consensus/cuda",
+  "snarkos-node-rest/cuda",
+  "snarkos-node-router/cuda",
+  "snarkos-node-sync/cuda"
+]
+serial = [ "snarkos-node-bft/serial" ]
+test = []
 
 [dependencies.aleo-std]
-version = "0.1.15"
-default-features = false
+workspace = true
 
 [dependencies.anyhow]
-version = "1"
+workspace = true
 
 [dependencies.async-trait]
-version = "0.1"
+workspace = true
+
+[dependencies.bytes]
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
 [dependencies.futures-util]
-version = "0.3"
-features = ["sink"]
+workspace = true
+features = [ "sink" ]
 
-[dependencies.indexmap]
-version = "1"
+[dependencies.locktick]
+workspace = true
+features = [ "parking_lot" ]
+optional = true
+
+[dependencies.lru]
+workspace = true
 
 [dependencies.num_cpus]
-version = "1"
+workspace = true
+
+[dependencies.once_cell]
+workspace = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.rand]
-version = "0.8"
-default-features = false
+workspace = true
+
+[dependencies.http]
+workspace = true
+
+[dependencies.reqwest]
+version = "0.12"
+features = [ "json", "rustls-tls" ]
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
+features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
-path = "../account"
+workspace = true
+
+[dependencies.snarkos-node-bft]
+workspace = true
 
 [dependencies.snarkos-node-cdn]
-path = "./cdn"
+workspace = true
 
 [dependencies.snarkos-node-consensus]
-path = "./consensus"
+workspace = true
 
-[dependencies.snarkos-node-ledger]
-path = "./ledger"
-
-[dependencies.snarkos-node-messages]
-path = "./messages"
+[dependencies.snarkos-node-network]
+workspace = true
 
 [dependencies.snarkos-node-rest]
-path = "./rest"
+workspace = true
 
 [dependencies.snarkos-node-router]
-path = "./router"
+workspace = true
 
-[dependencies.snarkos-node-store]
-path = "./store"
+[dependencies.snarkos-node-sync]
+workspace = true
 
 [dependencies.snarkos-node-tcp]
-path = "./tcp"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
-version = "1.22"
-features = ["rt", "signal"]
+workspace = true
+features = [ "rt", "signal" ]
+
+[dependencies.tokio-stream]
+version = "=0.1"
 
 [dependencies.tokio-util]
-version = "0.7"
+workspace = true
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
+
+[dependencies.indexmap]
+workspace = true
 
 [dev-dependencies.deadline]
 version = "0.2"
 
+[dev-dependencies.paste]
+version = "1"
+
 [dev-dependencies.pea2pea]
-version = "0.42"
+version = "0.49"
+
+[dev-dependencies.snarkos-node-router]
+workspace = true
+features = [ "test" ]
 
 [dev-dependencies.tracing-subscriber]
-version = "0.3"
+workspace = true
 features = [ "env-filter", "fmt" ]
 
 [dev-dependencies.rand_chacha]
-version = "0.3.0"
+workspace = true
+
+[package.metadata.cargo-machete]
+ignored = [
+  "serde_json", # Need to set preserve_order feature
+]

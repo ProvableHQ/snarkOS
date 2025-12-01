@@ -1,246 +1,168 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use super::*;
+use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_router::messages::UnconfirmedSolution;
+use snarkvm::{
+    ledger::puzzle::Solution,
+    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
+};
+
+use axum::{Json, extract::rejection::JsonRejection};
+
+use anyhow::{Context, anyhow};
+use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use serde_with::skip_serializing_none;
+use std::{collections::HashMap, sync::atomic::Ordering};
+
+#[cfg(not(feature = "serial"))]
+use rayon::prelude::*;
+
+use version::VersionInfo;
+
+/// Deserialize a CSV string into a vector of strings.
+fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(de)?;
+    Ok(if s.trim().is_empty() { Vec::new() } else { s.split(',').map(|x| x.trim().to_string()).collect() })
+}
 
 /// The `get_blocks` query object.
 #[derive(Deserialize, Serialize)]
-struct BlockRange {
+pub(crate) struct BlockRange {
     /// The starting block height (inclusive).
     start: u32,
     /// The ending block height (exclusive).
     end: u32,
 }
 
-impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
-    /// Initializes the routes, given the ledger and ledger sender.
-    pub fn routes(&self) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-        // GET /testnet3/latest/height
-        let latest_height = warp::get()
-            .and(warp::path!("testnet3" / "latest" / "height"))
-            .and(with(self.ledger.clone()))
-            .and_then(Self::latest_height);
+#[derive(Deserialize, Serialize)]
+pub(crate) struct BackupPath {
+    path: std::path::PathBuf,
+}
 
-        // GET /testnet3/latest/hash
-        let latest_hash = warp::get()
-            .and(warp::path!("testnet3" / "latest" / "hash"))
-            .and(with(self.ledger.clone()))
-            .and_then(Self::latest_hash);
+/// The query object for `get_mapping_value` and `get_mapping_values`.
+#[derive(Copy, Clone, Deserialize, Serialize)]
+pub(crate) struct Metadata {
+    metadata: Option<bool>,
+    all: Option<bool>,
+}
 
-        // GET /testnet3/latest/block
-        let latest_block = warp::get()
-            .and(warp::path!("testnet3" / "latest" / "block"))
-            .and(with(self.ledger.clone()))
-            .and_then(Self::latest_block);
+/// The query object for `transaction_broadcast`.
+#[derive(Copy, Clone, Deserialize, Serialize)]
+pub(crate) struct CheckTransaction {
+    check_transaction: Option<bool>,
+}
 
-        // GET /testnet3/latest/stateRoot
-        let latest_state_root = warp::get()
-            .and(warp::path!("testnet3" / "latest" / "stateRoot"))
-            .and(with(self.ledger.clone()))
-            .and_then(Self::latest_state_root);
+/// The query object for `solution_broadcast`.
+#[derive(Copy, Clone, Deserialize, Serialize)]
+pub(crate) struct CheckSolution {
+    check_solution: Option<bool>,
+}
 
-        // GET /testnet3/block/{height}
-        let get_block = warp::get()
-            .and(warp::path!("testnet3" / "block" / u32))
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_block);
+/// The query object for `get_state_paths_for_commitments`.
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct Commitments {
+    #[serde(deserialize_with = "de_csv")]
+    commitments: Vec<String>,
+}
 
-        // GET /testnet3/blocks?start={start_height}&end={end_height}
-        let get_blocks = warp::get()
-            .and(warp::path!("testnet3" / "blocks"))
-            .and(warp::query::<BlockRange>())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_blocks);
-
-        // GET /testnet3/block/{blockHash}
-        let get_block_by_hash = warp::get()
-            .and(warp::path!("testnet3" / "block" / ..))
-            .and(warp::path::param::<N::BlockHash>())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_block_by_hash);
-
-        // GET /testnet3/height/{blockHash}
-        let get_block_height_by_hash = warp::get()
-            .and(warp::path!("testnet3" / "height" / ..))
-            .and(warp::path::param::<N::BlockHash>())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_block_height_by_hash);
-
-        // GET /testnet3/block/{height}/transactions
-        let get_block_transactions = warp::get()
-            .and(warp::path!("testnet3" / "block" / u32 / "transactions"))
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_block_transactions);
-
-        // GET /testnet3/transaction/{transactionID}
-        let get_transaction = warp::get()
-            .and(warp::path!("testnet3" / "transaction" / ..))
-            .and(warp::path::param::<N::TransactionID>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_transaction);
-
-        // GET /testnet3/memoryPool/transactions
-        let get_memory_pool_transactions = warp::get()
-            .and(warp::path!("testnet3" / "memoryPool" / "transactions"))
-            .and(with(self.consensus.clone()))
-            .and_then(Self::get_memory_pool_transactions);
-
-        // GET /testnet3/program/{programID}
-        let get_program = warp::get()
-            .and(warp::path!("testnet3" / "program" / ..))
-            .and(warp::path::param::<ProgramID<N>>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_program);
-
-        // GET /testnet3/statePath/{commitment}
-        let get_state_path_for_commitment = warp::get()
-            .and(warp::path!("testnet3" / "statePath" / ..))
-            .and(warp::path::param::<Field<N>>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::get_state_path_for_commitment);
-
-        // GET /testnet3/beacons
-        let get_beacons = warp::get()
-            .and(warp::path!("testnet3" / "beacons"))
-            .and(with(self.consensus.clone()))
-            .and_then(Self::get_beacons);
-
-        // GET /testnet3/peers/count
-        let get_peers_count = warp::get()
-            .and(warp::path!("testnet3" / "peers" / "count"))
-            .and(with(self.routing.router().clone()))
-            .and_then(Self::get_peers_count);
-
-        // GET /testnet3/peers/all
-        let get_peers_all = warp::get()
-            .and(warp::path!("testnet3" / "peers" / "all"))
-            .and(with(self.routing.router().clone()))
-            .and_then(Self::get_peers_all);
-
-        // GET /testnet3/peers/all/metrics
-        let get_peers_all_metrics = warp::get()
-            .and(warp::path!("testnet3" / "peers" / "all" / "metrics"))
-            .and(with(self.routing.router().clone()))
-            .and_then(Self::get_peers_all_metrics);
-
-        // GET /testnet3/node/address
-        let get_node_address = warp::get()
-            .and(warp::path!("testnet3" / "node" / "address"))
-            .and(with(self.routing.router().address()))
-            .and_then(|address: Address<N>| async move { Ok::<_, Rejection>(reply::json(&address.to_string())) });
-
-        // GET /testnet3/find/blockHash/{transactionID}
-        let find_block_hash = warp::get()
-            .and(warp::path!("testnet3" / "find" / "blockHash" / ..))
-            .and(warp::path::param::<N::TransactionID>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::find_block_hash);
-
-        // GET /testnet3/find/deploymentID/{programID}
-        let find_deployment_id = warp::get()
-            .and(warp::path!("testnet3" / "find" / "deploymentID" / ..))
-            .and(warp::path::param::<ProgramID<N>>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::find_deployment_id);
-
-        // GET /testnet3/find/transactionID/{transitionID}
-        let find_transaction_id = warp::get()
-            .and(warp::path!("testnet3" / "find" / "transactionID" / ..))
-            .and(warp::path::param::<N::TransitionID>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::find_transaction_id);
-
-        // GET /testnet3/find/transitionID/{inputOrOutputID}
-        let find_transition_id = warp::get()
-            .and(warp::path!("testnet3" / "find" / "transitionID" / ..))
-            .and(warp::path::param::<Field<N>>())
-            .and(warp::path::end())
-            .and(with(self.ledger.clone()))
-            .and_then(Self::find_transition_id);
-
-        // POST /testnet3/transaction/broadcast
-        let transaction_broadcast = warp::post()
-            .and(warp::path!("testnet3" / "transaction" / "broadcast"))
-            .and(warp::body::content_length_limit(10 * 1024 * 1024))
-            .and(warp::body::json())
-            .and(with(self.consensus.clone()))
-            .and(with(self.routing.clone()))
-            .and_then(Self::transaction_broadcast);
-
-        // Return the list of routes.
-        latest_height
-            .or(latest_hash)
-            .or(latest_block)
-            .or(latest_state_root)
-            .or(get_block)
-            .or(get_blocks)
-            .or(get_block_by_hash)
-            .or(get_block_height_by_hash)
-            .or(get_block_transactions)
-            .or(get_transaction)
-            .or(get_memory_pool_transactions)
-            .or(get_program)
-            .or(get_state_path_for_commitment)
-            .or(get_beacons)
-            .or(get_peers_count)
-            .or(get_peers_all)
-            .or(get_peers_all_metrics)
-            .or(get_node_address)
-            .or(find_block_hash)
-            .or(find_deployment_id)
-            .or(find_transaction_id)
-            .or(find_transition_id)
-            .or(transaction_broadcast)
-    }
+/// The return value for a `sync_status` query.
+#[skip_serializing_none]
+#[derive(Copy, Clone, Serialize)]
+struct SyncStatus<'a> {
+    /// Is this node fully synced with the network?
+    is_synced: bool,
+    /// The block height of this node.
+    ledger_height: u32,
+    /// Which way are we sync'ing (either "cdn" or "p2p")
+    sync_mode: &'a str,
+    /// The block height of the CDN (if connected to a CDN).
+    cdn_height: Option<u32>,
+    /// The greatest known block height of a peer.
+    /// None, if no peers are connected yet.
+    p2p_height: Option<u32>,
+    /// The number of outstanding p2p sync requests.
+    outstanding_block_requests: usize,
+    /// The current sync speed in blocks per second.
+    sync_speed_bps: f64,
 }
 
 impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
-    /// Returns the latest block height.
-    async fn latest_height(ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.latest_height()))
+    /// GET /<network>/version
+    pub(crate) async fn get_version() -> ErasedJson {
+        ErasedJson::pretty(VersionInfo::get())
     }
 
-    /// Returns the latest block hash.
-    async fn latest_hash(ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.latest_hash()))
+    /// Get /<network>/consensus_version
+    pub(crate) async fn get_consensus_version(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(N::CONSENSUS_VERSION(rest.ledger.latest_height())? as u16))
     }
 
-    /// Returns the latest block.
-    async fn latest_block(ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.latest_block()))
+    /// GET /<network>/block/height/latest
+    pub(crate) async fn get_block_height_latest(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.ledger.latest_height())
     }
 
-    /// Returns the latest state root.
-    async fn latest_state_root(ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.latest_state_root()))
+    /// GET /<network>/block/hash/latest
+    pub(crate) async fn get_block_hash_latest(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.ledger.latest_hash())
     }
 
-    /// Returns the block for the given block height.
-    async fn get_block(height: u32, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.get_block(height).or_reject()?))
+    /// GET /<network>/block/latest
+    pub(crate) async fn get_block_latest(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.ledger.latest_block())
     }
 
-    /// Returns the blocks for the given block range.
-    async fn get_blocks(block_range: BlockRange, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
+    /// GET /<network>/block/{height}
+    /// GET /<network>/block/{blockHash}
+    pub(crate) async fn get_block(
+        State(rest): State<Self>,
+        Path(height_or_hash): Path<String>,
+    ) -> Result<ErasedJson, RestError> {
+        // Manually parse the height or the height of the hash, axum doesn't support different types
+        // for the same path param.
+        let id_name;
+        let block = if let Ok(height) = height_or_hash.parse::<u32>() {
+            id_name = "hash";
+            rest.ledger.try_get_block(height).with_context(|| "Failed to get block by height")?
+        } else if let Ok(hash) = height_or_hash.parse::<N::BlockHash>() {
+            id_name = "height";
+            rest.ledger.try_get_block_by_hash(&hash).with_context(|| "Failed to get block by hash")?
+        } else {
+            return Err(RestError::bad_request(anyhow!(
+                "invalid input, it is neither a block height nor a block hash"
+            )));
+        };
+
+        match block {
+            Some(block) => Ok(ErasedJson::pretty(block)),
+            None => Err(RestError::not_found(anyhow!("No block with {id_name} {height_or_hash} found"))),
+        }
+    }
+
+    /// GET /<network>/blocks?start={start_height}&end={end_height}
+    pub(crate) async fn get_blocks(
+        State(rest): State<Self>,
+        Query(block_range): Query<BlockRange>,
+    ) -> Result<ErasedJson, RestError> {
         let start_height = block_range.start;
         let end_height = block_range.end;
 
@@ -248,137 +170,770 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         // Ensure the end height is greater than the start height.
         if start_height > end_height {
-            return Err(reject::custom(RestError::Request("Invalid block range".to_string())));
+            return Err(RestError::bad_request(anyhow!("Invalid block range")));
         }
+
         // Ensure the block range is bounded.
-        else if end_height - start_height > MAX_BLOCK_RANGE {
-            return Err(reject::custom(RestError::Request(format!(
+        if end_height - start_height > MAX_BLOCK_RANGE {
+            return Err(RestError::bad_request(anyhow!(
                 "Cannot request more than {MAX_BLOCK_RANGE} blocks per call (requested {})",
                 end_height - start_height
-            ))));
+            )));
         }
 
-        let blocks = cfg_into_iter!((start_height..end_height))
-            .map(|height| ledger.get_block(height).or_reject())
-            .collect::<Result<Vec<_>, _>>()?;
+        // Prepare a closure for the blocking work.
+        let get_json_blocks = move || -> Result<ErasedJson, RestError> {
+            let blocks = cfg_into_iter!(start_height..end_height)
+                .map(|height| rest.ledger.get_block(height))
+                .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(reply::json(&blocks))
-    }
-
-    /// Returns the block for the given block hash.
-    async fn get_block_by_hash(hash: N::BlockHash, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.get_block_by_hash(&hash).or_reject()?))
-    }
-
-    /// Returns the block height for the given block hash.
-    async fn get_block_height_by_hash(hash: N::BlockHash, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.get_height(&hash).or_reject()?))
-    }
-
-    /// Returns the transactions for the given block height.
-    async fn get_block_transactions(height: u32, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.get_transactions(height).or_reject()?))
-    }
-
-    /// Returns the transaction for the given transaction ID.
-    async fn get_transaction(transaction_id: N::TransactionID, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.get_transaction(transaction_id).or_reject()?))
-    }
-
-    /// Returns the transactions in the memory pool.
-    async fn get_memory_pool_transactions(consensus: Option<Consensus<N, C>>) -> Result<impl Reply, Rejection> {
-        match consensus {
-            Some(consensus) => Ok(reply::json(&consensus.memory_pool().unconfirmed_transactions())),
-            None => Err(reject::custom(RestError::Request("Invalid endpoint".to_string()))),
-        }
-    }
-
-    /// Returns the program for the given program ID.
-    async fn get_program(program_id: ProgramID<N>, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        let program = if program_id == ProgramID::<N>::from_str("credits.aleo").or_reject()? {
-            Program::<N>::credits().or_reject()?
-        } else {
-            ledger.get_program(program_id).or_reject()?
+            Ok(ErasedJson::pretty(blocks))
         };
 
-        Ok(reply::json(&program))
-    }
+        // Fetch the blocks from ledger and serialize to json.
+        match tokio::task::spawn_blocking(get_json_blocks).await {
+            Ok(json) => json,
+            Err(err) => {
+                let err: anyhow::Error = err.into();
 
-    /// Returns the state path for the given commitment.
-    async fn get_state_path_for_commitment(
-        commitment: Field<N>,
-        ledger: Ledger<N, C>,
-    ) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.get_state_path_for_commitment(&commitment).or_reject()?))
-    }
-
-    /// Returns the list of current beacons.
-    async fn get_beacons(consensus: Option<Consensus<N, C>>) -> Result<impl Reply, Rejection> {
-        match consensus {
-            Some(consensus) => Ok(reply::json(&consensus.beacons().keys().collect::<Vec<&Address<N>>>())),
-            None => Err(reject::custom(RestError::Request("Invalid endpoint".to_string()))),
+                Err(RestError::internal_server_error(
+                    err.context(format!("Failed to get blocks '{start_height}..{end_height}'")),
+                ))
+            }
         }
     }
 
-    /// Returns the number of peers connected to the node.
-    async fn get_peers_count(router: Router<N>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&router.number_of_connected_peers()))
+    /// GET /<network>/sync/status
+    pub(crate) async fn get_sync_status(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        // Get the CDN height (if we are syncing from a CDN)
+        let (cdn_sync, cdn_height) = if let Some(cdn_sync) = &rest.cdn_sync {
+            let done = cdn_sync.is_done();
+
+            // Do not show CDN height if we are already done syncing from the CDN.
+            let cdn_height = if done { None } else { Some(cdn_sync.get_cdn_height().await?) };
+
+            // Report CDN sync until it is finished.
+            (!done, cdn_height)
+        } else {
+            (false, None)
+        };
+
+        // Generate a string representing the current sync mode.
+        let sync_mode = if cdn_sync { "cdn" } else { "p2p" };
+
+        Ok(ErasedJson::pretty(SyncStatus {
+            sync_mode,
+            cdn_height,
+            is_synced: !cdn_sync && rest.routing.is_block_synced(),
+            ledger_height: rest.ledger.latest_height(),
+            p2p_height: rest.block_sync.greatest_peer_block_height(),
+            outstanding_block_requests: rest.block_sync.num_outstanding_block_requests(),
+            sync_speed_bps: rest.block_sync.get_sync_speed(),
+        }))
     }
 
-    /// Returns the peers connected to the node.
-    async fn get_peers_all(router: Router<N>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&router.connected_peers()))
+    /// GET /<network>/sync/peers
+    pub(crate) async fn get_sync_peers(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        let peers: HashMap<String, u32> =
+            rest.block_sync.get_peer_heights().into_iter().map(|(addr, height)| (addr.to_string(), height)).collect();
+        Ok(ErasedJson::pretty(peers))
     }
 
-    /// Returns the metrics for peers connected to the node.
-    async fn get_peers_all_metrics(router: Router<N>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&router.connected_metrics()))
+    /// GET /<network>/sync/requests
+    pub(crate) async fn get_sync_requests_summary(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        let summary = rest.block_sync.get_block_requests_summary();
+        Ok(ErasedJson::pretty(summary))
     }
 
-    /// Returns the block hash that contains the given `transaction ID`.
-    async fn find_block_hash(transaction_id: N::TransactionID, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.find_block_hash(&transaction_id).or_reject()?))
+    /// GET /<network>/sync/requests/list
+    pub(crate) async fn get_sync_requests_list(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        let requests = rest.block_sync.get_block_requests_info();
+        Ok(ErasedJson::pretty(requests))
     }
 
-    /// Returns the transaction ID that contains the given `program ID`.
-    async fn find_deployment_id(program_id: ProgramID<N>, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.find_deployment_id(&program_id).or_reject()?))
+    /// GET /<network>/height/{blockHash}
+    pub(crate) async fn get_height(
+        State(rest): State<Self>,
+        Path(hash): Path<N::BlockHash>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_height(&hash)?))
     }
 
-    /// Returns the transaction ID that contains the given `transition ID`.
-    async fn find_transaction_id(
-        transition_id: N::TransitionID,
-        ledger: Ledger<N, C>,
-    ) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.find_transaction_id(&transition_id).or_reject()?))
+    /// GET /<network>/block/{height}/header
+    pub(crate) async fn get_block_header(
+        State(rest): State<Self>,
+        Path(height): Path<u32>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_header(height)?))
     }
 
-    /// Returns the transition ID that contains the given `input ID` or `output ID`.
-    async fn find_transition_id(input_or_output_id: Field<N>, ledger: Ledger<N, C>) -> Result<impl Reply, Rejection> {
-        Ok(reply::json(&ledger.find_transition_id(&input_or_output_id).or_reject()?))
+    /// GET /<network>/block/{height}/transactions
+    pub(crate) async fn get_block_transactions(
+        State(rest): State<Self>,
+        Path(height): Path<u32>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_transactions(height)?))
     }
 
-    /// Broadcasts the transaction to the ledger.
-    async fn transaction_broadcast(
-        transaction: Transaction<N>,
-        consensus: Option<Consensus<N, C>>,
-        routing: Arc<R>,
-    ) -> Result<impl Reply, Rejection> {
-        // If the consensus module is enabled, add the unconfirmed transaction to the memory pool.
-        if let Some(consensus) = consensus {
-            // Add the unconfirmed transaction to the memory pool.
-            consensus.add_unconfirmed_transaction(transaction.clone()).or_reject()?;
+    /// GET /<network>/transaction/{transactionID}
+    pub(crate) async fn get_transaction(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
+        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+            if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
+        })?))
+    }
+
+    /// GET /<network>/transaction/confirmed/{transactionID}
+    pub(crate) async fn get_confirmed_transaction(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
+        Ok(ErasedJson::pretty(rest.ledger.get_confirmed_transaction(tx_id).map_err(|err| {
+            if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
+        })?))
+    }
+
+    /// GET /<network>/transaction/unconfirmed/{transactionID}
+    pub(crate) async fn get_unconfirmed_transaction(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
+        Ok(ErasedJson::pretty(rest.ledger.get_unconfirmed_transaction(&tx_id).map_err(|err| {
+            if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
+        })?))
+    }
+
+    /// GET /<network>/memoryPool/transmissions
+    pub(crate) async fn get_memory_pool_transmissions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => {
+                Ok(ErasedJson::pretty(consensus.unconfirmed_transmissions().collect::<IndexMap<_, _>>()))
+            }
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
+    }
+
+    /// GET /<network>/memoryPool/solutions
+    pub(crate) async fn get_memory_pool_solutions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => Ok(ErasedJson::pretty(consensus.unconfirmed_solutions().collect::<IndexMap<_, _>>())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
+    }
+
+    /// GET /<network>/memoryPool/transactions
+    pub(crate) async fn get_memory_pool_transactions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => Ok(ErasedJson::pretty(consensus.unconfirmed_transactions().collect::<IndexMap<_, _>>())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
+    }
+
+    /// GET /<network>/program/{programID}
+    /// GET /<network>/program/{programID}?metadata={true}
+    pub(crate) async fn get_program(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+        metadata: Query<Metadata>,
+    ) -> Result<ErasedJson, RestError> {
+        // Get the program from the ledger.
+        let program = rest.ledger.get_program(id).with_context(|| format!("Failed to find program `{id}`"))?;
+        // Check if metadata is requested and return the program with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the edition of the program.
+            let edition = rest.ledger.get_latest_edition_for_program(&id)?;
+            return rest.return_program_with_metadata(program, edition);
+        }
+        // Return the program without metadata.
+        Ok(ErasedJson::pretty(program))
+    }
+
+    /// GET /<network>/program/{programID}/{edition}
+    /// GET /<network>/program/{programID}/{edition}?metadata={true}
+    pub(crate) async fn get_program_for_edition(
+        State(rest): State<Self>,
+        Path((id, edition)): Path<(ProgramID<N>, u16)>,
+        metadata: Query<Metadata>,
+    ) -> Result<ErasedJson, RestError> {
+        // Get the program from the ledger.
+        match rest
+            .ledger
+            .try_get_program_for_edition(&id, edition)
+            .with_context(|| format!("Failed get program `{id}` for edition {edition}"))?
+        {
+            Some(program) => {
+                // Check if metadata is requested and return the program with metadata if so.
+                if metadata.metadata.unwrap_or(false) {
+                    rest.return_program_with_metadata(program, edition)
+                } else {
+                    Ok(ErasedJson::pretty(program))
+                }
+            }
+            None => Err(RestError::not_found(anyhow!("No program `{id}` exists for edition {edition}"))),
+        }
+    }
+
+    /// A helper function to return the program and its metadata.
+    /// This function is used in the `get_program` and `get_program_for_edition` functions.
+    fn return_program_with_metadata(&self, program: Program<N>, edition: u16) -> Result<ErasedJson, RestError> {
+        let id = program.id();
+        // Get the transaction ID associated with the program and edition.
+        let tx_id = self.ledger.find_transaction_id_from_program_id_and_edition(id, edition)?;
+        // Get the optional program owner associated with the program.
+        // Note: The owner is only available after `ConsensusVersion::V9`.
+        let program_owner = match &tx_id {
+            Some(tid) => self
+                .ledger
+                .vm()
+                .block_store()
+                .transaction_store()
+                .deployment_store()
+                .get_deployment(tid)?
+                .and_then(|deployment| deployment.program_owner()),
+            None => None,
+        };
+        Ok(ErasedJson::pretty(json!({
+            "program": program,
+            "edition": edition,
+            "transaction_id": tx_id,
+            "program_owner": program_owner,
+        })))
+    }
+
+    /// GET /<network>/program/{programID}/latest_edition
+    pub(crate) async fn get_latest_program_edition(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_latest_edition_for_program(&id)?))
+    }
+
+    /// GET /<network>/program/{programID}/mappings
+    pub(crate) async fn get_mapping_names(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.vm().finalize_store().get_mapping_names_confirmed(&id)?))
+    }
+
+    /// GET /<network>/program/{programID}/mapping/{mappingName}/{mappingKey}
+    /// GET /<network>/program/{programID}/mapping/{mappingName}/{mappingKey}?metadata={true}
+    pub(crate) async fn get_mapping_value(
+        State(rest): State<Self>,
+        Path((id, name, key)): Path<(ProgramID<N>, Identifier<N>, Plaintext<N>)>,
+        metadata: Query<Metadata>,
+    ) -> Result<ErasedJson, RestError> {
+        // Retrieve the mapping value.
+        let mapping_value = rest.ledger.vm().finalize_store().get_value_confirmed(id, name, &key)?;
+
+        // Check if metadata is requested and return the value with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            return Ok(ErasedJson::pretty(json!({
+                "data": mapping_value,
+                "height": rest.ledger.latest_height(),
+            })));
+        }
+
+        // Return the value without metadata.
+        Ok(ErasedJson::pretty(mapping_value))
+    }
+
+    /// GET /<network>/program/{programID}/mapping/{mappingName}?all={true}&metadata={true}
+    pub(crate) async fn get_mapping_values(
+        State(rest): State<Self>,
+        Path((id, name)): Path<(ProgramID<N>, Identifier<N>)>,
+        metadata: Query<Metadata>,
+    ) -> Result<ErasedJson, RestError> {
+        // Return an error if the `all` query parameter is not set to `true`.
+        if metadata.all != Some(true) {
+            return Err(RestError::bad_request(anyhow!(
+                "Invalid query parameter. At this time, 'all=true' must be included"
+            )));
+        }
+
+        // Retrieve the latest height.
+        let height = rest.ledger.latest_height();
+
+        // Retrieve all the mapping values from the mapping.
+        match tokio::task::spawn_blocking(move || rest.ledger.vm().finalize_store().get_mapping_confirmed(id, name))
+            .await
+        {
+            Ok(Ok(mapping_values)) => {
+                // Check if metadata is requested and return the mapping with metadata if so.
+                if metadata.metadata.unwrap_or(false) {
+                    return Ok(ErasedJson::pretty(json!({
+                        "data": mapping_values,
+                        "height": height,
+                    })));
+                }
+
+                // Return the full mapping without metadata.
+                Ok(ErasedJson::pretty(mapping_values))
+            }
+            Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to read mapping"))),
+            Err(err) => Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        }
+    }
+
+    /// GET /<network>/statePath/{commitment}
+    pub(crate) async fn get_state_path_for_commitment(
+        State(rest): State<Self>,
+        Path(commitment): Path<Field<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_state_path_for_commitment(&commitment)?))
+    }
+
+    /// GET /<network>/statePaths?commitments=cm1,cm2,...
+    pub(crate) async fn get_state_paths_for_commitments(
+        State(rest): State<Self>,
+        Query(commitments): Query<Commitments>,
+    ) -> Result<ErasedJson, RestError> {
+        // Retrieve the number of commitments.
+        let num_commitments = commitments.commitments.len();
+        // Return an error if no commitments are provided.
+        if num_commitments == 0 {
+            return Err(RestError::unprocessable_entity(anyhow!("No commitments provided")));
+        }
+        // Return an error if the number of commitments exceeds the maximum allowed.
+        if num_commitments > N::MAX_INPUTS {
+            return Err(RestError::unprocessable_entity(anyhow!(
+                "Too many commitments provided (max: {}, got: {})",
+                N::MAX_INPUTS,
+                num_commitments
+            )));
+        }
+
+        // Deserialize the commitments from the query.
+        let commitments = commitments
+            .commitments
+            .iter()
+            .map(|s| {
+                s.parse::<Field<N>>()
+                    .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
+    }
+
+    /// GET /<network>/stateRoot/latest
+    pub(crate) async fn get_state_root_latest(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.ledger.latest_state_root())
+    }
+
+    /// GET /<network>/stateRoot/{height}
+    pub(crate) async fn get_state_root(
+        State(rest): State<Self>,
+        Path(height): Path<u32>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_state_root(height)?))
+    }
+
+    /// GET /<network>/committee/latest
+    pub(crate) async fn get_committee_latest(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.latest_committee()?))
+    }
+
+    /// GET /<network>/committee/{height}
+    pub(crate) async fn get_committee(
+        State(rest): State<Self>,
+        Path(height): Path<u32>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.get_committee(height)?))
+    }
+
+    /// GET /<network>/delegators/{validator}
+    pub(crate) async fn get_delegators_for_validator(
+        State(rest): State<Self>,
+        Path(validator): Path<Address<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        // Do not process the request if the node is too far behind to avoid sending outdated data.
+        if !rest.routing.is_within_sync_leniency() {
+            return Err(RestError::service_unavailable(anyhow!("Unable to request delegators (node is syncing)")));
+        }
+
+        // Return the delegators for the given validator.
+        match tokio::task::spawn_blocking(move || rest.ledger.get_delegators_for_validator(&validator)).await {
+            Ok(Ok(delegators)) => Ok(ErasedJson::pretty(delegators)),
+            Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to request delegators"))),
+            Err(err) => Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
+        }
+    }
+
+    /// GET /<network>/peers/count
+    pub(crate) async fn get_peers_count(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.routing.router().number_of_connected_peers())
+    }
+
+    /// GET /<network>/peers/all
+    pub(crate) async fn get_peers_all(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.routing.router().connected_peers())
+    }
+
+    /// GET /<network>/peers/all/metrics
+    pub(crate) async fn get_peers_all_metrics(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.routing.router().connected_metrics())
+    }
+
+    /// GET /<network>/node/address
+    pub(crate) async fn get_node_address(State(rest): State<Self>) -> ErasedJson {
+        ErasedJson::pretty(rest.routing.router().address())
+    }
+
+    /// GET /<network>/find/blockHash/{transactionID}
+    pub(crate) async fn find_block_hash(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_block_hash(&tx_id)?))
+    }
+
+    /// GET /<network>/find/blockHeight/{stateRoot}
+    pub(crate) async fn find_block_height_from_state_root(
+        State(rest): State<Self>,
+        Path(state_root): Path<N::StateRoot>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_block_height_from_state_root(state_root)?))
+    }
+
+    /// GET /<network>/find/transactionID/deployment/{programID}
+    pub(crate) async fn find_latest_transaction_id_from_program_id(
+        State(rest): State<Self>,
+        Path(program_id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_latest_transaction_id_from_program_id(&program_id)?))
+    }
+
+    /// GET /<network>/find/transactionID/deployment/{programID}/{edition}
+    pub(crate) async fn find_transaction_id_from_program_id_and_edition(
+        State(rest): State<Self>,
+        Path((program_id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id_and_edition(&program_id, edition)?))
+    }
+
+    /// GET /<network>/find/transactionID/{transitionID}
+    pub(crate) async fn find_transaction_id_from_transition_id(
+        State(rest): State<Self>,
+        Path(transition_id): Path<N::TransitionID>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_transition_id(&transition_id)?))
+    }
+
+    /// GET /<network>/find/transitionID/{inputOrOutputID}
+    pub(crate) async fn find_transition_id(
+        State(rest): State<Self>,
+        Path(input_or_output_id): Path<Field<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_transition_id(&input_or_output_id)?))
+    }
+
+    /// POST /<network>/transaction/broadcast
+    /// POST /<network>/transaction/broadcast?check_transaction={true}
+    ///
+    /// Transaction Broadcast Flow
+    ///
+    /// /transaction/broadcast
+    ///         |
+    ///    +----+---------------------------+
+    ///    |                               |
+    ///    v                               v
+    /// Without Query Params        With Query Param
+    ///                                check_transaction=true
+    ///    |                               |
+    ///    +---------+                     +---------+
+    ///    |         |                     |         |
+    ///    v         v                     v         v
+    /// Synced   Not Synced            Synced   Not Synced
+    ///    |         |                     |         |
+    ///    v         v                     v         v
+    ///   200       200        check_transaction  check_transaction
+    ///                           +---------+        +---------+
+    ///                           |         |        |         |
+    ///                           v         v        v         v
+    ///                          200       422      203       503
+    pub(crate) async fn transaction_broadcast(
+        State(rest): State<Self>,
+        check_transaction: Query<CheckTransaction>,
+        json_result: Result<Json<Transaction<N>>, JsonRejection>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        let Json(tx) = match json_result {
+            Ok(json) => json,
+            Err(JsonRejection::JsonDataError(err)) => {
+                // For JsonDataError, return 422 to let transaction validation handle it
+                return Err(RestError::unprocessable_entity(anyhow!("Invalid transaction data: {err}")));
+            }
+            Err(other_rejection) => return Err(other_rejection.into()),
+        };
+
+        // If the transaction exceeds the transaction size limit, return an error.
+        // The buffer is initially roughly sized to hold a `transfer_public`,
+        // most transactions will be smaller and this reduces unnecessary allocations.
+        // TODO: Should this be a blocking task?
+        let buffer = Vec::with_capacity(3000);
+        if tx.write_le(LimitedWriter::new(buffer, N::MAX_TRANSACTION_SIZE)).is_err() {
+            return Err(RestError::bad_request(anyhow!("Transaction size exceeds the byte limit")));
         }
 
         // Prepare the unconfirmed transaction message.
+        let tx_id = tx.id();
         let message = Message::UnconfirmedTransaction(UnconfirmedTransaction {
-            transaction_id: transaction.id(),
-            transaction: Data::Object(transaction),
+            transaction_id: tx_id,
+            transaction: Data::Object(tx.clone()),
         });
 
-        // Broadcast the transaction.
-        routing.propagate(message, vec![]);
+        // Check if the node is within sync leniency.
+        let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
 
-        Ok("OK")
+        // Determine if we need to check the transaction.
+        let check_transaction = check_transaction.check_transaction.unwrap_or(false);
+
+        if check_transaction {
+            // Select counter and limit based on transaction type.
+            let (counter, limit, err_msg) = if tx.is_execute() {
+                (
+                    &rest.num_verifying_executions,
+                    VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
+                    "Too many execution verifications in progress",
+                )
+            } else {
+                (
+                    &rest.num_verifying_deploys,
+                    VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
+                    "Too many deploy verifications in progress",
+                )
+            };
+
+            // Try to acquire a slot.
+            if counter
+                .fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |val| {
+                        if val < limit { Some(val + 1) } else { None }
+                    },
+                )
+                .is_err()
+            {
+                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
+            }
+
+            // Perform the check.
+            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::thread_rng()).map_err(|err| {
+                match is_within_sync_leniency {
+                    // The transaction failed to verify.
+                    true => RestError::unprocessable_entity(err.context("Invalid transaction")),
+                    // The node is out of sync and may not be able to properly validate the transaction.
+                    false => {
+                        RestError::service_unavailable(err.context("Unable to validate transaction (node is syncing)"))
+                    }
+                }
+            });
+            // Release the slot.
+            counter.fetch_sub(1, Ordering::Relaxed);
+            // Propagate error if any.
+            res?;
+        }
+
+        // If the consensus module is enabled, add the unconfirmed transaction to the memory pool.
+        if let Some(consensus) = rest.consensus {
+            // Add the unconfirmed transaction to the memory pool.
+            consensus.add_unconfirmed_transaction(tx.clone()).await?;
+        }
+
+        // Broadcast the transaction.
+        rest.routing.propagate(message, &[]);
+
+        // Determine if the node is synced and if the transaction was checked.
+        match !is_within_sync_leniency && check_transaction {
+            // If the node is not synced and we validated the transaction, return a 203.
+            true => Ok((StatusCode::NON_AUTHORITATIVE_INFORMATION, ErasedJson::pretty(tx_id))),
+            // Otherwise, return a 200.
+            false => Ok((StatusCode::OK, ErasedJson::pretty(tx_id))),
+        }
+    }
+
+    /// POST /<network>/solution/broadcast
+    /// POST /<network>/solution/broadcast?check_solution={true}
+    ///
+    /// Solution Broadcast Flow
+    ///
+    /// /solution/broadcast
+    ///         |
+    ///    +----+---------------------------+
+    ///    |                               |
+    ///    v                               v
+    /// Without Query Params        With Query Param
+    ///                                check_solution=true
+    ///    |                               |
+    ///    +---------+                     +---------+
+    ///    |         |                     |         |
+    ///    v         v                     v         v
+    /// Synced   Not Synced            Synced   Not Synced
+    ///    |         |                     |         |
+    ///    v         v                     v         v
+    ///   200       200        check_solution        check_solution
+    ///                           +---------+        +---------+
+    ///                           |         |        |         |
+    ///                           v         v        v         v
+    ///                          200       422      203       503
+    pub(crate) async fn solution_broadcast(
+        State(rest): State<Self>,
+        check_solution: Query<CheckSolution>,
+        Json(solution): Json<Solution<N>>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Check if the node is within sync leniency.
+        let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
+        // Determine if we need to check the solution.
+        let check_solution = check_solution.check_solution.unwrap_or(false);
+
+        if check_solution {
+            // Select counter and limit.
+            let (counter, limit, err_msg) =
+                (&rest.num_verifying_solutions, N::MAX_SOLUTIONS, "Too many solution verifications in progress");
+
+            // Try to acquire a slot.
+            if counter
+                .fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |val| {
+                        if val < limit { Some(val + 1) } else { None }
+                    },
+                )
+                .is_err()
+            {
+                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
+            }
+
+            // Compute the current epoch hash.
+            let epoch_hash = rest.ledger.latest_epoch_hash()?;
+            // Retrieve the current proof target.
+            let proof_target = rest.ledger.latest_proof_target();
+            // Ensure that the solution is valid for the given epoch.
+            let puzzle = rest.ledger.puzzle().clone();
+            // Check if the prover has reached their solution limit.
+            // While snarkVM will ultimately abort any excess solutions for safety, performing this check
+            // here prevents the to-be aborted solutions from propagating through the network.
+            let prover_address = solution.address();
+            if rest.ledger.is_solution_limit_reached(&prover_address, 0) {
+                return Err(RestError::unprocessable_entity(anyhow!(
+                    "Invalid solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch",
+                    fmt_id(solution.id())
+                )));
+            }
+            // Verify the solution in a blocking task.
+            let res: Result<(), anyhow::Error> =
+                match tokio::task::spawn_blocking(move || puzzle.check_solution(&solution, epoch_hash, proof_target))
+                    .await
+                {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(err)) => {
+                        return match is_within_sync_leniency {
+                            // The solution failed to verify.
+                            true => Err(RestError::unprocessable_entity(
+                                err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
+                            )),
+                            // The node is out of sync and may not be able to properly validate the solution.
+                            false => Err(RestError::service_unavailable(anyhow!(
+                                "Unable to validate solution '{}' (node is syncing)",
+                                fmt_id(solution.id())
+                            ))),
+                        };
+                    }
+                    Err(err) => {
+                        return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
+                    }
+                };
+            // Release the slot.
+            counter.fetch_sub(1, Ordering::Relaxed);
+            // Propagate error if any.
+            res?;
+        }
+
+        // If the consensus module is enabled, add the unconfirmed solution to the memory pool.
+        if let Some(consensus) = rest.consensus {
+            // Add the unconfirmed solution to the memory pool.
+            let _ = consensus.add_unconfirmed_solution(solution).await;
+        }
+
+        let solution_id = solution.id();
+        // Prepare the unconfirmed solution message.
+        let message =
+            Message::UnconfirmedSolution(UnconfirmedSolution { solution_id, solution: Data::Object(solution) });
+
+        // Broadcast the unconfirmed solution message.
+        rest.routing.propagate(message, &[]);
+
+        // Determine if the node is synced and if the solution was checked.
+        match !is_within_sync_leniency && check_solution {
+            // If the node is not synced and we validated the solution, return a 203.
+            true => Ok((StatusCode::NON_AUTHORITATIVE_INFORMATION, ErasedJson::pretty(solution_id))),
+            // Otherwise, return a 200.
+            false => Ok((StatusCode::OK, ErasedJson::pretty(solution_id))),
+        }
+    }
+
+    /// POST /{network}/db_backup?path=new_fs_path
+    pub(crate) async fn db_backup(
+        State(rest): State<Self>,
+        backup_path: Query<BackupPath>,
+    ) -> Result<ErasedJson, RestError> {
+        rest.ledger.backup_database(&backup_path.path)?;
+
+        Ok(ErasedJson::pretty(()))
+    }
+
+    /// GET /{network}/block/{blockHeight}/history/{mapping}
+    #[cfg(feature = "history")]
+    pub(crate) async fn get_history(
+        State(rest): State<Self>,
+        Path((height, mapping)): Path<(u32, snarkvm::synthesizer::MappingName)>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Retrieve the history for the given block height and variant.
+        let history = snarkvm::synthesizer::History::new(N::ID, rest.ledger.vm().finalize_store().storage_mode());
+        let result = history.load_mapping(height, mapping).map_err(|err| {
+            RestError::not_found(err.context(format!("Could not load mapping '{mapping}' from block '{height}'")))
+        })?;
+
+        Ok((StatusCode::OK, [(CONTENT_TYPE, "application/json")], result))
+    }
+
+    /// GET /{network}/validators/participation
+    /// GET /{network}/validators/participation?metadata={true}
+    #[cfg(feature = "telemetry")]
+    pub(crate) async fn get_validator_participation_scores(
+        State(rest): State<Self>,
+        metadata: Query<Metadata>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        match rest.consensus {
+            Some(consensus) => {
+                // Retrieve the latest committee.
+                let latest_committee = rest.ledger.latest_committee()?;
+                // Retrieve the latest participation scores.
+                let participation_scores = consensus
+                    .bft()
+                    .primary()
+                    .gateway()
+                    .validator_telemetry()
+                    .get_participation_scores(&latest_committee);
+
+                // Check if metadata is requested and return the participation scores with metadata if so.
+                if metadata.metadata.unwrap_or(false) {
+                    return Ok(ErasedJson::pretty(json!({
+                        "participation_scores": participation_scores,
+                        "height": rest.ledger.latest_height(),
+                    })));
+                }
+
+                Ok(ErasedJson::pretty(participation_scores))
+            }
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
     }
 }

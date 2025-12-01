@@ -1,41 +1,42 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
-
-use crate::RestError;
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use snarkvm::prelude::*;
 
-use anyhow::{anyhow, Result};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use ::time::OffsetDateTime;
+use anyhow::{Result, anyhow};
+use axum::{
+    RequestPartsExt,
+    body::Body,
+    http::{Request, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
+use axum_extra::{
+    TypedHeader,
+    headers::authorization::{Authorization, Bearer},
+};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
-use warp::{reject, Filter, Rejection};
 
 /// The time a jwt token is valid for.
 pub const EXPIRATION: i64 = 10 * 365 * 24 * 60 * 60; // 10 years.
 
-/// Returns the JWT secret for the node instance.
-fn jwt_secret() -> &'static Vec<u8> {
-    static SECRET: OnceCell<Vec<u8>> = OnceCell::new();
-    SECRET.get_or_init(|| {
-        let seed: [u8; 16] = rand::thread_rng().gen();
-        seed.to_vec()
-    })
-}
+/// The JWT secret for the REST server.
+static JWT_SECRET: OnceCell<Vec<u8>> = OnceCell::new();
 
 /// The Json web token claims.
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,46 +50,85 @@ pub struct Claims {
 }
 
 impl Claims {
-    pub fn new<N: Network>(address: Address<N>) -> Self {
-        let issued_at = OffsetDateTime::now_utc().unix_timestamp();
+    pub fn new<N: Network>(address: Address<N>, jwt_secret: Option<Vec<u8>>, jwt_timestamp: Option<i64>) -> Self {
+        if let Some(secret) = jwt_secret {
+            JWT_SECRET.set(secret)
+        } else {
+            JWT_SECRET.set({
+                let seed: [u8; 16] = ::rand::thread_rng().r#gen();
+                seed.to_vec()
+            })
+        }
+        .expect("Failed to set JWT secret: already initialized");
+
+        let issued_at = jwt_timestamp.unwrap_or_else(|| OffsetDateTime::now_utc().unix_timestamp());
         let expiration = issued_at.saturating_add(EXPIRATION);
 
         Self { sub: address.to_string(), iat: issued_at, exp: expiration }
     }
 
-    /// Returns true if the token is expired.
-    pub fn is_expired(&self) -> bool {
-        OffsetDateTime::now_utc().unix_timestamp() >= self.exp
-    }
-
     /// Returns the json web token string.
     pub fn to_jwt_string(&self) -> Result<String> {
-        encode(&Header::default(), &self, &EncodingKey::from_secret(jwt_secret())).map_err(|e| anyhow!(e))
+        encode(&Header::default(), &self, &EncodingKey::from_secret(JWT_SECRET.get().unwrap())).map_err(|e| anyhow!(e))
     }
 }
 
-/// Checks the authorization header for a valid token.
-pub fn with_auth() -> impl Filter<Extract = ((),), Error = Rejection> + Clone {
-    warp::header::<String>("authorization").and_then(|token: String| async move {
-        if !token.starts_with("Bearer ") {
-            return Err(reject::custom(RestError::Request("Invalid authorization header.".to_string())));
-        }
+pub async fn auth_middleware(request: Request<Body>, next: Next) -> Result<Response, Response> {
+    // If the JWT secret is not set, skip authentication.
+    if JWT_SECRET.get().is_none() {
+        return Ok(next.run(request).await);
+    }
 
-        // Decode the claims from the token.
-        match decode::<Claims>(
-            token.trim_start_matches("Bearer "),
-            &DecodingKey::from_secret(jwt_secret()),
-            &Validation::new(Algorithm::HS256),
-        ) {
-            Ok(decoded) => {
-                let claims = decoded.claims;
-                if claims.is_expired() {
-                    return Err(reject::custom(RestError::Request("Expired JSON Web Token.".to_string())));
-                }
+    // Deconstruct the request to extract the auth token.
+    let (mut parts, body) = request.into_parts();
+    let auth: TypedHeader<Authorization<Bearer>> =
+        parts.extract().await.map_err(|_| StatusCode::UNAUTHORIZED.into_response())?;
 
-                Ok(())
-            }
-            Err(_) => Err(reject::custom(RestError::Request("Unauthorized caller.".to_string()))),
-        }
-    })
+    if let Err(err) = decode::<Claims>(
+        auth.token(),
+        &DecodingKey::from_secret(JWT_SECRET.get().unwrap()),
+        &Validation::new(Algorithm::HS256),
+    ) {
+        warn!("Request authorization error: {err}");
+        return Err(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    // Reconstruct the request.
+    let request = Request::from_parts(parts, body);
+
+    Ok(next.run(request).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::prelude::*;
+    use snarkvm::prelude::{Address, MainnetV0};
+
+    #[test]
+    fn check_const_jwt_value() {
+        // Arbitrary input values to check against the expected value.
+        let secret = "FVPjEPVAKh2f0EkRCpQkqA==";
+        let timestamp = 174437065;
+
+        let secret_bytes = BASE64_STANDARD.decode(secret).unwrap();
+
+        // A fixed seed, as the address also forms part of the JWT.
+        let mut rng = TestRng::fixed(12345);
+        let pk = PrivateKey::<MainnetV0>::new(&mut rng).unwrap();
+        let addr = Address::try_from(pk).unwrap();
+
+        let claims = Claims::new(addr, Some(secret_bytes), Some(timestamp));
+        let jwt_str = claims.to_jwt_string().unwrap();
+
+        assert_eq!(
+            jwt_str,
+            "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.\
+            eyJzdWIiOiJhbGVvMTBrbmtlbHZuZDU1ZnNhYX\
+            JtMjV3Y2g3cDlzdWYydHFsZ3d5NWs0bnh3bXM2\
+            ZDI2Mnh5ZnFtMnRjY3IiLCJpYXQiOjE3NDQzNz\
+            A2NSwiZXhwIjo0ODk3OTcwNjV9.HcTvPC7jQyq\
+            NaPqsC2XHZl3Yji_OHxo5TyKLSKVxirI"
+        );
+    }
 }

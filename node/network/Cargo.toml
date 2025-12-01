@@ -1,0 +1,58 @@
+[package]
+name = "snarkos-node-network"
+version = "4.4.0"
+authors = [ "The Aleo Team <hello@aleo.org>" ]
+description = "Network-related objects and traits for nodes"
+homepage = "https://aleo.org"
+repository = "https://github.com/ProvableHQ/snarkOS"
+keywords = [
+  "aleo",
+  "cryptography",
+  "blockchain",
+  "decentralized",
+  "zero-knowledge"
+]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[features]
+locktick = [ "dep:locktick", "snarkos-node-tcp/locktick" ]
+test = [ ]
+
+[dependencies.aleo-std]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.locktick]
+workspace = true
+features = [ "parking_lot" ]
+optional = true
+
+[dependencies.parking_lot]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.snarkos-node-tcp]
+workspace = true
+
+[dependencies.snarkvm]
+workspace = true
+features = [ "console" ]
+
+[dependencies.tokio]
+workspace = true
+
+[dev-dependencies.snarkos-node-network]
+path = "."
+features = [ "test" ]
+
+[build-dependencies.built]
+workspace = true

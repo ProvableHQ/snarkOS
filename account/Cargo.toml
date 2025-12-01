@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-account"
-version = "2.0.2"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Account for a decentralized operating system"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,21 +12,17 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
-license = "GPL-3.0"
-edition = "2021"
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
 
-[dependencies.anyhow]
-version = "1"
+[features]
+cuda = [ "snarkvm/cuda" ]
+test_targets = [ "snarkvm/test_targets" ]
 
 [dependencies.colored]
-version = "2"
-
-[dependencies.rand]
-version = "0.8"
-default-features = false
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-default-features = false
 features = [ "console" ]

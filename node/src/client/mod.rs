@@ -1,89 +1,609 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 mod router;
 
 use crate::traits::NodeInterface;
-use snarkos_account::Account;
-use snarkos_node_messages::{Message, NodeType, PuzzleResponse, UnconfirmedSolution};
-use snarkos_node_router::{Heartbeat, Inbound, Outbound, Router, Routing};
-use snarkos_node_tcp::{
-    protocols::{Disconnect, Handshake, Reading, Writing},
-    P2P,
-};
-use snarkvm::prelude::{Block, CoinbasePuzzle, ConsensusStorage, EpochChallenge, Header, Network, ProverSolution};
 
-use anyhow::Result;
-use core::marker::PhantomData;
-use parking_lot::RwLock;
-use std::{net::SocketAddr, sync::Arc};
+use snarkos_account::Account;
+use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_cdn::CdnBlockSync;
+use snarkos_node_network::NodeType;
+use snarkos_node_rest::Rest;
+use snarkos_node_router::{
+    Heartbeat,
+    Inbound,
+    Outbound,
+    Router,
+    Routing,
+    messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
+};
+use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+use snarkos_node_tcp::{
+    P2P,
+    protocols::{Disconnect, Handshake, OnConnect, Reading},
+};
+use snarkvm::{
+    console::network::Network,
+    ledger::{
+        Ledger,
+        block::{Block, Header},
+        puzzle::{Puzzle, Solution, SolutionID},
+        store::ConsensusStorage,
+    },
+    prelude::{VM, block::Transaction},
+    utilities::flatten_error,
+};
+
+use aleo_std::StorageMode;
+use anyhow::{Context, Result};
+use core::future::Future;
+use indexmap::IndexMap;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::Mutex;
+use lru::LruCache;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::Mutex;
+use std::{
+    net::SocketAddr,
+    num::NonZeroUsize,
+    sync::{
+        Arc,
+        atomic::{
+            AtomicBool,
+            AtomicUsize,
+            Ordering::{Acquire, Relaxed},
+        },
+    },
+    time::Duration,
+};
+use tokio::{
+    sync::oneshot,
+    task::JoinHandle,
+    time::{sleep, timeout},
+};
+
+/// The maximum number of solutions to verify in parallel.
+/// Note: worst case memory to verify a solution is 0.5 GiB.
+const MAX_PARALLEL_SOLUTION_VERIFICATIONS: usize = 20;
+/// The capacity for storing unconfirmed deployments.
+/// Note: This is an inbound queue capacity, not a Narwhal-enforced capacity.
+const CAPACITY_FOR_DEPLOYMENTS: usize = 1 << 10;
+/// The capacity for storing unconfirmed executions.
+/// Note: This is an inbound queue capacity, not a Narwhal-enforced capacity.
+const CAPACITY_FOR_EXECUTIONS: usize = 1 << 10;
+/// The capacity for storing unconfirmed solutions.
+/// Note: This is an inbound queue capacity, not a Narwhal-enforced capacity.
+const CAPACITY_FOR_SOLUTIONS: usize = 1 << 10;
+
+/// Transaction details needed for propagation.
+/// We preserve the serialized transaction for faster propagation.
+type TransactionContents<N> = (SocketAddr, UnconfirmedTransaction<N>, Transaction<N>);
+/// Solution details needed for propagation.
+/// We preserve the serialized solution for faster propagation.
+type SolutionContents<N> = (SocketAddr, UnconfirmedSolution<N>, Solution<N>);
 
 /// A client node is a full node, capable of querying with the network.
 #[derive(Clone)]
 pub struct Client<N: Network, C: ConsensusStorage<N>> {
+    /// The ledger of the node.
+    ledger: Ledger<N, C>,
     /// The router of the node.
     router: Router<N>,
+    /// The REST server of the node.
+    rest: Option<Rest<N, C, Self>>,
+    /// The block synchronization logic.
+    sync: Arc<BlockSync<N>>,
     /// The genesis block.
     genesis: Block<N>,
-    /// The coinbase puzzle.
-    coinbase_puzzle: CoinbasePuzzle<N>,
-    /// The latest epoch challenge.
-    latest_epoch_challenge: Arc<RwLock<Option<EpochChallenge<N>>>>,
-    /// The latest block header.
-    latest_block_header: Arc<RwLock<Option<Header<N>>>>,
-    /// PhantomData.
-    _phantom: PhantomData<C>,
+    /// The puzzle.
+    puzzle: Puzzle<N>,
+    /// The unconfirmed solutions queue.
+    solution_queue: Arc<Mutex<LruCache<SolutionID<N>, SolutionContents<N>>>>,
+    /// The unconfirmed deployments queue.
+    deploy_queue: Arc<Mutex<LruCache<N::TransactionID, TransactionContents<N>>>>,
+    /// The unconfirmed executions queue.
+    execute_queue: Arc<Mutex<LruCache<N::TransactionID, TransactionContents<N>>>>,
+    /// The amount of solutions currently being verified.
+    num_verifying_solutions: Arc<AtomicUsize>,
+    /// The amount of deployments currently being verified.
+    num_verifying_deploys: Arc<AtomicUsize>,
+    /// The amount of executions currently being verified.
+    num_verifying_executions: Arc<AtomicUsize>,
+    /// The spawned handles.
+    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// The shutdown signal.
+    shutdown: Arc<AtomicBool>,
+    /// Keeps track of sending pings.
+    ping: Arc<Ping<N>>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
     /// Initializes a new client node.
     pub async fn new(
         node_ip: SocketAddr,
+        rest_ip: Option<SocketAddr>,
+        rest_rps: u32,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
+        cdn: Option<http::Uri>,
+        storage_mode: StorageMode,
+        trusted_peers_only: bool,
         dev: Option<u16>,
+        shutdown: Arc<AtomicBool>,
+        shutdown_tx: Option<oneshot::Sender<()>>,
     ) -> Result<Self> {
+        // Initialize the signal handler.
+        let signal_node = Self::handle_signals(shutdown.clone(), shutdown_tx);
+
+        // Initialize the ledger.
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
+
+        // Initialize the ledger service.
+        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
+
         // Initialize the node router.
         let router = Router::new(
             node_ip,
             NodeType::Client,
             account,
+            ledger_service.clone(),
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
+            trusted_peers_only,
+            storage_mode.clone(),
             dev.is_some(),
         )
         .await?;
-        // Load the coinbase puzzle.
-        let coinbase_puzzle = CoinbasePuzzle::<N>::load()?;
+
+        // Initialize the sync module.
+        let sync = Arc::new(BlockSync::new(ledger_service.clone()));
+
+        // Set up the ping logic.
+        let locators = sync.get_block_locators()?;
+        let ping = Arc::new(Ping::new(router.clone(), locators));
+
         // Initialize the node.
-        let node = Self {
+        let mut node = Self {
+            ledger: ledger.clone(),
             router,
+            rest: None,
+            sync: sync.clone(),
             genesis,
-            coinbase_puzzle,
-            latest_epoch_challenge: Default::default(),
-            latest_block_header: Default::default(),
-            _phantom: PhantomData,
+            ping,
+            puzzle: ledger.puzzle().clone(),
+            solution_queue: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(CAPACITY_FOR_SOLUTIONS).unwrap()))),
+            deploy_queue: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(CAPACITY_FOR_DEPLOYMENTS).unwrap()))),
+            execute_queue: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(CAPACITY_FOR_EXECUTIONS).unwrap()))),
+            num_verifying_solutions: Default::default(),
+            num_verifying_deploys: Default::default(),
+            num_verifying_executions: Default::default(),
+            handles: Default::default(),
+            shutdown: shutdown.clone(),
         };
+
+        // Perform sync with CDN (if enabled).
+        let cdn_sync = cdn.map(|base_url| {
+            trace!("CDN sync is enabled");
+            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown))
+        });
+
+        // Initialize the REST server.
+        if let Some(rest_ip) = rest_ip {
+            node.rest = Some(
+                Rest::start(rest_ip, rest_rps, None, ledger.clone(), Arc::new(node.clone()), cdn_sync.clone(), sync)
+                    .await?,
+            );
+        }
+
+        // Set up everything else after CDN sync is done.
+        if let Some(cdn_sync) = cdn_sync {
+            if let Err(error) = cdn_sync.wait().await {
+                crate::log_clean_error(&storage_mode);
+                node.shut_down().await;
+                return Err(error);
+            }
+        }
+
         // Initialize the routing.
         node.initialize_routing().await;
-        // Initialize the signal handler.
-        node.handle_signals();
+        // Initialize the sync module.
+        node.initialize_sync();
+        // Initialize solution verification.
+        node.initialize_solution_verification();
+        // Initialize deployment verification.
+        node.initialize_deploy_verification();
+        // Initialize execution verification.
+        node.initialize_execute_verification();
+        // Initialize the notification message loop.
+        node.handles.lock().push(crate::start_notification_message_loop());
+        // Pass the node to the signal handler.
+        let _ = signal_node.set(node.clone());
         // Return the node.
         Ok(node)
+    }
+
+    /// Returns the ledger.
+    pub fn ledger(&self) -> &Ledger<N, C> {
+        &self.ledger
+    }
+
+    /// Returns the REST server.
+    pub fn rest(&self) -> &Option<Rest<N, C, Self>> {
+        &self.rest
+    }
+
+    /// Returns the router.
+    pub fn router(&self) -> &Router<N> {
+        &self.router
+    }
+}
+
+/// Sync-specific code.
+impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
+    /// The maximum time to wait for peer updates before timing out and attempting to issue new requests.
+    /// This only exists as a fallback for the (unlikely) case a task does not get notified about updates.
+    const MAX_SYNC_INTERVAL: Duration = Duration::from_secs(30);
+
+    /// Spawns the tasks that performs the syncing logic for this client.
+    fn initialize_sync(&self) {
+        // Start the block request generation loop (outgoing).
+        let self_ = self.clone();
+        self.spawn(async move {
+            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // Perform the sync routine.
+                self_.try_issuing_block_requests().await;
+
+                // Rate limiting happens in [`Self::send_block_requests`] and no additional sleeps are needed here
+            }
+
+            info!("Stopped block request generation");
+        });
+
+        // Start the block response processing loop (incoming).
+        let self_ = self.clone();
+        self.spawn(async move {
+            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                // Wait until there is something to do or until the timeout.
+                let _ = timeout(Self::MAX_SYNC_INTERVAL, self_.sync.wait_for_block_responses()).await;
+
+                // Perform the sync routine.
+                self_.try_advancing_block_synchronization().await;
+
+                // We perform no additional rate limiting here as
+                // requests are already rate-limited.
+            }
+
+            debug!("Stopped block response processing");
+        });
+    }
+
+    /// Client-side version of [`snarkvm_node_bft::Sync::try_advancing_block_synchronization`].
+    async fn try_advancing_block_synchronization(&self) {
+        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
+            Ok(val) => val,
+            Err(err) => {
+                error!("Block synchronization failed - {err}");
+                return;
+            }
+        };
+
+        // If there are new blocks, we need to update the block locators.
+        if has_new_blocks {
+            match self.sync.get_block_locators() {
+                Ok(locators) => self.ping.update_block_locators(locators),
+                Err(err) => error!("Failed to get block locators: {err}"),
+            }
+        }
+    }
+
+    /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
+    async fn try_issuing_block_requests(&self) {
+        // Wait for peer updates or timeout
+        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
+
+        // For sanity, check that sync height is never below ledger height.
+        // (if the ledger height is lower or equal to the current sync height, this is a noop)
+        self.sync.set_sync_height(self.ledger.latest_height());
+
+        match self.sync.handle_block_request_timeouts(&self.router) {
+            Ok(Some((requests, sync_peers))) => {
+                // Re-request blocks instead of performing regular block sync.
+                self.send_block_requests(requests, sync_peers).await;
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                // Abort and retry later.
+                error!("{}", flatten_error(&err));
+                return;
+            }
+        }
+
+        // Do not attempt to sync if there are not blocks to sync.
+        // This prevents redundant log messages and performing unnecessary computation.
+        if !self.sync.can_block_sync() {
+            trace!("Nothing to sync. Will not issue new block requests");
+            return;
+        }
+
+        // Prepare the block requests, if any.
+        // In the process, we update the state of `is_block_synced` for the sync module.
+        let (block_requests, sync_peers) = self.sync.prepare_block_requests();
+
+        // If there are no block requests, but there are pending block responses in the sync pool,
+        // then try to advance the ledger using these pending block responses.
+        if block_requests.is_empty() {
+            let total_requests = self.sync.num_total_block_requests();
+            let num_outstanding = self.sync.num_outstanding_block_requests();
+            if total_requests > 0 {
+                trace!(
+                    "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
+                );
+            } else {
+                // This can happen during peer rotation and should not be a warning.
+                debug!(
+                    "Not block synced yet, and there are no outstanding block requests or \
+                 new block requests to send"
+                );
+            }
+        } else {
+            self.send_block_requests(block_requests, sync_peers).await;
+        }
+    }
+
+    async fn send_block_requests(
+        &self,
+        block_requests: Vec<(u32, PrepareSyncRequest<N>)>,
+        sync_peers: IndexMap<SocketAddr, BlockLocators<N>>,
+    ) {
+        // Issues the block requests in batches.
+        for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
+            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
+                // Stop if we fail to process a batch of requests.
+                break;
+            }
+
+            // Sleep to avoid triggering spam detection.
+            tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
+        }
+    }
+
+    /// Initializes solution verification.
+    fn initialize_solution_verification(&self) {
+        // Start the solution verification loop.
+        let node = self.clone();
+        self.spawn(async move {
+            loop {
+                // If the Ctrl-C handler registered the signal, stop the node.
+                if node.shutdown.load(Acquire) {
+                    info!("Shutting down solution verification");
+                    break;
+                }
+
+                // Determine if the queue contains txs to verify.
+                let queue_is_empty = node.solution_queue.lock().is_empty();
+                // Determine if our verification counter has space to verify new solutions.
+                let counter_is_full = node.num_verifying_solutions.load(Acquire) >= MAX_PARALLEL_SOLUTION_VERIFICATIONS;
+
+                // Sleep to allow the queue to be filled or solutions to be validated.
+                if queue_is_empty || counter_is_full {
+                    sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+
+                // Try to verify solutions.
+                let mut solution_queue = node.solution_queue.lock();
+                while let Some((_, (peer_ip, serialized, solution))) = solution_queue.pop_lru() {
+                    // Increment the verification counter.
+                    let previous_counter = node.num_verifying_solutions.fetch_add(1, Relaxed);
+                    let _node = node.clone();
+                    // For each solution, spawn a task to verify it.
+                    tokio::task::spawn_blocking(move || {
+                        // Retrieve the latest epoch hash.
+                        if let Ok(epoch_hash) = _node.ledger.latest_epoch_hash() {
+                            // Check if the prover has reached their solution limit.
+                            // While snarkVM will ultimately abort any excess solutions for safety, performing this check
+                            // here prevents the to-be aborted solutions from propagating through the network.
+                            let prover_address = solution.address();
+                            if _node.ledger.is_solution_limit_reached(&prover_address, 0) {
+                                debug!("Invalid Solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch", fmt_id(solution.id()));
+                            }
+                            // Retrieve the latest proof target.
+                            let proof_target = _node.ledger.latest_block().header().proof_target();
+                            // Ensure that the solution is valid for the given epoch.
+                            let is_valid = _node.puzzle.check_solution(&solution, epoch_hash, proof_target);
+
+                            match is_valid {
+                                // If the solution is valid, propagate the `UnconfirmedSolution`.
+                                Ok(()) => {
+                                    let message = Message::UnconfirmedSolution(serialized);
+                                    // Propagate the "UnconfirmedSolution".
+                                    _node.propagate(message, &[peer_ip]);
+                                }
+                                // If error occurs after the first 10 blocks of the epoch, log it as a warning, otherwise ignore.
+                                Err(error) => {
+                                    if _node.ledger.latest_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
+                                        debug!("Failed to verify the solution from peer_ip {peer_ip} - {error}")
+                                    }
+                                }
+                            }
+                        } else {
+                            warn!("Failed to retrieve the latest epoch hash.");
+                        }
+                        // Decrement the verification counter.
+                        _node.num_verifying_solutions.fetch_sub(1, Relaxed);
+                    });
+                    // If we are already at capacity, don't verify more solutions.
+                    if previous_counter + 1 >= MAX_PARALLEL_SOLUTION_VERIFICATIONS {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Initializes deploy verification.
+    fn initialize_deploy_verification(&self) {
+        // Start the deploy verification loop.
+        let node = self.clone();
+        self.spawn(async move {
+            loop {
+                // If the Ctrl-C handler registered the signal, stop the node.
+                if node.shutdown.load(Acquire) {
+                    info!("Shutting down deployment verification");
+                    break;
+                }
+
+                // Determine if the queue contains txs to verify.
+                let queue_is_empty = node.deploy_queue.lock().is_empty();
+                // Determine if our verification counter has space to verify new txs.
+                let counter_is_full =
+                    node.num_verifying_deploys.load(Acquire) >= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS;
+
+                // Sleep to allow the queue to be filled or transactions to be validated.
+                if queue_is_empty || counter_is_full {
+                    sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+
+                // Try to verify deployments.
+                while let Some((_, (peer_ip, serialized, transaction))) = node.deploy_queue.lock().pop_lru() {
+                    // Increment the verification counter.
+                    let previous_counter = node.num_verifying_deploys.fetch_add(1, Relaxed);
+                    let _node = node.clone();
+                    // For each deployment, spawn a task to verify it.
+                    tokio::task::spawn_blocking(move || {
+                        // First collect the state root.
+                        let Some(state_root) = transaction.fee_transition().map(|t| t.global_state_root()) else {
+                            debug!("Failed to access global state root for deployment from peer_ip {peer_ip}");
+                            _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                            return;
+                        };
+                        // Check if the state root is in the ledger.
+                        if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
+                            debug!("Failed to find global state root for deployment from peer_ip {peer_ip}, propagating anyway");
+                            // Propagate the `UnconfirmedTransaction`.
+                            _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                            _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                            return;
+                            // Also skip the `check_transaction_basic` call if it is already propagated.
+                        }
+                        // Check the deployment.
+                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                            Ok(_) => {
+                                // Propagate the `UnconfirmedTransaction`.
+                                _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                            }
+                            Err(error) => {
+                                debug!("Failed to verify the deployment from peer_ip {peer_ip} - {error}");
+                            }
+                        }
+                        // Decrement the verification counter.
+                        _node.num_verifying_deploys.fetch_sub(1, Relaxed);
+                    });
+                    // If we are already at capacity, don't verify more deployments.
+                    if previous_counter + 1 >= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Initializes execute verification.
+    fn initialize_execute_verification(&self) {
+        // Start the execute verification loop.
+        let node = self.clone();
+        self.spawn(async move {
+            loop {
+                // If the Ctrl-C handler registered the signal, stop the node.
+                if node.shutdown.load(Acquire) {
+                    info!("Shutting down execution verification");
+                    break;
+                }
+
+                // Determine if the queue contains txs to verify.
+                let queue_is_empty = node.execute_queue.lock().is_empty();
+                // Determine if our verification counter has space to verify new txs.
+                let counter_is_full =
+                    node.num_verifying_executions.load(Acquire) >= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS;
+
+                // Sleep to allow the queue to be filled or transactions to be validated.
+                if queue_is_empty || counter_is_full {
+                    sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+
+                // Try to verify executions.
+                while let Some((_, (peer_ip, serialized, transaction))) = node.execute_queue.lock().pop_lru() {
+                    // Increment the verification counter.
+                    let previous_counter = node.num_verifying_executions.fetch_add(1, Relaxed);
+                    let _node = node.clone();
+                    // For each execution, spawn a task to verify it.
+                    tokio::task::spawn_blocking(move || {
+                        // First collect the state roots.
+                        let state_roots = [
+                            transaction.execution().map(|t| t.global_state_root()),
+                            transaction.fee_transition().map(|t| t.global_state_root()),
+                        ]
+                        .into_iter()
+                        .flatten();
+
+                        for state_root in state_roots {
+                            if !_node.ledger().contains_state_root(&state_root).unwrap_or(false) {
+                                debug!("Failed to find global state root for execution from peer_ip {peer_ip}, propagating anyway");
+                                // Propagate the `UnconfirmedTransaction`.
+                                _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                                _node.num_verifying_executions.fetch_sub(1, Relaxed);
+                                return;
+                                // Also skip the `check_transaction_basic` call if it is already propagated.
+                            }
+                        }
+                        // Check the execution.
+                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                            Ok(_) => {
+                                // Propagate the `UnconfirmedTransaction`.
+                                _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
+                            }
+                            Err(error) => {
+                                debug!("Failed to verify the execution from peer_ip {peer_ip} - {error}");
+                            }
+                        }
+                        // Decrement the verification counter.
+                        _node.num_verifying_executions.fetch_sub(1, Relaxed);
+                    });
+                    // If we are already at capacity, don't verify more executions.
+                    if previous_counter + 1 >= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Spawns a task with the given future; it should only be used for long-running tasks.
+    pub fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
+        self.handles.lock().push(tokio::spawn(future));
     }
 }
 
@@ -92,6 +612,14 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
     /// Shuts down the node.
     async fn shut_down(&self) {
         info!("Shutting down...");
+
+        // Shut down the node.
+        trace!("Shutting down the node...");
+        self.shutdown.store(true, std::sync::atomic::Ordering::Release);
+
+        // Abort the tasks.
+        trace!("Shutting down the client...");
+        self.handles.lock().iter().for_each(|handle| handle.abort());
 
         // Shut down the router.
         self.router.shut_down().await;

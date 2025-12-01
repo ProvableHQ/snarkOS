@@ -1,0 +1,109 @@
+[package]
+name = "snarkos-node-sync"
+version = "4.4.0"
+authors = [ "The Aleo Team <hello@aleo.org>" ]
+description = "A synchronization module for a decentralized operating system"
+homepage = "https://aleo.org"
+repository = "https://github.com/ProvableHQ/snarkOS"
+keywords = [
+  "aleo",
+  "cryptography",
+  "blockchain",
+  "decentralized",
+  "zero-knowledge"
+]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[features]
+default = [ ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-bft-ledger-service/locktick",
+  "snarkos-node-router/locktick",
+]
+serial = ["snarkos-node-bft-ledger-service/serial"]
+metrics = [ "dep:snarkos-node-metrics" ]
+cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]
+test = [ "snarkos-node-sync-locators/test" ]
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.indexmap]
+workspace = true
+features = [ "serde", "rayon" ]
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.futures]
+workspace = true
+
+[dependencies.locktick]
+workspace = true
+features = [ "parking_lot" ]
+optional = true
+
+[dependencies.parking_lot]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = [ "sync" ]
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.snarkos-node-bft-ledger-service]
+workspace = true
+features = [ "ledger-write" ]
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
+
+[dependencies.snarkos-node-network]
+workspace = true
+
+[dependencies.snarkos-node-router]
+workspace = true
+
+[dependencies.snarkos-node-sync-communication-service]
+workspace = true
+
+[dependencies.snarkos-node-sync-locators]
+workspace = true
+
+[dependencies.snarkvm]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dev-dependencies.snarkos-node-bft-ledger-service]
+workspace = true
+features = [ "test" ]
+
+[dev-dependencies.snarkos-node-sync-locators]
+workspace = true
+features = [ "test" ]
+
+[dev-dependencies.snarkos-node-tcp]
+workspace = true
+
+[dev-dependencies.snarkos-node-sync-communication-service]
+workspace = true
+features = [ "test-helpers" ]
+
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "test-helpers" ]
+
+[dev-dependencies.tracing-subscriber]
+workspace = true
+features = [ "env-filter", "fmt" ]

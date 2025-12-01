@@ -1,45 +1,69 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use anyhow::{bail, Result};
+use snarkos_node::bft::helpers::proposal_cache_path;
+use snarkvm::console::network::{CanaryV0, MainnetV0, Network};
+
+use aleo_std::StorageMode;
+use anyhow::{Result, bail};
 use clap::Parser;
 use colored::Colorize;
+use std::path::PathBuf;
 
 /// Cleans the snarkOS node storage.
 #[derive(Debug, Parser)]
 pub struct Clean {
-    /// Specify the network to remove from storage.
-    #[clap(default_value = "3", long = "network")]
+    /// Specify the network to remove from storage (0 = mainnet, 1 = testnet, 2 = canary)
+    #[clap(default_value_t=MainnetV0::ID, long = "network", value_parser = clap::value_parser!(u16).range((MainnetV0::ID as i64)..=(CanaryV0::ID as i64)))]
     pub network: u16,
     /// Enables development mode, specify the unique ID of the local node to clean.
     #[clap(long)]
     pub dev: Option<u16>,
+    /// Specify the path to a directory containing the ledger. Overrides the default path (also for
+    /// dev).
+    #[clap(long = "path")]
+    pub path: Option<PathBuf>,
 }
 
 impl Clean {
     /// Cleans the snarkOS node storage.
     pub fn parse(self) -> Result<String> {
+        // Initialize the storage mode.
+        let storage_mode = match self.path {
+            Some(path) => StorageMode::Custom(path),
+            None => match self.dev {
+                Some(id) => StorageMode::Development(id),
+                None => StorageMode::Production,
+            },
+        };
+
+        // Remove the current proposal cache file, if it exists.
+        let proposal_cache_path = proposal_cache_path(self.network, &storage_mode);
+        if proposal_cache_path.exists() {
+            if let Err(err) = std::fs::remove_file(&proposal_cache_path) {
+                bail!("Failed to remove the current proposal cache file at {}: {err}", proposal_cache_path.display());
+            }
+        }
         // Remove the specified ledger from storage.
-        Self::remove_ledger(self.network, self.dev)
+        Self::remove_ledger(self.network, &storage_mode)
     }
 
     /// Removes the specified ledger from storage.
-    fn remove_ledger(network: u16, dev: Option<u16>) -> Result<String> {
+    pub(crate) fn remove_ledger(network: u16, mode: &StorageMode) -> Result<String> {
         // Construct the path to the ledger in storage.
-        let path = aleo_std::aleo_ledger_dir(network, dev);
+        let path = aleo_std::aleo_ledger_dir(network, mode);
 
         // Prepare the path string.
         let path_string = format!("(in \"{}\")", path.display()).dimmed();

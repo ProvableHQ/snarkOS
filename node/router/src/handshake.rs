@@ -1,36 +1,35 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use crate::{Peer, Router};
-use snarkos_node_messages::{
-    ChallengeRequest,
-    ChallengeResponse,
-    Data,
-    Disconnect,
-    DisconnectReason,
-    Message,
-    MessageCodec,
-    MessageTrait,
+use crate::{
+    ConnectionMode,
+    NodeType,
+    PeerPoolHandling,
+    Router,
+    messages::{ChallengeRequest, ChallengeResponse, DisconnectReason, Message, MessageCodec, MessageTrait},
 };
-use snarkos_node_tcp::{ConnectionSide, Tcp, P2P};
-use snarkvm::prelude::{error, Address, Header, Network};
+use snarkos_node_network::{get_repo_commit_hash, log_repo_sha_comparison};
+use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
+use snarkvm::{
+    ledger::narwhal::Data,
+    prelude::{Address, ConsensusVersion, Field, Network, block::Header, error, io_error},
+};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::SinkExt;
-use rand::{rngs::OsRng, Rng};
+use rand::{Rng, rngs::OsRng};
 use std::{io, net::SocketAddr};
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
@@ -43,148 +42,333 @@ impl<N: Network> P2P for Router<N> {
     }
 }
 
+/// A macro unwrapping the expected handshake message or returning an error for unexpected messages.
+#[macro_export]
+macro_rules! expect_message {
+    ($msg_ty:path, $framed:expr, $peer_addr:expr) => {{
+        use snarkvm::utilities::io_error;
+
+        match $framed.try_next().await? {
+            // Received the expected message, proceed.
+            Some($msg_ty(data)) => {
+                trace!("Received '{}' from '{}'", data.name(), $peer_addr);
+                data
+            }
+            // Received a disconnect message, abort.
+            Some(Message::Disconnect($crate::messages::Disconnect { reason })) => {
+                return Err(io_error(format!("'{}' disconnected: {reason}", $peer_addr)));
+            }
+            // Received an unexpected message, abort.
+            Some(ty) => {
+                return Err(io_error(format!(
+                    "'{}' did not follow the handshake protocol: received {:?} instead of {}",
+                    $peer_addr,
+                    ty.name(),
+                    stringify!($msg_ty),
+                )));
+            }
+            // Received nothing.
+            None => {
+                return Err(io_error(format!(
+                    "the peer disconnected before sending {:?}, likely due to peer saturation or shutdown",
+                    stringify!($msg_ty),
+                )));
+            }
+        }
+    }};
+}
+
+/// Send the given message to the peer.
+async fn send<N: Network>(
+    framed: &mut Framed<&mut TcpStream, MessageCodec<N>>,
+    peer_addr: SocketAddr,
+    message: Message<N>,
+) -> io::Result<()> {
+    trace!("Sending '{}' to '{peer_addr}'", message.name());
+    framed.send(message).await
+}
+
 impl<N: Network> Router<N> {
-    /// Performs the handshake protocol.
+    /// Executes the handshake protocol.
     pub async fn handshake<'a>(
         &'a self,
         peer_addr: SocketAddr,
         stream: &'a mut TcpStream,
         peer_side: ConnectionSide,
         genesis_header: Header<N>,
-    ) -> io::Result<(SocketAddr, Framed<&mut TcpStream, MessageCodec<N>>)> {
-        // Construct the stream.
-        let mut framed = Framed::new(stream, MessageCodec::<N>::default());
+        restrictions_id: Field<N>,
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
+        // If this is an inbound connection, we log it, but don't know the listening address yet.
+        // Otherwise, we can immediately register the listening address.
+        let mut listener_addr = if peer_side == ConnectionSide::Initiator {
+            debug!("Received a connection request from '{peer_addr}'");
+            None
+        } else {
+            debug!("Shaking hands with '{peer_addr}'...");
+            Some(peer_addr)
+        };
 
-        // Ensure the peer is allowed to connect.
-        if let Err(forbidden_message) = self.ensure_peer_is_allowed(peer_addr) {
-            return Err(error(format!("{forbidden_message}")));
+        // Check (or impose) IP-level bans.
+        #[cfg(not(feature = "test"))]
+        if !self.is_dev() && peer_side == ConnectionSide::Initiator {
+            // If the IP is already banned reject the connection.
+            if self.is_ip_banned(peer_addr.ip()) {
+                trace!("Rejected a connection request from banned IP '{}'", peer_addr.ip());
+                return Err(error(format!("'{}' is a banned IP address", peer_addr.ip())));
+            }
+
+            let num_attempts =
+                self.cache.insert_inbound_connection(peer_addr.ip(), Router::<N>::CONNECTION_ATTEMPTS_SINCE_SECS);
+
+            debug!("Number of connection attempts from '{}': {}", peer_addr.ip(), num_attempts);
+            if num_attempts > Router::<N>::MAX_CONNECTION_ATTEMPTS {
+                self.update_ip_ban(peer_addr.ip());
+                trace!("Rejected a consecutive connection request from IP '{}'", peer_addr.ip());
+                return Err(error(format!("'{}' appears to be spamming connections", peer_addr.ip())));
+            }
         }
-        debug!("Received a connection request from '{peer_addr}'");
 
-        /* Step 1: Send the challenge request. */
+        // Perform the handshake; we pass on a mutable reference to listener_addr in case the process is broken at any point in time.
+        let handshake_result = if peer_side == ConnectionSide::Responder {
+            self.handshake_inner_initiator(peer_addr, stream, genesis_header, restrictions_id).await
+        } else {
+            self.handshake_inner_responder(peer_addr, &mut listener_addr, stream, genesis_header, restrictions_id).await
+        };
+
+        if let Some(addr) = listener_addr {
+            match handshake_result {
+                Ok(Some(ref cr)) => {
+                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                        self.resolver.write().insert_peer(peer.listener_addr(), peer_addr, Some(cr.address));
+                        peer.upgrade_to_connected(
+                            peer_addr,
+                            cr.listener_port,
+                            cr.address,
+                            cr.node_type,
+                            cr.version,
+                            ConnectionMode::Router,
+                        );
+                    }
+                    #[cfg(feature = "metrics")]
+                    self.update_metrics();
+                    debug!("Completed the handshake with '{peer_addr}'");
+                }
+                Ok(None) => {
+                    return Err(error(format!("Duplicate handshake attempt with '{addr}'")));
+                }
+                Err(_) => {
+                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                        // The peer may only be downgraded if it's a ConnectingPeer.
+                        if peer.is_connecting() {
+                            peer.downgrade_to_candidate(addr);
+                        }
+                    }
+                }
+            }
+        }
+
+        handshake_result
+    }
+
+    /// The connection initiator side of the handshake.
+    async fn handshake_inner_initiator<'a>(
+        &'a self,
+        peer_addr: SocketAddr,
+        stream: &'a mut TcpStream,
+        genesis_header: Header<N>,
+        restrictions_id: Field<N>,
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
+        // Introduce the peer into the peer pool.
+        if !self.add_connecting_peer(peer_addr) {
+            // Return early if already being connected to.
+            return Ok(None);
+        }
+
+        // Construct the stream.
+        let mut framed = Framed::new(stream, MessageCodec::<N>::handshake());
 
         // Initialize an RNG.
         let rng = &mut OsRng;
-        // Sample a random nonce.
-        let nonce_a = rng.gen();
 
-        // Send a challenge request to the peer.
-        let message_a = Message::<N>::ChallengeRequest(ChallengeRequest {
-            version: Message::<N>::VERSION,
-            listener_port: self.local_ip.port(),
-            node_type: self.node_type,
-            address: self.address(),
-            nonce: nonce_a,
-        });
-        trace!("Sending '{}-A' to '{peer_addr}'", message_a.name());
-        framed.send(message_a).await?;
-
-        /* Step 2: Receive the challenge request. */
-
-        // Listen for the challenge request message.
-        let request_b = match framed.try_next().await? {
-            // Received the challenge request message, proceed.
-            Some(Message::ChallengeRequest(data)) => data,
-            // Received a disconnect message, abort.
-            Some(Message::Disconnect(reason)) => return Err(error(format!("'{peer_addr}' disconnected: {reason:?}"))),
-            // Received an unexpected message, abort.
-            _ => return Err(error(format!("'{peer_addr}' did not send a challenge request"))),
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
         };
-        trace!("Received '{}-B' from '{peer_addr}'", request_b.name());
 
+        /* Step 1: Send the challenge request. */
+
+        // Sample a random nonce.
+        let our_nonce = rng.r#gen();
+        // Send a challenge request to the peer.
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
+        send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
+
+        /* Step 2: Receive the peer's challenge response followed by the challenge request. */
+
+        // Listen for the challenge response message.
+        let peer_response = expect_message!(Message::ChallengeResponse, framed, peer_addr);
+        // Listen for the challenge request message.
+        let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
+
+        // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
+        if let Some(reason) = self
+            .verify_challenge_response(
+                peer_addr,
+                peer_request.address,
+                peer_request.node_type,
+                peer_response,
+                genesis_header,
+                restrictions_id,
+                our_nonce,
+            )
+            .await
+        {
+            send(&mut framed, peer_addr, reason.into()).await?;
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
+        }
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) = self.verify_challenge_request(peer_addr, &request_b) {
-            trace!("Sending 'Disconnect' to '{peer_addr}'");
-            framed.send(Message::Disconnect(Disconnect { reason: reason.clone() })).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+        if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
+            send(&mut framed, peer_addr, reason.into()).await?;
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
         }
 
         /* Step 3: Send the challenge response. */
 
+        let response_nonce: u64 = rng.r#gen();
+        let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
         // Sign the counterparty nonce.
-        let signature_b = self
-            .account
-            .sign_bytes(&request_b.nonce.to_le_bytes(), rng)
-            .map_err(|_| error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")))?;
-
-        // Send the challenge response.
-        let message_b =
-            Message::ChallengeResponse(ChallengeResponse { genesis_header, signature: Data::Object(signature_b) });
-        trace!("Sending '{}-B' to '{peer_addr}'", message_b.name());
-        framed.send(message_b).await?;
-
-        /* Step 4: Receive the challenge response. */
-
-        // Listen for the challenge response message.
-        let response_a = match framed.try_next().await? {
-            // Received the challenge response message, proceed.
-            Some(Message::ChallengeResponse(data)) => data,
-            // Received a disconnect message, abort.
-            Some(Message::Disconnect(reason)) => return Err(error(format!("'{peer_addr}' disconnected: {reason:?}"))),
-            // Received an unexpected message, abort.
-            _ => return Err(error(format!("'{peer_addr}' did not send a challenge response"))),
+        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+            return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
         };
-        trace!("Received '{}-A' from '{peer_addr}'", response_a.name());
+        // Send the challenge response.
+        let our_response = ChallengeResponse {
+            genesis_header,
+            restrictions_id,
+            signature: Data::Object(our_signature),
+            nonce: response_nonce,
+        };
+        send(&mut framed, peer_addr, Message::ChallengeResponse(our_response)).await?;
 
-        // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) =
-            self.verify_challenge_response(peer_addr, request_b.address, response_a, genesis_header, nonce_a).await
-        {
-            trace!("Sending 'Disconnect' to '{peer_addr}'");
-            framed.send(Message::Disconnect(Disconnect { reason: reason.clone() })).await?;
-            return Err(error(format!("Dropped '{peer_addr}' for reason: {reason:?}")));
+        Ok(Some(peer_request))
+    }
+
+    /// The connection responder side of the handshake.
+    async fn handshake_inner_responder<'a>(
+        &'a self,
+        peer_addr: SocketAddr,
+        listener_addr: &mut Option<SocketAddr>,
+        stream: &'a mut TcpStream,
+        genesis_header: Header<N>,
+        restrictions_id: Field<N>,
+    ) -> io::Result<Option<ChallengeRequest<N>>> {
+        // Construct the stream.
+        let mut framed = Framed::new(stream, MessageCodec::<N>::handshake());
+
+        /* Step 1: Receive the challenge request. */
+
+        // Listen for the challenge request message.
+        let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
+
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
+
+        // Obtain the peer's listening address.
+        *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_request.listener_port));
+        let listener_addr = listener_addr.unwrap();
+
+        // Knowing the peer's listening address, ensure it is allowed to connect.
+        if let Err(forbidden_message) = self.ensure_peer_is_allowed(listener_addr) {
+            return Err(error(format!("{forbidden_message}")));
         }
 
-        /* Step 5: Add the peer to the router. */
+        // Introduce the peer into the peer pool.
+        if !self.add_connecting_peer(listener_addr) {
+            // Return early if already being connected to.
+            return Ok(None);
+        }
 
-        // Prepare the peer.
-        let peer_ip = match peer_side {
-            // The peer initiated the connection.
-            ConnectionSide::Initiator => SocketAddr::new(peer_addr.ip(), request_b.listener_port),
-            // This node initiated the connection.
-            ConnectionSide::Responder => peer_addr,
+        // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
+        if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
+            send(&mut framed, peer_addr, reason.into()).await?;
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
+        }
+
+        /* Step 2: Send the challenge response followed by own challenge request. */
+
+        // Initialize an RNG.
+        let rng = &mut OsRng;
+
+        // Sign the counterparty nonce.
+        let response_nonce: u64 = rng.r#gen();
+        let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
+        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+            return Err(error(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
         };
-        let peer_address = request_b.address;
-        let peer_type = request_b.node_type;
-        let peer_version = request_b.version;
+        // Send the challenge response.
+        let our_response = ChallengeResponse {
+            genesis_header,
+            restrictions_id,
+            signature: Data::Object(our_signature),
+            nonce: response_nonce,
+        };
+        send(&mut framed, peer_addr, Message::ChallengeResponse(our_response)).await?;
 
-        // Construct the peer.
-        let peer = Peer::new(peer_ip, peer_address, peer_type, peer_version);
-        // Insert the connected peer in the router.
-        self.insert_connected_peer(peer, peer_addr);
-        info!("Connected to '{peer_ip}'");
+        // Sample a random nonce.
+        let our_nonce = rng.r#gen();
+        // Send the challenge request.
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
+        send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
 
-        Ok((peer_ip, framed))
+        /* Step 3: Receive the challenge response. */
+
+        // Listen for the challenge response message.
+        let peer_response = expect_message!(Message::ChallengeResponse, framed, peer_addr);
+        // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
+        if let Some(reason) = self
+            .verify_challenge_response(
+                peer_addr,
+                peer_request.address,
+                peer_request.node_type,
+                peer_response,
+                genesis_header,
+                restrictions_id,
+                our_nonce,
+            )
+            .await
+        {
+            send(&mut framed, peer_addr, reason.into()).await?;
+            return Err(io_error(format!("Dropped '{peer_addr}' for reason: {reason}")));
+        }
+
+        Ok(Some(peer_request))
     }
 
     /// Ensure the peer is allowed to connect.
-    fn ensure_peer_is_allowed(&self, peer_ip: SocketAddr) -> Result<()> {
-        // Ensure the peer IP is not this node.
-        if self.is_local_ip(&peer_ip) {
-            bail!("Dropping connection request from '{peer_ip}' (attempted to self-connect)")
+    fn ensure_peer_is_allowed(&self, listener_addr: SocketAddr) -> Result<()> {
+        // Ensure that it's not a self-connect attempt.
+        if self.is_local_ip(listener_addr) {
+            bail!("Dropping connection request from '{listener_addr}' (attempted to self-connect)");
         }
-        // Ensure the node does not surpass the maximum number of peer connections.
-        if self.number_of_connected_peers() >= self.max_connected_peers() {
-            bail!("Dropping connection request from '{peer_ip}' (maximum peers reached)")
+        // As a validator, only accept connections from trusted peers and bootstrap nodes.
+        if self.node_type() == NodeType::Validator
+            && !self.is_trusted(listener_addr)
+            && !crate::bootstrap_peers::<N>(self.is_dev()).contains(&listener_addr)
+        {
+            bail!("Dropping connection request from '{listener_addr}' (untrusted)");
         }
-        // Ensure the node is not already connected to this peer.
-        if self.is_connected(&peer_ip) {
-            bail!("Dropping connection request from '{peer_ip}' (already connected)")
-        }
-        // Ensure the peer is not restricted.
-        if self.is_restricted(&peer_ip) {
-            bail!("Dropping connection request from '{peer_ip}' (restricted)")
-        }
-        // Ensure the peer is not spamming connection attempts.
-        if !peer_ip.ip().is_loopback() {
-            // Add this connection attempt and retrieve the number of attempts.
-            let num_attempts = self.cache.insert_inbound_connection(peer_ip.ip(), Self::RADIO_SILENCE_IN_SECS as i64);
-            // Ensure the connecting peer has not surpassed the connection attempt limit.
-            if num_attempts > Self::MAXIMUM_CONNECTION_FAILURES {
-                // Restrict the peer.
-                self.insert_restricted_peer(peer_ip);
-                bail!("Dropping connection request from '{peer_ip}' (tried {num_attempts} times)")
-            }
+        // If the node is in trusted peers only mode, ensure the peer is explicitly trusted.
+        if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
+            bail!("Dropping connection request from '{listener_addr}' (untrusted)");
         }
         Ok(())
     }
@@ -196,59 +380,62 @@ impl<N: Network> Router<N> {
         message: &ChallengeRequest<N>,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _ } = message;
+        let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _, ref snarkos_sha } = message;
+        log_repo_sha_comparison(peer_addr, snarkos_sha, Self::OWNER);
 
         // Ensure the message protocol version is not outdated.
-        if version < Message::<N>::VERSION {
+        if !self.is_valid_message_version(version) {
             warn!("Dropping '{peer_addr}' on version {version} (outdated)");
             return Some(DisconnectReason::OutdatedClientVersion);
         }
 
-        // TODO (howardwu): Remove this after Phase 2.
-        if !self.is_dev
-            && node_type.is_beacon()
-            && address.to_string() != "aleo1q6qstg8q8shwqf5m6q5fcenuwsdqsvp4hhsgfnx5chzjm3secyzqt9mxm8"
+        // Ensure there are no validators connected with the given Aleo address.
+        if self.node_type() == NodeType::Validator
+            && node_type == NodeType::Validator
+            && self.is_connected_address(address)
         {
-            warn!("Dropping '{peer_addr}' for an invalid {node_type}");
-            return Some(DisconnectReason::ProtocolViolation);
+            warn!("Dropping '{peer_addr}' for being already connected ({address})");
+            return Some(DisconnectReason::NoReasonGiven);
         }
 
         None
     }
 
     /// Verifies the given challenge response. Returns a disconnect reason if the response is invalid.
+    #[allow(clippy::too_many_arguments)]
     async fn verify_challenge_response(
         &self,
         peer_addr: SocketAddr,
         peer_address: Address<N>,
+        peer_node_type: NodeType,
         response: ChallengeResponse<N>,
         expected_genesis_header: Header<N>,
+        expected_restrictions_id: Field<N>,
         expected_nonce: u64,
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge response.
-        let ChallengeResponse { genesis_header, signature } = response;
+        let ChallengeResponse { genesis_header, restrictions_id, signature, nonce } = response;
 
         // Verify the challenge response, by checking that the block header matches.
         if genesis_header != expected_genesis_header {
             warn!("Handshake with '{peer_addr}' failed (incorrect block header)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
-
+        // Verify the restrictions ID.
+        if !peer_node_type.is_prover() && !self.node_type.is_prover() && restrictions_id != expected_restrictions_id {
+            warn!("Handshake with '{peer_addr}' failed (incorrect restrictions ID)");
+            return Some(DisconnectReason::InvalidChallengeResponse);
+        }
         // Perform the deferred non-blocking deserialization of the signature.
-        let signature = match signature.deserialize().await {
-            Ok(signature) => signature,
-            Err(_) => {
-                warn!("Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
-                return Some(DisconnectReason::InvalidChallengeResponse);
-            }
+        let Ok(signature) = signature.deserialize().await else {
+            warn!("Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
+            return Some(DisconnectReason::InvalidChallengeResponse);
         };
-
         // Verify the signature.
-        if !signature.verify_bytes(&peer_address, &expected_nonce.to_le_bytes()) {
+        if !signature.verify_bytes(&peer_address, &[expected_nonce.to_le_bytes(), nonce.to_le_bytes()].concat()) {
             warn!("Handshake with '{peer_addr}' failed (invalid signature)");
             return Some(DisconnectReason::InvalidChallengeResponse);
         }
-
         None
     }
 }

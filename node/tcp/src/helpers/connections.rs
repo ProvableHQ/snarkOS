@@ -1,23 +1,25 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Objects associated with connection handling.
 
-use std::{collections::HashMap, net::SocketAddr, ops::Not};
+use std::{collections::HashMap, net::SocketAddr, ops::Not, sync::atomic::AtomicBool};
 
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -31,7 +33,7 @@ use crate::protocols::{Handshake, Reading, Writing};
 
 /// A map of all currently connected addresses to their associated connection.
 #[derive(Default)]
-pub(crate) struct Connections(RwLock<HashMap<SocketAddr, Connection>>);
+pub(crate) struct Connections(pub(crate) RwLock<HashMap<SocketAddr, Connection>>);
 
 impl Connections {
     /// Adds the given connection to the list of active connections.
@@ -83,6 +85,8 @@ pub struct Connection {
     pub(crate) writer: Option<Box<dyn AW>>,
     /// Used to notify the [`Reading`] protocol that the connection is fully ready.
     pub(crate) readiness_notifier: Option<oneshot::Sender<()>>,
+    /// Prevents the OnDisconnect hook from being triggered multiple times.
+    pub(crate) disconnecting: AtomicBool,
     /// Handles to tasks spawned for the connection.
     pub(crate) tasks: Vec<JoinHandle<()>>,
 }
@@ -96,6 +100,7 @@ impl Connection {
             reader: None,
             writer: None,
             readiness_notifier: None,
+            disconnecting: Default::default(),
             side,
             tasks: Default::default(),
         }

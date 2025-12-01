@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-node-rest"
-version = "0.9.0"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,56 +12,114 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
-license = "GPL-3.0"
-edition = "2021"
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[features]
+default = [ ]
+history = [ "snarkvm/synthesizer", "snarkvm/history" ]
+telemetry = [ "snarkos-node-consensus/telemetry" ]
+cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-consensus/locktick",
+  "snarkos-node-router/locktick",
+  "snarkvm/locktick"
+]
+serial = [
+  "snarkos-node-router/serial",
+  "snarkos-node-consensus/serial"
+] 
 
 [dependencies.anyhow]
-version = "1"
+workspace = true
+
+[dependencies.axum]
+workspace = true
+
+[dependencies.axum-extra]
+workspace = true
+features = [ "erased-json", "typed-header" ]
 
 [dependencies.http]
-version = "0.2"
+workspace = true
 
 [dependencies.indexmap]
-version = "1.8"
+workspace = true
+features = [ "serde", "rayon" ]
 
 [dependencies.jsonwebtoken]
-version = "8.1.1"
+version = "9.2"
+
+[dependencies.locktick]
+workspace = true
+features = [ "parking_lot" ]
+optional = true
 
 [dependencies.once_cell]
-version = "1.13"
+workspace = true
+
+[dependencies.parking_lot]
+workspace = true
 
 [dependencies.serde]
-version = "1"
-default-features = false
+workspace = true 
 features = [ "derive" ]
 
+[dependencies.serde_json]
+workspace = true
+features = [ "preserve_order" ]
+
+[dependencies.serde_with]
+version = "3"
+
+[dependencies.snarkos-node-cdn]
+workspace = true
+
 [dependencies.snarkos-node-consensus]
-path = "../consensus"
+workspace = true
 
-[dependencies.snarkos-node-ledger]
-path = "../ledger"
-
-[dependencies.snarkos-node-messages]
-path = "../messages"
+[dependencies.snarkos-node-network]
+workspace = true
 
 [dependencies.snarkos-node-router]
-path = "../router"
+workspace = true
 
-[dependencies.rand]
-version = "0.8"
+[dependencies.snarkos-node-sync]
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
 
+[dependencies.rand]
+workspace = true
+
+[dependencies.rayon]
+workspace = true
+
 [dependencies.time]
-version = "0.3"
+workspace = true
 
 [dependencies.tokio]
-version = "1"
+workspace = true
+
+[dependencies.tower_governor]
+version = "0.7"
+
+[dependencies.tower-http]
+version = "0.6"
+features = [ "cors", "trace" ]
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
 
-[dependencies.warp]
-version = "0.3"
+[dev-dependencies.base64]
+workspace = true
+
+[dev-dependencies.tower]
+version = "0.4"
+features = ["util"]
+
+[build-dependencies.built]
+workspace = true

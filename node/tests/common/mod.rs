@@ -1,30 +1,30 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 pub mod node;
 pub mod test_peer;
 
-use std::{env, str::FromStr};
+use std::str::FromStr;
 
 use snarkos_account::Account;
-use snarkvm::prelude::{Block, FromBytes, Network, Testnet3 as CurrentNetwork};
+use snarkvm::prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, PrivateKey, TestRng, block::Block};
 
 /// Returns a fixed account.
-pub fn sample_account() -> Account<CurrentNetwork> {
-    Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap()
+pub fn sample_account(rng: &mut TestRng) -> Account<CurrentNetwork> {
+    let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+    Account::<CurrentNetwork>::try_from(&private_key).unwrap()
 }
 
 /// Loads the current network's genesis block.
@@ -33,20 +33,21 @@ pub fn sample_genesis_block() -> Block<CurrentNetwork> {
 }
 
 /// Enables logging in tests.
-pub fn initialise_logger(level: u8) {
-    match level {
-        0 => env::set_var("RUST_LOG", "info"),
-        1 => env::set_var("RUST_LOG", "debug"),
-        2 | 3 => env::set_var("RUST_LOG", "trace"),
-        _ => env::set_var("RUST_LOG", "info"),
+pub fn initialize_logger(verbosity: u8) {
+    let verbosity_str = match verbosity {
+        0 => "info",
+        1 => "debug",
+        2..=4 => "trace",
+        _ => "info",
     };
 
     // Filter out undesirable logs.
-    let filter = tracing_subscriber::EnvFilter::from_default_env()
+    let filter = tracing_subscriber::EnvFilter::from_str(verbosity_str)
+        .unwrap()
         .add_directive("snarkos=off".parse().unwrap())
         .add_directive("tokio_util=off".parse().unwrap())
         .add_directive("mio=off".parse().unwrap());
 
     // Initialize tracing.
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(level == 3).try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(verbosity > 2).try_init();
 }

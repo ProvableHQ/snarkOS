@@ -10,19 +10,19 @@ env:
 jobs:
   ubuntu:
     name: Ubuntu
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
+        uses: dtolnay/rust-toolchain@stable
 
+      - name: Install required Debian pacakges
+        run: sudo apt install -y lld
+ 
       - name: Build snarkOS
         run: |
           cargo build --all --release && strip target/release/snarkos
@@ -35,33 +35,30 @@ jobs:
           mkdir tempdir
           mv target/release/snarkos tempdir
           cd tempdir
-          zip -r aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip snarkos
+          zip -r aleo-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip snarkos
           cd ..
-          mv tempdir/aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip .
+          mv tempdir/aleo-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip .
 
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip
+            aleo-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   macos:
     name: macOS
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build snarkOS
         run: |
@@ -75,37 +72,34 @@ jobs:
           mkdir tempdir
           mv target/release/snarkos tempdir
           cd tempdir
-          zip -r aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.zip snarkos
+          zip -r aleo-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.zip snarkos
           cd ..
-          mv tempdir/aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.zip .
+          mv tempdir/aleo-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.zip .
 
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.zip
+            aleo-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   windows:
     name: Windows
     runs-on: windows-latest
+    permissions:
+      contents: write
     continue-on-error: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v1
+        uses: KyleMayes/install-llvm-action@v2
         with:
           version: "11"
           directory: ${{ runner.temp }}/llvm
@@ -122,13 +116,13 @@ jobs:
 
       - name: Zip
         run: |
-          Compress-Archive target/release/snarkos.exe aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
+          Compress-Archive target/release/snarkos.exe aleo-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
 
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
+            aleo-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,34 +1,33 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use super::*;
 
-use snarkos_node_messages::{
+use snarkos_node_router::messages::{
     BlockRequest,
     DisconnectReason,
     Message,
     MessageCodec,
     Ping,
     Pong,
+    PuzzleRequest,
     UnconfirmedTransaction,
 };
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
-use snarkvm::prelude::{Network, Transaction};
+use snarkvm::prelude::{ConsensusVersion, Field, Network, Zero, block::Transaction};
 
-use futures_util::sink::SinkExt;
 use std::{io, net::SocketAddr};
 
 impl<N: Network, C: ConsensusStorage<N>> P2P for Prover<N, C> {
@@ -47,18 +46,28 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Prover<N, C> {
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
         let genesis_header = *self.genesis.header();
-        let (peer_ip, mut framed) = self.router.handshake(peer_addr, stream, conn_side, genesis_header).await?;
-
-        // Send the first `Ping` message to the peer.
-        let message = Message::Ping(Ping::<N> {
-            version: Message::<N>::VERSION,
-            node_type: self.node_type(),
-            block_locators: None,
-        });
-        trace!("Sending '{}' to '{peer_ip}'", message.name());
-        framed.send(message).await?;
+        let restrictions_id = Field::zero(); // Provers may bypass restrictions, since they do not validate transactions.
+        self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
         Ok(connection)
+    }
+}
+
+#[async_trait]
+impl<N: Network, C: ConsensusStorage<N>> OnConnect for Prover<N, C>
+where
+    Self: Outbound<N>,
+{
+    async fn on_connect(&self, peer_addr: SocketAddr) {
+        // Resolve the peer address to the listener address.
+        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
+            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
+                if peer.node_type != NodeType::BootstrapClient {
+                    // Send the first `Ping` message to the peer.
+                    self.ping.on_peer_connected(listener_addr);
+                }
+            }
+        }
     }
 }
 
@@ -66,19 +75,14 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Prover<N, C> {
 impl<N: Network, C: ConsensusStorage<N>> Disconnect for Prover<N, C> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
-        self.router.remove_connected_peer(peer_addr);
-    }
-}
-
-#[async_trait]
-impl<N: Network, C: ConsensusStorage<N>> Writing for Prover<N, C> {
-    type Codec = MessageCodec<N>;
-    type Message = Message<N>;
-
-    /// Creates an [`Encoder`] used to write the outbound messages to the target stream.
-    /// The `side` parameter indicates the connection side **from the node's perspective**.
-    fn codec(&self, _addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        Default::default()
+        if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
+            self.sync.remove_peer(&peer_ip);
+            self.router.downgrade_peer_to_candidate(peer_ip);
+            // Clear cached entries applicable to the peer.
+            self.router.cache().clear_peer_entries(peer_ip);
+            #[cfg(feature = "metrics")]
+            self.router.update_metrics();
+        }
     }
 }
 
@@ -94,13 +98,15 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Prover<N, C> {
     }
 
     /// Processes a message received from the network.
-    async fn process_message(&self, peer_ip: SocketAddr, message: Self::Message) -> io::Result<()> {
+    async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) -> io::Result<()> {
         // Process the message. Disconnect if the peer violated the protocol.
-        if let Err(error) = self.inbound(peer_ip, message).await {
-            warn!("Disconnecting from '{peer_ip}' - {error}");
-            self.send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
-            // Disconnect from this peer.
-            self.router().disconnect(peer_ip);
+        if let Err(error) = self.inbound(peer_addr, message).await {
+            if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
+                warn!("Disconnecting from '{peer_addr}' - {error}");
+                self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
+                // Disconnect from this peer.
+                self.router().disconnect(peer_ip);
+            }
         }
         Ok(())
     }
@@ -109,52 +115,98 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Prover<N, C> {
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Routing<N> for Prover<N, C> {}
 
-impl<N: Network, C: ConsensusStorage<N>> Heartbeat<N> for Prover<N, C> {}
+impl<N: Network, C: ConsensusStorage<N>> Heartbeat<N> for Prover<N, C> {
+    /// This function updates the puzzle if network has updated.
+    fn handle_puzzle_request(&self) {
+        // Find the sync peers.
+        if let Some((sync_peers, _)) = self.sync.find_sync_peers() {
+            // Choose the peer with the highest block height.
+            if let Some((peer_ip, _)) = sync_peers.into_iter().max_by_key(|(_, height)| *height) {
+                // Request the puzzle from the peer.
+                self.router().send(peer_ip, Message::PuzzleRequest(PuzzleRequest));
+            }
+        }
+    }
+}
 
 impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Prover<N, C> {
     /// Returns a reference to the router.
     fn router(&self) -> &Router<N> {
         &self.router
     }
+
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    fn is_block_synced(&self) -> bool {
+        true
+    }
+
+    /// Returns the number of blocks this node is behind the greatest peer height,
+    /// or `None` if not connected to peers yet.
+    fn num_blocks_behind(&self) -> Option<u32> {
+        //TODO(kaimast): should this return None instead?
+        Some(0)
+    }
+
+    /// Returns the current sync speed in blocks per second.
+    fn get_sync_speed(&self) -> f64 {
+        0.0
+    }
 }
 
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
+    /// Returns `true` if the message version is valid.
+    fn is_valid_message_version(&self, message_version: u32) -> bool {
+        self.router().is_valid_message_version(message_version)
+    }
+
     /// Handles a `BlockRequest` message.
     fn block_request(&self, peer_ip: SocketAddr, _message: BlockRequest) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 
     /// Handles a `BlockResponse` message.
-    fn block_response(&self, peer_ip: SocketAddr, _blocks: Vec<Block<N>>) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+    fn block_response(
+        &self,
+        peer_ip: SocketAddr,
+        _blocks: Vec<Block<N>>,
+        _latest_consensus_version: Option<ConsensusVersion>,
+    ) -> bool {
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
+    }
+
+    /// Processes the block locators and sends back a `Pong` message.
+    fn ping(&self, peer_ip: SocketAddr, message: Ping<N>) -> bool {
+        // If block locators were provided, then update the peer in the sync pool.
+        if let Some(block_locators) = message.block_locators {
+            // Check the block locators are valid, and update the peer in the sync pool.
+            if let Err(error) = self.sync.update_peer_locators(peer_ip, &block_locators) {
+                warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
+                return false;
+            }
+        }
+
+        // Send a `Pong` message to the peer.
+        self.router().send(peer_ip, Message::Pong(Pong { is_fork: Some(false) }));
+        true
     }
 
     /// Sleeps for a period and then sends a `Ping` message to the peer.
     fn pong(&self, peer_ip: SocketAddr, _message: Pong) -> bool {
-        // Spawn an asynchronous task for the `Ping` request.
-        let self_clone = self.clone();
-        tokio::spawn(async move {
-            // Sleep for the preset time before sending a `Ping` request.
-            tokio::time::sleep(Duration::from_secs(Self::PING_SLEEP_IN_SECS)).await;
-            // Send a `Ping` message to the peer.
-            self_clone.send_ping(peer_ip, None);
-        });
+        self.ping.on_pong_received(peer_ip);
         true
     }
 
     /// Disconnects on receipt of a `PuzzleRequest` message.
     fn puzzle_request(&self, peer_ip: SocketAddr) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 
-    /// Saves the latest epoch challenge and latest block header in the node.
-    fn puzzle_response(&self, peer_ip: SocketAddr, serialized: PuzzleResponse<N>, header: Header<N>) -> bool {
-        // Retrieve the epoch number.
-        let epoch_number = serialized.epoch_challenge.epoch_number();
+    /// Saves the latest epoch hash and latest block header in the node.
+    fn puzzle_response(&self, peer_ip: SocketAddr, epoch_hash: N::BlockHash, header: Header<N>) -> bool {
         // Retrieve the block height.
         let block_height = header.height();
         if let Some(block_header) = self.latest_block_header.read().as_ref() {
@@ -168,13 +220,13 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
         }
 
         info!(
-            "Coinbase Puzzle (Epoch {epoch_number}, Block {block_height}, Coinbase Target {}, Proof Target {})",
+            "Puzzle (Block {block_height}, Coinbase Target {}, Proof Target {})",
             header.coinbase_target(),
             header.proof_target()
         );
 
-        // Save the latest epoch challenge in the node.
-        self.latest_epoch_challenge.write().replace(serialized.epoch_challenge);
+        // Save the latest epoch hash in the node.
+        self.latest_epoch_hash.write().replace(epoch_hash);
         // Save the latest block header in the node.
         self.latest_block_header.write().replace(header);
         trace!("Received 'PuzzleResponse' from '{peer_ip}' (Epoch {epoch_number}, Block {block_height})");
@@ -186,39 +238,44 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Prover<N, C> {
         &self,
         peer_ip: SocketAddr,
         serialized: UnconfirmedSolution<N>,
-        solution: ProverSolution<N>,
+        solution: Solution<N>,
     ) -> bool {
-        // Retrieve the latest epoch challenge.
-        let epoch_challenge = self.latest_epoch_challenge.read().clone();
+        // Retrieve the latest epoch hash.
+        let epoch_hash = *self.latest_epoch_hash.read();
         // Retrieve the latest proof target.
         let proof_target = self.latest_block_header.read().as_ref().map(|header| header.proof_target());
 
-        if let (Some(epoch_challenge), Some(proof_target)) = (epoch_challenge, proof_target) {
-            // Ensure that the prover solution is valid for the given epoch.
-            let coinbase_puzzle = self.coinbase_puzzle.clone();
-            let is_valid = tokio::task::spawn_blocking(move || {
-                solution.verify(coinbase_puzzle.coinbase_verifying_key(), &epoch_challenge, proof_target)
-            })
-            .await;
+        if let (Some(epoch_hash), Some(proof_target)) = (epoch_hash, proof_target) {
+            // Ensure that the solution is valid for the given epoch.
+            let puzzle = self.puzzle.clone();
+            let is_valid =
+                tokio::task::spawn_blocking(move || puzzle.check_solution(&solution, epoch_hash, proof_target)).await;
 
             match is_valid {
                 // If the solution is valid, propagate the `UnconfirmedSolution`.
-                Ok(Ok(true)) => {
+                Ok(Ok(())) => {
                     let message = Message::UnconfirmedSolution(serialized);
-                    // Propagate the "UnconfirmedSolution" to the connected validators.
-                    self.propagate_to_validators(message, vec![peer_ip]);
+                    // Propagate the "UnconfirmedSolution".
+                    self.propagate(message, &[peer_ip]);
                 }
-                Ok(Ok(false)) | Ok(Err(_)) => {
-                    trace!("Invalid prover solution '{}' for the proof target.", solution.commitment())
+                Ok(Err(_)) => {
+                    trace!("Invalid solution '{}' for the proof target.", solution.id())
                 }
-                Err(error) => warn!("Failed to verify the prover solution: {error}"),
+                // If error occurs after the first 10 blocks of the epoch, log it as a warning, otherwise ignore.
+                Err(error) => {
+                    if let Some(height) = self.latest_block_header.read().as_ref().map(|header| header.height()) {
+                        if height % N::NUM_BLOCKS_PER_EPOCH > 10 {
+                            warn!("Failed to verify the solution - {error}")
+                        }
+                    }
+                }
             }
         }
         true
     }
 
     /// Handles an `UnconfirmedTransaction` message.
-    fn unconfirmed_transaction(
+    async fn unconfirmed_transaction(
         &self,
         _peer_ip: SocketAddr,
         _serialized: UnconfirmedTransaction<N>,

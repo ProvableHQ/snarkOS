@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-node-cdn"
-version = "2.0.2"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CDN client for a decentralized operating system"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,50 +12,74 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
-license = "GPL-3.0"
-edition = "2021"
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
 
 [features]
 default = [ "parallel" ]
-parallel = [ "snarkvm/parallel", "snarkos-node-ledger/parallel" ]
+locktick = [ "dep:locktick", "snarkvm/locktick" ]
+parallel = [ "rayon" ]
+cuda = [ "snarkvm/cuda" ]
+metrics = [ "dep:snarkos-node-metrics" ]
 
 [dependencies.anyhow]
-version = "1"
-
-[dependencies.backoff]
-version = "0.4"
-features = [ "tokio" ]
+workspace = true
 
 [dependencies.bincode]
-version = "1.0"
+workspace = true
 
 [dependencies.colored]
-version = "2"
+workspace = true
 
-[dependencies.futures]
-version = "0.3"
+[dependencies.locktick]
+workspace = true
+features = [ "parking_lot" ]
+optional = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
+features = [ "metrics" ]
+
+[dependencies.rayon]
+workspace = true
+optional = true
 
 [dependencies.reqwest]
-version = "0.11"
+version = "0.12"
+features = [ "rustls-tls" ]
 
-[dependencies.snarkos-node-ledger]
-path = "../ledger"
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+features = [ "preserve_order" ]
 
 [dependencies.snarkvm]
 workspace = true
-default-features = false
-features = ["synthesizer"]
+features = [ "console", "ledger" ]
+
+[dependencies.http]
+workspace = true
 
 [dependencies.tokio]
-version = "1.21"
-features = ["rt"]
+workspace = true
+features = [ "rt" ]
 
 [dependencies.tracing]
-version = "0.1"
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = [ "rt", "rt-multi-thread" ]
 
 [dev-dependencies.tokio-test]
 version = "0.4"
+
+[package.metadata.cargo-machete]
+ignored = ["serde"]

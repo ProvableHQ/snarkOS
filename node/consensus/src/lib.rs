@@ -1,700 +1,691 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #![forbid(unsafe_code)]
+
+mod transactions_queue;
+use transactions_queue::TransactionsQueue;
 
 #[macro_use]
 extern crate tracing;
 
-mod helpers;
-pub use helpers::*;
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
 
-mod memory_pool;
-pub use memory_pool::*;
+use snarkos_account::Account;
+use snarkos_node_bft::{
+    BFT,
+    MAX_BATCH_DELAY_IN_MS,
+    Primary,
+    helpers::{
+        ConsensusReceiver,
+        PrimarySender,
+        Storage as NarwhalStorage,
+        fmt_id,
+        init_consensus_channels,
+        init_primary_channels,
+    },
+    spawn_blocking,
+};
+use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_bft_storage_service::BFTPersistentStorage;
+use snarkos_node_sync::{BlockSync, Ping};
 
-#[cfg(test)]
-mod tests;
+use snarkvm::{
+    ledger::{
+        block::Transaction,
+        narwhal::{BatchHeader, Data, Subdag, Transmission, TransmissionID},
+        puzzle::{Solution, SolutionID},
+    },
+    prelude::*,
+    utilities::flatten_error,
+};
 
-use snarkos_node_ledger::Ledger;
-use snarkvm::prelude::*;
-
-use anyhow::{anyhow, ensure, Result};
+use aleo_std::StorageMode;
+use anyhow::{Context, Result};
+use colored::Colorize;
 use indexmap::IndexMap;
-use parking_lot::RwLock;
-use rayon::iter::ParallelIterator;
-use std::sync::Arc;
-use time::OffsetDateTime;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::{Mutex, RwLock};
+use lru::LruCache;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::{Mutex, RwLock};
+use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
+use tokio::{sync::oneshot, task::JoinHandle};
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+#[cfg(feature = "metrics")]
+use std::collections::HashMap;
 
-// TODO (raychu86): Remove this after Phase 2.
-/// The block height to start using new coinbase targeting algorithm.
-const V4_START_HEIGHT: u32 = 123478;
+/// The capacity of the queue reserved for deployments.
+/// Note: This is an inbound queue capacity, not a Narwhal-enforced capacity.
+const CAPACITY_FOR_DEPLOYMENTS: usize = 1 << 10;
+/// The capacity of the queue reserved for executions.
+/// Note: This is an inbound queue capacity, not a Narwhal-enforced capacity.
+const CAPACITY_FOR_EXECUTIONS: usize = 1 << 10;
+/// The capacity of the queue reserved for solutions.
+/// Note: This is an inbound queue capacity, not a Narwhal-enforced capacity.
+const CAPACITY_FOR_SOLUTIONS: usize = 1 << 10;
+/// The **suggested** maximum number of deployments in each interval.
+/// Note: This is an inbound queue limit, not a Narwhal-enforced limit.
+const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
 
+/// Wrapper around `BFT` that adds additional functionality, such as a mempool.
+///
+/// Consensus acts as a rate limiter to prevents workers in BFT from being overloaded.
+/// Each worker maintains a ready queue (which is essentially also a mempool), but verifies transactions/solutions
+/// before enquing them.
+/// Consensus only passes more transactions/solutions to the BFT layer if its ready queues are not already full.
 #[derive(Clone)]
-pub struct Consensus<N: Network, C: ConsensusStorage<N>> {
+pub struct Consensus<N: Network> {
     /// The ledger.
-    ledger: Ledger<N, C>,
-    /// The coinbase puzzle.
-    coinbase_puzzle: CoinbasePuzzle<N>,
-    /// The memory pool.
-    memory_pool: MemoryPool<N>,
-    /// The beacons.
-    // TODO (howardwu): Update this to retrieve from a beacons store.
-    beacons: Arc<RwLock<IndexMap<Address<N>, ()>>>,
-    /// The boolean flag for the development mode.
-    is_dev: bool,
+    ledger: Arc<dyn LedgerService<N>>,
+    /// The BFT.
+    bft: BFT<N>,
+    /// The primary sender.
+    primary_sender: PrimarySender<N>,
+    /// The unconfirmed solutions queue.
+    solutions_queue: Arc<Mutex<LruCache<SolutionID<N>, Solution<N>>>>,
+    /// The unconfirmed transactions queue.
+    transactions_queue: Arc<RwLock<TransactionsQueue<N>>>,
+    /// The recently-seen unconfirmed solutions.
+    seen_solutions: Arc<Mutex<LruCache<SolutionID<N>, ()>>>,
+    /// The recently-seen unconfirmed transactions.
+    seen_transactions: Arc<Mutex<LruCache<N::TransactionID, ()>>>,
+    #[cfg(feature = "metrics")]
+    transmissions_tracker: Arc<Mutex<HashMap<TransmissionID<N>, i64>>>,
+    /// The spawned handles.
+    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// The ping logic.
+    ping: Arc<Ping<N>>,
+    /// The block sync logic.
+    block_sync: Arc<BlockSync<N>>,
 }
 
-impl<N: Network, C: ConsensusStorage<N>> Consensus<N, C> {
-    /// Initializes a new instance of consensus.
-    pub fn new(ledger: Ledger<N, C>, is_dev: bool) -> Result<Self> {
-        // Load the coinbase puzzle.
-        let coinbase_puzzle = CoinbasePuzzle::<N>::load()?;
-
-        // Initialize consensus.
-        let mut consensus = Self {
-            ledger,
-            coinbase_puzzle,
-            memory_pool: Default::default(),
-            // TODO (howardwu): Update this to retrieve from a validators store.
-            beacons: Default::default(),
-            is_dev,
-        };
-
-        // Add the genesis beacon.
-        let genesis_beacon = consensus.ledger.get_block(0)?.signature().to_address();
-        if !consensus.beacons.read().contains_key(&genesis_beacon) {
-            consensus.add_beacon(genesis_beacon)?;
-        }
-
-        Ok(consensus)
-    }
-
-    /// Returns the beacon set.
-    pub fn beacons(&self) -> IndexMap<Address<N>, ()> {
-        self.beacons.read().clone()
-    }
-
-    /// Adds a given address to the beacon set.
-    pub fn add_beacon(&mut self, address: Address<N>) -> Result<()> {
-        if self.beacons.write().insert(address, ()).is_some() {
-            bail!("'{address}' is already in the beacon set.")
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Removes a given address from the beacon set.
-    pub fn remove_beacon(&mut self, address: Address<N>) -> Result<()> {
-        if self.beacons.write().remove(&address).is_none() {
-            bail!("'{address}' is not in the beacon set.")
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Returns the memory pool.
-    pub const fn memory_pool(&self) -> &MemoryPool<N> {
-        &self.memory_pool
-    }
-
-    /// Adds the given unconfirmed transaction to the memory pool.
-    pub fn add_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<()> {
-        // Ensure the transaction is not already in the memory pool.
-        if self.memory_pool.contains_unconfirmed_transaction(transaction.id()) {
-            bail!("Transaction is already in the memory pool.");
-        }
-        // Check that the transaction is well-formed and unique.
-        self.check_transaction_basic(&transaction)?;
-        // Insert the transaction to the memory pool.
-        self.memory_pool.add_unconfirmed_transaction(&transaction);
-
-        Ok(())
-    }
-
-    /// Adds the given unconfirmed solution to the memory pool.
-    pub fn add_unconfirmed_solution(&self, solution: &ProverSolution<N>) -> Result<()> {
-        // Ensure the prover solution is not already in the memory pool.
-        if self.memory_pool.contains_unconfirmed_solution(solution.commitment()) {
-            bail!("Prover solution is already in the memory pool.");
-        }
-        // Ensure the prover solution is not already in the ledger.
-        if self.ledger.contains_puzzle_commitment(&solution.commitment())? {
-            bail!("Prover solution is already in the ledger.");
-        }
-
-        // Compute the current epoch challenge.
-        let epoch_challenge = self.ledger.latest_epoch_challenge()?;
-        // Retrieve the current proof target.
-        let proof_target = self.ledger.latest_proof_target();
-
-        // Ensure that the prover solution is valid for the given epoch.
-        if !solution.verify(self.coinbase_puzzle.coinbase_verifying_key(), &epoch_challenge, proof_target)? {
-            bail!("Invalid prover solution '{}' for the current epoch.", solution.commitment());
-        }
-
-        // Insert the solution to the memory pool.
-        self.memory_pool.add_unconfirmed_solution(solution)?;
-
-        Ok(())
-    }
-
-    /// Returns `true` if the coinbase target is met.
-    pub fn is_coinbase_target_met(&self) -> Result<bool> {
-        // Retrieve the latest proof target.
-        let latest_proof_target = self.ledger.latest_proof_target();
-        // Compute the candidate coinbase target.
-        let cumulative_proof_target = self.memory_pool.candidate_coinbase_target(latest_proof_target)?;
-        // Retrieve the latest coinbase target.
-        let latest_coinbase_target = self.ledger.latest_coinbase_target();
-        // Check if the coinbase target is met.
-        Ok(cumulative_proof_target >= latest_coinbase_target as u128)
-    }
-
-    /// Returns a candidate for the next block in the ledger.
-    pub fn propose_next_block<R: Rng + CryptoRng>(&self, private_key: &PrivateKey<N>, rng: &mut R) -> Result<Block<N>> {
-        // Retrieve the latest state root.
-        let latest_state_root = self.ledger.latest_state_root();
-        // Retrieve the latest block.
-        let latest_block = self.ledger.latest_block();
-        // Retrieve the latest height.
-        let latest_height = latest_block.height();
-        // Retrieve the latest proof target.
-        let latest_proof_target = latest_block.proof_target();
-        // Retrieve the latest coinbase target.
-        let latest_coinbase_target = latest_block.coinbase_target();
-
-        // Select the transactions from the memory pool.
-        let transactions = self.memory_pool.candidate_transactions(self).into_iter().collect::<Transactions<N>>();
-        // Select the prover solutions from the memory pool.
-        let prover_solutions =
-            self.memory_pool.candidate_solutions(self, latest_height, latest_proof_target, latest_coinbase_target)?;
-
-        // Construct the coinbase solution.
-        let (coinbase, coinbase_accumulator_point) = match &prover_solutions {
-            Some(prover_solutions) => {
-                let epoch_challenge = self.ledger.latest_epoch_challenge()?;
-                let coinbase_solution =
-                    self.coinbase_puzzle.accumulate_unchecked(&epoch_challenge, prover_solutions)?;
-                let coinbase_accumulator_point = coinbase_solution.to_accumulator_point()?;
-
-                (Some(coinbase_solution), coinbase_accumulator_point)
-            }
-            None => (None, Field::<N>::zero()),
-        };
-
-        // Fetch the next round state.
-        let next_timestamp = OffsetDateTime::now_utc().unix_timestamp();
-        let next_height = latest_height.saturating_add(1);
-        let next_round = latest_block.round().saturating_add(1);
-
-        // TODO (raychu86): Pay the provers. Currently we do not pay the provers with the `credits.aleo` program
-        //  and instead, will track prover leaderboards via the `coinbase_solution` in each block.
-        if let Some(prover_solutions) = prover_solutions {
-            // Calculate the coinbase reward.
-            let coinbase_reward = coinbase_reward(
-                latest_block.last_coinbase_timestamp(),
-                next_timestamp,
-                next_height,
-                N::STARTING_SUPPLY,
-                N::ANCHOR_TIME,
-            )?;
-
-            // Compute the cumulative proof target of the prover solutions as a u128.
-            let cumulative_proof_target: u128 = prover_solutions.iter().try_fold(0u128, |cumulative, solution| {
-                cumulative
-                    .checked_add(solution.to_target()? as u128)
-                    .ok_or_else(|| anyhow!("Cumulative proof target overflowed"))
-            })?;
-
-            // Calculate the rewards for the individual provers.
-            let mut prover_rewards: Vec<(Address<N>, u64)> = Vec::new();
-            for prover_solution in prover_solutions {
-                // Prover compensation is defined as:
-                //   1/2 * coinbase_reward * (prover_target / cumulative_prover_target)
-                //   = (coinbase_reward * prover_target) / (2 * cumulative_prover_target)
-
-                // Compute the numerator.
-                let numerator = (coinbase_reward as u128)
-                    .checked_mul(prover_solution.to_target()? as u128)
-                    .ok_or_else(|| anyhow!("Prover reward numerator overflowed"))?;
-
-                // Compute the denominator.
-                let denominator = cumulative_proof_target
-                    .checked_mul(2)
-                    .ok_or_else(|| anyhow!("Prover reward denominator overflowed"))?;
-
-                // Compute the prover reward.
-                let prover_reward = u64::try_from(
-                    numerator.checked_div(denominator).ok_or_else(|| anyhow!("Prover reward overflowed"))?,
-                )?;
-
-                prover_rewards.push((prover_solution.address(), prover_reward));
-            }
-        }
-
-        // Construct the next coinbase target.
-        // Use the new targeting algorithm if the node is in development mode or
-        // if the block height is greater than or equal to `V4_START_HEIGHT`.
-        let next_coinbase_target = match self.is_dev || next_height >= V4_START_HEIGHT {
-            true => coinbase_target::<true>(
-                latest_block.last_coinbase_target(),
-                latest_block.last_coinbase_timestamp(),
-                next_timestamp,
-                N::ANCHOR_TIME,
-                N::NUM_BLOCKS_PER_EPOCH,
-            ),
-            false => coinbase_target::<false>(
-                latest_block.last_coinbase_target(),
-                latest_block.last_coinbase_timestamp(),
-                next_timestamp,
-                N::ANCHOR_TIME,
-                N::NUM_BLOCKS_PER_EPOCH,
-            ),
-        }?;
-
-        // Construct the next proof target.
-        let next_proof_target = proof_target(next_coinbase_target);
-
-        // Construct the next last coinbase target and next last coinbase timestamp.
-        let (next_last_coinbase_target, next_last_coinbase_timestamp) = match coinbase {
-            Some(_) => (next_coinbase_target, next_timestamp),
-            None => (latest_block.last_coinbase_target(), latest_block.last_coinbase_timestamp()),
-        };
-
-        // Construct the metadata.
-        let metadata = Metadata::new(
-            N::ID,
-            next_round,
-            next_height,
-            next_coinbase_target,
-            next_proof_target,
-            next_last_coinbase_target,
-            next_last_coinbase_timestamp,
-            next_timestamp,
+impl<N: Network> Consensus<N> {
+    /// Initializes a new instance of consensus and spawn its background tasks.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new(
+        account: Account<N>,
+        ledger: Arc<dyn LedgerService<N>>,
+        block_sync: Arc<BlockSync<N>>,
+        ip: Option<SocketAddr>,
+        trusted_validators: &[SocketAddr],
+        trusted_peers_only: bool,
+        storage_mode: StorageMode,
+        ping: Arc<Ping<N>>,
+        dev: Option<u16>,
+    ) -> Result<Self> {
+        // Initialize the primary channels.
+        let (primary_sender, primary_receiver) = init_primary_channels::<N>();
+        // Initialize the Narwhal transmissions.
+        let transmissions = Arc::new(BFTPersistentStorage::open(storage_mode.clone())?);
+        // Initialize the Narwhal storage.
+        let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
+        // Initialize the BFT.
+        let bft = BFT::new(
+            account,
+            storage,
+            ledger.clone(),
+            block_sync.clone(),
+            ip,
+            trusted_validators,
+            trusted_peers_only,
+            storage_mode,
+            dev,
         )?;
+        // Create a new instance of Consensus.
+        let mut _self = Self {
+            ledger,
+            bft,
+            block_sync,
+            primary_sender,
+            solutions_queue: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(CAPACITY_FOR_SOLUTIONS).unwrap()))),
+            transactions_queue: Default::default(),
+            seen_solutions: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1 << 16).unwrap()))),
+            seen_transactions: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(1 << 16).unwrap()))),
+            #[cfg(feature = "metrics")]
+            transmissions_tracker: Default::default(),
+            handles: Default::default(),
+            ping: ping.clone(),
+        };
 
-        // Construct the header.
-        let header = Header::from(latest_state_root, transactions.to_root()?, coinbase_accumulator_point, metadata)?;
+        info!("Starting the consensus instance...");
 
-        // Construct the new block.
-        Block::new(private_key, latest_block.hash(), header, transactions, coinbase, rng)
+        // First, initialize the consensus channels.
+        let (consensus_sender, consensus_receiver) = init_consensus_channels();
+        // Then, start the consensus handlers.
+        _self.start_handlers(consensus_receiver);
+        // Lastly, also start BFTs handlers.
+        _self.bft.run(Some(ping), Some(consensus_sender), _self.primary_sender.clone(), primary_receiver).await?;
+
+        Ok(_self)
     }
 
-    /// Advances the ledger to the next block.
-    pub fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
-        // Adds the next block to the ledger.
-        self.ledger.add_next_block(block)?;
-
-        // Clear the memory pool of unconfirmed transactions that are now invalid.
-        self.memory_pool.clear_invalid_transactions(self);
-
-        // If this starts a new epoch, clear all unconfirmed solutions from the memory pool.
-        if block.epoch_number() > self.ledger.latest_epoch_number() {
-            self.memory_pool.clear_all_unconfirmed_solutions();
-        }
-        // Otherwise, if a new coinbase was produced, clear the memory pool of unconfirmed solutions that are now invalid.
-        else if block.coinbase().is_some() {
-            self.memory_pool.clear_invalid_solutions(self);
-        }
-
-        info!("Advanced to block {}", block.height());
-
-        Ok(())
+    /// Returns the underlying `BFT` struct.
+    pub const fn bft(&self) -> &BFT<N> {
+        &self.bft
     }
 
-    /// Clears the memory pool of invalid solutions and transactions.
-    pub fn refresh_memory_pool(&self) -> Result<()> {
-        // Clear the memory pool of unconfirmed solutions that are now invalid.
-        self.memory_pool.clear_invalid_solutions(self);
-        // Clear the memory pool of unconfirmed transactions that are now invalid.
-        self.memory_pool.clear_invalid_transactions(self);
-        Ok(())
+    pub fn contains_transaction(&self, transaction_id: &N::TransactionID) -> bool {
+        self.transactions_queue.read().contains(transaction_id)
+    }
+}
+
+impl<N: Network> Consensus<N> {
+    /// Returns the number of unconfirmed transmissions in the BFT's workers (not in the mempool).
+    pub fn num_unconfirmed_transmissions(&self) -> usize {
+        self.bft.num_unconfirmed_transmissions()
     }
 
-    /// Clears the memory pool of all solutions and transactions.
-    pub fn clear_memory_pool(&self) -> Result<()> {
-        // Clear the memory pool of unconfirmed solutions that are now invalid.
-        self.memory_pool.clear_all_unconfirmed_solutions();
-        // Clear the memory pool of unconfirmed transactions that are now invalid.
-        self.memory_pool.clear_unconfirmed_transactions();
-        Ok(())
+    /// Returns the number of unconfirmed ratifications in the BFT's workers (not in the mempool).
+    pub fn num_unconfirmed_ratifications(&self) -> usize {
+        self.bft.num_unconfirmed_ratifications()
     }
 
-    /// Checks the given block is valid next block.
-    pub fn check_next_block(&self, block: &Block<N>) -> Result<()> {
-        // Ensure the previous block hash is correct.
-        if self.ledger.latest_hash() != block.previous_hash() {
-            bail!("The next block has an incorrect previous block hash")
-        }
+    /// Returns the number unconfirmed solutions in the BFT's workers (not in the mempool).
+    pub fn num_unconfirmed_solutions(&self) -> usize {
+        self.bft.num_unconfirmed_solutions()
+    }
 
-        // Ensure the block hash does not already exist.
-        if self.ledger.contains_block_hash(&block.hash())? {
-            bail!("Block hash '{}' already exists in the ledger", block.hash())
-        }
+    /// Returns the number of unconfirmed transactions.
+    pub fn num_unconfirmed_transactions(&self) -> usize {
+        self.bft.num_unconfirmed_transactions()
+    }
+}
 
-        // Ensure the next block height is correct.
-        if self.ledger.latest_height() > 0 && self.ledger.latest_height() + 1 != block.height() {
-            bail!("The next block has an incorrect block height")
-        }
+impl<N: Network> Consensus<N> {
+    /// Returns the unconfirmed transmission IDs.
+    pub fn unconfirmed_transmission_ids(&self) -> impl '_ + Iterator<Item = TransmissionID<N>> {
+        self.worker_transmission_ids().chain(self.inbound_transmission_ids())
+    }
 
-        // Ensure the block height does not already exist.
-        if self.ledger.contains_block_height(block.height())? {
-            bail!("Block height '{}' already exists in the ledger", block.height())
-        }
+    /// Returns the unconfirmed transmissions.
+    pub fn unconfirmed_transmissions(&self) -> impl '_ + Iterator<Item = (TransmissionID<N>, Transmission<N>)> {
+        self.worker_transmissions().chain(self.inbound_transmissions())
+    }
 
-        // TODO (raychu86): Ensure the next round number includes timeouts.
-        // Ensure the next round is correct.
-        if self.ledger.latest_round() > 0
-            && self.ledger.latest_round() + 1 /*+ block.number_of_timeouts()*/ != block.round()
+    /// Returns the unconfirmed solutions.
+    pub fn unconfirmed_solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
+        self.worker_solutions().chain(self.inbound_solutions())
+    }
+
+    /// Returns the unconfirmed transactions.
+    pub fn unconfirmed_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
+        self.worker_transactions().chain(self.inbound_transactions())
+    }
+}
+
+impl<N: Network> Consensus<N> {
+    /// Returns the worker transmission IDs.
+    pub fn worker_transmission_ids(&self) -> impl '_ + Iterator<Item = TransmissionID<N>> {
+        self.bft.worker_transmission_ids()
+    }
+
+    /// Returns the worker transmissions.
+    pub fn worker_transmissions(&self) -> impl '_ + Iterator<Item = (TransmissionID<N>, Transmission<N>)> {
+        self.bft.worker_transmissions()
+    }
+
+    /// Returns the worker solutions.
+    pub fn worker_solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
+        self.bft.worker_solutions()
+    }
+
+    /// Returns the worker transactions.
+    pub fn worker_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
+        self.bft.worker_transactions()
+    }
+}
+
+impl<N: Network> Consensus<N> {
+    /// Returns the transmission IDs in the inbound queue.
+    pub fn inbound_transmission_ids(&self) -> impl '_ + Iterator<Item = TransmissionID<N>> {
+        self.inbound_transmissions().map(|(id, _)| id)
+    }
+
+    /// Returns the transmissions in the inbound queue.
+    pub fn inbound_transmissions(&self) -> impl '_ + Iterator<Item = (TransmissionID<N>, Transmission<N>)> {
+        self.inbound_transactions()
+            .map(|(id, tx)| {
+                (
+                    TransmissionID::Transaction(id, tx.to_checksum::<N>().unwrap_or_default()),
+                    Transmission::Transaction(tx),
+                )
+            })
+            .chain(self.inbound_solutions().map(|(id, solution)| {
+                (
+                    TransmissionID::Solution(id, solution.to_checksum::<N>().unwrap_or_default()),
+                    Transmission::Solution(solution),
+                )
+            }))
+    }
+
+    /// Returns the solutions in the inbound queue.
+    pub fn inbound_solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
+        // Return an iterator over the solutions in the inbound queue.
+        self.solutions_queue.lock().clone().into_iter().map(|(id, solution)| (id, Data::Object(solution)))
+    }
+
+    /// Returns the transactions in the inbound queue.
+    pub fn inbound_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
+        // Return an iterator over the deployment and execution transactions in the inbound queue.
+        self.transactions_queue.read().transactions().map(|(id, tx)| (id, Data::Object(tx)))
+    }
+}
+
+impl<N: Network> Consensus<N> {
+    /// Adds the given unconfirmed solution to the memory pool, which will then eventually be passed
+    /// to the BFT layer for inclusion in a batch.
+    pub async fn add_unconfirmed_solution(&self, solution: Solution<N>) -> Result<()> {
+        // Calculate the transmission checksum.
+        let checksum = Data::<Solution<N>>::Buffer(solution.to_bytes_le()?.into()).to_checksum::<N>()?;
+        // Queue the unconfirmed solution.
         {
-            bail!("The next block has an incorrect round number")
-        }
+            let solution_id = solution.id();
 
-        // TODO (raychu86): Ensure the next block timestamp is the median of proposed blocks.
-        // Ensure the next block timestamp is after the current block timestamp.
-        if block.height() > 0 {
-            let next_timestamp = block.header().timestamp();
-            let latest_timestamp = self.ledger.latest_block().header().timestamp();
-            if next_timestamp <= latest_timestamp {
-                bail!("The next block timestamp {next_timestamp} is before the current timestamp {latest_timestamp}")
+            // Check if the transaction was recently seen.
+            if self.seen_solutions.lock().put(solution_id, ()).is_some() {
+                // If the transaction was recently seen, return early.
+                return Ok(());
+            }
+            // Check if the solution already exists in the ledger.
+            if self.ledger.contains_transmission(&TransmissionID::Solution(solution_id, checksum))? {
+                bail!("Solution '{}' exists in the ledger {}", fmt_id(solution_id), "(skipping)".dimmed());
+            }
+            #[cfg(feature = "metrics")]
+            {
+                metrics::increment_gauge(metrics::consensus::UNCONFIRMED_SOLUTIONS, 1f64);
+                let timestamp = snarkos_node_bft::helpers::now();
+                self.transmissions_tracker.lock().insert(TransmissionID::Solution(solution.id(), checksum), timestamp);
+            }
+            // Add the solution to the memory pool.
+            trace!("Received unconfirmed solution '{}' in the queue", fmt_id(solution_id));
+            if self.solutions_queue.lock().put(solution_id, solution).is_some() {
+                bail!("Solution '{}' exists in the memory pool", fmt_id(solution_id));
             }
         }
 
-        for transaction_id in block.transaction_ids() {
-            // Ensure the transaction in the block do not already exist.
-            if self.ledger.contains_transaction_id(transaction_id)? {
-                bail!("Transaction '{transaction_id}' already exists in the ledger")
-            }
+        // Try to process the unconfirmed solutions in the memory pool.
+        self.process_unconfirmed_solutions().await
+    }
+
+    /// Processes unconfirmed solutions in the mempool, and passes them to the BFT layer
+    /// (if sufficient space is available).
+    async fn process_unconfirmed_solutions(&self) -> Result<()> {
+        // If the memory pool of this node is full, return early.
+        let num_unconfirmed_solutions = self.num_unconfirmed_solutions();
+        let num_unconfirmed_transmissions = self.num_unconfirmed_transmissions();
+        if num_unconfirmed_solutions >= N::MAX_SOLUTIONS
+            || num_unconfirmed_transmissions >= Primary::<N>::MAX_TRANSMISSIONS_TOLERANCE
+        {
+            return Ok(());
         }
-
-        /* Input */
-
-        // Ensure the ledger does not already contain a given serial numbers.
-        for serial_number in block.serial_numbers() {
-            if self.ledger.contains_serial_number(serial_number)? {
-                bail!("Serial number '{serial_number}' already exists in the ledger")
-            }
-        }
-
-        /* Output */
-
-        // Ensure the ledger does not already contain a given commitments.
-        for commitment in block.commitments() {
-            if self.ledger.contains_commitment(commitment)? {
-                bail!("Commitment '{commitment}' already exists in the ledger")
-            }
-        }
-
-        // Ensure the ledger does not already contain a given nonces.
-        for nonce in block.nonces() {
-            if self.ledger.contains_nonce(nonce)? {
-                bail!("Nonce '{nonce}' already exists in the ledger")
-            }
-        }
-
-        /* Metadata */
-
-        // Ensure the ledger does not already contain a given transition public keys.
-        for tpk in block.transition_public_keys() {
-            if self.ledger.contains_tpk(tpk)? {
-                bail!("Transition public key '{tpk}' already exists in the ledger")
-            }
-        }
-
-        /* Block Header */
-
-        // If the block is the genesis block, check that it is valid.
-        if block.height() == 0 && !block.is_genesis() {
-            bail!("Invalid genesis block");
-        }
-
-        // Ensure the block header is valid.
-        if !block.header().is_valid() {
-            bail!("Invalid block header: {:?}", block.header());
-        }
-
-        // Check the last coinbase members in the block.
-        if block.height() > 0 {
-            match block.coinbase() {
-                Some(_) => {
-                    // Ensure the last coinbase target matches the coinbase target.
-                    if block.last_coinbase_target() != block.coinbase_target() {
-                        bail!("The last coinbase target does not match the coinbase target")
-                    }
-                    // Ensure the last coinbase timestamp matches the block timestamp.
-                    if block.last_coinbase_timestamp() != block.timestamp() {
-                        bail!("The last coinbase timestamp does not match the block timestamp")
-                    }
-                }
-                None => {
-                    // Ensure the last coinbase target matches the previous block coinbase target.
-                    if block.last_coinbase_target() != self.ledger.last_coinbase_target() {
-                        bail!("The last coinbase target does not match the previous block coinbase target")
-                    }
-                    // Ensure the last coinbase timestamp matches the previous block's last coinbase timestamp.
-                    if block.last_coinbase_timestamp() != self.ledger.last_coinbase_timestamp() {
-                        bail!("The last coinbase timestamp does not match the previous block's last coinbase timestamp")
-                    }
-                }
-            }
-        }
-
-        // Construct the next coinbase target.
-        // Use the new targeting algorithm if the node is in development mode or
-        // if the block height is greater than or equal to `V4_START_HEIGHT`.
-        let expected_coinbase_target = match self.is_dev || block.height() >= V4_START_HEIGHT {
-            true => coinbase_target::<true>(
-                self.ledger.last_coinbase_target(),
-                self.ledger.last_coinbase_timestamp(),
-                block.timestamp(),
-                N::ANCHOR_TIME,
-                N::NUM_BLOCKS_PER_EPOCH,
-            ),
-            false => coinbase_target::<false>(
-                self.ledger.last_coinbase_target(),
-                self.ledger.last_coinbase_timestamp(),
-                block.timestamp(),
-                N::ANCHOR_TIME,
-                N::NUM_BLOCKS_PER_EPOCH,
-            ),
-        }?;
-
-        if block.coinbase_target() != expected_coinbase_target {
-            bail!("Invalid coinbase target: expected {}, got {}", expected_coinbase_target, block.coinbase_target())
-        }
-
-        // Ensure the proof target is correct.
-        let expected_proof_target = proof_target(expected_coinbase_target);
-        if block.proof_target() != expected_proof_target {
-            bail!("Invalid proof target: expected {}, got {}", expected_proof_target, block.proof_target())
-        }
-
-        /* Block Hash */
-
-        // Compute the Merkle root of the block header.
-        let header_root = match block.header().to_root() {
-            Ok(root) => root,
-            Err(error) => bail!("Failed to compute the Merkle root of the block header: {error}"),
+        // Retrieve the solutions.
+        let solutions = {
+            // Determine the available capacity.
+            let capacity = N::MAX_SOLUTIONS.saturating_sub(num_unconfirmed_solutions);
+            // Acquire the lock on the queue.
+            let mut queue = self.solutions_queue.lock();
+            // Determine the number of solutions to send.
+            let num_solutions = queue.len().min(capacity);
+            // Drain the solutions from the queue.
+            (0..num_solutions).filter_map(|_| queue.pop_lru().map(|(_, solution)| solution)).collect::<Vec<_>>()
         };
-
-        // Check the block hash.
-        match N::hash_bhp1024(&[block.previous_hash().to_bits_le(), header_root.to_bits_le()].concat()) {
-            Ok(candidate_hash) => {
-                // Ensure the block hash matches the one in the block.
-                if candidate_hash != *block.hash() {
-                    bail!("Block {} ({}) has an incorrect block hash.", block.height(), block.hash());
+        // Iterate over the solutions.
+        for solution in solutions.into_iter() {
+            let solution_id = solution.id();
+            trace!("Adding unconfirmed solution '{}' to the memory pool...", fmt_id(solution_id));
+            // Send the unconfirmed solution to the primary.
+            match self.primary_sender.send_unconfirmed_solution(solution_id, Data::Object(solution)).await {
+                Ok(true) => {}
+                Ok(false) => debug!(
+                    "Unable to add unconfirmed solution '{}' to the memory pool. Already exists.",
+                    fmt_id(solution_id)
+                ),
+                Err(err) => {
+                    // If the node is synced and the occurs after the first 10 blocks of an epoch, log it as a warning, otherwise ignore.
+                    if self.bft.is_synced() && self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
+                        let err = err.context(format!(
+                            "Unable to add unconfirmed solution '{}' to the memory pool",
+                            fmt_id(solution_id)
+                        ));
+                        warn!("{}", flatten_error(err));
+                    }
                 }
             }
-            Err(error) => {
-                bail!("Unable to compute block hash for block {} ({}): {error}", block.height(), block.hash())
-            }
-        };
-
-        /* Signature */
-
-        // Ensure the block is signed by an authorized beacon.
-        let signer = block.signature().to_address();
-        if !self.beacons.read().contains_key(&signer) {
-            bail!("Block {} ({}) is signed by an unauthorized beacon ({})", block.height(), block.hash(), signer);
         }
-
-        // Check the signature.
-        if !block.signature().verify(&signer, &[*block.hash()]) {
-            bail!("Invalid signature for block {} ({})", block.height(), block.hash());
-        }
-
-        /* Transactions */
-
-        // Compute the transactions root.
-        match block.transactions().to_root() {
-            // Ensure the transactions root matches the one in the block header.
-            Ok(root) => {
-                if root != block.header().transactions_root() {
-                    bail!(
-                        "Block {} ({}) has an incorrect transactions root: expected {}",
-                        block.height(),
-                        block.hash(),
-                        block.header().transactions_root()
-                    );
-                }
-            }
-            Err(error) => bail!("Failed to compute the Merkle root of the block transactions: {error}"),
-        };
-
-        // Ensure the transactions list is not empty.
-        if block.transactions().is_empty() {
-            bail!("Cannot validate an empty transactions list");
-        }
-
-        // Ensure the number of transactions is within the allowed range.
-        if block.transactions().len() > Transactions::<N>::MAX_TRANSACTIONS {
-            bail!("Cannot validate a block with more than {} transactions", Transactions::<N>::MAX_TRANSACTIONS);
-        }
-
-        // Ensure each transaction is well-formed and unique.
-        cfg_iter!(block.transactions()).try_for_each(|(_, transaction)| {
-            self.check_transaction_basic(transaction)
-                .map_err(|e| anyhow!("Invalid transaction found in the transactions list: {e}"))
-        })?;
-
-        /* Coinbase Proof */
-
-        // Ensure the coinbase solution is valid, if it exists.
-        if let Some(coinbase) = block.coinbase() {
-            // Ensure coinbase solutions are not accepted after the anchor block height at year 10.
-            if block.height() > anchor_block_height(N::ANCHOR_TIME, 10) {
-                bail!("Coinbase proofs are no longer accepted after the anchor block height at year 10.");
-            }
-            // Ensure the coinbase accumulator point matches in the block header.
-            if block.header().coinbase_accumulator_point() != coinbase.to_accumulator_point()? {
-                bail!("Coinbase accumulator point does not match the coinbase solution.");
-            }
-            // TODO (howardwu): Remove this in Phase 3.
-            // Ensure the number of prover solutions is within the allowed range.
-            if block.height() > 128_000 && coinbase.len() > 256 {
-                bail!("Cannot validate a coinbase proof with more than {} prover solutions", 256);
-            }
-            // Ensure the number of prover solutions is within the allowed range.
-            if coinbase.len() > N::MAX_PROVER_SOLUTIONS {
-                bail!("Cannot validate a coinbase proof with more than {} prover solutions", N::MAX_PROVER_SOLUTIONS);
-            }
-            // Ensure the puzzle commitments are new.
-            for puzzle_commitment in coinbase.puzzle_commitments() {
-                if self.ledger.contains_puzzle_commitment(&puzzle_commitment)? {
-                    bail!("Puzzle commitment {puzzle_commitment} already exists in the ledger");
-                }
-            }
-            // Ensure the coinbase solution is valid.
-            if !self.coinbase_puzzle.verify(
-                coinbase,
-                &self.ledger.latest_epoch_challenge()?,
-                self.ledger.latest_coinbase_target(),
-                self.ledger.latest_proof_target(),
-            )? {
-                bail!("Invalid coinbase solution: {:?}", coinbase);
-            }
-        } else {
-            // Ensure that the block header does not contain a coinbase accumulator point.
-            if block.header().coinbase_accumulator_point() != Field::<N>::zero() {
-                bail!("Coinbase accumulator point should be zero as there is no coinbase solution in the block.");
-            }
-        }
-
         Ok(())
     }
 
-    /// Checks the given transaction is well-formed and unique.
-    pub fn check_transaction_basic(&self, transaction: &Transaction<N>) -> Result<()> {
-        let transaction_id = transaction.id();
+    /// Adds the given unconfirmed transaction to the memory pool, which will then eventually be passed
+    /// to the BFT layer for inclusion in a batch.
+    pub async fn add_unconfirmed_transaction(&self, transaction: Transaction<N>) -> Result<()> {
+        // Calculate the transmission checksum.
+        let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
+        // Queue the unconfirmed transaction.
+        {
+            let transaction_id = transaction.id();
 
-        // Ensure the ledger does not already contain the given transaction ID.
-        if self.ledger.contains_transaction_id(&transaction_id)? {
-            bail!("Transaction '{transaction_id}' already exists in the ledger")
+            // Check that the transaction is not a fee transaction.
+            if transaction.is_fee() {
+                bail!("Transaction '{}' is a fee transaction {}", fmt_id(transaction_id), "(skipping)".dimmed());
+            }
+            // Check if the transaction was recently seen.
+            if self.seen_transactions.lock().put(transaction_id, ()).is_some() {
+                // If the transaction was recently seen, return early.
+                return Ok(());
+            }
+            // Check if the transaction already exists in the ledger.
+            if self.ledger.contains_transmission(&TransmissionID::Transaction(transaction_id, checksum))? {
+                bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
+            }
+            // Check that the transaction is not in the mempool.
+            if self.contains_transaction(&transaction_id) {
+                bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
+            }
+            #[cfg(feature = "metrics")]
+            {
+                metrics::increment_gauge(metrics::consensus::UNCONFIRMED_TRANSACTIONS, 1f64);
+                let timestamp = snarkos_node_bft::helpers::now();
+                self.transmissions_tracker
+                    .lock()
+                    .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
+            }
+            // Add the transaction to the memory pool.
+            trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
+            let priority_fee = transaction.priority_fee_amount()?;
+            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
         }
 
-        /* Fee */
+        // Try to process the unconfirmed transactions in the memory pool.
+        self.process_unconfirmed_transactions().await
+    }
 
-        // Ensure transactions with a positive balance must pay for its storage in bytes.
-        let fee = transaction.fee()?;
-        if fee >= 0 && transaction.to_bytes_le()?.len() < usize::try_from(fee)? {
-            bail!("Transaction '{transaction_id}' has insufficient fee to cover its storage in bytes")
+    /// Processes unconfirmed transactions in the mempool, and passes them to the BFT layer
+    /// (if sufficient space is available).
+    async fn process_unconfirmed_transactions(&self) -> Result<()> {
+        // If the memory pool of this node is full, return early.
+        let num_unconfirmed_transmissions = self.num_unconfirmed_transmissions();
+        if num_unconfirmed_transmissions >= Primary::<N>::MAX_TRANSMISSIONS_TOLERANCE {
+            return Ok(());
         }
-
-        /* Proof(s) */
-
-        // Ensure the transaction is valid.
-        if !self.ledger.vm().verify(transaction) {
-            bail!("Transaction '{transaction_id}' is invalid")
-        }
-
-        /* Input */
-
-        // Ensure the ledger does not already contain the given input ID.
-        for input_id in transaction.input_ids() {
-            if self.ledger.contains_input_id(input_id)? {
-                bail!("Input ID '{input_id}' already exists in the ledger")
+        // Retrieve the transactions.
+        let transactions = {
+            // Determine the available capacity.
+            let capacity = Primary::<N>::MAX_TRANSMISSIONS_TOLERANCE.saturating_sub(num_unconfirmed_transmissions);
+            // Acquire the lock on the transactions queue.
+            let mut tx_queue = self.transactions_queue.write();
+            // Determine the number of deployments to send.
+            let num_deployments = tx_queue.deployments.len().min(capacity).min(MAX_DEPLOYMENTS_PER_INTERVAL);
+            // Determine the number of executions to send.
+            let num_executions = tx_queue.executions.len().min(capacity.saturating_sub(num_deployments));
+            // Create an iterator which will select interleaved deployments and executions within the capacity.
+            // Note: interleaving ensures we will never have consecutive invalid deployments blocking the queue.
+            let selector_iter = (0..num_deployments).map(|_| true).interleave((0..num_executions).map(|_| false));
+            // Drain the transactions from the queue, interleaving deployments and executions.
+            selector_iter
+                .filter_map(
+                    |select_deployment| {
+                        if select_deployment { tx_queue.deployments.pop() } else { tx_queue.executions.pop() }
+                    },
+                )
+                .map(|(_, tx)| tx)
+                .collect_vec()
+        };
+        // Iterate over the transactions.
+        for transaction in transactions.into_iter() {
+            let transaction_id = transaction.id();
+            // Determine the type of the transaction. The fee type is technically not possible here.
+            let tx_type_str = match transaction {
+                Transaction::Deploy(..) => "deployment",
+                Transaction::Execute(..) => "execution",
+                Transaction::Fee(..) => "fee",
+            };
+            trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
+            // Send the unconfirmed transaction to the primary.
+            match self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await {
+                Ok(true) => {}
+                Ok(false) => debug!(
+                    "Unable to add unconfirmed {tx_type_str} transaction '{}' to the memory pool. Already exists.",
+                    fmt_id(transaction_id)
+                ),
+                Err(err) => {
+                    // If the BFT is synced, then log the warning.
+                    if self.bft.is_synced() {
+                        let err = err.context(format!(
+                            "Unable to add unconfirmed {tx_type_str} transaction '{}' to the memory pool",
+                            fmt_id(transaction_id)
+                        ));
+                        warn!("{}", flatten_error(err));
+                    }
+                }
             }
         }
-
-        // Ensure the ledger does not already contain a given serial numbers.
-        for serial_number in transaction.serial_numbers() {
-            if self.ledger.contains_serial_number(serial_number)? {
-                bail!("Serial number '{serial_number}' already exists in the ledger")
-            }
-        }
-
-        // Ensure the ledger does not already contain a given tag.
-        for tag in transaction.tags() {
-            if self.ledger.contains_tag(tag)? {
-                bail!("Tag '{tag}' already exists in the ledger")
-            }
-        }
-
-        /* Output */
-
-        // Ensure the ledger does not already contain the given output ID.
-        for output_id in transaction.output_ids() {
-            if self.ledger.contains_output_id(output_id)? {
-                bail!("Output ID '{output_id}' already exists in the ledger")
-            }
-        }
-
-        // Ensure the ledger does not already contain a given commitments.
-        for commitment in transaction.commitments() {
-            if self.ledger.contains_commitment(commitment)? {
-                bail!("Commitment '{commitment}' already exists in the ledger")
-            }
-        }
-
-        // Ensure the ledger does not already contain a given nonces.
-        for nonce in transaction.nonces() {
-            if self.ledger.contains_nonce(nonce)? {
-                bail!("Nonce '{nonce}' already exists in the ledger")
-            }
-        }
-
-        /* Program */
-
-        // Ensure that the ledger does not already contain the given program ID.
-        if let Transaction::Deploy(_, deployment, _) = &transaction {
-            let program_id = deployment.program_id();
-            if self.ledger.contains_program_id(program_id)? {
-                bail!("Program ID '{program_id}' already exists in the ledger")
-            }
-        }
-
-        /* Metadata */
-
-        // Ensure the ledger does not already contain a given transition public keys.
-        for tpk in transaction.transition_public_keys() {
-            if self.ledger.contains_tpk(tpk)? {
-                bail!("Transition public key '{tpk}' already exists in the ledger")
-            }
-        }
-
-        // Ensure the ledger does not already contain a given transition commitment.
-        for tcm in transaction.transition_commitments() {
-            if self.ledger.contains_tcm(tcm)? {
-                bail!("Transition commitment '{tcm}' already exists in the ledger")
-            }
-        }
-
         Ok(())
+    }
+}
+
+impl<N: Network> Consensus<N> {
+    /// Starts the consensus handlers.
+    ///
+    /// This is only invoked once, in the constructor.
+    fn start_handlers(&self, consensus_receiver: ConsensusReceiver<N>) {
+        let ConsensusReceiver { mut rx_consensus_subdag } = consensus_receiver;
+
+        // Process the committed subdag and transmissions from the BFT.
+        let self_ = self.clone();
+        self.spawn(async move {
+            while let Some((committed_subdag, transmissions, callback)) = rx_consensus_subdag.recv().await {
+                self_.process_bft_subdag(committed_subdag, transmissions, callback).await;
+            }
+        });
+
+        // Process the unconfirmed transactions in the memory pool.
+        //
+        // TODO (kaimast): This shouldn't happen periodically but only when new batches/blocks are accepted
+        // by the BFT layer, after which the worker's ready queue may have capacity for more transactions/solutions.
+        let self_ = self.clone();
+        self.spawn(async move {
+            loop {
+                // Sleep briefly.
+                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                // Process the unconfirmed transactions in the memory pool.
+                if let Err(e) = self_.process_unconfirmed_transactions().await {
+                    warn!("Cannot process unconfirmed transactions - {e}");
+                }
+                // Process the unconfirmed solutions in the memory pool.
+                if let Err(e) = self_.process_unconfirmed_solutions().await {
+                    warn!("Cannot process unconfirmed solutions - {e}");
+                }
+            }
+        });
+    }
+
+    /// Attempts to build a new block from the given subDAG, and (tries to) advance the legder to it.
+    async fn process_bft_subdag(
+        &self,
+        subdag: Subdag<N>,
+        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+        callback: oneshot::Sender<Result<()>>,
+    ) {
+        // Try to advance to the next block.
+        let self_ = self.clone();
+        let transmissions_ = transmissions.clone();
+        let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
+
+        // If the block failed to advance, reinsert the transmissions into the memory pool.
+        if let Err(e) = &result {
+            error!("{}", flatten_error(e));
+            // On failure, reinsert the transmissions into the memory pool.
+            self.reinsert_transmissions(transmissions).await;
+        }
+        // Send the callback **after** advancing to the next block.
+        // Note: We must await the block to be advanced before sending the callback.
+        callback.send(result).ok();
+    }
+
+    /// Attempts to advance the ledger to the next block, and updates the metrics (if enabled) accordingly.
+    fn try_advance_to_next_block(
+        &self,
+        subdag: Subdag<N>,
+        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+    ) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let start = subdag.leader_certificate().batch_header().timestamp();
+        #[cfg(feature = "metrics")]
+        let num_committed_certificates = subdag.values().map(|c| c.len()).sum::<usize>();
+        #[cfg(feature = "metrics")]
+        let current_block_timestamp = self.ledger.latest_block().header().metadata().timestamp();
+
+        // Create the candidate next block.
+        let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
+        // Check that the block is well-formed.
+        self.ledger.check_next_block(&next_block)?;
+        // Advance to the next block.
+        self.ledger.advance_to_next_block(&next_block)?;
+        #[cfg(feature = "telemetry")]
+        // Fetch the latest committee
+        let latest_committee = self.ledger.current_committee()?;
+
+        // If the next block starts a new epoch, clear the existing solutions.
+        if next_block.height() % N::NUM_BLOCKS_PER_EPOCH == 0 {
+            // Clear the solutions queue.
+            self.solutions_queue.lock().clear();
+            // Clear the worker solutions.
+            self.bft.primary().clear_worker_solutions();
+        }
+
+        // Notify peers that we have a new block.
+        let locators = self.block_sync.get_block_locators()?;
+        self.ping.update_block_locators(locators);
+
+        // Make block sync aware of the new block.
+        self.block_sync.set_sync_height(next_block.height());
+
+        // TODO(kaimast): This should also remove any transmissions/solutions contained in the block from the mempool.
+        // Removal currently happens when Consensus eventually passes them to the worker, which then just discards them.
+
+        #[cfg(feature = "metrics")]
+        {
+            let now_utc = snarkos_node_bft::helpers::now_utc();
+            let elapsed = std::time::Duration::from_secs((now_utc.unix_timestamp() - start) as u64);
+            let next_block_timestamp = next_block.header().metadata().timestamp();
+            let next_block_utc = snarkos_node_bft::helpers::to_utc_datetime(next_block_timestamp);
+            let block_latency = next_block_timestamp - current_block_timestamp;
+            let block_lag = (now_utc - next_block_utc).whole_milliseconds();
+
+            let proof_target = next_block.header().proof_target();
+            let coinbase_target = next_block.header().coinbase_target();
+            let cumulative_proof_target = next_block.header().cumulative_proof_target();
+
+            // Calculate latency for all transmissions included in this block.
+            metrics::add_transmission_latency_metric(&self.transmissions_tracker, &next_block);
+
+            metrics::gauge(metrics::consensus::COMMITTED_CERTIFICATES, num_committed_certificates as f64);
+            metrics::histogram(metrics::consensus::CERTIFICATE_COMMIT_LATENCY, elapsed.as_secs_f64());
+            metrics::histogram(metrics::consensus::BLOCK_LATENCY, block_latency as f64);
+            metrics::histogram(metrics::consensus::BLOCK_LAG, block_lag as f64);
+            metrics::gauge(metrics::blocks::PROOF_TARGET, proof_target as f64);
+            metrics::gauge(metrics::blocks::COINBASE_TARGET, coinbase_target as f64);
+            metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);
+
+            #[cfg(feature = "telemetry")]
+            {
+                // Retrieve the latest participation scores.
+                let participation_scores =
+                    self.bft().primary().gateway().validator_telemetry().get_participation_scores(&latest_committee);
+
+                // Log the participation scores.
+                for (address, participation_score) in participation_scores {
+                    metrics::histogram_label(
+                        metrics::consensus::VALIDATOR_PARTICIPATION,
+                        "validator_address",
+                        address.to_string(),
+                        participation_score,
+                    )
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reinserts the given transmissions into the memory pool.
+    async fn reinsert_transmissions(&self, transmissions: IndexMap<TransmissionID<N>, Transmission<N>>) {
+        // Iterate over the transmissions.
+        for (transmission_id, transmission) in transmissions.into_iter() {
+            // Reinsert the transmission into the memory pool.
+            match self.reinsert_transmission(transmission_id, transmission).await {
+                Ok(true) => {}
+                Ok(false) => debug!(
+                    "Unable to reinsert transmission {}.{} into the memory pool. Already exists.",
+                    fmt_id(transmission_id),
+                    fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                ),
+                Err(err) => {
+                    let err = err.context(format!(
+                        "Unable to reinsert transmission {}.{} into the memory pool",
+                        fmt_id(transmission_id),
+                        fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                    ));
+                    warn!("{}", flatten_error(err));
+                }
+            }
+        }
+    }
+
+    /// Reinserts the given transmission into the memory pool.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the transmission was added to the memory pool.
+    /// - `Ok(false)` if the transmission was valid but already exists in the memory pool.
+    /// - `Err(anyhow::Error)` if the transmission was invalid.
+    async fn reinsert_transmission(
+        &self,
+        transmission_id: TransmissionID<N>,
+        transmission: Transmission<N>,
+    ) -> Result<bool> {
+        // Initialize a callback sender and receiver.
+        let (callback, callback_receiver) = oneshot::channel();
+        // Send the transmission to the primary.
+        match (transmission_id, transmission) {
+            (TransmissionID::Ratification, Transmission::Ratification) => return Ok(true),
+            (TransmissionID::Solution(solution_id, _), Transmission::Solution(solution)) => {
+                // Send the solution to the primary.
+                self.primary_sender.tx_unconfirmed_solution.send((solution_id, solution, callback)).await?;
+            }
+            (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(transaction)) => {
+                // Send the transaction to the primary.
+                self.primary_sender.tx_unconfirmed_transaction.send((transaction_id, transaction, callback)).await?;
+            }
+            _ => bail!("Mismatching `(transmission_id, transmission)` pair in consensus"),
+        }
+        // Await the callback.
+        callback_receiver.await?
+    }
+
+    /// Spawns a task with the given future; it should only be used for long-running tasks.
+    fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
+        self.handles.lock().push(tokio::spawn(future));
+    }
+
+    /// Shuts down the consensus and BFT layers.
+    pub async fn shut_down(&self) {
+        info!("Shutting down consensus...");
+        // Shut down the BFT.
+        self.bft.shut_down().await;
+        // Abort the tasks.
+        self.handles.lock().iter().for_each(|handle| handle.abort());
     }
 }

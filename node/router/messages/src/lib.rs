@@ -1,0 +1,333 @@
+// Copyright (c) 2019-2025 Provable Inc.
+// This file is part of the snarkOS library.
+
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#![forbid(unsafe_code)]
+
+#[macro_use]
+extern crate tracing;
+
+pub mod helpers;
+pub use helpers::*;
+
+mod block_request;
+pub use block_request::BlockRequest;
+
+mod block_response;
+pub use block_response::BlockResponse;
+
+mod challenge_request;
+pub use challenge_request::ChallengeRequest;
+
+mod challenge_response;
+pub use challenge_response::ChallengeResponse;
+
+mod disconnect;
+pub use disconnect::Disconnect;
+
+mod peer_request;
+pub use peer_request::PeerRequest;
+
+mod peer_response;
+pub use peer_response::PeerResponse;
+
+mod ping;
+pub use ping::Ping;
+
+mod pong;
+pub use pong::Pong;
+
+mod puzzle_request;
+pub use puzzle_request::PuzzleRequest;
+
+mod puzzle_response;
+pub use puzzle_response::PuzzleResponse;
+
+mod unconfirmed_solution;
+pub use unconfirmed_solution::UnconfirmedSolution;
+
+mod unconfirmed_transaction;
+pub use unconfirmed_transaction::UnconfirmedTransaction;
+
+pub use snarkos_node_bft_events::DataBlocks;
+
+use snarkos_node_sync_locators::BlockLocators;
+use snarkvm::prelude::{
+    Address,
+    ConsensusVersion,
+    FromBytes,
+    Network,
+    Signature,
+    ToBytes,
+    block::{Header, Transaction},
+    error,
+    puzzle::{Solution, SolutionID},
+};
+
+use std::{borrow::Cow, io, net::SocketAddr};
+
+pub trait MessageTrait: ToBytes + FromBytes {
+    /// Returns the message name.
+    fn name(&self) -> Cow<'static, str>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Message<N: Network> {
+    BlockRequest(BlockRequest),
+    BlockResponse(BlockResponse<N>),
+    ChallengeRequest(ChallengeRequest<N>),
+    ChallengeResponse(ChallengeResponse<N>),
+    Disconnect(Disconnect),
+    PeerRequest(PeerRequest),
+    PeerResponse(PeerResponse),
+    Ping(Ping<N>),
+    Pong(Pong),
+    PuzzleRequest(PuzzleRequest),
+    PuzzleResponse(PuzzleResponse<N>),
+    UnconfirmedSolution(UnconfirmedSolution<N>),
+    UnconfirmedTransaction(UnconfirmedTransaction<N>),
+}
+
+impl<N: Network> From<DisconnectReason> for Message<N> {
+    fn from(reason: DisconnectReason) -> Self {
+        Self::Disconnect(Disconnect { reason })
+    }
+}
+
+impl<N: Network> Message<N> {
+    /// The version of the network protocol; this is incremented for breaking changes between migration versions.
+    // Note. This should be incremented for each new `ConsensusVersion` that is added.
+    pub const VERSIONS: [(ConsensusVersion, u32); 7] = [
+        (ConsensusVersion::V5, 17),
+        (ConsensusVersion::V7, 18),
+        (ConsensusVersion::V8, 19),
+        (ConsensusVersion::V9, 20),
+        (ConsensusVersion::V10, 21),
+        (ConsensusVersion::V11, 22),
+        (ConsensusVersion::V12, 23),
+    ];
+
+    /// Returns the latest message version.
+    pub fn latest_message_version() -> u32 {
+        Self::VERSIONS.last().map(|(_, version)| *version).unwrap_or(0)
+    }
+
+    /// Returns the lowest acceptable message version for the given block height.
+    /// Example scenario:
+    ///     At block height `X`, the protocol upgrades to message version from `Y-1` to `Y`.
+    ///     Client A upgrades and starts using message version `Y`.
+    ///     Client B has not upgraded and still uses message version `Y-1`.
+    ///     Until block `X`, they stay connected and can communicate.
+    ///     After block `X`, Client A will reject messages from Client B.
+    pub fn lowest_accepted_message_version(current_block_height: u32) -> u32 {
+        // Fetch the latest message version.
+        let latest_message_version = Self::latest_message_version();
+
+        // Fetch the versions.
+        let versions = Self::VERSIONS;
+
+        // Determine the minimum accepted message version.
+        N::CONSENSUS_VERSION(current_block_height).map_or(latest_message_version, |seek_version| {
+            // Search the consensus value for the specified version.
+            match versions.binary_search_by(|(version, _)| version.cmp(&seek_version)) {
+                // If a value was found for this consensus version, return it.
+                Ok(index) => versions[index].1,
+                // If the specified version was not found exactly, return the appropriate value belonging to the consensus version *lower* than the sought version.
+                // If the constant is not yet in effect at this consensus version, use the earliest version.
+                Err(index) => versions[index.saturating_sub(1)].1,
+            }
+        })
+    }
+
+    /// Returns the message name.
+    #[inline]
+    pub fn name(&self) -> Cow<'static, str> {
+        match self {
+            Self::BlockRequest(message) => message.name(),
+            Self::BlockResponse(message) => message.name(),
+            Self::ChallengeRequest(message) => message.name(),
+            Self::ChallengeResponse(message) => message.name(),
+            Self::Disconnect(message) => message.name(),
+            Self::PeerRequest(message) => message.name(),
+            Self::PeerResponse(message) => message.name(),
+            Self::Ping(message) => message.name(),
+            Self::Pong(message) => message.name(),
+            Self::PuzzleRequest(message) => message.name(),
+            Self::PuzzleResponse(message) => message.name(),
+            Self::UnconfirmedSolution(message) => message.name(),
+            Self::UnconfirmedTransaction(message) => message.name(),
+        }
+    }
+
+    /// Returns the message ID.
+    #[inline]
+    pub fn id(&self) -> u16 {
+        match self {
+            Self::BlockRequest(..) => 0,
+            Self::BlockResponse(..) => 1,
+            Self::ChallengeRequest(..) => 2,
+            Self::ChallengeResponse(..) => 3,
+            Self::Disconnect(..) => 4,
+            Self::PeerRequest(..) => 5,
+            Self::PeerResponse(..) => 6,
+            Self::Ping(..) => 7,
+            Self::Pong(..) => 8,
+            Self::PuzzleRequest(..) => 9,
+            Self::PuzzleResponse(..) => 10,
+            Self::UnconfirmedSolution(..) => 11,
+            Self::UnconfirmedTransaction(..) => 12,
+        }
+    }
+
+    /// Checks the message byte length. To be used before deserialization.
+    pub fn check_size(bytes: &[u8]) -> io::Result<()> {
+        // Store the length to be checked against the max message size for each variant.
+        let len = bytes.len();
+        if len < 2 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
+        }
+
+        // Check the first two bytes for the message ID.
+        let id_bytes: [u8; 2] = (&bytes[..2])
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "id couldn't be deserialized"))?;
+        let id = u16::from_le_bytes(id_bytes);
+
+        // SPECIAL CASE: check the transaction message isn't too large.
+        if id == 12 && len > N::MAX_TRANSACTION_SIZE {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<N: Network> ToBytes for Message<N> {
+    fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
+        self.id().write_le(&mut writer)?;
+
+        match self {
+            Self::BlockRequest(message) => message.write_le(writer),
+            Self::BlockResponse(message) => message.write_le(writer),
+            Self::ChallengeRequest(message) => message.write_le(writer),
+            Self::ChallengeResponse(message) => message.write_le(writer),
+            Self::Disconnect(message) => message.write_le(writer),
+            Self::PeerRequest(message) => message.write_le(writer),
+            Self::PeerResponse(message) => message.write_le(writer),
+            Self::Ping(message) => message.write_le(writer),
+            Self::Pong(message) => message.write_le(writer),
+            Self::PuzzleRequest(message) => message.write_le(writer),
+            Self::PuzzleResponse(message) => message.write_le(writer),
+            Self::UnconfirmedSolution(message) => message.write_le(writer),
+            Self::UnconfirmedTransaction(message) => message.write_le(writer),
+        }
+    }
+}
+
+impl<N: Network> FromBytes for Message<N> {
+    fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
+        // Read the event ID.
+        let mut id_bytes = [0u8; 2];
+        reader.read_exact(&mut id_bytes)?;
+        let id = u16::from_le_bytes(id_bytes);
+
+        // Deserialize the data field.
+        let message = match id {
+            0 => Self::BlockRequest(BlockRequest::read_le(&mut reader)?),
+            1 => Self::BlockResponse(BlockResponse::read_le(&mut reader)?),
+            2 => Self::ChallengeRequest(ChallengeRequest::read_le(&mut reader)?),
+            3 => Self::ChallengeResponse(ChallengeResponse::read_le(&mut reader)?),
+            4 => Self::Disconnect(Disconnect::read_le(&mut reader)?),
+            5 => Self::PeerRequest(PeerRequest::read_le(&mut reader)?),
+            6 => Self::PeerResponse(PeerResponse::read_le(&mut reader)?),
+            7 => Self::Ping(Ping::read_le(&mut reader)?),
+            8 => Self::Pong(Pong::read_le(&mut reader)?),
+            9 => Self::PuzzleRequest(PuzzleRequest::read_le(&mut reader)?),
+            10 => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
+            11 => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
+            12 => Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?),
+            13.. => return Err(error("Unknown message ID {id}")),
+        };
+
+        // Ensure that there are no "dangling" bytes.
+        #[allow(clippy::unbuffered_bytes)]
+        if reader.bytes().next().is_some() {
+            return Err(error("Leftover bytes in a Message"));
+        }
+
+        Ok(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snarkvm::prelude::{CanaryV0, MainnetV0, TestnetV0};
+
+    /// Ensure that the message versions used at genesis is correct.
+    fn consensus_constants_at_genesis<N: Network>() {
+        let height = 0;
+        let consensus_version = Message::<N>::lowest_accepted_message_version(height);
+        assert_eq!(consensus_version as usize, Message::<N>::VERSIONS.first().unwrap().1 as usize);
+    }
+
+    /// Ensure that the consensus *versions* are unique and incrementing.
+    fn consensus_versions<N: Network>() {
+        let mut previous_version = Message::<N>::VERSIONS.first().unwrap().0;
+        for (version, _) in Message::<N>::VERSIONS.iter().skip(1) {
+            assert!(*version as usize > previous_version as usize);
+            previous_version = *version;
+        }
+    }
+
+    /// Ensure that *message versions* are unique and incrementing by 1.
+    fn consensus_constants_increasing_heights<N: Network>() {
+        let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
+        for (_, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+            assert_eq!(*message_version, previous_message_version + 1);
+            previous_message_version = *message_version;
+        }
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn test_consensus_constants() {
+        consensus_constants_at_genesis::<MainnetV0>();
+        consensus_constants_at_genesis::<TestnetV0>();
+        consensus_constants_at_genesis::<CanaryV0>();
+
+        consensus_versions::<MainnetV0>();
+        consensus_versions::<TestnetV0>();
+        consensus_versions::<CanaryV0>();
+
+        consensus_constants_increasing_heights::<MainnetV0>();
+        consensus_constants_increasing_heights::<TestnetV0>();
+        consensus_constants_increasing_heights::<CanaryV0>();
+    }
+
+    #[test]
+    fn test_latest_consensus_version() {
+        let message_consensus_version = Message::<MainnetV0>::VERSIONS.last().unwrap().0;
+        let expected_consensus_version = MainnetV0::CONSENSUS_VERSION_HEIGHTS().last().unwrap().0;
+        assert_eq!(message_consensus_version, expected_consensus_version);
+
+        let message_consensus_version = Message::<TestnetV0>::VERSIONS.last().unwrap().0;
+        let expected_consensus_version = TestnetV0::CONSENSUS_VERSION_HEIGHTS().last().unwrap().0;
+        assert_eq!(message_consensus_version, expected_consensus_version);
+
+        let message_consensus_version = Message::<CanaryV0>::VERSIONS.last().unwrap().0;
+        let expected_consensus_version = CanaryV0::CONSENSUS_VERSION_HEIGHTS().last().unwrap().0;
+        assert_eq!(message_consensus_version, expected_consensus_version);
+    }
+}

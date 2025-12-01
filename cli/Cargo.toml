@@ -1,10 +1,10 @@
 [package]
 name = "snarkos-cli"
-version = "2.0.2"
+version = "4.4.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
-description = "A CLI for a decentralized operating system"
+description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
-repository = "https://github.com/AleoHQ/snarkOS"
+repository = "https://github.com/ProvableHQ/snarkOS"
 keywords = [
   "aleo",
   "cryptography",
@@ -12,78 +12,161 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-categories = [ "cryptography", "operating-systems" ]
-license = "GPL-3.0"
-edition = "2021"
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[features]
+async = []
+locktick = [
+  "dep:locktick",
+  "snarkos-node/locktick",
+  "snarkos-node-cdn/locktick",
+  "snarkos-node-rest/locktick",
+  "snarkvm/locktick"
+]
+metrics = [ "dep:snarkos-node-metrics", "snarkos-node/metrics" ]
+cuda = [
+  "snarkvm/cuda",
+  "snarkos-account/cuda",
+  "snarkos-node/cuda",
+  "snarkos-node-cdn/cuda",
+  "snarkos-node-rest/cuda"
+]
+test_targets = [ "snarkvm/test_targets" ]
+test_consensus_heights = [ "snarkvm/test_consensus_heights" ]
+test_network = [
+  "test_targets", 
+  "test_consensus_heights",
+  "snarkvm/dev-print"
+]
+serial = [ ]
+tokio_console = [ "dep:console-subscriber", "tokio/tracing" ]
 
 [dependencies.aleo-std]
-version = "0.1.15"
-default-features = false
+workspace = true
+
+[dependencies.anstyle]
+version = "1"
 
 [dependencies.anyhow]
-version = "1"
+workspace = true
+
+[dependencies.base64]
+workspace = true
 
 [dependencies.clap]
-version = "3.2"
-features = ["derive"]
+workspace = true
+features = [ "derive", "color", "unstable-styles", "help", "cargo", "usage", "suggestions" ]
 
 [dependencies.colored]
-version = "2"
+workspace = true
+
+[dependencies.console-subscriber]
+version = "0.4.1"
+optional = true
 
 [dependencies.crossterm]
-version = "0.25"
+workspace = true
 
-[target.'cfg(target_family = "unix")'.dependencies.nix]
-version = "0.26"
+[dependencies.indexmap]
+workspace = true
+features = [ "serde", "rayon" ]
+
+[dependencies.locktick]
+workspace = true
+features = [ "parking_lot" ]
+optional = true
 
 [dependencies.num_cpus]
-version = "1"
+workspace = true
 
 [dependencies.parking_lot]
-version = "0.12"
+workspace = true
 
 [dependencies.rand]
-version = "0.8"
-default-features = false
+workspace = true
 
 [dependencies.rand_chacha]
-version = "0.3.0"
-default-features = false
+workspace = true
 
 [dependencies.rayon]
-version = "1"
+workspace = true
+
+[dependencies.rpassword]
+version = "7.4.0"
 
 [dependencies.self_update]
-version = "0.32"
+version = "0.42"
+features = [ "archive-zip", "compression-zip-deflate" ]
 
 [dependencies.serde]
-version = "1"
+workspace = true
 
 [dependencies.serde_json]
-version = "1"
+workspace = true
+features = [ "preserve_order" ]
 
 [dependencies.snarkos-account]
-path = "../account"
+workspace = true
 
 [dependencies.snarkos-display]
-path = "../display"
+workspace = true
 
 [dependencies.snarkos-node]
-path = "../node"
+workspace = true
+
+[dependencies.snarkos-node-cdn]
+workspace = true
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-rest]
-path = "../node/rest"
+workspace = true
 
 [dependencies.snarkvm]
 workspace = true
+features = [ "parameters", "circuit", "package" ]
+
+[dependencies.sys-info]
+version = "0.9"
+
+[dependencies.tempfile]
+version = "3"
+
+[dependencies.time]
+workspace = true
 
 [dependencies.thiserror]
-version = "1.0"
+workspace = true
 
 [dependencies.tokio]
-version = "1.22"
-features = ["rt"]
+workspace = true
+features = [ "rt" ]
+
+[dependencies.tracing]
+workspace = true
 
 [dependencies.tracing-subscriber]
-version = "0.3"
+workspace = true
 features = [ "env-filter" ]
+
+[dependencies.ureq]
+version = "3"
+features = ["json"]
+default-features = true
+
+[dependencies.zeroize]
+version = "1"
+features = [ "derive" ]
+
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "test-helpers" ]
+
+[target."cfg(target_family = \"unix\")".dependencies.nix]
+version = "0.30"
+default-features = false
+features = [ "resource" ]

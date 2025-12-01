@@ -1,22 +1,30 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use crate::{Outbound, Router, REDUNDANCY_FACTOR};
-use snarkos_node_messages::{DisconnectReason, Message, PeerRequest, PuzzleRequest};
+use crate::{
+    ConnectedPeer,
+    NodeType,
+    Outbound,
+    PeerPoolHandling,
+    Router,
+    bootstrap_peers,
+    messages::{DisconnectReason, Message, PeerRequest},
+};
 use snarkvm::prelude::Network;
+
+use snarkos_node_tcp::P2P;
 
 use colored::Colorize;
 use rand::{prelude::IteratorRandom, rngs::OsRng};
@@ -30,18 +38,23 @@ pub const fn max(a: usize, b: usize) -> usize {
     }
 }
 
+#[async_trait]
 pub trait Heartbeat<N: Network>: Outbound<N> {
     /// The duration in seconds to sleep in between heartbeat executions.
-    const HEARTBEAT_IN_SECS: u64 = 15; // 15 seconds
+    const HEARTBEAT_IN_SECS: u64 = 25; // 25 seconds
     /// The minimum number of peers required to maintain connections with.
     const MINIMUM_NUMBER_OF_PEERS: usize = 3;
     /// The median number of peers to maintain connections with.
     const MEDIAN_NUMBER_OF_PEERS: usize = max(Self::MAXIMUM_NUMBER_OF_PEERS / 2, Self::MINIMUM_NUMBER_OF_PEERS);
     /// The maximum number of peers permitted to maintain connections with.
     const MAXIMUM_NUMBER_OF_PEERS: usize = 21;
+    /// The maximum number of provers to maintain connections with.
+    const MAXIMUM_NUMBER_OF_PROVERS: usize = Self::MAXIMUM_NUMBER_OF_PEERS / 4;
+    /// The amount of time an IP address is prohibited from connecting.
+    const IP_BAN_TIME_IN_SECS: u64 = 300;
 
     /// Handles the heartbeat request.
-    fn heartbeat(&self) {
+    async fn heartbeat(&self) {
         self.safety_check_minimum_number_of_peers();
         self.log_connected_peers();
 
@@ -52,14 +65,16 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Keep the number of connected peers within the allowed range.
         self.handle_connected_peers();
         // Keep the bootstrap peers within the allowed range.
-        self.handle_bootstrap_peers();
+        self.handle_bootstrap_peers().await;
         // Keep the trusted peers connected.
-        self.handle_trusted_peers();
+        self.handle_trusted_peers().await;
         // Keep the puzzle request up to date.
         self.handle_puzzle_request();
+        // Unban any addresses whose ban time has expired.
+        self.handle_banned_ips();
     }
 
-    /// TODO (howardwu): Consider checking minimum number of beacons and validators, to exclude clients and provers.
+    /// TODO (howardwu): Consider checking minimum number of validators, to exclude clients and provers.
     /// This function performs safety checks on the setting for the minimum number of peers.
     fn safety_check_minimum_number_of_peers(&self) {
         // Perform basic sanity checks on the configuration for the number of peers.
@@ -67,12 +82,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         assert!(Self::MINIMUM_NUMBER_OF_PEERS <= Self::MAXIMUM_NUMBER_OF_PEERS);
         assert!(Self::MINIMUM_NUMBER_OF_PEERS <= Self::MEDIAN_NUMBER_OF_PEERS);
         assert!(Self::MEDIAN_NUMBER_OF_PEERS <= Self::MAXIMUM_NUMBER_OF_PEERS);
-
-        // If the node is not in development mode, and is a beacon or validator, check its median number of peers.
-        let is_beacon_or_validator = self.router().node_type().is_beacon() || self.router().node_type().is_validator();
-        if !self.router().is_dev() && is_beacon_or_validator && Self::MEDIAN_NUMBER_OF_PEERS < 2 * REDUNDANCY_FACTOR {
-            warn!("Caution - please raise the median number of peers to be at least {}", 2 * REDUNDANCY_FACTOR);
-        }
+        assert!(Self::MAXIMUM_NUMBER_OF_PROVERS <= Self::MAXIMUM_NUMBER_OF_PEERS);
     }
 
     /// This function logs the connected peers.
@@ -81,7 +91,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let connected_peers = self.router().connected_peers();
         let connected_peers_fmt = format!("{connected_peers:?}").dimmed();
         match connected_peers.len() {
-            0 => debug!("No connected peers"),
+            0 => warn!("No connected peers"),
             1 => debug!("Connected to 1 peer: {connected_peers_fmt}"),
             num_connected => debug!("Connected to {num_connected} peers {connected_peers_fmt}"),
         }
@@ -92,182 +102,234 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // Check if any connected peer is stale.
         for peer in self.router().get_connected_peers() {
             // Disconnect if the peer has not communicated back within the predefined time.
-            let elapsed = peer.last_seen().elapsed().as_secs();
-            if elapsed > Router::<N>::RADIO_SILENCE_IN_SECS {
-                warn!("Peer {} has not communicated in {elapsed} seconds", peer.ip());
+            let elapsed = peer.last_seen.elapsed();
+            if elapsed > Router::<N>::MAX_RADIO_SILENCE {
+                warn!("Peer {} has not communicated in {elapsed:?}", peer.listener_addr);
                 // Disconnect from this peer.
-                self.router().disconnect(peer.ip());
+                self.router().disconnect(peer.listener_addr);
             }
         }
     }
 
-    /// This function removes the oldest connected peer, to keep the connections fresh.
-    /// This function only triggers if the router is above the minimum number of connected peers.
+    /// Returns a sorted vector of network addresses of all removable connected peers
+    /// where the first entry has the lowest priority and the last one the highest.
+    ///
+    /// Rules:
+    ///     - Trusted peers and bootstrap nodes are not removable.
+    ///     - Peers that we are currently syncing with are not removable.
+    ///     - Connections that have not been seen in a while are considered lower priority.
+    fn get_removable_peers(&self) -> Vec<ConnectedPeer<N>> {
+        // Are we synced already? (cache this here, so it does not need to be recomputed)
+        let is_block_synced = self.is_block_synced();
+
+        // Sort by priority, where lowest priority will be at the beginning
+        // of the vector.
+        // Note, that this gives equal priority to clients and provers, which
+        // we might want to change in the future.
+        let mut peers = self.router().filter_connected_peers(|peer| {
+            !peer.trusted
+                && peer.node_type != NodeType::BootstrapClient
+                && !self.router().cache.contains_inbound_block_request(&peer.listener_addr) // This peer is currently syncing from us.
+                && (is_block_synced || self.router().cache.num_outbound_block_requests(&peer.listener_addr) == 0) // We are currently syncing from this peer.
+        });
+        peers.sort_by_key(|peer| peer.last_seen);
+
+        peers
+    }
+
+    /// This function removes the peer that we have not heard from the longest,
+    /// to keep the connections fresh.
+    /// It only triggers if the router is above the minimum number of connected peers.
     fn remove_oldest_connected_peer(&self) {
+        // Skip if the node is not requesting peers.
+        if self.router().trusted_peers_only() {
+            return;
+        }
+
         // Skip if the router is at or below the minimum number of connected peers.
         if self.router().number_of_connected_peers() <= Self::MINIMUM_NUMBER_OF_PEERS {
             return;
         }
 
-        // Retrieve the trusted peers.
-        let trusted = self.router().trusted_peers();
-        // Retrieve the bootstrap peers.
-        let bootstrap = self.router().bootstrap_peers();
-
-        // Find the oldest connected peer, that is neither trusted nor a bootstrap peer.
-        let oldest_peer = self
-            .router()
-            .get_connected_peers()
-            .iter()
-            .filter(|peer| !trusted.contains(&peer.ip()) && !bootstrap.contains(&peer.ip()))
-            .min_by_key(|peer| peer.last_seen())
-            .map(|peer| peer.ip());
-
-        // Disconnect from the oldest connected peer, if one exists.
-        if let Some(oldest) = oldest_peer {
+        // Disconnect from the oldest connected peer, which is the first entry in the list
+        // of removable peers.
+        // Do nothing, if the list is empty.
+        if let Some(oldest) = self.get_removable_peers().first().map(|peer| peer.listener_addr) {
             info!("Disconnecting from '{oldest}' (periodic refresh of peers)");
-            let _ = self.send(oldest, Message::Disconnect(DisconnectReason::PeerRefresh.into()));
-            // Disconnect from this peer.
+            let _ = self.router().send(oldest, Message::Disconnect(DisconnectReason::PeerRefresh.into()));
             self.router().disconnect(oldest);
         }
     }
 
-    /// TODO (howardwu): If the node is a beacon, keep the beacons, and keep 0 clients and provers.
-    ///  If the node is a validator, keep REDUNDANCY_FACTOR beacons.
-    ///  If the node is a client or prover, prioritize validators, and keep 0 beacons.
     /// This function keeps the number of connected peers within the allowed range.
     fn handle_connected_peers(&self) {
+        // Initialize an RNG.
+        let rng = &mut OsRng;
+
         // Obtain the number of connected peers.
         let num_connected = self.router().number_of_connected_peers();
+        // Obtain the number of connected provers.
+        let num_connected_provers = self.router().filter_connected_peers(|peer| peer.node_type.is_prover()).len();
+
+        // Determine the maximum number of peers and provers to keep.
+        let (max_peers, max_provers) = (Self::MAXIMUM_NUMBER_OF_PEERS, Self::MAXIMUM_NUMBER_OF_PROVERS);
+
         // Compute the number of surplus peers.
-        let num_surplus = num_connected.saturating_sub(Self::MAXIMUM_NUMBER_OF_PEERS);
-        // Compute the number of deficit peers.
-        let num_deficient = Self::MEDIAN_NUMBER_OF_PEERS.saturating_sub(num_connected);
+        let num_surplus_peers = num_connected.saturating_sub(max_peers);
+        // Compute the number of surplus provers.
+        let num_surplus_provers = num_connected_provers.saturating_sub(max_provers);
+        // Compute the number of provers remaining connected.
+        let num_remaining_provers = num_connected_provers.saturating_sub(num_surplus_provers);
+        // Compute the number of surplus clients and validators.
+        let num_surplus_clients_validators = num_surplus_peers.saturating_sub(num_remaining_provers);
 
-        if num_surplus > 0 {
-            debug!("Exceeded maximum number of connected peers, disconnecting from {num_surplus} peers");
+        if num_surplus_provers > 0 || num_surplus_clients_validators > 0 {
+            debug!(
+                "Exceeded maximum number of connected peers, disconnecting from ({num_surplus_provers} + {num_surplus_clients_validators}) peers"
+            );
 
-            // Retrieve the trusted peers.
-            let trusted = self.router().trusted_peers();
-            // Retrieve the bootstrap peers.
-            let bootstrap = self.router().bootstrap_peers();
-
-            // Initialize an RNG.
-            let rng = &mut OsRng::default();
-
-            // TODO (howardwu): As a validator, prioritize disconnecting from clients and provers.
-            //  Remove RNG, pick the `n` oldest nodes.
-            // Determine the peers to disconnect from.
-            let peer_ips_to_disconnect = self
+            // Determine the provers to disconnect from.
+            let provers_to_disconnect = self
                 .router()
-                .connected_peers()
+                .filter_connected_peers(|peer| peer.node_type.is_prover() && !peer.trusted)
                 .into_iter()
-                .filter(|peer_ip| !trusted.contains(peer_ip) && !bootstrap.contains(peer_ip))
-                .choose_multiple(rng, num_surplus);
+                .choose_multiple(rng, num_surplus_provers);
+
+            // Determine the clients and validators to disconnect from.
+            let peers_to_disconnect = self
+                .get_removable_peers()
+                .into_iter()
+                .filter(|peer| !peer.node_type.is_prover()) // remove provers as those are handled separately
+                .take(num_surplus_clients_validators);
 
             // Proceed to send disconnect requests to these peers.
-            for peer_ip in peer_ips_to_disconnect {
+            for peer in peers_to_disconnect.chain(provers_to_disconnect) {
                 // TODO (howardwu): Remove this after specializing this function.
                 if self.router().node_type().is_prover() {
-                    if let Some(peer) = self.router().get_connected_peer(&peer_ip) {
-                        if peer.node_type().is_validator() {
-                            continue;
-                        }
-                    }
+                    continue;
                 }
 
-                info!("Disconnecting from '{peer_ip}' (exceeded maximum connections)");
-                self.send(peer_ip, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
+                let peer_addr = peer.listener_addr;
+                info!("Disconnecting from '{peer_addr}' (exceeded maximum connections)");
+                self.router().send(peer_addr, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
                 // Disconnect from this peer.
-                self.router().disconnect(peer_ip);
+                self.router().disconnect(peer_addr);
             }
         }
 
+        // Obtain the number of connected peers.
+        let num_connected = self.router().number_of_connected_peers();
+        // Compute the number of deficit peers.
+        let num_deficient = Self::MEDIAN_NUMBER_OF_PEERS.saturating_sub(num_connected);
+
         if num_deficient > 0 {
             // Initialize an RNG.
-            let rng = &mut OsRng::default();
+            let rng = &mut OsRng;
 
-            // Attempt to connect to more peers.
-            for peer_ip in self.router().candidate_peers().into_iter().choose_multiple(rng, num_deficient) {
-                self.router().connect(peer_ip);
+            // Attempt to connect to more peers, separately choosing from those at a greater block
+            // height, and those whose height is lower or unknown to us.
+            let own_height = self.router().ledger.latest_block_height();
+            let (higher_peers, other_peers): (Vec<_>, Vec<_>) = self
+                .router()
+                .get_candidate_peers()
+                .into_iter()
+                .partition(|peer| peer.last_height_seen.map(|h| h > own_height).unwrap_or(false));
+            // We may not know of half of `num_deficient` candidates; account for it using `min`.
+            let num_higher_peers = num_deficient.div_ceil(2).min(higher_peers.len());
+            for peer in higher_peers.into_iter().choose_multiple(rng, num_higher_peers) {
+                self.router().connect(peer.listener_addr);
             }
-            // Request more peers from the connected peers.
-            for peer_ip in self.router().connected_peers().into_iter().choose_multiple(rng, 3) {
-                self.send(peer_ip, Message::PeerRequest(PeerRequest));
+            for peer in other_peers.into_iter().choose_multiple(rng, num_deficient - num_higher_peers) {
+                self.router().connect(peer.listener_addr);
+            }
+
+            if !self.router().trusted_peers_only() {
+                // Request more peers from the connected peers.
+                for peer_ip in self.router().connected_peers().into_iter().choose_multiple(rng, 3) {
+                    self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
+                }
             }
         }
     }
 
-    // TODO (howardwu): Remove this for Phase 3.
     /// This function keeps the number of bootstrap peers within the allowed range.
-    fn handle_bootstrap_peers(&self) {
-        // Split the bootstrap peers into connected and candidate lists.
-        let mut connected_bootstrap = Vec::new();
-        let mut candidate_bootstrap = Vec::new();
-        for bootstrap_ip in self.router().bootstrap_peers() {
-            match self.router().is_connected(&bootstrap_ip) {
-                true => connected_bootstrap.push(bootstrap_ip),
-                false => candidate_bootstrap.push(bootstrap_ip),
-            }
-        }
-        // If the node is a beacon, ensure it is connected to all bootstrap peers.
-        if self.router().node_type().is_beacon() {
-            // TODO (howardwu): Enable with tests passing.
-            // for bootstrap_ip in candidate_bootstrap {
-            //     self.router().connect(bootstrap_ip);
-            // }
+    async fn handle_bootstrap_peers(&self) {
+        // Return early if we are in trusted peers only mode.
+        if self.router().trusted_peers_only() {
             return;
+        }
+        // Split the bootstrap peers into connected and candidate lists.
+        let mut candidate_bootstrap = Vec::new();
+        let connected_bootstrap =
+            self.router().filter_connected_peers(|peer| peer.node_type == NodeType::BootstrapClient);
+        for bootstrap_ip in bootstrap_peers::<N>(self.router().is_dev()) {
+            if !connected_bootstrap.iter().any(|peer| peer.listener_addr == bootstrap_ip) {
+                candidate_bootstrap.push(bootstrap_ip);
+            }
         }
         // If there are not enough connected bootstrap peers, connect to more.
         if connected_bootstrap.is_empty() {
             // Initialize an RNG.
-            let rng = &mut OsRng::default();
+            let rng = &mut OsRng;
             // Attempt to connect to a bootstrap peer.
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
-                self.router().connect(peer_ip);
+                match self.router().connect(peer_ip) {
+                    Some(hdl) => {
+                        let result = hdl.await;
+                        if let Err(err) = result {
+                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
+                        }
+                    }
+                    None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
+                }
             }
         }
         // Determine if the node is connected to more bootstrap peers than allowed.
         let num_surplus = connected_bootstrap.len().saturating_sub(1);
         if num_surplus > 0 {
             // Initialize an RNG.
-            let rng = &mut OsRng::default();
+            let rng = &mut OsRng;
             // Proceed to send disconnect requests to these bootstrap peers.
-            for peer_ip in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
-                info!("Disconnecting from '{peer_ip}' (exceeded maximum bootstrap)");
-                self.send(peer_ip, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
+            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+                info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
+                self.router().send(peer.listener_addr, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
                 // Disconnect from this peer.
-                self.router().disconnect(peer_ip);
+                self.router().disconnect(peer.listener_addr);
             }
         }
     }
 
     /// This function attempts to connect to any disconnected trusted peers.
-    fn handle_trusted_peers(&self) {
+    async fn handle_trusted_peers(&self) {
         // Ensure that the trusted nodes are connected.
-        for peer_ip in self.router().trusted_peers() {
-            // If the peer is not connected, attempt to connect to it.
-            if !self.router().is_connected(peer_ip) {
-                // Attempt to connect to the trusted peer.
-                self.router().connect(*peer_ip);
+        let handles: Vec<_> = self
+            .router()
+            .unconnected_trusted_peers()
+            .iter()
+            .filter_map(|listener_addr| {
+                debug!("Attempting to (re-)connect to trusted peer `{listener_addr}`");
+                let hdl = self.router().connect(*listener_addr);
+                if hdl.is_none() {
+                    warn!("Could not initiate connection to trusted peer at `{listener_addr}`");
+                }
+                hdl
+            })
+            .collect();
+
+        for result in futures::future::join_all(handles).await {
+            if let Err(err) = result {
+                warn!("Could not connect to trusted peer: {err}");
             }
         }
     }
 
-    /// This function updates the coinbase puzzle if network has updated.
+    /// This function updates the puzzle if network has updated.
     fn handle_puzzle_request(&self) {
-        // Retrieve the node type.
-        let node_type = self.router().node_type();
-        // If the node is a prover or client, request the coinbase puzzle.
-        if node_type.is_prover() || node_type.is_client() {
-            // Find the sync peers.
-            if let Some((sync_peers, _)) = self.router().sync().find_sync_peers() {
-                // Choose the peer with the highest block height.
-                if let Some((peer_ip, _)) = sync_peers.into_iter().max_by_key(|(_, height)| *height) {
-                    // Request the coinbase puzzle from the peer.
-                    self.send(peer_ip, Message::PuzzleRequest(PuzzleRequest));
-                }
-            }
-        }
+        // No-op
+    }
+
+    // Remove addresses whose ban time has expired.
+    fn handle_banned_ips(&self) {
+        self.router().tcp().banned_peers().remove_old_bans(Self::IP_BAN_TIME_IN_SECS);
     }
 }

@@ -1,0 +1,28 @@
+[package]
+name = "snarkos-node-sync-communication-service"
+version = "4.4.0"
+authors = [ "The Aleo Team <hello@aleo.org>" ]
+description = "A communication service for the sync module in a decentralized operating system"
+homepage = "https://aleo.org"
+repository = "https://github.com/ProvableHQ/snarkOS"
+keywords = [
+  "aleo",
+  "cryptography",
+  "blockchain",
+  "decentralized",
+  "zero-knowledge"
+]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[dependencies.async-trait]
+version = "0.1"
+
+[dependencies.tokio]
+workspace = true
+features = [ "sync" ]
+
+[features]
+default = [ ]
+test-helpers = [ ]

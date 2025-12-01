@@ -1,0 +1,65 @@
+[package]
+name = "snarkos-node-bft-events"
+version = "4.4.0"
+authors = [ "The Aleo Team <hello@aleo.org>" ]
+description = "Events for the gateway in a decentralized operating system"
+homepage = "https://aleo.org"
+repository = "https://github.com/ProvableHQ/snarkOS"
+keywords = [
+  "aleo",
+  "cryptography",
+  "blockchain",
+  "decentralized",
+  "zero-knowledge"
+]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[features]
+default = [ ]
+metrics = [ "snarkvm/metrics" ]
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.bytes]
+workspace = true
+
+[dependencies.indexmap]
+workspace = true
+features = [ "serde", "rayon" ]
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.snarkos-node-sync-locators]
+workspace = true
+
+[dependencies.snarkvm]
+workspace = true
+features = [ "ledger", "utilities" ]
+
+[dependencies.tokio-util]
+workspace = true
+features = [ "codec" ]
+
+[dependencies.tracing]
+workspace = true
+
+[dev-dependencies.proptest]
+workspace = true
+
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "test-helpers" ]
+
+[dev-dependencies.test-strategy]
+workspace = true
+
+[dev-dependencies.time]
+workspace = true
+
+[dev-dependencies.snarkos-node-sync-locators]
+workspace = true
+features = [ "test" ]

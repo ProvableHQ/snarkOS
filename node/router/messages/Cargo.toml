@@ -1,0 +1,57 @@
+[package]
+name = "snarkos-node-router-messages"
+version = "4.4.0"
+authors = [ "The Aleo Team <hello@aleo.org>" ]
+description = "Node messages for a decentralized operating system"
+homepage = "https://aleo.org"
+repository = "https://github.com/ProvableHQ/snarkOS"
+keywords = [
+  "aleo",
+  "cryptography",
+  "blockchain",
+  "decentralized",
+  "zero-knowledge"
+]
+categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
+license = "Apache-2.0"
+edition = "2024"
+
+[features]
+default = [ ]
+test = [ ]
+
+[dependencies.bytes]
+workspace = true
+
+[dependencies.snarkos-node-network]
+workspace = true
+
+[dependencies.snarkos-node-bft-events]
+workspace = true
+
+[dependencies.snarkos-node-sync-locators]
+workspace = true
+
+[dependencies.snarkvm]
+workspace = true
+
+[dependencies.tokio-util]
+workspace = true
+features = [ "codec" ]
+
+[dependencies.tracing]
+workspace = true
+
+[dev-dependencies.snarkos-node-sync-locators]
+workspace = true
+features = [ "test" ]
+
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "algorithms", "test-helpers" ]
+
+[dev-dependencies.proptest]
+workspace = true
+
+[dev-dependencies.test-strategy]
+workspace = true

@@ -1,18 +1,17 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #![forbid(unsafe_code)]
 
@@ -29,7 +28,16 @@ use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{
+    Frame,
+    Terminal,
+    backend::{Backend, CrosstermBackend},
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Tabs as TabsTui},
 };
 use std::{
     io,
@@ -37,15 +45,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc::Receiver;
-use tui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans},
-    widgets::{Block, Borders, Tabs as TabsTui},
-    Frame,
-    Terminal,
-};
 
 pub struct Display<N: Network> {
     /// An instance of the node.
@@ -56,6 +55,14 @@ pub struct Display<N: Network> {
     tabs: Tabs,
     /// The logs tab.
     logs: Logs,
+}
+
+fn header_style() -> Style {
+    Style::default().fg(Color::Cyan)
+}
+
+fn content_style() -> Style {
+    Style::default().fg(Color::White)
 }
 
 impl<N: Network> Display<N> {
@@ -129,7 +136,7 @@ impl<N: Network> Display<N> {
     }
 
     /// Draws the display.
-    fn draw<B: Backend>(&mut self, f: &mut Frame<B>) {
+    fn draw(&mut self, f: &mut Frame) {
         /* Layout */
 
         // Initialize the layout of the page.
@@ -137,20 +144,20 @@ impl<N: Network> Display<N> {
             .margin(1)
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-            .split(f.size());
+            .split(f.area());
 
         /* Tabs */
 
         // Initialize the tabs.
         let block = Block::default().style(Style::default().bg(Color::Black).fg(Color::White));
-        f.render_widget(block, f.size());
-        let titles = self
+        f.render_widget(block, f.area());
+        let titles: Vec<_> = self
             .tabs
             .titles
             .iter()
             .map(|t| {
                 let (first, rest) = t.split_at(1);
-                Spans::from(vec![
+                Line::from(vec![
                     Span::styled(first, Style::default().fg(Color::Yellow)),
                     Span::styled(rest, Style::default().fg(Color::Green)),
                 ])
@@ -164,7 +171,7 @@ impl<N: Network> Display<N> {
                     .style(Style::default().add_modifier(Modifier::BOLD)),
             )
             .select(self.tabs.index)
-            .style(Style::default().fg(Color::Cyan))
+            .style(header_style())
             .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::White));
         f.render_widget(tabs, chunks[0]);
 

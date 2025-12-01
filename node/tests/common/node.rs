@@ -1,46 +1,39 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use crate::common::test_peer::sample_genesis_block;
 use snarkos_account::Account;
-use snarkos_node::{Beacon, Client, Prover, Validator};
-use snarkvm::prelude::{ConsensusMemory, Testnet3 as CurrentNetwork};
+use snarkos_node::{Client, Prover, Validator};
+use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 
+use aleo_std::StorageMode;
 use std::str::FromStr;
-
-pub async fn beacon() -> Beacon<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
-    Beacon::new(
-        "127.0.0.1:0".parse().unwrap(),
-        None,
-        Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
-        &[],
-        sample_genesis_block(), // Should load the current network's genesis block.
-        None,                   // No CDN.
-        None,
-    )
-    .await
-    .expect("couldn't create beacon instance")
-}
 
 pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
     Client::new(
         "127.0.0.1:0".parse().unwrap(),
+        None,
+        10,
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
+        None, // No CDN.
+        StorageMode::new_test(None),
+        false, // Connect to untrusted peers.
+        None,
+        Default::default(),
         None,
     )
     .await
@@ -53,6 +46,10 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
+        StorageMode::new_test(None),
+        false,
+        None,
+        Default::default(),
         None,
     )
     .await
@@ -63,10 +60,18 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
     Validator::new(
         "127.0.0.1:0".parse().unwrap(),
         None,
+        None,
+        10,
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
+        &[],
         &[],
         sample_genesis_block(), // Should load the current network's genesis block.
         None,                   // No CDN.
+        StorageMode::new_test(None),
+        false, // This test requires validators to connect to peers.
+        false, // No dev traffic in production mode.
+        None,
+        Default::default(),
         None,
     )
     .await

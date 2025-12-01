@@ -1,7 +1,27 @@
 version: 2.1
 
+parameters:
+  medium:
+    type: string
+    default: medium
+  large:
+    type: string
+    default: large
+  xlarge:
+    type: string
+    default: xlarge
+  twoxlarge:
+    type: string
+    default: 2xlarge
+
 orbs:
-  windows: circleci/windows@2.4.0
+  windows: circleci/windows@5.0
+
+executors:
+  # The default docker image used in the main-workflow
+  rust-docker:
+     docker:
+      - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
 
 commands:
   check_windows:
@@ -14,20 +34,35 @@ commands:
       - restore_cache:
           key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
-          name: "Install Rust and run cargo check"
+          name: "Install Rust"
+          timeout: 10m
           command: |
             $ProgressPreference = "SilentlyContinue"
-            Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "stable-x86_64-pc-windows-msvc" --no-modify-path --profile minimal
+            # Remove the version of rustc that (might be) installed already..
+            # Use non-interactive mode and force uninstall to prevent the job from getting stuck.
+            choco uninstall rust -y --force
+            # Install llvm (libclang for rocksdb).
             choco install llvm -y
             refreshenv
-            $env:Path += ";C:\Users\circleci\.cargo\bin"
-            rustc -Vv
-            cargo --version
+
+            # Install rust with rustup.
+            Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
+            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+
+            # Add cargo to PATH
+            $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
+            # Verify the installation.
+            cargo --version --verbose
             rustc --version | Out-File -FilePath "rust-version"
             if (!(Test-Path "Cargo.lock" -PathType Leaf)) {
                 cargo generate-lockfile
             }
+      - run:
+          name: "Run cargo check"
+          command: |
+            # Add cargo to PATH
+            $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
+            # Check that the given package compiles
             cd << parameters.workspace_member >>
             cargo check --examples --benches --tests
       - save_cache:
@@ -42,26 +77,37 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: snarkos-stable-cache
+        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
     steps:
       - run: set -e
-      - setup_remote_docker
       - run:
-          name: Prepare environment and install dependencies
+          name: Prepare environment variables
           command: |
-            export SCCACHE_CACHE_SIZE=200M
-            export WORK_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
-            export SCCACHE_DIR="$CIRCLE_WORKING_DIRECTORY/.cache/sccache"
-            mkdir -p "$CIRCLE_WORKING_DIRECTORY/.bin"
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -C "$CIRCLE_WORKING_DIRECTORY/.bin" -xvf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            mv $CIRCLE_WORKING_DIRECTORY/.bin/sccache-v0.3.0-x86_64-unknown-linux-musl/sccache $CIRCLE_WORKING_DIRECTORY/.bin/sccache
-            export PATH="$PATH:$CIRCLE_WORKING_DIRECTORY/.bin"
-            export RUSTC_WRAPPER="sccache"
-            rm -rf "$CIRCLE_WORKING_DIRECTORY/.cargo/registry"
+            # Note: sccache cache is disabled for now
+            # it causes longer build times and causes some builds to fail
+    
+            # echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
+            # echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
+            # Disable incremental builds so that sccache works as expected
+            # echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
+      - run:
+          name: Install sccache
+          command: |
+            export SCCACHE_DIR="$HOME/.cache/sccache"
+            export SCCACHE_VERSION=v0.10.0
+            export SCCACHE_PKG="sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+
+            mkdir -p "$HOME/.bin"
+            wget "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/$SCCACHE_PKG.tar.gz"
+            tar -C "$HOME/.bin" -xvf "$SCCACHE_PKG.tar.gz"
+            chmod +x "$HOME/.bin/$SCCACHE_PKG/sccache"
+            mv "$HOME/.bin/$SCCACHE_PKG/sccache" "$HOME/.bin/sccache"
+            rm -rf "$HOME/.cargo/registry"
+      - run:
+          name: Install Debian packages
+          command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get dist-upgrade -y -o DPkg::Options::=--force-confold
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm pkg-config xz-utils make libssl-dev libssl-dev
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -71,15 +117,19 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: snarkos-stable-cache
+        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
     steps:
-      - run: (sccache -s||true)
       - run: set +e
+      - run:
+          name: "Show sccache statistics"
+          command: $HOME/.bin/sccache -s
       - save_cache:
           key: << parameters.cache_key >>
           paths:
-            - .cache/sccache
-            - .cargo
+            # Store the sccache files
+            - ~/.cache/sccache
+            # Store the cargo registry
+            - ~/.cargo
 
   run_serial:
     description: "Build and run tests"
@@ -91,18 +141,188 @@ commands:
       flags:
         type: string
         default: ""
+      timeout:
+        type: string
+        default: 30m
+      no_output_timeout:
+        type: string
+        default: 30m
     steps:
       - checkout
       - setup_environment:
-          cache_key: << parameters.cache_key >>
-      - run:
-          no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
-      - clear_environment:
-          cache_key: << parameters.cache_key >>
+          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
 
-  run_parallel:
-    description: "Build and run tests (in parallel)"
+      - run:
+          name: Install cargo-nextest
+          command: |
+            cargo install cargo-nextest --locked || true
+
+      - run:
+          name: "Run Tests"
+          timeout: << parameters.timeout >>
+          no_output_timeout: << parameters.no_output_timeout >>
+          command: |
+            set -euo pipefail
+            export CARGO_TERM_COLOR=never
+
+            mkdir -p artifacts target/nextest/ci
+
+            # Determine package / workspace targeting for nextest
+            WSM="<< parameters.workspace_member >>"
+            if [ "$WSM" = "." ]; then
+              # Root job: test only the root package instead of the whole workspace,
+              # to avoid OOM from `--workspace`.
+              # If your root package is named something else (e.g. snarkos-cli),
+              # change PKG_NAME accordingly.
+              PKG_NAME="snarkos"
+              PKG_ARGS="--package $PKG_NAME"
+              PKG_DESC="$PKG_NAME (root package)"
+              SAFE_NAME="$PKG_NAME"
+            else
+              PKG_NAME="snarkos-${WSM//\//-}"
+              PKG_ARGS="--package $PKG_NAME"
+              PKG_DESC="$PKG_NAME (from path $WSM)"
+              SAFE_NAME="${WSM//\//-}"
+            fi
+
+            # Artifact filenames (no slashes)
+            OUT="artifacts/${SAFE_NAME}-nextest.txt"
+            CSV="artifacts/${SAFE_NAME}-test-times.csv"
+            TOP="artifacts/${SAFE_NAME}-slow-tests-top30.csv"
+            JUNIT="target/nextest/ci/junit.xml"
+
+            mkdir -p "$(dirname "$OUT")" "$(dirname "$CSV")" "$(dirname "$TOP")"
+
+            # Extract and trim flags from parameters
+            FLAGS_FULL="<< parameters.flags >>"
+            FLAGS_TRIM="$(printf '%s' "$FLAGS_FULL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+            # Split into cargo flags (before --) and right-of-separator (test binary args)
+            RIGHT_OF_SEP=""
+            if printf '%s' "$FLAGS_TRIM" | grep -q ' -- '; then
+              BUILD_FLAGS="${FLAGS_TRIM%% -- *}"
+              RIGHT_OF_SEP="${FLAGS_TRIM#* -- }"
+            elif printf '%s' "$FLAGS_TRIM" | grep -Eq '^--[[:space:]]'; then
+              BUILD_FLAGS=""
+              RIGHT_OF_SEP="${FLAGS_TRIM#-- }"
+            else
+              BUILD_FLAGS="$FLAGS_TRIM"
+            fi
+
+            # Remove any --test target flags, they cause nextest build errors
+            BUILD_FLAGS_SANITIZED="$(printf '%s' "$BUILD_FLAGS" \
+              | sed -E "s/(^|[[:space:]])--test[[:space:]]+'[^']*'([[:space:]]|$)/ /g" \
+              | sed -E 's/(^|[[:space:]])--test[[:space:]]+\"[^\"]*\"([[:space:]]|$)/ /g' \
+              | sed -E 's/(^|[[:space:]])--test[[:space:]]+[^[:space:]]+([[:space:]]|$)/ /g' \
+              | tr -s ' ' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+            )"
+
+            # Build nextest filter expression from any --skip <pattern> arguments
+            FILTER_EXPR=""
+            if [ -n "$RIGHT_OF_SEP" ]; then
+              SKIPS="$(printf '%s\n' "$RIGHT_OF_SEP" \
+                | sed -E 's/[[:space:]]+/ /g' \
+                | grep -oE -- '--skip[[:space:]]+(\"[^\"]+\"|'\''[^'\'']+'\''|[^[:space:]]+)' || true)"
+              if [ -n "$SKIPS" ]; then
+                EXPRS=""
+                tmpf="$(mktemp)"
+                printf '%s\n' "$SKIPS" > "$tmpf"
+                while IFS= read -r line; do
+                  pat="${line#--skip }"
+                  pat="${pat%\"}"; pat="${pat#\"}"
+                  pat="${pat%\'}"; pat="${pat#\'}"
+                  pat_rx="${pat//\//\\/}"
+                  if [ -z "$EXPRS" ]; then
+                    EXPRS="test(/$pat_rx/)"
+                  else
+                    EXPRS="$EXPRS or test(/$pat_rx/)"
+                  fi
+                done < "$tmpf"
+                rm -f "$tmpf"
+                if [ -n "$EXPRS" ]; then
+                  FILTER_EXPR="not ($EXPRS)"
+                fi
+              fi
+            fi
+
+            # Detect and extract --test-threads value (used to set JOBS)
+            TEST_THREADS=""
+            if [ -n "$RIGHT_OF_SEP" ]; then
+              TEST_THREADS="$(printf '%s\n' "$RIGHT_OF_SEP" | sed -nE 's/.*--test-threads=([0-9]+).*/\1/p' | head -n1)"
+              if [ -z "$TEST_THREADS" ]; then
+                TEST_THREADS="$(printf '%s\n' "$RIGHT_OF_SEP" | sed -nE 's/.*--test-threads[[:space:]]+([0-9]+).*/\1/p' | head -n1)"
+              fi
+            fi
+
+            JOBS="${NEXTEST_JOBS:-2}"
+            if [ -n "$TEST_THREADS" ]; then
+              JOBS="$TEST_THREADS"
+            fi
+
+            # Create nextest config override
+            SLOW_PERIOD="${NEXTEST_SLOW_PERIOD:-60s}"
+            CFG_ARGS=()
+            TMPD="$(mktemp -d)"
+            if [ -f ".config/nextest.toml" ]; then
+              CFG_ARGS+=(--config-file ".config/nextest.toml")
+            fi
+            {
+              printf '%s\n' '[profile.ci]'
+              printf '%s\n' 'fail-fast = false'
+              printf '%s\n' "slow-timeout = \"${SLOW_PERIOD}\""
+              printf '%s\n' ''
+              printf '%s\n' '[profile.ci.junit]'
+              printf '%s\n' 'path = "junit.xml"'
+            } > "$TMPD/nextest-override.toml"
+            CFG_ARGS+=(--config-file "$TMPD/nextest-override.toml")
+
+            echo "==> nextest target: ${PKG_DESC}"
+            echo "==> build flags (sanitized): '${BUILD_FLAGS_SANITIZED}'"
+            echo "==> filter-expr: ${FILTER_EXPR:-<none>}  (right-of-sep: ${RIGHT_OF_SEP:-<none>})"
+            echo "==> test-threads override: ${TEST_THREADS:-<none>}"
+            echo "==> jobs: ${JOBS}"
+
+            # If flags explicitly include --no-run, fall back to plain cargo test
+            if printf '%s' " $BUILD_FLAGS_SANITIZED " | grep -q ' --no-run '; then
+              cargo test $PKG_ARGS $BUILD_FLAGS_SANITIZED | tee "$OUT"
+              : > "$CSV"; : > "$TOP"
+            else
+              cargo nextest run \
+                $PKG_ARGS $BUILD_FLAGS_SANITIZED \
+                --profile ci -j "${JOBS}" "${CFG_ARGS[@]}" \
+                --status-level fail --hide-progress-bar \
+                --no-tests=pass \
+                ${FILTER_EXPR:+--filter-expr "$FILTER_EXPR"} \
+                2>&1 | tee "$OUT"
+
+              if [ -f "$JUNIT" ]; then
+                awk -v RS='<testcase ' '
+                  NR>1 {
+                    name=""; classname=""; time="";
+                    start=index($0,"classname=\""); if(start>0){ start+=11; rest=substr($0,start); end=index(rest,"\""); if(end>0) classname=substr(rest,1,end-1) }
+                    start=index($0,"name=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) name=substr(rest,1,end-1) }
+                    start=index($0,"time=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) time=substr(rest,1,end-1) }
+                    if(name!="" && time!=""){ full=(classname!=""?classname"::"name:name); printf "%s,%s\n", full, time }
+                  }
+                ' "$JUNIT" > "$CSV" || true
+
+                sort -t, -k2,2nr "$CSV" | head -n 30 > "$TOP" || true
+              else
+                echo "WARN: $JUNIT not found; no timings extracted." >&2
+                : > "$CSV"; : > "$TOP"
+              fi
+            fi
+
+      - store_artifacts:
+          path: artifacts
+          destination: test-timings/<< parameters.workspace_member >>
+      - store_test_results:
+          path: target/nextest/ci
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+
+  run_serial_long:
+    description: "Build and run long running tests"
     parameters:
       workspace_member:
         type: string
@@ -116,15 +336,49 @@ commands:
       - setup_environment:
           cache_key: << parameters.cache_key >>
       - run:
-          no_output_timeout: 45m
+          no_output_timeout: 300m
+          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
+      - clear_environment:
+          cache_key: << parameters.cache_key >>
+
+  run_devnet:
+    description: "Run devnet for integration testing"
+    parameters:
+      workspace_member:
+        type: string
+      cache_key:
+        type: string
+      validators:
+        type: integer
+        default: 4
+      clients:
+        type: integer
+        default: 2
+      network_id:
+        type: integer
+        default: 0
+      min_height:
+        type: integer
+        default: 45
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: << parameters.cache_key >>
+      - run:
+          name: "Install snarkos"
+          no_output_timeout: 20m
           command: |
-            cd << parameters.workspace_member >>
-            cargo test -- --list --format terse | sed 's/: test//' > test_names.txt
-            TEST_NAMES=$(circleci tests split test_names.txt)
-            for i in $(echo $TEST_NAMES | sed "s/ / /g")
-            do
-                RUST_MIN_STACK=67108864 cargo test $i << parameters.flags >>
-            done
+            cargo install --locked --path . --features test_network
+      - run:
+          name: "Run DB backup test"
+          timeout: 10m  # Allow 10 minutes total
+          command: |
+            ./.ci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+      - run:
+          name: "Run block advancement test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./.ci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
@@ -134,147 +388,223 @@ commands:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
 
 jobs:
-  integration:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
-    steps:
-      - run_serial:
-          workspace_member: .integration
-          cache_key: snarkos-integration-cache
-
   snarkos:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: .
-          cache_key: snarkos-stable-cache
+          cache_key: stable
 
   account:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: account
-          cache_key: snarkos-account-cache
+          cache_key: account
 
   cli:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: cli
-          cache_key: snarkos-cli-cache
-
-  display:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
-    steps:
-      - run_serial:
-          workspace_member: display
-          cache_key: snarkos-display-cache
+          cache_key: cli
 
   node:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
     steps:
       - run_serial:
           workspace_member: node
-          cache_key: snarkos-node-cache
+          cache_key: node
+
+  node-bft:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+      - run_serial:
+          workspace_member: node/bft
+          cache_key: node-bft
+
+  node-bft-events:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
+    steps:
+      - run_serial:
+          workspace_member: node/bft/events
+          cache_key: node-bft-events
+
+  node-bft-ledger-service:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: node/bft/ledger-service
+          cache_key: node-bft-ledger-service
+
+  node-bft-storage-service:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: node/bft/storage-service
+          cache_key: node-bft-storage-service
 
   node-cdn:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/cdn
-          cache_key: snarkos-node-cdn-cache
+          cache_key: node-cdn
 
   node-consensus:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
           workspace_member: node/consensus
-          cache_key: snarkos-node-consensus-cache
-
-  node-ledger:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
-    steps:
-      - run_serial:
-          workspace_member: node/ledger
-          cache_key: snarkos-node-ledger-cache
-
-  node-messages:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
-    steps:
-      - run_serial:
-          workspace_member: node/messages
-          cache_key: snarkos-node-messages-cache
+          cache_key: node-consensus
 
   node-rest:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - run_serial:
           workspace_member: node/rest
-          cache_key: snarkos-node-rest-cache
+          cache_key: node-rest
 
   node-router:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.xlarge >>
     steps:
       - run_serial:
           workspace_member: node/router
-          cache_key: snarkos-node-router-cache
+          cache_key: node-router
 
-  node-store:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
+  node-router-messages:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
     steps:
       - run_serial:
-          workspace_member: node/store
-          cache_key: snarkos-node-store-cache
+          workspace_member: node/router/messages
+          cache_key: node-router-messages-
+
+  node-sync:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - run_serial:
+          workspace_member: node/sync
+          cache_key: node-sync
+
+  node-sync-communication-service:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: node/sync/communication-service
+          cache_key: node-sync-communication-service
+
+  node-sync-locators:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: node/sync/locators
+          cache_key: node-sync-locators
+
+  node-tcp:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: node/tcp
+          cache_key: node-tcp
+
+  devnet-test:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - run_devnet:
+          workspace_member: .
+          cache_key: v4.2.0-rust-1.88.0-devnet-test-cache
+
+  # Check crates that do not have any tests individually
+  check-other-crates:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+      - run:
+          name: Check snarkos-node-metrics crate
+          no_output_timeout: 10m
+          command: cargo check --package=snarkos-node-metrics --all-features
+      - run:
+          name: Check snarkos-display crate
+          no_output_timeout: 10m
+          command: cargo check --package=snarkos-node-metrics --all-features
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
 
   check-fmt:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: xlarge
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - install_rust_nightly
       - setup_environment:
-          cache_key: snarkos-fmt-cache
+          cache_key: v4.2.0-rust-1.88.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +nightly fmt --all -- --check
       - clear_environment:
-          cache_key: snarkos-fmt-cache
+          cache_key: v4.2.0-rust-1.88.0-fmt-cache
 
-  check-clippy:
-    docker:
-      - image: cimg/rust:1.65
-    resource_class: 2xlarge
+  check-unused-dependencies:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
       - setup_environment:
-          cache_key: snarkos-clippy-cache
+          cache_key: v4.2.0-rust-1.88.0-machete-cache
+      - run:
+          name: Check for unused dependencies
+          no_output_timeout: 10m
+          command: |
+            cargo install cargo-machete@0.7.0
+            cargo machete
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-machete-cache
+
+  check-cargo-audit:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
+      - run:
+          name: Check for security vulnerabilities
+          no_output_timeout: 10m
+          command: |
+            cargo install cargo-audit@0.21.2 --locked
+            cargo audit -D warnings
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
+
+  check-clippy:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -282,7 +612,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: snarkos-clippy-cache
+          cache_key: v4.2.0-rust-1.88.0-clippy-cache
 
   verify-windows:
     executor:
@@ -300,23 +630,40 @@ jobs:
 workflows:
   version: 2
 
-  main-workflow:
+  cargo-workflow:
     jobs:
-      - integration
+      - check-fmt
+      - check-clippy
+      - check-unused-dependencies
+      - check-cargo-audit
+      - check-other-crates
+
+  node-workflow:
+    jobs:
+      - node
+      - node-bft
+      - node-bft-events
+      - node-bft-ledger-service
+      - node-bft-storage-service
+      - node-cdn
+      - node-consensus
+      - node-rest
+      - node-router
+      - node-router-messages
+      - node-sync
+      - node-sync-communication-service
+      - node-sync-locators
+      - node-tcp
+
+  devnet-workflow:
+    jobs:
+      - devnet-test
+
+  snarkos-workflow:
+    jobs:
       - snarkos
       - account
       - cli
-      - display
-      - node
-      - node-cdn
-      - node-consensus
-      - node-ledger
-      - node-messages
-      - node-rest
-      - node-router
-      - node-store
-      - check-fmt
-      - check-clippy
 
   windows-workflow:
     jobs:

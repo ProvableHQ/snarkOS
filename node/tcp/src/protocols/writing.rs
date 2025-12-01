@@ -1,23 +1,25 @@
-// Copyright (C) 2019-2022 Aleo Systems Inc.
+// Copyright (c) 2019-2025 Provable Inc.
 // This file is part of the snarkOS library.
 
-// The snarkOS library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
 
-// The snarkOS library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// http://www.apache.org/licenses/LICENSE-2.0
 
-// You should have received a copy of the GNU General Public License
-// along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use futures_util::sink::SinkExt;
+#[cfg(feature = "locktick")]
+use locktick::parking_lot::RwLock;
+#[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use tokio::{
     io::AsyncWrite,
@@ -27,12 +29,12 @@ use tokio_util::codec::{Encoder, FramedWrite};
 use tracing::*;
 
 #[cfg(doc)]
-use crate::{protocols::Handshake, Config, Tcp};
+use crate::{Config, Tcp, protocols::Handshake};
 use crate::{
-    protocols::{Protocol, ProtocolHandler, ReturnableConnection},
     Connection,
     ConnectionSide,
     P2P,
+    protocols::{Protocol, ProtocolHandler, ReturnableConnection},
 };
 
 type WritingSenders = Arc<RwLock<HashMap<SocketAddr, mpsc::Sender<WrappedMessage>>>>;
@@ -48,8 +50,10 @@ where
     /// messages the node can enqueue. Setting it to a large value is not recommended, as doing it might
     /// obscure potential issues with your implementation (like slow serialization) or network.
     ///
-    /// The default value is 64.
-    const MESSAGE_QUEUE_DEPTH: usize = 64;
+    /// The default value is 1024.
+    fn message_queue_depth(&self) -> usize {
+        1024
+    }
 
     /// The type of the outbound messages; unless their serialization is expensive and the message
     /// is broadcasted (in which case it would get serialized multiple times), serialization should
@@ -194,7 +198,7 @@ impl<W: Writing> WritingInternal for W {
         let writer = conn.writer.take().expect("missing connection writer!");
         let mut framed = FramedWrite::new(writer, codec);
 
-        let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(Self::MESSAGE_QUEUE_DEPTH);
+        let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(self.message_queue_depth());
 
         // register the connection's message sender with the Writing protocol handler
         conn_senders.write().insert(addr, outbound_message_sender);
@@ -207,7 +211,7 @@ impl<W: Writing> WritingInternal for W {
 
         // the task for writing outbound messages
         let self_clone = self.clone();
-        let writer_task = tokio::spawn(async move {
+        let writer_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
             trace!(parent: node.span(), "spawned a task for writing messages to {}", addr);
             tx_writer.send(()).unwrap(); // safe; the channel was just opened
@@ -221,12 +225,12 @@ impl<W: Writing> WritingInternal for W {
                 match self_clone.write_to_stream(*msg, &mut framed).await {
                     Ok(len) => {
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
-                        node.known_peers().register_sent_message(addr, len);
+                        node.known_peers().register_sent_message(addr.ip(), len);
                         node.stats().register_sent_message(len);
                         trace!(parent: node.span(), "sent {}B to {}", len, addr);
                     }
                     Err(e) => {
-                        node.known_peers().register_failure(addr);
+                        node.known_peers().register_failure(addr.ip());
                         error!(parent: node.span(), "couldn't send a message to {}: {}", addr, e);
                         let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
                         let _ = wrapped_msg.delivery_notification.send(Err(e));
@@ -238,7 +242,7 @@ impl<W: Writing> WritingInternal for W {
             }
 
             node.disconnect(addr).await;
-        });
+        }));
         let _ = rx_writer.await;
         conn.tasks.push(writer_task);
 
