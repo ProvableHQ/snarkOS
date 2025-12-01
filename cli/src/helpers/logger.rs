@@ -26,6 +26,7 @@ use std::{
     str::FromStr,
     sync::{Arc, atomic::AtomicBool},
 };
+use time::{UtcDateTime, macros::format_description};
 use tokio::sync::mpsc;
 use tracing_subscriber::{
     EnvFilter,
@@ -195,7 +196,10 @@ pub fn initialize_logger<P: AsRef<Path>>(
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "flamegraph")] {
-            let (flame_layer, log_guard) = FlameLayer::with_file("./snarkos-trace.folded").with_context(|| "Failed to create flamegraph file")?;
+            // Add a timestamp to the trace file name, so we do not overwrite an existing one.
+            let timestamp = UtcDateTime::now().format(format_description!("[year][month][day]-[hour][minute][second]")).with_context(|| "Failed to format timestamp")?;
+            let trace_file_name = format!("snarkos-trace-{timestamp}.folded");
+            let (flame_layer, log_guard) = FlameLayer::with_file(trace_file_name.clone()).with_context(|| format!("Failed to create flamegraph file at {trace_file_name}"))?;
             let _ = registry.with(flame_layer).try_init();
 
             Ok((log_receiver, log_guard))

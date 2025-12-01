@@ -150,6 +150,7 @@ version = "3"
 
 [dependencies.time]
 workspace = true
+features = [ "std", "formatting" ]
 
 [dependencies.thiserror]
 workspace = true
