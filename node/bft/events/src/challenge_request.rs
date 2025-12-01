@@ -15,8 +15,6 @@
 
 use super::*;
 
-use snarkos_node_network::get_repo_commit_hash;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeRequest<N: Network> {
     pub version: u32,
@@ -30,8 +28,8 @@ impl<N: Network> ChallengeRequest<N> {
     /// Constant for an unknown commit hash.
     const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
 
-    pub fn new(listener_port: u16, address: Address<N>, nonce: u64) -> Self {
-        Self { version: Event::<N>::VERSION, listener_port, address, nonce, snarkos_sha: get_repo_commit_hash() }
+    pub fn new(listener_port: u16, address: Address<N>, nonce: u64, snarkos_sha: Option<[u8; 40]>) -> Self {
+        Self { version: Event::<N>::VERSION, listener_port, address, nonce, snarkos_sha }
     }
 }
 

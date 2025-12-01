@@ -15,7 +15,7 @@
 
 use super::*;
 
-use snarkos_node_network::{NodeType, get_repo_commit_hash};
+use snarkos_node_network::NodeType;
 use snarkvm::prelude::{FromBytes, ToBytes, io_error};
 
 use std::borrow::Cow;
@@ -73,15 +73,14 @@ impl<N: Network> ChallengeRequest<N> {
     /// Constant for an unknown commit hash.
     const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
 
-    pub fn new(listener_port: u16, node_type: NodeType, address: Address<N>, nonce: u64) -> Self {
-        Self {
-            version: Message::<N>::latest_message_version(),
-            listener_port,
-            node_type,
-            address,
-            nonce,
-            snarkos_sha: get_repo_commit_hash(),
-        }
+    pub fn new(
+        listener_port: u16,
+        node_type: NodeType,
+        address: Address<N>,
+        nonce: u64,
+        snarkos_sha: Option<[u8; 40]>,
+    ) -> Self {
+        Self { version: Message::<N>::latest_message_version(), listener_port, node_type, address, nonce, snarkos_sha }
     }
 }
 
