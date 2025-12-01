@@ -17,7 +17,7 @@
 // https://github.com/rust-lang/rust-clippy/issues/6446
 #![allow(clippy::await_holding_lock)]
 
-use snarkos_utilities::Stoppable;
+use snarkos_utilities::{SignalHandler, Stoppable};
 
 use snarkvm::prelude::{
     Deserialize,
@@ -89,7 +89,7 @@ impl CdnBlockSync {
     pub fn new<N: Network, C: ConsensusStorage<N>>(
         base_url: http::Uri,
         ledger: Ledger<N, C>,
-        stoppable: Arc<dyn Stoppable>,
+        stoppable: Arc<SignalHandler>,
     ) -> Self {
         let task = {
             let base_url = base_url.clone();
