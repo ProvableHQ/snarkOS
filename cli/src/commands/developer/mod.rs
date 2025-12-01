@@ -30,6 +30,7 @@ pub use transfer_private::*;
 
 use crate::helpers::{args::network_id_parser, logger::initialize_terminal_logger};
 
+use snarkos_node_rest::{API_VERSION_V1, API_VERSION_V2};
 use snarkvm::{package::Package, prelude::*};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -50,6 +51,13 @@ use ureq::http::{self, Uri};
 pub enum StoreFormat {
     String,
     Bytes,
+}
+
+/// The API version used by an endpoint
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ApiVersion {
+    V1,
+    V2,
 }
 
 /// Commands to deploy and execute transactions
@@ -183,9 +191,27 @@ impl Developer {
     /// # Arguments
     ///  - `base_url`: the hostname (and path prefix) of the node to query. this must exclude the network name.
     ///  - `route`: the route to the endpoint (e.g., `stateRoot/latest`). This cannot start with a slash.
-    fn build_endpoint<N: Network>(base_url: &http::Uri, route: &str) -> Result<String> {
+    ///
+    /// # Returns
+    /// The full endpoint Uri and the API version used by it.
+    fn build_endpoint<N: Network>(base_url: &http::Uri, route: &str) -> Result<(String, ApiVersion)> {
         // This function is only called internally but check for additional sanity.
         ensure!(!route.starts_with('/'), "path cannot start with a slash");
+
+        // Determine the API version we are interacting with.
+        let api_version = {
+            let r = base_url.path().trim_end_matches('/');
+
+            if r.ends_with(API_VERSION_V1) {
+                ApiVersion::V1
+            } else if r.ends_with(API_VERSION_V2) {
+                ApiVersion::V2
+            } else {
+                // Default to v1.
+                // Note: If the snarkos-node-rest switches default to v2, this needs to be updated.
+                ApiVersion::V1
+            }
+        };
 
         // Work around a bug in the `http` crate where empty paths will be set to '/'
         // but other paths are not appended with a slash.
@@ -193,9 +219,8 @@ impl Developer {
         let sep = if base_url.path().ends_with('/') { "" } else { "/" };
 
         // Build "{base}/{network}/{route}"
-        let prefix = format!("{}/", N::SHORT_NAME);
-
-        Ok(format!("{base_url}{sep}{prefix}{route}"))
+        let full_uri = format!("{base_url}{sep}{network}/{route}", network = N::SHORT_NAME);
+        Ok((full_uri, api_version))
     }
 
     /// Converts the returned JSON error (if any) into an anyhow Error chain.
@@ -208,15 +233,43 @@ impl Developer {
         } else if response.status() == http::StatusCode::NOT_FOUND {
             Ok(None)
         } else {
-            let rest_error: RestError =
-                response.into_body().read_json().with_context(|| "Failed to parse error JSON")?;
+            // V2 returns the error in JSON format.
+            let is_json = response
+                .headers()
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|h| h.to_str().ok())
+                .map(|ct| ct.contains("json"))
+                .unwrap_or(false);
 
-            Err(rest_error.parse())
+            if is_json {
+                let rest_error: RestError =
+                    response.into_body().read_json().with_context(|| "Failed to parse error JSON")?;
+
+                Err(rest_error.parse())
+            } else {
+                // V1 returns the error message a string.
+                let err_msg = response.into_body().read_to_string()?;
+                Err(anyhow!(err_msg))
+            }
+        }
+    }
+
+    /// Extracts the API version from a custom endpoint.
+    fn parse_custom_endpoint<N: Network>(url: &Uri) -> (String, ApiVersion) {
+        // Determine API version for custom endpoint.
+        if let Some(pq) = url.path_and_query()
+            && pq.path().ends_with(&format!("{API_VERSION_V2}/{}/transaction/broadcast", N::SHORT_NAME))
+        {
+            (url.to_string(), ApiVersion::V2)
+        } else {
+            (url.to_string(), ApiVersion::V1)
         }
     }
 
     /// Helper function to send a POST request with a JSON body to an endpoint and await a JSON response.
     fn http_post_json<I: Serialize, O: DeserializeOwned>(path: &str, arg: &I) -> Result<Option<O>> {
+        debug!("Issuing POST request to \"{path}\"");
+
         let result =
             ureq::post(path).config().http_status_as_error(false).build().send_json(arg).map_err(|err| err.into());
 
@@ -231,8 +284,9 @@ impl Developer {
 
     /// Helper function to send a GET request to an endpoint and await a JSON response.
     fn http_get_json<N: Network, O: DeserializeOwned>(base_url: &http::Uri, route: &str) -> Result<Option<O>> {
-        let endpoint = Self::build_endpoint::<N>(base_url, route)?;
-        debug!("HTTP GET request to {endpoint}");
+        let (endpoint, _api_version) = Self::build_endpoint::<N>(base_url, route)?;
+        debug!("Issuing GET request to \"{endpoint}\"");
+
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
         match Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")? {
@@ -247,7 +301,9 @@ impl Developer {
 
     /// Helper function to send a GET request to an endpoint and await the response.
     fn http_get<N: Network>(base_url: &http::Uri, route: &str) -> Result<Option<ureq::Body>> {
-        let endpoint = Self::build_endpoint::<N>(base_url, route)?;
+        let (endpoint, _api_version) = Self::build_endpoint::<N>(base_url, route)?;
+        debug!("Issuing GET request to \"{endpoint}\"");
+
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
         Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")
@@ -258,6 +314,7 @@ impl Developer {
         endpoint: &Uri,
         transaction_id: &N::TransactionID,
         timeout_seconds: u64,
+        api_version: ApiVersion,
     ) -> Result<()> {
         let start_time = Instant::now();
         let timeout_duration = Duration::from_secs(timeout_seconds);
@@ -265,16 +322,31 @@ impl Developer {
 
         while start_time.elapsed() < timeout_duration {
             // Check if transaction exists in a confirmed block
-            let result = Self::http_get::<N>(endpoint, &format!("transaction/{transaction_id}"))
-                .with_context(|| "Failed to check transaction status")?;
+            let result = Self::http_get::<N>(endpoint, &format!("transaction/{transaction_id}"));
 
-            match result {
-                Some(_) => return Ok(()),
-                None => {
-                    // Transaction not found yet, continue polling.
-                    thread::sleep(poll_interval);
+            match api_version {
+                ApiVersion::V1 => match result {
+                    Ok(Some(_)) => return Ok(()),
+                    Ok(None) => {
+                        // Transaction not found yet, continue polling.
+                    }
+                    Err(err) => {
+                        // The V1 API returns 500 on missing transactions. Retroy on any error.
+                        eprintln!("Got error when fetching transaction ({err}). Will retry...");
+                    }
+                },
+                ApiVersion::V2 => {
+                    // With the V2 API, we can differentiate between benign errors and fatal errors.
+                    match result.with_context(|| "Failed to check transaction status")? {
+                        Some(_) => return Ok(()),
+                        None => {
+                            // Transaction not found yet, continue polling.
+                        }
+                    }
                 }
             }
+
+            thread::sleep(poll_interval);
         }
 
         // Timeout reached
@@ -289,23 +361,27 @@ impl Developer {
         }
     }
 
-    // /// Gets the public account balance of an Aleo Address (in microcredits).
-    // fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<u64> {
-    //     // Initialize the program id and account identifier.
-    //     let account_mapping = Identifier::<N>::from_str("account")?;
-    //     let credits = ProgramID::<N>::from_str("credits.aleo")?;
+    /*
+    /// Gets the public account balance of an Aleo Address (in microcredits).
+    fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<Option<u64>> {
+        // Initialize the program id and account identifier.
+        let account_mapping = Identifier::<N>::from_str("account")?;
+        let credits = ProgramID::<N>::from_str("credits.aleo")?;
 
-    //     // Send a request to the query node.
-    //     let result: Option<Value<N>> =
-    //         Self::http_get_json::<N, _>(endpoint, &format!("program/{credits}/mapping/{account_mapping}/{address}"))?;
+        // Request the balance from the endpoint.
+        // If no such balance/account exists, the node returns status code 200 with `null` as the response body.
+        // Nodes should never return 404 for this endpoint.
+        let result: Option<Value<N>> =
+            Self::http_get_json::<N, _>(endpoint, &format!("program/{credits}/mapping/{account_mapping}/{address}"))?
+                .ok_or_else(|| anyhow!("Got unexpected 404 error when fetching public balance"))?;
 
-    //     // Return the balance in microcredits.
-    //     match result {
-    //         Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(*amount),
-    //         Some(..) => bail!("Failed to deserialize balance for {address}"),
-    //         None => Ok(0),
-    //     }
-    // }
+        // Return the balance in microcredits.
+        match result {
+            Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(Some(*amount)),
+            Some(..) => bail!("Failed to deserialize balance for {address}"),
+            None => Ok(None),
+        }
+    }*/
 
     /// Determine if the transaction should be broadcast or displayed to user.
     ///
@@ -360,8 +436,9 @@ impl Developer {
 
         // Determine if the transaction should be broadcast to the network.
         if let Some(broadcast_value) = broadcast {
-            let broadcast_endpoint = if let Some(url) = broadcast_value {
-                url.to_string()
+            let (broadcast_endpoint, api_version) = if let Some(url) = broadcast_value {
+                debug!("Using custom endpoint for broadcasting: {url}");
+                Self::parse_custom_endpoint::<N>(url)
             } else {
                 Self::build_endpoint::<N>(endpoint, "transaction/broadcast")?
             };
@@ -400,7 +477,7 @@ impl Developer {
                     // If wait is enabled, wait for transaction confirmation
                     if wait {
                         println!("⏳ Waiting for transaction confirmation (timeout: {timeout}s)...");
-                        Self::wait_for_transaction_confirmation::<N>(endpoint, &transaction_id, timeout)?;
+                        Self::wait_for_transaction_confirmation::<N>(endpoint, &transaction_id, timeout, api_version)?;
 
                         match transaction {
                             Transaction::Deploy(..) => {
@@ -438,5 +515,72 @@ impl Developer {
         } else {
             Ok("".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use snarkvm::ledger::test_helpers::CurrentNetwork;
+
+    /// Test that the default endpoints (V1) work as expected.
+    ///
+    /// Note, if the default endpoint ever changes, this test needs to be updated.
+    #[test]
+    fn test_build_endpoint_default_v1() {
+        let base_uri_str = "http://localhost:3030";
+        let base_uri = Uri::try_from(base_uri_str).unwrap();
+        let (endpoint, api_version) =
+            Developer::build_endpoint::<CurrentNetwork>(&base_uri, "transaction/broadcast").unwrap();
+
+        assert_eq!(endpoint, format!("{base_uri_str}/{}/transaction/broadcast", CurrentNetwork::SHORT_NAME));
+        assert_eq!(api_version, ApiVersion::V1);
+    }
+
+    /// Ensure that the V1 endpoints work as expected.
+    #[test]
+    fn test_build_endpoint_v1() {
+        let base_uri_str = "http://localhost:3030/v1";
+        let base_uri = Uri::try_from(base_uri_str).unwrap();
+        let (endpoint, api_version) =
+            Developer::build_endpoint::<CurrentNetwork>(&base_uri, "transaction/broadcast").unwrap();
+
+        assert_eq!(endpoint, format!("{base_uri_str}/{}/transaction/broadcast", CurrentNetwork::SHORT_NAME));
+        assert_eq!(api_version, ApiVersion::V1);
+    }
+
+    /// Ensure that the V2 endpoints work as expected.
+    #[test]
+    fn test_build_endpoint_v2() {
+        let base_uri_str = "http://localhost:3030/v2";
+        let base_uri = Uri::try_from(base_uri_str).unwrap();
+        let (endpoint, api_version) =
+            Developer::build_endpoint::<CurrentNetwork>(&base_uri, "transaction/broadcast").unwrap();
+
+        assert_eq!(endpoint, format!("{base_uri_str}/{}/transaction/broadcast", CurrentNetwork::SHORT_NAME));
+        assert_eq!(api_version, ApiVersion::V2);
+    }
+
+    #[test]
+    fn test_custom_endpoint_v1() {
+        let endpoint_str = "http://localhost:3030/v1/mainnet/transaction/broadcast";
+        let endpoint = Uri::try_from(endpoint_str).unwrap();
+
+        let (parsed, api_version) = Developer::parse_custom_endpoint::<CurrentNetwork>(&endpoint);
+
+        assert_eq!(parsed, endpoint_str);
+        assert_eq!(api_version, ApiVersion::V1);
+    }
+
+    #[test]
+    fn test_custom_endpoint_v2() {
+        let endpoint_str = "http://localhost:3030/v2/mainnet/transaction/broadcast";
+        let endpoint = Uri::try_from(endpoint_str).unwrap();
+
+        let (parsed, api_version) = Developer::parse_custom_endpoint::<CurrentNetwork>(&endpoint);
+
+        assert_eq!(parsed, endpoint_str);
+        assert_eq!(api_version, ApiVersion::V2);
     }
 }

@@ -1005,7 +1005,7 @@ impl<N: Network> BlockSync<N> {
     /// In this case, the current iteration of block synchronization should not continue and the node should re-try later instead.
     pub fn handle_block_request_timeouts<P: PeerPoolHandling<N>>(
         &self,
-        peer_pool_handler: &P,
+        _peer_pool_handler: &P,
     ) -> Result<Option<BlockRequestBatch<N>>> {
         // Acquire the write lock on the requests map.
         let mut requests = self.requests.write();
@@ -1067,7 +1067,8 @@ impl<N: Network> BlockSync<N> {
         // Now remove and ban any unresponsive peers
         for peer_ip in peers_to_ban {
             self.remove_peer(&peer_ip);
-            peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
+            // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
+            // peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
         }
 
         // Determine if we need to re-issue any timed-out requests.
@@ -1975,9 +1976,9 @@ mod tests {
         let c = DummyPeerPoolHandler::default();
         sync.handle_block_request_timeouts(&c).unwrap();
 
-        let ban_list = c.peers_to_ban.write();
-        assert_eq!(ban_list.len(), 1);
-        assert_eq!(ban_list.iter().next(), Some(&peer_ip));
+        // let ban_list = c.peers_to_ban.write();
+        // assert_eq!(ban_list.len(), 1);
+        // assert_eq!(ban_list.iter().next(), Some(&peer_ip));
 
         assert!(sync.requests.read().is_empty());
         assert!(sync.locators.read().is_empty());
@@ -2023,9 +2024,9 @@ mod tests {
 
         let re_requests = sync.handle_block_request_timeouts(&c).unwrap();
 
-        let ban_list = c.peers_to_ban.write();
-        assert_eq!(ban_list.len(), 1);
-        assert_eq!(ban_list.iter().next(), Some(&peer_ip1));
+        // let ban_list = c.peers_to_ban.write();
+        // assert_eq!(ban_list.len(), 1);
+        // assert_eq!(ban_list.iter().next(), Some(&peer_ip1));
 
         assert_eq!(sync.requests.read().len(), 1);
         assert_eq!(sync.locators.read().len(), 2);

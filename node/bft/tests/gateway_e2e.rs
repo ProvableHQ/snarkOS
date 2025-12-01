@@ -33,13 +33,16 @@ use std::time::Duration;
 
 use deadline::deadline;
 use rand::Rng;
+use tokio::task;
 
 async fn new_test_gateway(
     num_nodes: u16,
     rng: &mut TestRng,
 ) -> (Vec<Account<CurrentNetwork>>, Gateway<CurrentNetwork>) {
     let (accounts, committee) = new_test_committee(num_nodes, rng);
-    let ledger = sample_ledger(&accounts, &committee, rng);
+    let accounts_ = accounts.clone();
+    let mut rng_ = TestRng::fixed(rng.r#gen());
+    let ledger = task::spawn_blocking(move || sample_ledger(&accounts_, &committee, &mut rng_)).await.unwrap();
     let storage = sample_storage(ledger.clone());
     let gateway = sample_gateway(accounts[0].clone(), storage, ledger);
 
@@ -107,7 +110,7 @@ async fn handshake_responder_side_invalid_challenge_request() {
     let listener_port = test_peer.listening_addr().port();
     let address = accounts.get(1).unwrap().address();
     let nonce = rng.r#gen();
-    let snarkos_sha = String::new();
+    let snarkos_sha = None;
     // Set the wrong version so the challenge request is invalid.
     let challenge_request = ChallengeRequest { version: 0, listener_port, address, nonce, snarkos_sha };
 
@@ -147,7 +150,7 @@ async fn handshake_responder_side_invalid_challenge_response() {
     let listener_port = test_peer.listening_addr().port();
     let address = accounts.get(1).unwrap().address();
     let our_nonce = rng.r#gen();
-    let snarkos_sha = String::new();
+    let snarkos_sha = None;
     let version = Event::<CurrentNetwork>::VERSION;
     let challenge_request = ChallengeRequest { version, listener_port, address, nonce: our_nonce, snarkos_sha };
 

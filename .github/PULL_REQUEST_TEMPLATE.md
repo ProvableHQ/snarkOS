@@ -1,4 +1,4 @@
-Thank you for submitting the PR! We appreciate you spending the time to work on these changes!
+<!-- Thank you for submitting the PR! We appreciate you spending the time to work on these changes! -->
 
 ## Motivation
 

@@ -95,6 +95,17 @@ Lastly, install `snarkOS`:
 cargo install --locked --path .
 ```
 
+#### Optional: CUDA Acceleration for Provers
+
+> This CUDA build is optional. The current snarkOS puzzle does not leverage CUDA acceleration—it is a leftover from a previous event, although CUDA may become relevant again with ARC-43.
+>
+> The CUDA feature is considered unstable and experimental; expect breaking changes.
+
+For prover operators who want to experiment with GPU support:
+```
+cargo install --locked --path . --features cuda
+```
+
 Please ensure ports `4130/tcp` and `3030/tcp` are open on your router and OS firewall.
 ### 2.4 Port Configuration
 
@@ -455,7 +466,7 @@ By default, the metrics feature is turned on for some internal crates.
 * **telemetry** -
   Allows the node to upload telemetry data.
 * **cuda** -
-  Allows some operations to run on the (NVidia) GPU, instead of on the CPU. See above under [Enable CUDA acceleration](#cuda)
+  Allows some operations to run on the (NVidia) GPU, instead of on the CPU. See [CUDA acceleration for provers](#optional-cuda-acceleration-for-provers) for install tips and current puzzle status.
 * **locktick** -
   This feature turns on code for detecting deadlocks.
 * **test_targets** -

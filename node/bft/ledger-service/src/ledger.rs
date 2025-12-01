@@ -50,7 +50,6 @@ use parking_lot::RwLock;
 use rayon::prelude::*;
 
 use std::{
-    collections::BTreeMap,
     fmt,
     io::Read,
     ops::Range,
@@ -60,14 +59,10 @@ use std::{
     },
 };
 
-/// The capacity of the cache holding the highest blocks.
-const BLOCK_CACHE_SIZE: usize = 10;
-
 /// A core ledger service.
 #[allow(clippy::type_complexity)]
 pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
-    block_cache: Arc<RwLock<BTreeMap<u32, Block<N>>>>,
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
     shutdown: Arc<AtomicBool>,
 }
@@ -75,8 +70,7 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
-        let block_cache = Arc::new(RwLock::new(BTreeMap::new()));
-        Self { ledger, block_cache, latest_leader: Default::default(), shutdown }
+        Self { ledger, latest_leader: Default::default(), shutdown }
     }
 }
 
@@ -141,14 +135,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the block for the given block height.
     fn get_block(&self, height: u32) -> Result<Block<N>> {
-        // First, check if the block is in the block cache.
-        // Using `try_read` to avoid blocking the thread: https://github.com/rayon-rs/rayon/issues/1205
-        if let Some(block_cache) = self.block_cache.try_read() {
-            if let Some(block) = block_cache.get(&height) {
-                return Ok(block.clone());
-            }
-        }
-        // If no block is found in the cache, then retrieve the block from the ledger.
         self.ledger.get_block(height)
     }
 
@@ -379,15 +365,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         }
         // Advance to the next block.
         self.ledger.advance_to_next_block(block)?;
-        // Add the block to the block cache.
-        {
-            let mut block_cache = self.block_cache.write();
-            block_cache.insert(block.height(), block.clone());
-            // Prune the block cache if it exceeds the maximum size.
-            if block_cache.len() > BLOCK_CACHE_SIZE {
-                block_cache.pop_first();
-            }
-        }
         // Update BFT metrics.
         #[cfg(feature = "metrics")]
         {

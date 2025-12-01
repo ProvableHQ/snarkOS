@@ -40,7 +40,8 @@ pub struct DAG<N: Network> {
     /// where each entry has a round number as its key and a set of certificate IDs as its value.
     recent_committed_ids: BTreeMap<u64, IndexSet<Field<N>>>,
 
-    /// The last round that was committed.
+    /// The latest round a certificate was committed too.
+    /// This corresponds to the latest leader certificate's round, because the leader certificate always has the greatest round number of its subDAG.
     last_committed_round: u64,
 }
 
@@ -62,7 +63,7 @@ impl<N: Network> DAG<N> {
         &self.graph
     }
 
-    /// Returns the last committed round.
+    /// Returns the latest round a certificate was committed to.
     pub const fn last_committed_round(&self) -> u64 {
         self.last_committed_round
     }
@@ -135,6 +136,10 @@ impl<N: Network> DAG<N> {
 
         // Update the last committed round.
         if self.last_committed_round < certificate_round {
+            trace!(
+                "Last committed round updated from {last_committed_round} to {certificate_round}",
+                last_committed_round = self.last_committed_round
+            );
             self.last_committed_round = certificate_round;
         } else {
             // TODO(kaimast); only remove old certificates for specific author here?

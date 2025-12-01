@@ -241,7 +241,9 @@ impl<N: Network> Storage<N> {
             for gc_round in current_gc_round..=next_gc_round {
                 // Iterate over the certificates for the GC round.
                 for id in self.get_certificate_ids_for_round(gc_round).into_iter() {
-                    // Remove the certificate from storage.
+                    trace!(
+                        "Garbage collecting certificate {id} at round {gc_round} (cut-off is round {next_gc_round})"
+                    );
                     self.remove_certificate(id);
                 }
             }
@@ -424,12 +426,17 @@ impl<N: Network> Storage<N> {
     /// - All previous certificates are for the previous round (i.e. round - 1).
     /// - All previous certificates contain a unique author.
     /// - The previous certificates reached the quorum threshold (N - f).
+    ///
+    /// # Returns
+    /// - `Ok(Some(txns))` for a valid new batch, where `txns` is the set of missing transactions in the batch
+    ///   that need to be fetched from peers.
+    /// - `Ok(None)` if the batch already exists in storage
     pub fn check_batch_header(
         &self,
         batch_header: &BatchHeader<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
+    ) -> Result<Option<HashMap<TransmissionID<N>, Transmission<N>>>> {
         // Retrieve the round.
         let round = batch_header.round();
         // Retrieve the GC round.
@@ -439,7 +446,8 @@ impl<N: Network> Storage<N> {
 
         // Ensure the batch ID does not already exist in storage.
         if self.contains_batch(batch_header.batch_id()) {
-            bail!("Batch for round {round} already exists in storage {gc_log}")
+            debug!("Batch for round {round} already exists in storage {gc_log}");
+            return Ok(None);
         }
 
         // Retrieve the committee lookback for the batch round.
@@ -503,7 +511,8 @@ impl<N: Network> Storage<N> {
                 bail!("Previous certificates for a batch in round {round} did not reach quorum threshold {gc_log}")
             }
         }
-        Ok(missing_transmissions)
+
+        Ok(Some(missing_transmissions))
     }
 
     /// Check the validity of a certificate coming from another validator.
@@ -588,8 +597,11 @@ impl<N: Network> Storage<N> {
         }
 
         // Ensure the batch header is well-formed.
-        let missing_transmissions =
-            self.check_batch_header(certificate.batch_header(), transmissions, aborted_transmissions)?;
+        let Some(missing_transmissions) =
+            self.check_batch_header(certificate.batch_header(), transmissions, aborted_transmissions)?
+        else {
+            bail!("Certificate for round {round} already exists in storage {gc_log}")
+        };
 
         // Check the timestamp for liveness.
         check_timestamp_for_liveness(certificate.timestamp())?;
@@ -620,6 +632,7 @@ impl<N: Network> Storage<N> {
         if !committee_lookback.is_quorum_threshold_reached(&signers) {
             bail!("Signatures for a batch in round {round} did not reach quorum threshold {gc_log}")
         }
+
         Ok(missing_transmissions)
     }
 

@@ -139,14 +139,14 @@ mod client {
     // Initiator side (full node connects to synthetic peer).
     test_handshake! {
         client -> client,
-        client -> validator,
+        // client -> validator, // router connections to untrusted peers are not allowed
         client -> prover
     }
 
     // Responder side (synthetic peer connects to full node).
     test_handshake! {
         client <- client,
-        client <- validator,
+        // client <- validator, // router connections to untrusted peers are not allowed
         client <- prover
     }
 }
@@ -155,33 +155,34 @@ mod prover {
     // Initiator side (full node connects to synthetic peer).
     test_handshake! {
         prover -> client,
-        prover -> validator,
+        // prover -> validator, // router connections to untrusted peers are not allowed
         prover -> prover
     }
 
     // Responder side (synthetic peer connects to full node).
     test_handshake! {
         prover <- client,
-        prover <- validator,
+        // prover <- validator, // router connections to untrusted peers are not allowed
         prover <- prover
     }
 }
 
-mod validator {
-    // Initiator side (full node connects to synthetic peer).
-    test_handshake! {
-        validator -> client,
-        validator -> validator,
-        validator -> prover
-    }
+// router connections to untrusted peers are not allowed
+// mod validator {
+//     // Initiator side (full node connects to synthetic peer).
+//     test_handshake! {
+//         validator -> client,
+//         validator -> validator,
+//         validator -> prover
+//     }
 
-    // Responder side (synthetic peer connects to full node).
-    test_handshake! {
-        validator <- client,
-        validator <- validator,
-        validator <- prover
-    }
-}
+//     // Responder side (synthetic peer connects to full node).
+//     test_handshake! {
+//         validator <- client,
+//         validator <- validator,
+//         validator <- prover
+//     }
+// }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn simultaneous_connection_attempt() {
@@ -247,8 +248,8 @@ async fn duplicate_connection_attempts() {
     // common::initialise_logger(3);
 
     // Spin up 2 full nodes.
-    let node1 = validator().await;
-    let node2 = validator().await;
+    let node1 = client().await;
+    let node2 = client().await;
     let addr2 = node2.listening_addr();
 
     // Prepare connection attempts.

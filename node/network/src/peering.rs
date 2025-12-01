@@ -534,6 +534,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
     /// optional reason for the ban. This also removes the peer from the candidate pool.
     fn ip_ban_peer(&self, listener_addr: SocketAddr, reason: Option<&str>) {
+        // Ignore IP-banning if we are in dev mode.
+        if self.is_dev() {
+            return;
+        }
+
         let ip = listener_addr.ip();
         debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
 

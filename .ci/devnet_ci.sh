@@ -15,6 +15,9 @@ total_clients=$2
 network_id=$3
 min_height=$4
 
+# The verobsity of snarkos nodes.
+NODE_VERBOSITY=1
+
 # Default values if not provided
 : "${total_validators:=4}"
 : "${total_clients:=2}"
@@ -47,11 +50,20 @@ trap child_exit_handler CHLD
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
-# Flags used by all ndoes
+# Flags used by all nodes.
 common_flags=(
-  --nodisplay --nobanner --noupdater "--network=$network_id" --verbosity=1
+  --nodisplay --nobanner --noupdater "--network=$network_id" "--verbosity=$NODE_VERBOSITY"
   "--dev-num-validators=$total_validators"
 )
+
+# Set the trusted peers for the validators
+trusted_peers=()
+for ((client_index = 0; client_index < total_clients; client_index++)); do
+  node_index=$((client_index + total_validators))
+  trusted_peers+=("localhost:$((4130 + $node_index)),")
+done
+# Trim the last comma
+trusted_peers=${trusted_peers%,}
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
@@ -60,10 +72,10 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --metrics --no-dev-txs &
+      --validator "--logfile=$log_file" --metrics --no-dev-txs --peers "$trusted_peers" &
   else
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" &
+      --validator "--logfile=$log_file" --peers "$trusted_peers" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -72,11 +84,12 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   sleep 1
 done
 
-# Start all client nodes in the background
+# Start all client nodes in the background.
 for ((client_index = 0; client_index < total_clients; client_index++)); do
+  # compute the absolute index for this node.
   node_index=$((client_index + total_validators))
 
-  snarkos clean --dev $node_index
+  snarkos clean "--dev=$node_index" "--network=$network_id"
 
   log_file="$log_dir/client-$client_index.log"
   snarkos start "${common_flags[@]}" "--dev=$node_index" \
@@ -158,9 +171,10 @@ echo "{
 " > program/program.json
 
 # Deploy the test program and wait for the deployment to be processed.
-_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 10 "$program_name")
+echo "● Testing program deployment..."
+_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 20 "$program_name")
 
-# Ensure we are able to fetch the program fromn the node.
+# Ensure we are able to fetch the program from the node.
 status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/program/${program_name}/0")
 if (( status_code == 200 )); then
   echo "✅ Program exists on the node"
@@ -170,19 +184,16 @@ else
 fi
 
 # Ensure the latest edition is indeed 0.
+echo "● Testing retrieval of program editions..."
 edition=$(curl -s -o /dev/null "http://localhost:3030/v2/$network_name/program/${program_name}/latest_edition")
-if (( edition == 0 )); then
-  echo "✅ Only program edition 0 exists on the node"
-else
+if (( edition != 0 )); then
   echo "❌ Test failed! Invalid latest edition {} for test program returned, not 0."
   exit 1
 fi
 
 # Also check that the latest edition for the default program (credits.aleo) is 0.
 edition=$(curl -s -o /dev/null "http://localhost:3030/v2/$network_name/program/credits.aleo/latest_edition")
-if (( edition == 0 )); then
-  echo "✅ Only program edition 0 exists on the node"
-else
+if (( edition != 0 )); then
   echo "❌ Test failed! Invalid latest edition {} for credits.aleo returned, not 0."
   exit 1
 fi
@@ -197,9 +208,9 @@ else
 fi
 
 # Execute a function in the deployed program and wait for the execution to be processed.
-# Use the old flags here `--query` and `--broadcast=URL` to test they still work.
-# Also, use the v1 API to test it still works.
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=localhost:3030 "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
+echo "● Testing program execution with V2 API..."
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --broadcast --endpoint=http://localhost:3030 \
+    "$program_name" main 1u32 1u32 --wait --timeout 10)
 
 # Fail if the execution transaction does not exist.
 tx=$(echo "$execute_result" | tail -n 1)
@@ -213,7 +224,26 @@ else
   echo "✅ Transaction executed successfully: $execute_result"
 fi
 
+# Use the old flags here `--query` and `--broadcast=URL` to test they still work.
+# Also, use the v1 API to test it still works.
+echo "● Testing program execution with V1 API..."
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=http://localhost:3030/v1 \
+    "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
+
+# Fail if the execution transaction does not exist.
+tx=$(echo "$execute_result" | tail -n 1)
+found=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v1/$network_name/transaction/$tx")
+# Fail if the HTTP response is not 2XX.
+if (( found < 200 || found >= 300 )); then
+  printf "❌ Test failed! Transaction does not exist or contains an error: \nexecute_result: %s\nfound: %s\n" \
+    "$execute_result" "$found"
+  exit 1
+else
+  echo "✅ Transaction executed successfully: $execute_result"
+fi
+
 # Fail if status does not exist or is not set to "accepted".
+echo "● Testing confirmed transaction endpoint..."
 rest_confirmed=$(curl -s "http://localhost:3030/v2/$network_name/transaction/confirmed/$tx")
 
 rest_status=$(jq --raw-output '.status' <<< "$rest_confirmed")
@@ -225,9 +255,10 @@ fi
 echo "ℹ️Testing REST API and REST Error Handling"
 
 # Test invalid transaction data (JsonDataError) returns 422 Unprocessable Content
-echo "Testing invalid transaction data returns 422 status code..."
-(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --endpoint=localhost:3030 \
-  --store txn_data.json --store-format=string "$program_name" main 1u32 1u32)
+echo "● Testing invalid transaction data returns 422 status code..."
+(cd program && snarkos developer execute --dev-key 0 --network "$network_id" \
+  --endpoint=localhost:3030  --store txn_data.json --store-format=string \
+  "$program_name" main 1u32 1u32)
 
 # Modify the proof data
 # This changes the last three characters in the hash but keeps the correct length.
@@ -290,7 +321,7 @@ fi
 echo "✅ Malformed JSON returns properly formatted RestError with JSON syntax error message"
 
 # Test invalid Content-Type header returns 400 Bad Request
-echo "Testing missing Content-Type header returns 400 status code..."
+echo "● Testing missing Content-Type header returns 400 status code..."
 missing_content_type_response=$(curl -s -w "%{http_code}" -X POST \
   -d '{"valid": "json"}' \
   "http://localhost:3030/v2/$network_name/transaction/broadcast" \
@@ -304,7 +335,8 @@ else
 fi
 
 # Test that missing Content-Type returns a properly formatted RestError
-echo "Testing missing Content-Type returns valid RestError format..."
+echo "● Testing missing Content-Type returns valid RestError format..."
+
 missing_content_type_error=$(curl -s -X POST \
   -d '{"valid": "json"}' \
   "http://localhost:3030/v2/$network_name/transaction/broadcast")
@@ -324,6 +356,8 @@ fi
 echo "✅ Missing Content-Type returns properly formatted RestError with Content-Type error message"
 
 # Scan the network for records.
+echo "● Testing `snarkos developer scan`..."
+
 scan_result=$(snarkos developer scan --dev-key 0 --network "$network_id" --start 0 --endpoint=localhost:3030)
 num_records=$(echo "$scan_result" | grep -c "owner")
 # Fail if the scan did not return 4 records.

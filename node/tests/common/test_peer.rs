@@ -21,7 +21,7 @@ use snarkos_node_router::{
 };
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, Field, FromBytes, MainnetV0 as CurrentNetwork, Network, TestRng, block::Block, error},
+    prelude::{Address, Field, FromBytes, MainnetV0 as CurrentNetwork, Network, TestRng, block::Block},
 };
 
 use std::{
@@ -138,7 +138,8 @@ impl Handshake for TestPeer {
         match node_side {
             ConnectionSide::Initiator => {
                 // Send a challenge request to the peer.
-                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen());
+                let our_request =
+                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen(), None);
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Receive the peer's challenge bundle.
@@ -176,7 +177,8 @@ impl Handshake for TestPeer {
                     nonce: response_nonce,
                 };
                 framed.send(Message::ChallengeResponse(our_response)).await?;
-                let our_request = ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen());
+                let our_request =
+                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen(), None);
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Listen for the challenge response.
