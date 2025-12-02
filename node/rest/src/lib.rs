@@ -177,6 +177,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/block/height/latest", get(Self::get_block_height_latest))
             .route("/block/hash/latest", get(Self::get_block_hash_latest))
             .route("/block/latest", get(Self::get_block_latest))
+            .route("/block/{height}/record_count", get(Self::get_number_of_block_records))
             .route("/block/{height_or_hash}", get(Self::get_block))
             // The path param here is actually only the height, but the name must match the route
             // above, otherwise there'll be a conflict at runtime.
@@ -223,6 +224,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // GET misc endpoints.
             .route("/version", get(Self::get_version))
             .route("/blocks", get(Self::get_blocks))
+            .route("/record_count", get(Self::get_number_of_records))
             .route("/height/{hash}", get(Self::get_height))
             .route("/memoryPool/transmissions", get(Self::get_memory_pool_transmissions))
             .route("/memoryPool/solutions", get(Self::get_memory_pool_solutions))
