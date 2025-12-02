@@ -45,7 +45,10 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
-serial = [ "snarkos-node-bft-ledger-service/serial" ]
+serial = [
+  "snarkos-node-metrics/serial",
+  "snarkos-node-bft-ledger-service/serial"
+]
 
 [dependencies.aleo-std]
 workspace = true
