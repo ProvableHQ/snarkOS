@@ -1262,14 +1262,17 @@ mod tests {
         }
 
         // ### Test that sync works as expected ###
-        let storage_mode = StorageMode::Test(None);
+        let storage_mode = StorageMode::new_test(None);
 
         // Create a new ledger to test with, but use the existing storage
         // so that the certificates exist.
-        let syncing_ledger = Arc::new(CoreLedgerService::new(
-            CurrentLedger::load(genesis, storage_mode.clone()).unwrap(),
-            Default::default(),
-        ));
+        let syncing_ledger = {
+            let storage_mode = storage_mode.clone();
+            Arc::new(CoreLedgerService::new(
+                spawn_blocking!(CurrentLedger::load(genesis, storage_mode)).unwrap(),
+                Default::default(),
+            ))
+        };
 
         // Set up sync and its dependencies.
         let gateway = Gateway::new(
