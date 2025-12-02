@@ -14,9 +14,9 @@
 // limitations under the License.
 
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::RwLock;
+use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use std::sync::{
     Arc,
@@ -24,7 +24,7 @@ use std::sync::{
 };
 use tokio::sync::oneshot;
 
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 /// Generic trait that can be queried for whether current process should be stopped.
 /// This is implemented by `SignalHandler` and `SimpleStoppable`.
@@ -69,7 +69,7 @@ pub struct SignalHandler {
     stopped_sender: RwLock<Option<oneshot::Sender<()>>>,
 
     /// This receiver is used to wait for the node to be stopped.
-    stopped_receiver: RwLock<Option<oneshot::Receiver<()>>>,
+    stopped_receiver: Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl SignalHandler {
@@ -78,7 +78,7 @@ impl SignalHandler {
         let (stopped_sender, stopped_receiver) = oneshot::channel();
         let obj = Arc::new(Self {
             stopped_sender: RwLock::new(Some(stopped_sender)),
-            stopped_receiver: RwLock::new(Some(stopped_receiver)),
+            stopped_receiver: Mutex::new(Some(stopped_receiver)),
         });
 
         {
@@ -104,10 +104,10 @@ impl SignalHandler {
             let mut s_hup = signal(SignalKind::hangup())?;
 
             tokio::select!(
-                _ = s_int.recv() => debug!("Received SIGINT"),
-                _ = s_term.recv() => debug!("Received SIGTERM"),
-                _ = s_quit.recv() => debug!("Received SIGQUIT"),
-                _ = s_hup.recv() => debug!("Received SIGHUP"),
+                _ = s_int.recv() => trace!("Received SIGINT"),
+                _ = s_term.recv() => trace!("Received SIGTERM"),
+                _ = s_quit.recv() => trace!("Received SIGQUIT"),
+                _ = s_hup.recv() => trace!("Received SIGHUP"),
             );
 
             std::io::Result::<()>::Ok(())
@@ -116,17 +116,13 @@ impl SignalHandler {
         #[cfg(not(target_family = "unix"))]
         let signal_listener = async move {
             tokio::signal::ctrl_c().await?;
-            debug!("Received signal");
-
             std::io::Result::<()>::Ok(())
         };
 
-        // Block until the signal.
+        // Block until we receive a signal.
         match signal_listener.await {
-            Ok(()) => {}
-            Err(error) => {
-                error!("tokio::signal encountered an error: {error}");
-            }
+            Ok(()) => debug!("Received signal, shutting down..."),
+            Err(error) => error!("tokio::signal encountered an error: {error}"),
         }
 
         self.stop();
@@ -136,14 +132,12 @@ impl SignalHandler {
     ///
     /// Note: This can only be called once, and must not be called concurrently.
     pub async fn wait_for_signals(&self) {
-        let receiver = self.stopped_receiver.write().take();
-
-        if let Some(receiver) = receiver {
-            if let Err(err) = receiver.await {
-                error!("wait_for_signals encountered an error: {err}");
-            }
-        } else {
+        let Some(receiver) = self.stopped_receiver.lock().take() else {
             panic!("wait_for_signals must be called at most once");
+        };
+
+        if let Err(err) = receiver.await {
+            error!("wait_for_signals encountered an error: {err}");
         }
     }
 }

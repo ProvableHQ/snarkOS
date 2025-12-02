@@ -288,26 +288,15 @@ impl Start {
         Self::runtime().block_on(async move {
             // Error messages.
             let node_parse_error = || "Failed to start node";
-            let signal_handler = SignalHandler::new();
 
             // Clone the configurations.
             let mut self_ = self.clone();
 
             // Parse the node arguments, start it, and block until shutdown.
             match self_.network {
-                MainnetV0::ID => self_
-                    .parse_node::<MainnetV0>(log_receiver, signal_handler.clone())
-                    .await
-                    .with_context(node_parse_error)?,
-
-                TestnetV0::ID => self_
-                    .parse_node::<TestnetV0>(log_receiver, signal_handler.clone())
-                    .await
-                    .with_context(node_parse_error)?,
-                CanaryV0::ID => self_
-                    .parse_node::<CanaryV0>(log_receiver, signal_handler.clone())
-                    .await
-                    .with_context(node_parse_error)?,
+                MainnetV0::ID => self_.parse_node::<MainnetV0>(log_receiver).await.with_context(node_parse_error)?,
+                TestnetV0::ID => self_.parse_node::<TestnetV0>(log_receiver).await.with_context(node_parse_error)?,
+                CanaryV0::ID => self_.parse_node::<CanaryV0>(log_receiver).await.with_context(node_parse_error)?,
                 _ => panic!("Invalid network ID specified"),
             };
 
@@ -577,7 +566,7 @@ impl Start {
 
     /// Start the node and blocks until it terminates.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, log_receiver: mpsc::Receiver<Vec<u8>>, signal_handler: Arc<SignalHandler>) -> Result<()> {
+    async fn parse_node<N: Network>(&mut self, log_receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
@@ -721,6 +710,9 @@ impl Start {
         if !self.nodisplay && !self.nocdn {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
+
+        // Register the signal handler.
+        let signal_handler = SignalHandler::new();
 
         // Initialize the node.
         let node = match node_type {
