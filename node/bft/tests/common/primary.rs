@@ -30,7 +30,7 @@ use snarkos_node_bft::{
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::BlockSync;
-use snarkos_utilities::SimpleStoppable;
+use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
 use snarkvm::{
     console::{
@@ -180,7 +180,7 @@ impl TestNetwork {
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
                     false,
-                    StorageMode::new_test(None),
+                    NodeDataDir::new_test(None),
                     None,
                 )
                 .unwrap();
@@ -194,7 +194,7 @@ impl TestNetwork {
                     Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + id as u16)),
                     &[],
                     false,
-                    StorageMode::new_test(None),
+                    NodeDataDir::new_test(None),
                     None,
                 )
                 .unwrap();

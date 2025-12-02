@@ -29,7 +29,7 @@ use snarkos_node_bft::{
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_sync::BlockSync;
-use snarkos_utilities::SimpleStoppable;
+use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
 use aleo_std::StorageMode;
 use snarkvm::{
@@ -140,7 +140,7 @@ pub async fn start_bft(
         Some(ip) => Some(*ip),
         None => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + node_id)),
     };
-    let storage_mode = StorageMode::new_test(None);
+    let node_config_dir = NodeDataDir::new_test(None);
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     let trusted_peers_only = false;
@@ -158,7 +158,7 @@ pub async fn start_bft(
         ip,
         &trusted_validators,
         trusted_peers_only,
-        storage_mode,
+        node_config_dir,
         None,
     )?;
     // Run the BFT instance.
@@ -194,7 +194,7 @@ pub async fn start_primary(
         Some(ip) => Some(*ip),
         None => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + node_id)),
     };
-    let storage_mode = StorageMode::new_test(None);
+    let node_config_dir = NodeDataDir::new_test(None);
     // Initialize the trusted validators.
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     let trusted_peers_only = false;
@@ -208,7 +208,7 @@ pub async fn start_primary(
         ip,
         &trusted_validators,
         trusted_peers_only,
-        storage_mode,
+        node_config_dir,
         None,
     )?;
     // Run the primary instance.

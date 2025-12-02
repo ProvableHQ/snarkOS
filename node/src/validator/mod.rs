@@ -36,7 +36,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::SignalHandler;
+use snarkos_utilities::{NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{
     Ledger,
@@ -88,6 +88,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
@@ -114,7 +115,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             trusted_peers_only,
-            storage_mode.clone(),
+            node_data_dir.clone(),
             dev.is_some(),
         )
         .await?;
@@ -133,6 +134,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             trusted_validators,
             trusted_peers_only,
             storage_mode.clone(),
+            node_data_dir.clone(),
             ping.clone(),
             dev,
         )
@@ -498,6 +500,7 @@ mod tests {
         let node = SocketAddr::from_str("0.0.0.0:4130").unwrap();
         let rest = SocketAddr::from_str("0.0.0.0:3030").unwrap();
         let storage_mode = StorageMode::Development(0);
+        let node_config_dir = NodeDataDir::new_development(0);
         let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.
@@ -524,6 +527,7 @@ mod tests {
             genesis,
             None,
             storage_mode,
+            node_config_dir,
             false,
             dev_txs,
             None,

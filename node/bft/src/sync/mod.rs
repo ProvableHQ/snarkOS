@@ -1065,7 +1065,8 @@ mod tests {
 
     use snarkos_account::Account;
     use snarkos_node_sync::BlockSync;
-    use snarkos_utilities::SimpleStoppable;
+    use snarkos_utilities::{NodeDataDir, SimpleStoppable};
+
     use snarkvm::{
         console::{
             account::{Address, PrivateKey},
@@ -1287,7 +1288,7 @@ mod tests {
             None,
             &[],
             false,
-            StorageMode::new_test(None),
+            NodeDataDir::new_test(None),
             None,
         )?;
         let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));

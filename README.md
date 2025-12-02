@@ -299,30 +299,142 @@ SUBCOMMANDS:
 
 The following are the options for the `snarkos start` command:
 ```
-USAGE:
-    snarkos start [OPTIONS]
+      --network <NETWORK>
+          Specify the network ID of this node [options: 0 = mainnet, 1 = testnet, 2 = canary]
+          
+          [default: 0]
 
-OPTIONS:
-        --network <NETWORK_ID>                  Specify the network ID of this node [default: 3]
-        
-        --validator                             Specify this node as a validator
-        --prover                                Specify this node as a prover
-        --client                                Specify this node as a client
-        
-        --private-key <PRIVATE_KEY>             Specify the node's account private key
-        --private-key-file <PRIVATE_KEY_FILE>   Specify the path to a file containing the node's account private key
-        
-        --node <IP:PORT>                        Specify the IP address and port for the node server [default: 0.0.0.0:4130]
-        --connect <IP:PORT>                     Specify the IP address and port of a peer to connect to
- 
-        --rest <REST>                           Specify the IP address and port for the REST server [default: 0.0.0.0:3030]
-        --norest                                If the flag is set, the node will not initialize the REST server
-        
-        --nodisplay                             If the flag is set, the node will not render the display
-        --verbosity <VERBOSITY_LEVEL>           Specify the verbosity of the node [options: 0, 1, 2, 3] [default: 2]
-        --logfile <PATH>                        Specify the path to the file where logs will be stored [default: /tmp/snarkos.log]
-        
-        --dev <NODE_ID>                         Enables development mode, specify a unique ID for this node
+      --prover
+          Start the node as a prover
+
+      --client
+          Start the node as a client (default).
+          
+          Client are "full nodes", i.e, validate and execute all blocks they receive, but they do not participate in AleoBFT consensus.
+
+      --bootstrap-client
+          Start the node as a bootstrap client.
+
+      --validator
+          Start the node as a validator.
+          
+          Validators are "full nodes", like clients, but also participate in AleoBFT.
+
+      --noupdater
+          Disable checking for new versions at startup
+
+      --private-key <PRIVATE_KEY>
+          Specify the account private key of the node
+
+      --private-key-file <PRIVATE_KEY_FILE>
+          Specify the path to a file containing the account private key of the node
+
+      --node <NODE>
+          Set the IP address and port used for P2P communication
+
+      --bft <BFT>
+          Set the IP address and port used for BFT communication. This argument is only allowed for validator nodes
+
+      --peers <PEERS>
+          Specify the IP address and port of the peer(s) to connect to (as a comma-separated list).
+          
+          These peers will be set as "trusted", which means the node will not disconnect from them when performing peer rotation.
+          
+          Setting peers to "" has the same effect as not setting the flag at all, except when using `--dev`.
+
+      --validators <VALIDATORS>
+          Specify the IP address and port of the validator(s) to connect to
+
+      --rest <REST>
+          Specify the IP address and port for the REST server
+
+      --rest-rps <REST_RPS>
+          Specify the requests per second (RPS) rate limit per IP for the REST server
+          
+          [default: 10]
+
+      --jwt-secret <JWT_SECRET>
+          Specify the JWT secret for the REST server (16B, base64-encoded)
+
+      --jwt-timestamp <JWT_TIMESTAMP>
+          Specify the JWT creation timestamp; can be any time in the last 10 years
+
+      --norest
+          If the flag is set, the node will not initialize the REST server
+
+      --nojwt
+          If the flag is set, the node will not require JWT authentication for the REST server
+
+      --trusted-peers-only
+          If the flag is set, the node will only connect to trusted peers and validators
+
+      --nodisplay
+          Write log message to stdout instead of showing a terminal UI.
+          
+          This is useful, for example, for running a node as a service instead of in the foreground or to pipe its output into a file.
+
+      --verbosity <VERBOSITY>
+          Specify the log verbosity of the node. [options: 0 (lowest log level) to 6 (highest level)]
+          
+          [default: 1]
+
+      --log-filter <LOG_FILTER>
+          Set a custom log filtering scheme, e.g., "off,snarkos_bft=trace", to show all log messages of snarkos_bft but nothing else
+
+      --logfile <LOGFILE>
+          Specify the path to the file where logs will be stored
+          
+          [default: /var/folders/6v/1bwnpyjd1r5f9wr_9hq25qsm0000gn/T/snarkos.log]
+
+      --metrics
+          Enable the metrics exporter
+
+      --metrics-ip <METRICS_IP>
+          Specify the IP address and port for the metrics exporter
+
+      --storage <STORAGE>
+          Specify the path to a directory containing the storage database for the ledger. This flag overrides the default path, even when `--dev` is set
+
+      --node-data <NODE_DATA>
+          Set a custom path for the node-specific data.
+          This flag overrides the default path, even when `--dev` is set.
+          
+          That folder may contain sensitive data, such as the JWT secret, and should not be shared with untrusted parties.
+          For validators, it also contains the latest proposal cache, which is required to participate in consensus.
+
+      --cdn <CDN>
+          Enables the node to prefetch initial blocks from a CDN
+
+      --nocdn
+          If the flag is set, the node will not prefetch from a CDN
+
+      --dev <DEV>
+          Enables development mode used to set up test networks.
+          
+          The purpose of this flag is to run multiple nodes on the same machine and in the same working directory.
+          To do this, set the value to a unique ID within the test work. For example if there are four nodes in the network, pass `--dev 0` for the first node, `--dev 1` for the second, and so forth.
+          
+          If you do not explicitly set the `--peers` flag, this will also populate the set of trusted peers, so that the network is fully connected.
+          Additionally, if you do not set the `--rest` or the `--norest` flags, it will also set the REST port to `3030` for the first node, `3031` for the second, and so forth.
+
+      --dev-num-validators <DEV_NUM_VALIDATORS>
+          If development mode is enabled, specify the number of genesis validator
+          
+          [default: 4]
+
+      --dev-num-clients <DEV_NUM_CLIENTS>
+          If development mode is enabled, specify the number of clients. This is only used by validators to automatically populate their set of trusted peers.
+          
+          This option cannot be used while also passing the `--peers` flag.
+
+      --no-dev-txs
+          If development mode is enabled, specify whether node 0 should generate traffic to drive the network
+
+      --dev-bonded-balances <DEV_BONDED_BALANCES>
+          If development mode is enabled, specify the custom bonded balances as a JSON object
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## 6. Development Guide

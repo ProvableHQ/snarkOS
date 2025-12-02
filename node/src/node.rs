@@ -24,7 +24,7 @@ use crate::{
 };
 
 use snarkos_account::Account;
-use snarkos_utilities::SignalHandler;
+use snarkos_utilities::{NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{
     Address,
@@ -71,6 +71,7 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
@@ -88,6 +89,7 @@ impl<N: Network> Node<N> {
                 genesis,
                 cdn,
                 storage_mode,
+                node_data_dir,
                 trusted_peers_only,
                 dev_txs,
                 dev,
@@ -103,7 +105,7 @@ impl<N: Network> Node<N> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
         signal_handler: Arc<SignalHandler>,
@@ -114,7 +116,7 @@ impl<N: Network> Node<N> {
                 account,
                 trusted_peers,
                 genesis,
-                storage_mode,
+                node_data_dir,
                 trusted_peers_only,
                 dev,
                 signal_handler,
@@ -133,6 +135,7 @@ impl<N: Network> Node<N> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
         signal_handler: Arc<SignalHandler>,
@@ -147,6 +150,7 @@ impl<N: Network> Node<N> {
                 genesis,
                 cdn,
                 storage_mode,
+                node_data_dir,
                 trusted_peers_only,
                 dev,
                 signal_handler,

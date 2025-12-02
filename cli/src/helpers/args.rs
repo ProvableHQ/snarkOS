@@ -13,17 +13,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::helpers::dev::get_development_key;
+
+use snarkos_utilities::NodeDataDir;
+
 use snarkvm::{
     console::network::{CanaryV0, MainnetV0},
     prelude::{Network, PrivateKey},
 };
 
+use aleo_std::aleo_dir;
 use anyhow::{Context, Result, anyhow};
 use clap::builder::RangedU64ValueParser;
 use std::{path::PathBuf, str::FromStr};
 use ureq::http::{Uri, uri};
-
-use crate::helpers::dev::get_development_key;
 
 pub(crate) fn network_id_parser() -> RangedU64ValueParser<u16> {
     RangedU64ValueParser::<u16>::new().range((MainnetV0::ID as u64)..=(CanaryV0::ID as u64))
@@ -72,6 +75,34 @@ pub(crate) fn parse_private_key<N: Network>(
     let private_key = PrivateKey::from_str(&key_str).with_context(|| "Failed to parse private key")?;
 
     Ok(private_key)
+}
+
+/// Returns the path to the node configuration directory.
+pub(crate) fn parse_node_data_dir(
+    node_config_dir: &Option<PathBuf>,
+    network: u16,
+    dev: Option<u16>,
+) -> Result<NodeDataDir> {
+    if let Some(custom) = node_config_dir {
+        return Ok(NodeDataDir::new(custom.clone()));
+    }
+
+    let config = if let Some(dev) = dev {
+        // Development mode
+        let mut path = match std::env::current_dir() {
+            Ok(current_dir) => current_dir,
+            _ => PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        };
+
+        path.push(format!(".node-data-{network}-{dev}"));
+        NodeDataDir::new(path)
+    } else {
+        // Production mode
+        let path = aleo_dir().join("storage").join(format!("node-data-{network}"));
+        NodeDataDir::new(path)
+    };
+
+    Ok(config)
 }
 
 #[cfg(test)]

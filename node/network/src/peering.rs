@@ -15,7 +15,6 @@
 
 use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver, bootstrap_peers};
 
-use aleo_std::{StorageMode, aleo_ledger_dir};
 use snarkos_node_tcp::{P2P, is_bogon_ip, is_unspecified_or_broadcast_ip};
 use snarkvm::prelude::{Address, Network};
 
@@ -33,6 +32,7 @@ use std::{
     fs,
     io::{self, Write},
     net::{IpAddr, SocketAddr},
+    path::Path,
     str::FromStr,
     time::Instant,
 };
@@ -461,11 +461,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Loads any previously cached peer addresses so they can be introduced as initial
     /// candidate peers to connect to.
-    fn load_cached_peers(storage_mode: &StorageMode, filename: &str) -> Result<Vec<SocketAddr>> {
-        let mut peer_cache_path = aleo_ledger_dir(N::ID, storage_mode);
-        peer_cache_path.push(filename);
-
-        let peers = match fs::read_to_string(&peer_cache_path) {
+    fn load_cached_peers(path: &Path) -> Result<Vec<SocketAddr>> {
+        let peers = match fs::read_to_string(path) {
             Ok(cached_peers_str) => {
                 let mut cached_peers = Vec::new();
                 for peer_addr_str in cached_peers_str.lines() {
@@ -481,7 +478,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 Vec::new()
             }
             Err(error) => {
-                warn!("{} Couldn't load cached peers at {}: {error}", Self::OWNER, peer_cache_path.display());
+                warn!("{} Couldn't load cached peers at {}: {error}", Self::OWNER, path.display());
                 Vec::new()
             }
         };
@@ -491,7 +488,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Preserve the peers who have the greatest known block heights, and the lowest
     /// number of registered network failures.
-    fn save_best_peers(&self, storage_mode: &StorageMode, filename: &str, max_entries: Option<usize>) -> Result<()> {
+    fn save_best_peers(&self, path: &Path, max_entries: Option<usize>) -> Result<()> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
 
@@ -513,8 +510,6 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         }
 
         // Dump the connected peers to a file.
-        let mut path = aleo_ledger_dir(N::ID, storage_mode);
-        path.push(filename);
         let mut file = fs::File::create(path)?;
         for peer in peers {
             writeln!(file, "{}", peer.listener_addr())?;

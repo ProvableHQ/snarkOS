@@ -17,3 +17,6 @@
 pub mod signals;
 
 pub use signals::*;
+
+pub mod node_data;
+pub use node_data::*;
