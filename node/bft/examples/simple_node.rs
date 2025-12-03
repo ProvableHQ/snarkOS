@@ -338,7 +338,7 @@ fn consensus_handler(receiver: ConsensusReceiver<CurrentNetwork>) {
             // Sleep for the determined amount of time.
             tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
             // Call the callback.
-            callback.send(Ok(())).ok();
+            callback.send(Ok(true)).ok();
         }
     });
 }

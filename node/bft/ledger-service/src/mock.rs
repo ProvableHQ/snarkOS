@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{LedgerService, fmt_id};
+use crate::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService, fmt_id};
 use snarkvm::{
     ledger::{
         Block,
@@ -21,13 +21,12 @@ use snarkvm::{
         PendingBlock,
         Transaction,
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail, consensus_config_value, ensure},
+    prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail, consensus_config_value},
 };
 
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
@@ -218,40 +217,13 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         &self,
         _block: Block<N>,
         _prefix: &[PendingBlock<N>],
-    ) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>> {
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>> {
         unimplemented!();
     }
 
-    fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>> {
+    /// Begins a ledger update.
+    fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError> {
         unimplemented!();
-    }
-
-    /// Checks the given block is valid next block.
-    fn check_next_block(&self, _block: &Block<N>) -> Result<()> {
-        Ok(())
-    }
-
-    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
-    #[cfg(feature = "ledger-write")]
-    fn prepare_advance_to_next_quorum_block(
-        &self,
-        _subdag: Subdag<N>,
-        _transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>, CheckBlockError<N>> {
-        unreachable!("MockLedgerService does not support prepare_advance_to_next_quorum_block")
-    }
-
-    /// Adds the given block as the next block in the ledger.
-    #[cfg(feature = "ledger-write")]
-    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
-        ensure!(
-            block.height() == self.latest_block_height() + 1,
-            "Tried to advance to block {} from block {}",
-            block.height(),
-            self.latest_block_height()
-        );
-        self.height_to_round_and_hash.lock().insert(block.height(), (block.round(), block.hash()));
-        Ok(())
     }
 
     /// Returns the spent cost for a transaction in microcredits.

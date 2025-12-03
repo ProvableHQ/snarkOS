@@ -14,13 +14,15 @@
 // limitations under the License.
 
 use crate::{
+    Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
+    Transport,
     events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
-    gateway::{Gateway, Transport},
     helpers::{Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
-    ledger_service::LedgerService,
+    ledger_service::{BeginLedgerUpdateError, LedgerService},
     spawn_blocking,
 };
+
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{
     BLOCK_REQUEST_BATCH_DELAY,
@@ -37,7 +39,7 @@ use snarkvm::{
         network::{ConsensusVersion, Network},
         types::Field,
     },
-    ledger::{PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
+    ledger::{CheckBlockError, PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
     utilities::{cfg_into_iter, cfg_iter, ensure_equals, flatten_error},
 };
 
@@ -64,9 +66,8 @@ use tokio::{sync::oneshot, task::JoinHandle};
 /// This is currently used by BFT.
 #[async_trait::async_trait]
 pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
-    async fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>);
+    fn sync_bft_dag_at_bootup(&self, certificates: &[BatchCertificate<N>]);
 
-    /// Sends a new certificate.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
 }
 
@@ -109,7 +110,7 @@ pub struct Sync<N: Network> {
     /// Blocks need to be processed in order, hence a BTree map.
     ///
     /// Whenever a new block is added to this map, BlockSync::set_sync_height needs to be called.
-    pending_blocks: Arc<TMutex<VecDeque<PendingBlock<N>>>>,
+    pending_blocks: Arc<Mutex<VecDeque<PendingBlock<N>>>>,
 }
 
 impl<N: Network> Sync<N> {
@@ -502,8 +503,7 @@ impl<N: Network> Sync<N> {
 
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(cb) = self.sync_callback.get() {
-            // Await the callback to continue.
-            cb.sync_dag_at_bootup(certificates).await;
+            cb.sync_bft_dag_at_bootup(&certificates);
         }
 
         self.block_sync.set_sync_height(block_height);
@@ -513,9 +513,9 @@ impl<N: Network> Sync<N> {
 
     /// Returns which height we are synchronized to.
     /// If there are queued block responses, this might be higher than the latest block in the ledger.
-    async fn compute_sync_height(&self) -> u32 {
+    fn compute_sync_height(&self) -> u32 {
         let ledger_height = self.ledger.latest_block_height();
-        let mut pending_blocks = self.pending_blocks.lock().await;
+        let mut pending_blocks = self.pending_blocks.lock();
 
         // Remove any old responses.
         while let Some(b) = pending_blocks.front()
@@ -610,7 +610,7 @@ impl<N: Network> Sync<N> {
         if within_gc {
             // Retrieve the current height, based on the ledger height and the
             // (unconfirmed) blocks that are already queued up.
-            let start_height = self.compute_sync_height().await;
+            let start_height = self.compute_sync_height();
 
             // The height is incremented as blocks are added.
             let mut current_height = start_height;
@@ -696,17 +696,41 @@ impl<N: Network> Sync<N> {
 
         let self_ = self.clone();
         spawn_blocking!({
+            let block_height = block.height();
+
+            let ledger_update = match self_.ledger.begin_ledger_update() {
+                Ok(update) => update,
+                Err(BeginLedgerUpdateError::ShuttingDown) => {
+                    debug!("BlockSync cannot advance the ledger any more. The node is shutting down.");
+                    return Ok(());
+                }
+                Err(err) => {
+                    return Err(anyhow!("Unexpected error when beginning ledger update: {err}"));
+                }
+            };
+
             // Check the next block.
-            self_.ledger.check_next_block(&block)?;
+            let block = match ledger_update.check_next_block(block) {
+                Ok(block) => block,
+                Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                    debug!("Skipping a block at height {block_height}. The ledger already advanced.");
+                    self_.block_sync.remove_block_response(block_height);
+                    return Ok(());
+                }
+                Err(err) => {
+                    return Err(err.into_anyhow());
+                }
+            };
+
             // Attempt to advance to the next block.
-            self_.ledger.advance_to_next_block(&block)?;
+            ledger_update.advance_to_next_block(&block)?;
 
             // Sync the height with the block.
-            self_.storage.sync_height_with_block(block.height());
+            self_.storage.sync_height_with_block(block_height);
             // Sync the round with the block.
             self_.storage.sync_round_with_block(block.round());
             // Mark the block height as processed in block_sync.
-            self_.block_sync.remove_block_response(block.height());
+            self_.block_sync.remove_block_response(block_height);
 
             Ok(())
         })
@@ -817,24 +841,31 @@ impl<N: Network> Sync<N> {
             return Ok(());
         }
 
-        // Acquire the pending blocks lock.
-        let mut pending_blocks = self.pending_blocks.lock().await;
-
         // Append the certificates to the storage.
         self.add_block_subdag_to_bft(&new_block).await?;
 
-        // Fetch the latest block height.
-        let ledger_block_height = self.ledger.latest_block_height();
+        // This optimistically performs updates to the pending block set.
+        // Because BFT can advance concurrently, we may have to abort and retry.
+        let _self = self.clone();
 
-        // First, clear any older pending blocks.
-        // TODO(kaimast): ensure there are no dangling block requests
-        while let Some(pending_block) = pending_blocks.front() {
-            if pending_block.height() > ledger_block_height {
-                break;
+        spawn_blocking!({
+            while !_self.try_sync_storage_with_block(&new_block)? {
+                trace!("Retrying to sync storage with block at height {new_block_height}");
             }
 
-            pending_blocks.pop_front();
-        }
+            Ok(())
+        })
+    }
+
+    /// Tries to sync the storage with the given block.
+    ///  
+    /// # Returns
+    /// - Ok(true) if the storage was synced with the block, or a pending block already exists for the given height.
+    /// - Ok(false) if the block, or one of the pending blocks, is out of order.
+    /// - Err(anyhow::Error) if any other error occured.
+    fn try_sync_storage_with_block(&self, new_block: &Block<N>) -> Result<bool> {
+        // Acquire the pending blocks lock.
+        let mut pending_blocks = self.pending_blocks.lock();
 
         if let Some(tail) = pending_blocks.back() {
             if tail.height() >= new_block.height() {
@@ -843,7 +874,7 @@ impl<N: Network> Sync<N> {
                     Will not sync.",
                     height = new_block.height()
                 );
-                return Ok(());
+                return Ok(true);
             }
 
             ensure_equals!(tail.height() + 1, new_block.height(), "Got an out-of-order block");
@@ -851,6 +882,7 @@ impl<N: Network> Sync<N> {
 
         // Fetch the latest block height.
         let ledger_block_height = self.ledger.latest_block_height();
+        let new_block_height = new_block.height();
 
         // Clear any older pending blocks.
         // TODO(kaimast): ensure there are no dangling block requests
@@ -868,18 +900,31 @@ impl<N: Network> Sync<N> {
         }
 
         // Check the block against the chain of pending blocks and append it on success.
-        let new_block = match self.ledger.check_block_subdag(new_block, pending_blocks.make_contiguous()) {
+        let new_block = match self.ledger.check_block_subdag(new_block.clone(), pending_blocks.make_contiguous()) {
             Ok(new_block) => new_block,
-            Err(err) => {
-                // TODO(kaimast): this shoud not return an error on the snarkVM side.
-                if err.to_string().contains("already in the ledger") {
-                    debug!("Ledger is already synced with block at height {new_block_height}. Will not sync.",);
+            // Retry if one of the pending blocks became obsolete.
+            Err(CheckBlockError::InvalidPrefix { index, .. }) => {
+                let height = pending_blocks.get(index).with_context(|| "Invalid prefix index")?.height();
+                debug!("Pending block at height {height} became obsolete. Will retry with updated prefix.",);
 
-                    return Ok(());
-                } else {
-                    return Err(err.into());
+                while let Some(pending_block) = pending_blocks.front()
+                    && pending_block.height() <= height
+                {
+                    trace!("Removing obsolete pending block at height {}.", pending_block.height());
+                    pending_blocks.pop_front();
                 }
+
+                return Ok(false);
             }
+            // If the ledger already advanced, consider it a success.
+            Err(CheckBlockError::BlockAlreadyExists { .. }) | Err(CheckBlockError::InvalidHeight { .. }) => {
+                debug!(
+                    "Tried to sync storage with block at height {new_block_height}, but it was already in the ledger."
+                );
+                return Ok(true);
+            }
+            // Any other error should be returned to the caller.
+            Err(err) => return Err(err.into_anyhow()),
         };
 
         trace!(
@@ -910,45 +955,65 @@ impl<N: Network> Sync<N> {
             }
         }
 
-        if let Some(commit_height) = commit_height {
-            let start_height = ledger_block_height + 1;
-            ensure!(commit_height >= start_height, "Invalid commit height");
-            let num_blocks = (commit_height - start_height + 1) as usize;
-
-            // Create a more detailed log message if we are committing more than one block at a time.
-            if num_blocks > 1 {
-                trace!(
-                    "Attempting to commit {chain_length} pending block(s) starting at height {start_height}.",
-                    chain_length = pending_blocks.len(),
-                );
-            }
-
-            for pending_block in pending_blocks.drain(0..num_blocks) {
-                let hash = pending_block.hash();
-                let height = pending_block.height();
-                let ledger = self.ledger.clone();
-                let storage = self.storage.clone();
-
-                spawn_blocking!({
-                    let block = ledger.check_block_content(pending_block).with_context(|| {
-                        format!("Failed to check contents of pending block {hash} at height {height}")
-                    })?;
-
-                    trace!("Adding pending block {hash} at height {height} to the ledger");
-                    ledger.advance_to_next_block(&block)?;
-                    // Sync the height with the block.
-                    storage.sync_height_with_block(block.height());
-                    // Sync the round with the block.
-                    storage.sync_round_with_block(block.round());
-
-                    Ok(())
-                })?
-            }
-        } else {
+        let Some(commit_height) = commit_height else {
             trace!("No pending block are ready to be committed ({} block(s) are pending)", pending_blocks.len());
+            return Ok(true);
+        };
+
+        let ledger = self.ledger.clone();
+
+        let ledger_update = match ledger.begin_ledger_update() {
+            Ok(update) => update,
+            Err(BeginLedgerUpdateError::ShuttingDown) => {
+                info!("BlockSync cannot advance the ledger any more. The node is shutting down.");
+                return Ok(true);
+            }
+            Err(err) => {
+                return Err(anyhow!("Unexpected error when beginning ledger update: {err}"));
+            }
+        };
+
+        let start_height = ledger_block_height + 1;
+        ensure!(commit_height >= start_height, "Invalid commit height");
+        let num_blocks = (commit_height - start_height + 1) as usize;
+
+        // Create a more detailed log message if we are committing more than one block at a time.
+        if num_blocks > 1 {
+            trace!(
+                "Attempting to commit {chain_length} pending block(s) starting at height {start_height}.",
+                chain_length = pending_blocks.len(),
+            );
         }
 
-        Ok(())
+        for pending_block in pending_blocks.drain(0..num_blocks) {
+            let hash = pending_block.hash();
+            let height = pending_block.height();
+            let storage = self.storage.clone();
+
+            let block = match ledger_update.check_block_content(pending_block) {
+                Ok(block) => block,
+                Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                    // If the block was outdated, stop here and request a retry.
+                    // The outdated pending block has already been removed (due to the `drain` call above)
+                    debug!("Pending block at height {height} became obsolete. Will retry with updated prefix.");
+                    return Ok(false);
+                }
+                Err(err) => {
+                    return Err(err
+                        .into_anyhow()
+                        .context(format!("Failed to check contents of pending block {hash} at height {height}")));
+                }
+            };
+
+            trace!("Adding pending block {hash} at height {height} to the ledger");
+            ledger_update.advance_to_next_block(&block)?;
+            // Sync the height with the block.
+            storage.sync_height_with_block(block.height());
+            // Sync the round with the block.
+            storage.sync_round_with_block(block.round());
+        }
+
+        Ok(true)
     }
 }
 
@@ -1268,8 +1333,9 @@ mod tests {
 
             let core_ledger = core_ledger.clone();
             let block = spawn_blocking!({
-                let block = core_ledger.clone().prepare_advance_to_next_quorum_block(subdag, Default::default())?;
-                core_ledger.advance_to_next_block(&block)?;
+                let ledger_update = core_ledger.begin_ledger_update()?;
+                let block = ledger_update.prepare_advance_to_next_quorum_block(subdag, Default::default())?;
+                ledger_update.advance_to_next_block(&block)?;
                 Ok(block)
             })?;
 
@@ -1352,10 +1418,13 @@ mod tests {
             PrivateKey::new(genesis_rng)?,
             PrivateKey::new(genesis_rng)?,
         ];
+
         // Initialize the ledger with the genesis block.
-        let ledger = spawn_blocking!(CurrentLedger::load(genesis, StorageMode::new_test(None))).unwrap();
-        // Initialize the ledger.
-        let core_ledger = Arc::new(CoreLedgerService::new(ledger.clone(), SimpleStoppable::new()));
+        let core_ledger = {
+            let ledger = spawn_blocking!(CurrentLedger::load(genesis, StorageMode::new_test(None))).unwrap();
+            Arc::new(CoreLedgerService::new(ledger.clone(), SimpleStoppable::new()))
+        };
+
         // Sample rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
             // Initialize the committee.
@@ -1413,12 +1482,14 @@ mod tests {
         for certificate in certificates.clone().iter() {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
         }
-        // Create block 1.
+
         let leader_round_1 = commit_round;
         let leader_1 = committee.get_leader(leader_round_1).unwrap();
         let leader_certificate = storage.get_certificate_for_round_with_author(commit_round, leader_1).unwrap();
         let mut subdag_map: BTreeMap<u64, IndexSet<BatchCertificate<CurrentNetwork>>> = BTreeMap::new();
-        let block_1 = {
+
+        // Create subdag for block 1.
+        let subdag_1 = {
             let mut leader_cert_map = IndexSet::new();
             leader_cert_map.insert(leader_certificate.clone());
             let mut previous_cert_map = IndexSet::new();
@@ -1427,22 +1498,27 @@ mod tests {
             }
             subdag_map.insert(commit_round, leader_cert_map.clone());
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
-            let subdag = Subdag::from(subdag_map.clone())?;
-            let ledger = core_ledger.clone();
-            tokio::task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))
-                .await??
+            Subdag::from(subdag_map.clone())?
         };
-        // Insert block 1.
-        let ledger = core_ledger.clone();
-        let block = block_1.clone();
-        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
-        // Create block 2.
-        let leader_round_2 = commit_round + 2;
-        let leader_2 = committee.get_leader(leader_round_2).unwrap();
-        let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader_2).unwrap();
+        let core_ledger_cpy = core_ledger.clone();
+        spawn_blocking!({
+            // Create block 1.
+            let update1 = core_ledger_cpy.begin_ledger_update()?;
+            let block_1 = update1.prepare_advance_to_next_quorum_block(subdag_1, Default::default())?;
+
+            // Insert block 1.
+            update1.advance_to_next_block(&block_1)?;
+
+            Ok(())
+        })?;
+
+        // Prepare DAG for block 2.
         let mut subdag_map_2: BTreeMap<u64, IndexSet<BatchCertificate<CurrentNetwork>>> = BTreeMap::new();
-        let block_2 = {
+        let subdag_2 = {
+            let leader_round_2 = commit_round + 2;
+            let leader_2 = committee.get_leader(leader_round_2).unwrap();
+            let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader_2).unwrap();
             let mut leader_cert_map_2 = IndexSet::new();
             leader_cert_map_2.insert(leader_certificate_2.clone());
             let mut previous_cert_map_2 = IndexSet::new();
@@ -1451,25 +1527,30 @@ mod tests {
             }
             subdag_map_2.insert(leader_round_2, leader_cert_map_2.clone());
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
-            let subdag_2 = Subdag::from(subdag_map_2.clone())?;
-            let ledger = core_ledger.clone();
-
-            tokio::task::spawn_blocking(move || {
-                ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default())
-            })
-            .await??
+            Subdag::from(subdag_map_2.clone())?
         };
-        // Insert block 2.
-        let ledger = core_ledger.clone();
-        let block = block_2.clone();
-        spawn_blocking!(ledger.advance_to_next_block(&block))?;
 
-        // Create block 3
+        let core_ledger_cpy = core_ledger.clone();
+        spawn_blocking!({
+            let update2 = core_ledger_cpy.begin_ledger_update()?;
+
+            // Create block 2.
+            let block_2 = update2.prepare_advance_to_next_quorum_block(subdag_2, Default::default())?;
+
+            // Insert block 2.
+            update2.advance_to_next_block(&block_2)?;
+
+            Ok(())
+        })?;
+
+        // Prepare DAG for block 3.
         let leader_round_3 = commit_round + 4;
         let leader_3 = committee.get_leader(leader_round_3).unwrap();
         let leader_certificate_3 = storage.get_certificate_for_round_with_author(leader_round_3, leader_3).unwrap();
+
+        // Prepare DAG for block 3.
         let mut subdag_map_3: BTreeMap<u64, IndexSet<BatchCertificate<CurrentNetwork>>> = BTreeMap::new();
-        let block_3 = {
+        let subdag_3 = {
             let mut leader_cert_map_3 = IndexSet::new();
             leader_cert_map_3.insert(leader_certificate_3.clone());
             let mut previous_cert_map_3 = IndexSet::new();
@@ -1478,18 +1559,21 @@ mod tests {
             }
             subdag_map_3.insert(leader_round_3, leader_cert_map_3.clone());
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
-            let subdag_3 = Subdag::from(subdag_map_3.clone())?;
-            let ledger = core_ledger.clone();
-
-            tokio::task::spawn_blocking(move || {
-                ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default())
-            })
-            .await??
+            Subdag::from(subdag_map_3.clone())?
         };
-        // Insert block 3.
-        let ledger = core_ledger.clone();
-        let block = block_3.clone();
-        spawn_blocking!(ledger.advance_to_next_block(&block))?;
+
+        let core_ledger_cpy = core_ledger.clone();
+        spawn_blocking!({
+            let update3 = core_ledger_cpy.begin_ledger_update()?;
+
+            // Create block 3
+            let block_3 = update3.prepare_advance_to_next_quorum_block(subdag_3, Default::default())?;
+
+            // Insert block 3.
+            update3.advance_to_next_block(&block_3)?;
+
+            Ok(())
+        })?;
 
         /*
             Check that the pending certificates are computed correctly.
