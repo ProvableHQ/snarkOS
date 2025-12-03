@@ -75,7 +75,7 @@ function check_heights() {
   fi
 }
 
-# Function checking that nodes created logs on disk.
+# Function checking that nodes created logs on disk and they contain no errors.
 function check_logs() {
   echo "Checking logs exist for all nodes..."
   local log_dir=$1
@@ -90,6 +90,11 @@ function check_logs() {
       echo "❌ Test failed! Validator #${validator_index} did not create any logs in \"$log_dir\"."
       return 1
     fi
+
+    if grep -q "ERROR" "$log_dir/validator-${validator_index}.log"; then
+      echo "❌ Test failed! Validator #${validator_index} logs contain errors."
+      return 1
+    fi
   done
 
   for ((client_index = 0; client_index < total_clients; client_index++)); do
@@ -97,6 +102,12 @@ function check_logs() {
       echo "❌ Test failed! Client #${client_index} did not create any logs in \"$log_dir\"."
       return 1
     fi
+
+    if grep -q "ERROR" "$log_dir/client-${client_index}.log"; then
+      echo "❌ Test failed! Client #${client_index} logs contain errors."
+      return 1
+    fi
+ 
   done
 
   return 0
