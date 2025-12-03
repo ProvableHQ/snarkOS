@@ -936,4 +936,21 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
+
+    /// GET /{network}/record_count
+    pub(crate) async fn get_number_of_records(State(rest): State<Self>) -> ErasedJson {
+        let record_counts = rest.ledger.get_record_count();
+        ErasedJson::pretty(record_counts)
+    }
+
+    /// GET /{network}/{block}/record_count
+    pub(crate) async fn get_number_of_block_records(
+        State(rest): State<Self>,
+        Path(height): Path<u32>,
+    ) -> Result<ErasedJson, RestError> {
+        match rest.ledger.get_num_block_records(height) {
+            Ok(record_counts) => Ok(ErasedJson::pretty(record_counts)),
+            Err(_) => Err(RestError::not_found(anyhow!("Records for block {height} couldn't be found"))),
+        }
+    }
 }
