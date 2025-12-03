@@ -288,7 +288,7 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
     /// Notification about a new certificate.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()> {
         // Update the DAG with the certificate.
-        self.update_dag::<true, false>(certificate).await
+        self.update_dag::<false>(certificate).await
     }
 }
 
@@ -315,7 +315,7 @@ impl<N: Network> SyncCallback<N> for BFT<N> {
     /// Sends a new certificate.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()> {
         // Update the DAG with the certificate.
-        self.update_dag::<true, true>(certificate).await
+        self.update_dag::<true>(certificate).await
     }
 }
 
@@ -515,13 +515,7 @@ impl<N: Network> BFT<N> {
 
 impl<N: Network> BFT<N> {
     /// Stores the certificate in the DAG, and attempts to commit one or more anchors.
-    async fn update_dag<const ALLOW_LEDGER_ACCESS: bool, const IS_SYNCING: bool>(
-        &self,
-        certificate: BatchCertificate<N>,
-    ) -> Result<()> {
-        // Acquire the BFT lock.
-        let _lock = self.lock.lock().await;
-
+    async fn update_dag<const IS_SYNCING: bool>(&self, certificate: BatchCertificate<N>) -> Result<()> {
         // ### First, insert the certificate into the DAG. ###
         // Retrieve the round of the new certificate to add to the DAG.
         let certificate_round = certificate.round();
@@ -606,11 +600,11 @@ impl<N: Network> BFT<N> {
         }
 
         // Commit the leader certificate, and all previous leader certificates since the last committed round.
-        self.commit_leader_certificate::<ALLOW_LEDGER_ACCESS, IS_SYNCING>(leader_certificate).await
+        self.commit_leader_certificate::<IS_SYNCING>(leader_certificate).await
     }
 
     /// Commits the leader certificate, and all previous leader certificates since the last committed round.
-    async fn commit_leader_certificate<const ALLOW_LEDGER_ACCESS: bool, const IS_SYNCING: bool>(
+    async fn commit_leader_certificate<const IS_SYNCING: bool>(
         &self,
         leader_certificate: BatchCertificate<N>,
     ) -> Result<()> {
@@ -675,9 +669,8 @@ impl<N: Network> BFT<N> {
             // Retrieve the leader certificate round.
             let leader_round = leader_certificate.round();
             // Compute the commit subdag.
-            let commit_subdag = self
-                .order_dag_with_dfs::<ALLOW_LEDGER_ACCESS>(leader_certificate)
-                .with_context(|| "BFT failed to order the DAG with DFS")?;
+            let commit_subdag =
+                self.order_dag_with_dfs(leader_certificate).with_context(|| "BFT failed to order the DAG with DFS")?;
             // If the node is not syncing, trigger consensus, as this will build a new block for the ledger.
             if !IS_SYNCING {
                 // Initialize a map for the deduped transmissions.
@@ -814,7 +807,7 @@ impl<N: Network> BFT<N> {
     }
 
     /// Returns the subdag of batch certificates to commit.
-    fn order_dag_with_dfs<const ALLOW_LEDGER_ACCESS: bool>(
+    fn order_dag_with_dfs(
         &self,
         leader_certificate: BatchCertificate<N>,
     ) -> Result<BTreeMap<u64, IndexSet<BatchCertificate<N>>>> {
@@ -850,7 +843,7 @@ impl<N: Network> BFT<N> {
                     continue;
                 }
                 // If the previous certificate already exists in the ledger, continue.
-                if ALLOW_LEDGER_ACCESS && self.ledger().contains_certificate(previous_certificate_id).unwrap_or(false) {
+                if self.ledger().contains_certificate(previous_certificate_id).unwrap_or(false) {
                     continue;
                 }
 
@@ -917,7 +910,7 @@ impl<N: Network> BFT<N> {
         // Remove the callback.
         self.bft_callback.clear();
         // Acquire the lock.
-        // FIXME let _lock = self.lock.lock();
+        let _lock = self.lock.lock().await;
         // Shut down the primary.
         self.primary.shut_down().await;
     }
@@ -1304,11 +1297,11 @@ mod tests {
 
             // Insert the previous certificates into the BFT.
             for certificate in previous_certificates.clone() {
-                assert!(bft.update_dag::<false, false>(certificate).await.is_ok());
+                assert!(bft.update_dag::<false>(certificate).await.is_ok());
             }
 
             // Ensure this call succeeds and returns all given certificates.
-            let result = bft.order_dag_with_dfs::<false>(certificate.clone());
+            let result = bft.order_dag_with_dfs(certificate.clone());
             assert!(result.is_ok());
             let candidate_certificates = result.unwrap().into_values().flatten().collect::<Vec<_>>();
             assert_eq!(candidate_certificates.len(), 1);
@@ -1334,11 +1327,11 @@ mod tests {
 
             // Insert the previous certificates into the BFT.
             for certificate in previous_certificates.clone() {
-                assert!(bft.update_dag::<false, false>(certificate).await.is_ok());
+                assert!(bft.update_dag::<false>(certificate).await.is_ok());
             }
 
             // Ensure this call succeeds and returns all given certificates.
-            let result = bft.order_dag_with_dfs::<false>(certificate.clone());
+            let result = bft.order_dag_with_dfs(certificate.clone());
             assert!(result.is_ok());
             let candidate_certificates = result.unwrap().into_values().flatten().collect::<Vec<_>>();
             assert_eq!(candidate_certificates.len(), 5);
@@ -1394,7 +1387,7 @@ mod tests {
         );
 
         // Ensure this call fails on a missing previous certificate.
-        let result = bft.order_dag_with_dfs::<false>(certificate);
+        let result = bft.order_dag_with_dfs(certificate);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().to_string(), error_msg);
         Ok(())
@@ -1455,11 +1448,11 @@ mod tests {
 
         // Insert the certificates into the BFT.
         for certificate in certificates {
-            assert!(bft.update_dag::<false, false>(certificate).await.is_ok());
+            assert!(bft.update_dag::<false>(certificate).await.is_ok());
         }
 
         // Commit the leader certificate.
-        bft.commit_leader_certificate::<false, false>(leader_certificate).await.unwrap();
+        bft.commit_leader_certificate::<false>(leader_certificate).await.unwrap();
 
         // Ensure that the `gc_round` has been updated.
         assert_eq!(bft.storage().gc_round(), commit_round - max_gc_rounds);
@@ -1519,11 +1512,11 @@ mod tests {
 
         // Insert the previous certificates into the BFT.
         for certificate in certificates.clone() {
-            assert!(bft.update_dag::<false, false>(certificate).await.is_ok());
+            assert!(bft.update_dag::<false>(certificate).await.is_ok());
         }
 
         // Commit the leader certificate.
-        bft.commit_leader_certificate::<false, false>(leader_certificate.clone()).await.unwrap();
+        bft.commit_leader_certificate::<false>(leader_certificate.clone()).await.unwrap();
 
         // Simulate a bootup of the BFT.
 
@@ -1691,17 +1684,17 @@ mod tests {
 
         // Insert the certificates into the BFT without bootup.
         for certificate in pre_shutdown_certificates.clone() {
-            assert!(bft.update_dag::<false, false>(certificate).await.is_ok());
+            assert!(bft.update_dag::<false>(certificate).await.is_ok());
         }
 
         // Insert the post shutdown certificates into the BFT without bootup.
         for certificate in post_shutdown_certificates.clone() {
-            assert!(bft.update_dag::<false, false>(certificate).await.is_ok());
+            assert!(bft.update_dag::<false>(certificate).await.is_ok());
         }
         // Commit the second leader certificate.
-        let commit_subdag = bft.order_dag_with_dfs::<false>(next_leader_certificate.clone()).unwrap();
+        let commit_subdag = bft.order_dag_with_dfs(next_leader_certificate.clone()).unwrap();
         let commit_subdag_metadata = commit_subdag.iter().map(|(round, c)| (*round, c.len())).collect::<Vec<_>>();
-        bft.commit_leader_certificate::<false, false>(next_leader_certificate.clone()).await.unwrap();
+        bft.commit_leader_certificate::<false>(next_leader_certificate.clone()).await.unwrap();
 
         // Simulate a bootup of the BFT.
 
@@ -1719,14 +1712,14 @@ mod tests {
             bootup_bft.storage().testing_only_insert_certificate_testing_only(certificate.clone());
         }
         for certificate in post_shutdown_certificates.clone() {
-            assert!(bootup_bft.update_dag::<false, false>(certificate).await.is_ok());
+            assert!(bootup_bft.update_dag::<false>(certificate).await.is_ok());
         }
         // Commit the second leader certificate.
-        let commit_subdag_bootup = bootup_bft.order_dag_with_dfs::<false>(next_leader_certificate.clone()).unwrap();
+        let commit_subdag_bootup = bootup_bft.order_dag_with_dfs(next_leader_certificate.clone()).unwrap();
         let commit_subdag_metadata_bootup =
             commit_subdag_bootup.iter().map(|(round, c)| (*round, c.len())).collect::<Vec<_>>();
         let committed_certificates_bootup = commit_subdag_bootup.values().flatten();
-        bootup_bft.commit_leader_certificate::<false, false>(next_leader_certificate.clone()).await.unwrap();
+        bootup_bft.commit_leader_certificate::<false>(next_leader_certificate.clone()).await.unwrap();
 
         // Check that the final state of both BFTs is the same.
 
@@ -1907,12 +1900,12 @@ mod tests {
 
         // Insert the post shutdown certificates into the DAG.
         for certificate in post_shutdown_certificates.clone() {
-            assert!(bootup_bft.update_dag::<false, false>(certificate).await.is_ok());
+            assert!(bootup_bft.update_dag::<false>(certificate).await.is_ok());
         }
 
         // Get the next leader certificate to commit.
         let next_leader_certificate = storage.get_certificate_for_round_with_author(next_round, next_leader).unwrap();
-        let commit_subdag = bootup_bft.order_dag_with_dfs::<false>(next_leader_certificate).unwrap();
+        let commit_subdag = bootup_bft.order_dag_with_dfs(next_leader_certificate).unwrap();
         let committed_certificates = commit_subdag.values().flatten();
 
         // Check that none of the certificates synced from the bootup appear in the subdag for the next commit round.
@@ -2047,7 +2040,7 @@ mod tests {
         // Insert all certificates into the storage and DAG.
         for certificate in certificates_by_round.into_iter().flat_map(|(_, certs)| certs) {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
-            bft.update_dag::<false, false>(certificate).await.unwrap();
+            bft.update_dag::<false>(certificate).await.unwrap();
         }
 
         let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader2).unwrap();
@@ -2058,7 +2051,7 @@ mod tests {
         );
 
         // Explicitely commit leader certificate 2.
-        bft.commit_leader_certificate::<false, false>(leader_certificate_2.clone()).await.unwrap();
+        bft.commit_leader_certificate::<false>(leader_certificate_2.clone()).await.unwrap();
 
         // Leader certificate 1 should be committed transitively when committing the leader certificate 2.
         assert!(
@@ -2201,7 +2194,7 @@ mod tests {
         // Insert all certificates into the storage and DAG.
         for certificate in certificates_by_round.into_iter().flat_map(|(_, certs)| certs) {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
-            bft.update_dag::<false, false>(certificate).await.unwrap();
+            bft.update_dag::<false>(certificate).await.unwrap();
         }
 
         let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader2).unwrap();
@@ -2213,7 +2206,7 @@ mod tests {
         assert_eq!(bft.dag.read().last_committed_round(), 0);
 
         // Explicitely commit leader certificate 2.
-        bft.commit_leader_certificate::<false, false>(leader_certificate_2.clone()).await.unwrap();
+        bft.commit_leader_certificate::<false>(leader_certificate_2.clone()).await.unwrap();
 
         // Leader certificate 1 should be committed transitively when committing the leader certificate 2.
         assert!(
