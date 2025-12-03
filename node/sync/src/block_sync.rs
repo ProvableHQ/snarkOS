@@ -17,7 +17,7 @@ use crate::{
     helpers::{PeerPair, PrepareSyncRequest, SyncRequest},
     locators::BlockLocators,
 };
-use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_bft_ledger_service::{BeginLedgerUpdateError, LedgerService};
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
@@ -25,11 +25,11 @@ use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
-    prelude::block::Block,
+    ledger::{Block, CheckBlockError},
     utilities::ensure_equals,
 };
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 #[cfg(feature = "locktick")]
@@ -48,6 +48,7 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::sync::Notify;
+use tracing::info;
 
 mod helpers;
 use helpers::rangify_heights;
@@ -554,33 +555,46 @@ impl<N: Network> BlockSync<N> {
             }
 
             let ledger = self.ledger.clone();
-            let advanced = tokio::task::spawn_blocking(move || {
-                // Try to check the next block and advance to it.
-                match ledger.check_next_block(&block) {
-                    Ok(_) => match ledger.advance_to_next_block(&block) {
-                        Ok(_) => true,
-                        Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
-                                block.height(),
-                                block.hash()
-                            );
-                            false
-                        }
-                    },
-                    Err(err) => {
-                        warn!(
-                            "The next block (height: {}, hash: '{}') is invalid - {err}",
-                            block.height(),
-                            block.hash()
-                        );
-                        false
-                    }
-                }
-            })
-            .await?;
 
-            // Only count successful requests.
+            let (advanced, stop) = tokio::task::spawn_blocking(move || {
+                let ledger_update = match ledger.begin_ledger_update() {
+                    Ok(update) => update,
+                    Err(BeginLedgerUpdateError::ShuttingDown) => {
+                        info!("BlockSync cannot advance the ledger any more. The node is shutting down.");
+                        return Ok((false, true));
+                    }
+                    Err(err) => {
+                        return Err(anyhow!("Unexpected error when beginning ledger update: {err}"));
+                    }
+                };
+
+                // Try to check the next block and advance to it.
+                let block = match ledger_update.check_next_block(block) {
+                    Ok(block) => block,
+                    Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                        debug!("Skipping a block at height {next_height}. The ledger already advanced",);
+                        return Ok((false, false));
+                    }
+                    Err(err) => {
+                        warn!("{err}");
+                        return Err(err.into_anyhow());
+                    }
+                };
+
+                ledger_update.advance_to_next_block(&block).with_context(|| {
+                    format!(
+                        "Failed to advance to next block (height: {height}, hash: {hash})",
+                        height = block.height(),
+                        hash = block.hash(),
+                    )
+                })?;
+
+                Ok((true, false))
+            })
+            .await??;
+
+            // Only count successful advances.
+            // We may not always advance, for example, if the block was already added to the ledger.
             if advanced {
                 self.count_request_completed();
             }
@@ -588,8 +602,8 @@ impl<N: Network> BlockSync<N> {
             // Remove the block response.
             self.remove_block_response(next_height);
 
-            // If advancing failed, exit the loop.
-            if !advanced {
+            // If the node is shutting down, exit the loop.
+            if stop {
                 break;
             }
 

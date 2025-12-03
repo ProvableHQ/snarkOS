@@ -13,9 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[macro_use]
-extern crate tracing;
-
 #[cfg(feature = "metrics")]
 extern crate snarkos_node_metrics as metrics;
 
@@ -52,7 +49,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-
 use axum_extra::response::ErasedJson;
 use clap::{Parser, ValueEnum};
 use indexmap::IndexMap;
@@ -65,6 +61,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 use tokio::net::TcpListener;
+use tracing::{error, info};
 use tracing_subscriber::{
     layer::{Layer, SubscriberExt},
     util::SubscriberInitExt,
@@ -318,7 +315,7 @@ impl BftCallback<CurrentNetwork> for ConsensusHandler {
         &self,
         subdag: Subdag<CurrentNetwork>,
         transmissions: IndexMap<TransmissionID<CurrentNetwork>, Transmission<CurrentNetwork>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Determine the amount of time to sleep for the subdag.
         let subdag_ms = subdag.values().flatten().count();
         // Determine the amount of time to sleep for the transmissions.
@@ -330,7 +327,7 @@ impl BftCallback<CurrentNetwork> for ConsensusHandler {
         // Sleep for the determined amount of time.
         tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
 
-        Ok(())
+        Ok(true)
     }
 }
 
