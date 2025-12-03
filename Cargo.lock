@@ -4263,7 +4263,6 @@ dependencies = [
  "indexmap 2.12.1",
  "proptest",
  "serde",
- "snarkos-node-network",
  "snarkos-node-sync-locators",
  "snarkvm",
  "test-strategy 0.4.3",
