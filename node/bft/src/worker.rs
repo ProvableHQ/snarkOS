@@ -575,7 +575,7 @@ impl<N: Network> Worker<N> {
 mod tests {
     use super::*;
     use crate::helpers::CALLBACK_EXPIRATION_IN_SECS;
-    use snarkos_node_bft_ledger_service::LedgerService;
+    use snarkos_node_bft_ledger_service::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService};
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
         console::{network::Network, types::Field},
@@ -584,14 +584,13 @@ mod tests {
             CheckBlockError,
             PendingBlock,
             committee::Committee,
-            narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
+            narwhal::{BatchCertificate, Transmission, TransmissionID},
             test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::Address,
     };
 
     use bytes::Bytes;
-    use indexmap::IndexMap;
     use mockall::mock;
     use std::{io, ops::Range};
 
@@ -648,15 +647,8 @@ mod tests {
                 transaction_id: N::TransactionID,
                 transaction: Transaction<N>,
             ) -> Result<()>;
-            fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>>;
-            fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>>;
-            fn check_next_block(&self, block: &Block<N>) -> Result<()>;
-            fn prepare_advance_to_next_quorum_block(
-                &self,
-                subdag: Subdag<N>,
-                transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-            ) -> Result<Block<N>>;
-            fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
+            fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>, CheckBlockError<N>>;
+            fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError>;
             fn transaction_spend_in_microcredits(&self, transaction: &Transaction<N>, consensus_version: ConsensusVersion) -> Result<u64>;
         }
     }

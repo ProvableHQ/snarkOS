@@ -41,13 +41,13 @@ const MAX_CHANNEL_SIZE: usize = 8192;
 #[derive(Debug)]
 pub struct ConsensusSender<N: Network> {
     pub tx_consensus_subdag:
-        mpsc::Sender<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
+        mpsc::Sender<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 #[derive(Debug)]
 pub struct ConsensusReceiver<N: Network> {
     pub rx_consensus_subdag:
-        mpsc::Receiver<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
+        mpsc::Receiver<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 /// Initializes the consensus channels.
