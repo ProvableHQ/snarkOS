@@ -939,8 +939,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     /// GET /{network}/record_count
     pub(crate) async fn get_number_of_records(State(rest): State<Self>) -> ErasedJson {
-        let (input, output) = rest.ledger.get_record_count();
-        ErasedJson::pretty(format!("input: {input}, output: {output}"))
+        let record_counts = rest.ledger.get_record_count();
+        ErasedJson::pretty(record_counts)
     }
 
     /// GET /{network}/{block}/record_count
@@ -949,7 +949,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Path(height): Path<u32>,
     ) -> Result<ErasedJson, RestError> {
         match rest.ledger.get_num_block_records(height) {
-            Ok((input, output)) => Ok(ErasedJson::pretty(format!("input: {input}, output: {output}"))),
+            Ok(record_counts) => Ok(ErasedJson::pretty(record_counts)),
             Err(_) => Err(RestError::not_found(anyhow!("Records for block {height} couldn't be found"))),
         }
     }
