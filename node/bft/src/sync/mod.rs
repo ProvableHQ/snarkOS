@@ -706,7 +706,7 @@ impl<N: Network> Sync<N> {
     /// It syncs the batch certificates with the BFT, if the block's authority is a sub-DAG.
     ///
     /// Note that the block authority is always a sub-DAG in production; beacon signatures are only used for testing,
-    /// and as placeholder (irrelevant) block authority in the genesis block.i
+    /// and as placeholder (irrelevant) block authority in the genesis block.
     async fn add_block_subdag_to_bft(&self, block: &Block<N>) -> Result<()> {
         // Nothing to do if this is a beacon block
         let Authority::Quorum(subdag) = block.authority() else {

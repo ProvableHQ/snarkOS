@@ -495,6 +495,11 @@ impl<N: Network> Worker<N> {
         // Insert the transmission ID into the pending queue.
         self.pending.insert(transmission_id, peer_ip, Some((callback_sender, should_send_request)));
 
+        // Helper to print the transmission ID and checksum.
+        let print_transmission_id = |transmission_id: TransmissionID<N>| {
+            format!("{}.{}", fmt_id(transmission_id), fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed())
+        };
+
         // If the number of requests is less than or equal to the the redundancy factor, send the transmission request to the peer.
         if should_send_request {
             // Send the transmission request to the peer.
@@ -503,9 +508,8 @@ impl<N: Network> Worker<N> {
             }
         } else {
             debug!(
-                "Skipped sending request for transmission {}.{} to '{peer_ip}' ({num_sent_requests} redundant requests)",
-                fmt_id(transmission_id),
-                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                "Skipped sending request for transmission {} to '{peer_ip}' ({num_sent_requests} redundant requests)",
+                print_transmission_id(transmission_id)
             );
         }
         // Wait for the transmission to be fetched.
@@ -513,19 +517,9 @@ impl<N: Network> Worker<N> {
         let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
             .await
             .with_context(|| {
-                format!(
-                    "Unable to fetch transmission {}.{} (timeout)",
-                    fmt_id(transmission_id),
-                    fmt_id(transmission_id.checksum().unwrap_or_default())
-                )
+                format!("Unable to fetch transmission {} (timeout)", print_transmission_id(transmission_id),)
             })?
-            .with_context(|| {
-                format!(
-                    "Unable to fetch transmission {}.{}",
-                    fmt_id(transmission_id),
-                    fmt_id(transmission_id.checksum().unwrap_or_default())
-                )
-            })?;
+            .with_context(|| format!("Unable to fetch transmission {}", print_transmission_id(transmission_id),))?;
 
         Ok((transmission_id, transmission))
     }
