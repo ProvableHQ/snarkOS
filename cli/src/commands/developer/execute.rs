@@ -105,6 +105,9 @@ pub struct Execute {
     /// Timeout in seconds when waiting for transaction confirmation. Default is 60 seconds.
     #[clap(long, default_value_t = 60, requires = "wait")]
     timeout: u64,
+    /// Send the transaction without checking if sufficient funds are available (intended for testing purposes only).
+    #[clap(long, hide = true)]
+    skip_funds_check: bool,
 }
 
 impl Drop for Execute {
@@ -184,7 +187,7 @@ impl Execute {
         };
 
         // Check if the public balance is sufficient.
-        if self.record.is_none() && !is_static_query {
+        if self.record.is_none() && !is_static_query && !self.skip_funds_check {
             // Fetch the public balance.
             let address = Address::try_from(&private_key)?;
             let public_balance = Developer::get_public_balance::<N>(&endpoint, &address)
