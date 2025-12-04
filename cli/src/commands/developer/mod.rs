@@ -76,7 +76,8 @@ pub enum DeveloperCommand {
 }
 
 /// Use the Provable explorer's API by default.
-const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com";
+/// Note, `v2` here refers to the explorer version, not the snarkOS API version.
+const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com/v2";
 
 #[derive(Debug, Parser)]
 pub struct Developer {
