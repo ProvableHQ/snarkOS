@@ -20,6 +20,8 @@ use crate::{
 };
 
 use snarkos_node_cdn::CDN_BASE_URL;
+use snarkos_utilities::SimpleStoppable;
+
 use snarkvm::{
     console::network::Network,
     prelude::{Ciphertext, Field, Plaintext, PrivateKey, Record, ViewKey, block::Block},
@@ -312,7 +314,7 @@ impl Scan {
         let rt = tokio::runtime::Runtime::new()?;
 
         // Create a placeholder shutdown flag.
-        let _shutdown = Default::default();
+        let _shutdown = SimpleStoppable::new();
 
         // Copy endpoint for background task.
         let endpoint = endpoint.clone();

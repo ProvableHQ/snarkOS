@@ -13,10 +13,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{BootstrapClient, Client, Prover, Validator, traits::NodeInterface};
+use crate::{
+    BootstrapClient,
+    Client,
+    Prover,
+    Validator,
+    network::{NodeType, Peer, PeerPoolHandling},
+    router::Outbound,
+    traits::NodeInterface,
+};
+
 use snarkos_account::Account;
-use snarkos_node_network::{NodeType, Peer, PeerPoolHandling};
-use snarkos_node_router::Outbound;
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::prelude::{
     Address,
     Header,
@@ -30,16 +39,12 @@ use snarkvm::prelude::{
 
 use aleo_std::StorageMode;
 use anyhow::Result;
+
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicBool},
-};
-use tokio::sync::oneshot;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 #[derive(Clone)]
 pub enum Node<N: Network> {
@@ -69,8 +74,7 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
-        shutdown_tx: Option<oneshot::Sender<()>>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         Ok(Self::Validator(Arc::new(
             Validator::new(
@@ -87,8 +91,7 @@ impl<N: Network> Node<N> {
                 trusted_peers_only,
                 dev_txs,
                 dev,
-                shutdown,
-                shutdown_tx,
+                signal_handler,
             )
             .await?,
         )))
@@ -103,8 +106,7 @@ impl<N: Network> Node<N> {
         storage_mode: StorageMode,
         trusted_peers_only: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
-        shutdown_tx: Option<oneshot::Sender<()>>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         Ok(Self::Prover(Arc::new(
             Prover::new(
@@ -115,8 +117,7 @@ impl<N: Network> Node<N> {
                 storage_mode,
                 trusted_peers_only,
                 dev,
-                shutdown,
-                shutdown_tx,
+                signal_handler,
             )
             .await?,
         )))
@@ -134,8 +135,7 @@ impl<N: Network> Node<N> {
         storage_mode: StorageMode,
         trusted_peers_only: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
-        shutdown_tx: Option<oneshot::Sender<()>>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         Ok(Self::Client(Arc::new(
             Client::new(
@@ -149,8 +149,7 @@ impl<N: Network> Node<N> {
                 storage_mode,
                 trusted_peers_only,
                 dev,
-                shutdown,
-                shutdown_tx,
+                signal_handler,
             )
             .await?,
         )))
@@ -275,6 +274,16 @@ impl<N: Network> Node<N> {
             Self::Prover(node) => node.shut_down().await,
             Self::Client(node) => node.shut_down().await,
             Self::BootstrapClient(node) => node.shut_down().await,
+        }
+    }
+
+    /// Waits until the node receives a signal.
+    pub async fn wait_for_signals(&self, signal_handler: &SignalHandler) {
+        match self {
+            Self::Validator(node) => node.wait_for_signals(signal_handler).await,
+            Self::Prover(node) => node.wait_for_signals(signal_handler).await,
+            Self::Client(node) => node.wait_for_signals(signal_handler).await,
+            Self::BootstrapClient(node) => node.wait_for_signals(signal_handler).await,
         }
     }
 }

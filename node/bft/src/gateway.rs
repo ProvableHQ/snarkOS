@@ -87,7 +87,7 @@ use std::{
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::TcpStream,
@@ -696,6 +696,9 @@ impl<N: Network> Gateway<N> {
                     bail!("Dropping '{peer_ip}' on event version {version} (outdated)");
                 }
 
+                // Log the validator's height.
+                debug!("Validator '{peer_ip}' is at height {}", block_locators.latest_locator_height());
+
                 // Update the peer locators. Except for some tests, there is always a sync sender.
                 if let Some(sync_sender) = self.sync_sender.get() {
                     // Check the block locators are valid, and update the validators in the sync module.
@@ -818,12 +821,14 @@ impl<N: Network> Gateway<N> {
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
         self.spawn(async move {
+            let start = Instant::now();
             // Sleep briefly to ensure the other nodes are ready to connect.
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
-                self_clone.heartbeat().await;
+                let uptime = start.elapsed();
+                self_clone.heartbeat(uptime).await;
                 // Sleep for the heartbeat interval.
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
@@ -851,10 +856,13 @@ impl<N: Network> Gateway<N> {
 }
 
 impl<N: Network> Gateway<N> {
+    /// The uptime after which nodes log a warning about missing validator connections.
+    const MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD: Duration = Duration::from_secs(60);
+
     /// Handles the heartbeat request.
-    async fn heartbeat(&self) {
+    async fn heartbeat(&self, uptime: Duration) {
         // Log the connected validators.
-        self.log_connected_validators();
+        self.log_connected_validators(uptime);
         // Log the validator participation scores.
         #[cfg(feature = "telemetry")]
         self.log_participation_scores();
@@ -871,7 +879,7 @@ impl<N: Network> Gateway<N> {
     }
 
     /// Logs the connected validators.
-    fn log_connected_validators(&self) {
+    fn log_connected_validators(&self, uptime: Duration) {
         // Retrieve the connected validators and current committee.
         let connected_validators = self.connected_peers();
         let committee = match self.ledger.current_committee() {
@@ -934,7 +942,12 @@ impl<N: Network> Gateway<N> {
         }
 
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
-            error!("Not connected to a quorum of validators");
+            // Not being connected to a quorum of validators is begning during startup.
+            if uptime > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
+                error!("Not connected to a quorum of validators");
+            } else {
+                debug!("Not connected to a quorum of validators");
+            }
         }
     }
 

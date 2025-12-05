@@ -156,10 +156,6 @@ async fn test_quorum_threshold() {
     const TARGET_ROUND: u64 = 4;
     let net = network.clone();
     deadline!(Duration::from_secs(20), move || { net.is_round_reached(TARGET_ROUND) });
-
-    tokio::task::spawn_blocking(move || {
-        drop(network);
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -194,10 +190,6 @@ async fn test_quorum_break() {
 
     // Check the nodes have stopped advancing through the rounds.
     assert!(network.is_halted().await);
-
-    tokio::task::spawn_blocking(move || {
-        drop(network);
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -259,10 +251,6 @@ async fn test_leader_election_consistency() {
         // Assert that all leaders are equal
         assert!(leaders.iter().all_equal());
     }
-
-    tokio::task::spawn_blocking(move || {
-        drop(network);
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]

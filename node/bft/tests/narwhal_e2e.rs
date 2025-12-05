@@ -108,10 +108,6 @@ async fn test_quorum_threshold() {
     const TARGET_ROUND: u64 = 4;
     let net = network.clone();
     deadline!(Duration::from_secs(20), move || { net.is_round_reached(TARGET_ROUND) });
-
-    tokio::task::spawn_blocking(move || {
-        drop(network);
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -146,10 +142,6 @@ async fn test_quorum_break() {
 
     // Check the nodes have stopped advancing through the rounds.
     assert!(network.is_halted().await);
-
-    tokio::task::spawn_blocking(move || {
-        drop(network);
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -186,8 +178,4 @@ async fn test_storage_coherence() {
     // check only up to 3 rounds before the the target round, because the network advances when
     // quorum is reached, not when all the nodes have completed the round and received certificates.
     assert!(network.is_certificate_round_coherent(1..TARGET_ROUND - 2));
-
-    tokio::task::spawn_blocking(move || {
-        drop(network);
-    });
 }
