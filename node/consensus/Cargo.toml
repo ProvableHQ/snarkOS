@@ -28,8 +28,11 @@ locktick = [
 metrics = [ "dep:snarkos-node-metrics" ]
 telemetry = [ "snarkos-node-bft/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
-serial = [ "snarkos-node-bft-ledger-service/serial" ]
-
+serial = [ 
+  "snarkos-node-bft-ledger-service/serial",
+  "snarkos-node-metrics/serial",
+  "snarkvm/serial"
+]
 
 [dependencies.aleo-std]
 workspace = true

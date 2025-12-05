@@ -17,10 +17,13 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-default = [ "rayon", "snarkvm/metrics" ]
-locktick = [ "dep:locktick", "snarkvm/locktick" ]
+default = [ "metrics" ]
+locktick = [ 
+  "dep:locktick",
+  "snarkvm/locktick"
+]
 metrics = [ "snarkvm/metrics" ]
-serial = [ ]
+serial = [ "snarkvm/serial" ]
 
 [dependencies.locktick]
 workspace = true
@@ -35,7 +38,6 @@ workspace = true
 
 [dependencies.rayon]
 workspace = true
-optional = true
 
 [dependencies.snarkvm]
 workspace = true
