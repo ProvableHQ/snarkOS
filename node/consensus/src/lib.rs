@@ -27,7 +27,6 @@ extern crate snarkos_node_metrics as metrics;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
-    MAX_BATCH_DELAY_IN_MS,
     Primary,
     helpers::{
         ConsensusReceiver,
@@ -62,8 +61,8 @@ use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc};
+use tokio::{sync::{Notify, oneshot}, task::JoinHandle};
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -111,6 +110,8 @@ pub struct Consensus<N: Network> {
     ping: Arc<Ping<N>>,
     /// The block sync logic.
     block_sync: Arc<BlockSync<N>>,
+    /// The notifier for the transaction pool.
+    tx_pool_notifier: Arc<Notify>,
 }
 
 impl<N: Network> Consensus<N> {
@@ -133,6 +134,8 @@ impl<N: Network> Consensus<N> {
         let transmissions = Arc::new(BFTPersistentStorage::open(storage_mode.clone())?);
         // Initialize the Narwhal storage.
         let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
+        // Initialize the notifier for the transaction pool.
+        let tx_pool_notifier = Arc::new(Notify::new());
         // Initialize the BFT.
         let bft = BFT::new(
             account,
@@ -143,6 +146,7 @@ impl<N: Network> Consensus<N> {
             trusted_validators,
             trusted_peers_only,
             storage_mode,
+            Some(tx_pool_notifier.clone()),
             dev,
         )?;
         // Create a new instance of Consensus.
@@ -159,6 +163,7 @@ impl<N: Network> Consensus<N> {
             transmissions_tracker: Default::default(),
             handles: Default::default(),
             ping: ping.clone(),
+            tx_pool_notifier,
         };
 
         info!("Starting the consensus instance...");
@@ -499,8 +504,8 @@ impl<N: Network> Consensus<N> {
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                // Wait for a notification.
+                self_.tx_pool_notifier.notified().await;
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(e) = self_.process_unconfirmed_transactions().await {
                     warn!("Cannot process unconfirmed transactions - {e}");
@@ -530,6 +535,9 @@ impl<N: Network> Consensus<N> {
             error!("{}", flatten_error(e));
             // On failure, reinsert the transmissions into the memory pool.
             self.reinsert_transmissions(transmissions).await;
+        } else {
+            // Notify the transaction pool that the block has been advanced.
+            self.tx_pool_notifier.notify_one();
         }
         // Send the callback **after** advancing to the next block.
         // Note: We must await the block to be advanced before sending the callback.

@@ -83,7 +83,7 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{sync::OnceCell, task::JoinHandle};
+use tokio::{sync::{Notify, OnceCell}, task::JoinHandle};
 
 /// A helper type for an optional proposed batch.
 pub type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
@@ -116,6 +116,8 @@ pub struct Primary<N: Network> {
     propose_lock: Arc<TMutex<u64>>,
     /// The storage mode of the node.
     storage_mode: StorageMode,
+    /// The notifier for the transaction pool.
+    tx_pool_notifier: Option<Arc<Notify>>,
 }
 
 impl<N: Network> Primary<N> {
@@ -133,6 +135,7 @@ impl<N: Network> Primary<N> {
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
         storage_mode: StorageMode,
+        tx_pool_notifier: Option<Arc<Notify>>,
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway.
@@ -163,6 +166,7 @@ impl<N: Network> Primary<N> {
             handles: Default::default(),
             propose_lock: Default::default(),
             storage_mode,
+            tx_pool_notifier,
         })
     }
 
@@ -721,6 +725,11 @@ impl<N: Network> Primary<N> {
         *self.latest_proposed_batch_timestamp.write() = proposal.timestamp();
         // Set the proposed batch.
         *self.proposed_batch.write() = Some(proposal);
+
+        // Notify the transaction pool that the workers have been drained.
+        if let Some(notifier) = &self.tx_pool_notifier {
+            notifier.notify_one();
+        }
         Ok(())
     }
 

@@ -66,7 +66,7 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
 use tokio::{
-    sync::{OnceCell, oneshot},
+    sync::{Notify, OnceCell, oneshot},
     task::JoinHandle,
 };
 
@@ -100,6 +100,7 @@ impl<N: Network> BFT<N> {
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
         storage_mode: StorageMode,
+        tx_pool_notifier: Option<Arc<Notify>>,
         dev: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
@@ -112,6 +113,7 @@ impl<N: Network> BFT<N> {
                 trusted_validators,
                 trusted_peers_only,
                 storage_mode,
+                tx_pool_notifier,
                 dev,
             )?,
             dag: Default::default(),
