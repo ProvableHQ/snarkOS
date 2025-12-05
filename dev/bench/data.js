@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1764929387177,
+  "lastUpdate": 1764929606173,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -7032,6 +7032,72 @@ window.BENCHMARK_DATA = {
             "value": 1.2,
             "unit": "blocks/s",
             "extra": "total_wait=208s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "226f3acc6aaf6aa1d513584eb4802d9783237964",
+          "message": "Merge pull request #3915 from ProvableHQ/feat/signal-handling\n\n[Feature] Improve signal and shutdown handling",
+          "timestamp": "2025-12-05T10:44:52+01:00",
+          "tree_id": "4f8b0c66a0e8b844b282691ddbbe353ba3d89e73",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/226f3acc6aaf6aa1d513584eb4802d9783237964"
+        },
+        "date": 1764929605679,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.495592802812931,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=87.34271574020386, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7938.128157458412,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.077942609786987, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1004.504314906282,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7964127063751221, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.78,
+            "unit": "blocks/s",
+            "extra": "total_wait=140s, target_height=250, connect_time=22s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.14907,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=137, mean_speed=1.137713, max_speed=2.833333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.48,
+            "unit": "blocks/s",
+            "extra": "total_wait=168s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250"
           }
         ]
       }
