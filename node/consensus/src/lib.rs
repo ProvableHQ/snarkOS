@@ -355,13 +355,16 @@ impl<N: Network> Consensus<N> {
                     fmt_id(solution_id)
                 ),
                 Err(err) => {
-                    // If the node is synced and the occurs after the first 10 blocks of an epoch, log it as a warning, otherwise ignore.
+                    let err = err.context(format!(
+                        "Unable to add unconfirmed solution '{}' to the memory pool",
+                        fmt_id(solution_id)
+                    ));
+
+                    // If the node is synced and the occurs after the first 10 blocks of an epoch, log it as a warning, otherwise trace it.
                     if self.bft.is_synced() && self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
-                        let err = err.context(format!(
-                            "Unable to add unconfirmed solution '{}' to the memory pool",
-                            fmt_id(solution_id)
-                        ));
                         warn!("{}", flatten_error(err));
+                    } else {
+                        trace!("{}", flatten_error(err));
                     }
                 }
             }
@@ -502,12 +505,12 @@ impl<N: Network> Consensus<N> {
                 // Sleep briefly.
                 tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
                 // Process the unconfirmed transactions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_transactions().await {
-                    warn!("Cannot process unconfirmed transactions - {e}");
+                if let Err(err) = self_.process_unconfirmed_transactions().await {
+                    warn!("{}", flatten_error(err.context("Cannot process unconfirmed transactions")));
                 }
                 // Process the unconfirmed solutions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_solutions().await {
-                    warn!("Cannot process unconfirmed solutions - {e}");
+                if let Err(err) = self_.process_unconfirmed_solutions().await {
+                    warn!("{}", flatten_error(err.context("Cannot process unconfirmed solutions")));
                 }
             }
         });

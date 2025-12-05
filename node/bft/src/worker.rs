@@ -26,12 +26,13 @@ use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
     console::prelude::*,
     ledger::{
-        block::Transaction,
+        Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
 };
 
+use anyhow::Context;
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -494,6 +495,11 @@ impl<N: Network> Worker<N> {
         // Insert the transmission ID into the pending queue.
         self.pending.insert(transmission_id, peer_ip, Some((callback_sender, should_send_request)));
 
+        // Helper to print the transmission ID and checksum.
+        let print_transmission_id = |transmission_id: TransmissionID<N>| {
+            format!("{}.{}", fmt_id(transmission_id), fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed())
+        };
+
         // If the number of requests is less than or equal to the the redundancy factor, send the transmission request to the peer.
         if should_send_request {
             // Send the transmission request to the peer.
@@ -502,18 +508,20 @@ impl<N: Network> Worker<N> {
             }
         } else {
             debug!(
-                "Skipped sending request for transmission {}.{} to '{peer_ip}' ({num_sent_requests} redundant requests)",
-                fmt_id(transmission_id),
-                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                "Skipped sending request for transmission {} to '{peer_ip}' ({num_sent_requests} redundant requests)",
+                print_transmission_id(transmission_id)
             );
         }
         // Wait for the transmission to be fetched.
-        match timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the transmission was fetched, return it.
-            Ok(result) => Ok((transmission_id, result?)),
-            // If the transmission was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch transmission - (timeout) {e}"),
-        }
+
+        let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| {
+                format!("Unable to fetch transmission {} (timeout)", print_transmission_id(transmission_id),)
+            })?
+            .with_context(|| format!("Unable to fetch transmission {}", print_transmission_id(transmission_id),))?;
+
+        Ok((transmission_id, transmission))
     }
 
     /// Handles the incoming transmission response.
@@ -570,7 +578,8 @@ mod tests {
     use snarkvm::{
         console::{network::Network, types::Field},
         ledger::{
-            block::Block,
+            Block,
+            PendingBlock,
             committee::Committee,
             narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
             test_helpers::sample_execution_transaction_with_fee,
@@ -636,6 +645,8 @@ mod tests {
                 transaction_id: N::TransactionID,
                 transaction: Transaction<N>,
             ) -> Result<()>;
+            fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>>;
+            fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>>;
             fn check_next_block(&self, block: &Block<N>) -> Result<()>;
             fn prepare_advance_to_next_quorum_block(
                 &self,

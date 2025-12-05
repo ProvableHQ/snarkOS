@@ -15,7 +15,9 @@
 
 use snarkvm::{
     ledger::{
-        block::{Block, Transaction},
+        Block,
+        PendingBlock,
+        Transaction,
         committee::Committee,
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -105,6 +107,12 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
         transaction_id: N::TransactionID,
         transaction: Transaction<N>,
     ) -> Result<()>;
+
+    /// Checks that the subDAG in a given block is valid, but does not fully verify the block.
+    fn check_block_subdag(&self, block: Block<N>, prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>>;
+
+    /// Takes a pending block and performs the remaining checks to full verify it.
+    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>>;
 
     /// Checks the given block is valid next block.
     fn check_next_block(&self, block: &Block<N>) -> Result<()>;

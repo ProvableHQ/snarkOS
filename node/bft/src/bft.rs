@@ -524,18 +524,18 @@ impl<N: Network> BFT<N> {
         trace!("Checking if the leader is ready to be committed for round {commit_round}...");
 
         // Retrieve the committee lookback for the commit round.
-        let Ok(committee_lookback) = self.ledger().get_committee_lookback_for_round(commit_round) else {
-            bail!("BFT failed to retrieve the committee with lag for commit round {commit_round}");
-        };
+        let committee_lookback = self.ledger().get_committee_lookback_for_round(commit_round).with_context(|| {
+            format!("BFT failed to retrieve the committee with lag for commit round {commit_round}")
+        })?;
 
         // Either retrieve the cached leader or compute it.
         let leader = match self.ledger().latest_leader() {
             Some((cached_round, cached_leader)) if cached_round == commit_round => cached_leader,
             _ => {
                 // Compute the leader for the commit round.
-                let Ok(computed_leader) = committee_lookback.get_leader(commit_round) else {
-                    bail!("BFT failed to compute the leader for commit round {commit_round}");
-                };
+                let computed_leader = committee_lookback
+                    .get_leader(commit_round)
+                    .with_context(|| format!("BFT failed to compute the leader for commit round {commit_round}"))?;
 
                 // Cache the computed leader.
                 self.ledger().update_latest_leader(commit_round, computed_leader);
@@ -551,15 +551,16 @@ impl<N: Network> BFT<N> {
             return Ok(());
         };
         // Retrieve all of the certificates for the **certificate** round.
-        let Some(certificates) = self.dag.read().get_certificates_for_round(certificate_round) else {
-            // TODO (howardwu): Investigate how many certificates we should have at this point.
-            bail!("BFT failed to retrieve the certificates for certificate round {certificate_round}");
-        };
+        let certificates = self.dag.read().get_certificates_for_round(certificate_round).with_context(|| {
+            format!("BFT failed to retrieve the certificates for certificate round {certificate_round}")
+        })?;
+
         // Retrieve the committee lookback for the certificate round (i.e. the round just after the commit round).
-        let Ok(certificate_committee_lookback) = self.ledger().get_committee_lookback_for_round(certificate_round)
-        else {
-            bail!("BFT failed to retrieve the committee lookback for certificate round {certificate_round}");
-        };
+        let certificate_committee_lookback =
+            self.ledger().get_committee_lookback_for_round(certificate_round).with_context(|| {
+                format!("BFT failed to retrieve the committee lookback for certificate round {certificate_round}")
+            })?;
+
         // Construct a set over the authors who included the leader's certificate in the certificate round.
         let authors = certificates
             .values()
@@ -571,12 +572,15 @@ impl<N: Network> BFT<N> {
         // Check if the leader is ready to be committed.
         if !certificate_committee_lookback.is_availability_threshold_reached(&authors) {
             // If the leader is not ready to be committed, return early.
-            trace!("BFT is not ready to commit {commit_round}");
+            trace!("BFT is not ready to commit {commit_round}. Availability threshold has not been reached yet.");
             return Ok(());
         }
 
-        /* Proceeding to commit the leader. */
-        info!("Proceeding to commit round {commit_round} with leader '{}'", fmt_id(leader));
+        if IS_SYNCING {
+            info!("Proceeding to commit round {commit_round} with leader '{}' from block sync", fmt_id(leader));
+        } else {
+            info!("Proceeding to commit round {commit_round} with leader '{}'", fmt_id(leader));
+        }
 
         // Commit the leader certificate, and all previous leader certificates since the last committed round.
         self.commit_leader_certificate::<ALLOW_LEDGER_ACCESS, IS_SYNCING>(leader_certificate).await
@@ -648,10 +652,9 @@ impl<N: Network> BFT<N> {
             // Retrieve the leader certificate round.
             let leader_round = leader_certificate.round();
             // Compute the commit subdag.
-            let commit_subdag = match self.order_dag_with_dfs::<ALLOW_LEDGER_ACCESS>(leader_certificate) {
-                Ok(subdag) => subdag,
-                Err(e) => bail!("BFT failed to order the DAG with DFS - {e}"),
-            };
+            let commit_subdag = self
+                .order_dag_with_dfs::<ALLOW_LEDGER_ACCESS>(leader_certificate)
+                .with_context(|| "BFT failed to order the DAG with DFS")?;
             // If the node is not syncing, trigger consensus, as this will build a new block for the ledger.
             if !IS_SYNCING {
                 // Initialize a map for the deduped transmissions.
@@ -694,14 +697,14 @@ impl<N: Network> BFT<N> {
                             continue;
                         }
                         // Retrieve the transmission.
-                        let Some(transmission) = self.storage().get_transmission(*transmission_id) else {
-                            bail!(
+                        let transmission = self.storage().get_transmission(*transmission_id).with_context(|| {
+                            format!(
                                 "BFT failed to retrieve transmission '{}.{}' from round {}",
                                 fmt_id(transmission_id),
                                 fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed(),
                                 certificate.round()
-                            );
-                        };
+                            )
+                        })?;
                         // Insert the transaction ID or solution ID into the map.
                         match transmission_id {
                             TransmissionID::Solution(id, _) => {
@@ -757,14 +760,20 @@ impl<N: Network> BFT<N> {
                 }
 
                 info!(
-                    "\n\nCommitting a subdag from round {anchor_round} with {num_transmissions} transmissions: {subdag_metadata:?}\n"
+                    "\n\nCommitting a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?} (syncing={IS_SYNCING})\n",
                 );
             }
 
             // Update the DAG, as the subdag was successfully included into a block.
-            let mut dag_write = self.dag.write();
-            for certificate in commit_subdag.values().flatten() {
-                dag_write.commit(certificate, self.storage().max_gc_rounds());
+            {
+                let mut dag_write = self.dag.write();
+                let mut count = 0;
+                for certificate in commit_subdag.values().flatten() {
+                    dag_write.commit(certificate, self.storage().max_gc_rounds());
+                    count += 1;
+                }
+
+                trace!("Committed {count} certificates to the DAG");
             }
 
             // Update the validator telemetry.
