@@ -890,10 +890,9 @@ impl<N: Network> Sync<N> {
         // the availability threshold for the new block could also be reached.
         let mut commit_height = None;
         for block in pending_blocks.iter().rev() {
-            // This check assumes that the pending blocks are properly linked together.
-            // Tfoodhe assumption is based on the fact that, to generate the sequence of `PendingBlocks`, each block needs to
-            // successfully be processed by `Ledger::check_block_subdag`.
-            // As a result, the safety of this piece sof code relies on the correctness of that component in ledger,
+            // This check assumes that the pending blocks are properly linked together, based on the fact that,
+            // to generate the sequence of `PendingBlocks`, each block needs to successfully be processed by `Ledger::check_block_subdag`.
+            // As a result, the safety of this piece of code relies on the correctness `Ledger::check_block_subdag`,
             // which is tested in `snarkvm/ledger/tests/pending_block.rs`.
             if self
                 .is_block_availability_threshold_reached(block)
