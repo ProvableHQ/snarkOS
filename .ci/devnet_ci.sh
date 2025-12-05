@@ -35,7 +35,11 @@ log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 chmod 755 "$log_dir"
 
+# Ensures we use IPv4 localhost everywhere.
+localhost="127.0.0.1"
+
 # Define a trap handler that cleans up all processes on exit.
+# shellcheck disable=SC2329
 function exit_handler() {
   stop_nodes
 
@@ -56,14 +60,16 @@ common_flags=(
   "--dev-num-validators=$total_validators"
 )
 
-# Set the trusted peers for the validators
-trusted_peers=()
+# Set the trusted peers for the validators as they will not allow connections from unknown peers.
+trusted_peers=""
 for ((client_index = 0; client_index < total_clients; client_index++)); do
   node_index=$((client_index + total_validators))
-  trusted_peers+=("localhost:$((4130 + $node_index)),")
+  if (( client_index == 0 )); then
+    trusted_peers+="$localhost:$((4130+node_index))"
+  else
+    trusted_peers+=",$localhost:$((4130+node_index))"
+  fi
 done
-# Trim the last comma
-trusted_peers=${trusted_peers%,}
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
@@ -72,10 +78,10 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --metrics --no-dev-txs --peers "$trusted_peers" &
+      --validator "--logfile=$log_file" --metrics --no-dev-txs "--peers=$trusted_peers" &
   else
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --peers "$trusted_peers" &
+      --validator "--logfile=$log_file" "--peers=$trusted_peers" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -110,8 +116,8 @@ last_seen_height=0
 
 # Function checking that the first node reached the latest (unchanging) consensus version.
 function consensus_version_stable() {
-  consensus_version=$(curl -s "http://localhost:3030/v2/$network_name/consensus_version")
-  height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
+  consensus_version=$(curl -s "http://$localhost:3030/v2/$network_name/consensus_version")
+  height=$(curl -s "http://$localhost:3030/v2/$network_name/block/height/latest")
   if (is_integer "$consensus_version") && (is_integer "$height"); then
     # If the consensus version is greater than the last seen, we update it.
     if (( consensus_version > last_seen_consensus_version )); then
@@ -203,7 +209,7 @@ status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$
 if (( status_code == 404 )); then
   echo "✅ Only program edition 0 exists on the node"
 else
-  echo "❌ Test failed! Invalid edition returnd ${status}, not 404."
+  echo "❌ Test failed! Invalid edition returnd ${status_code}, not 404."
   exit 1
 fi
 
@@ -227,13 +233,13 @@ fi
 # Use the old flags here `--query` and `--broadcast=URL` to test they still work.
 # Also, use the v1 API to test it still works.
 echo "● Testing program execution with V1 API..."
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=http://localhost:3030/v1 \
-    "--broadcast=http://localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=http://$localhost:3030/v1 \
+    "--broadcast=http://$localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
 
 # Fail if the execution transaction does not exist.
 tx=$(echo "$execute_result" | tail -n 1)
-found=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v1/$network_name/transaction/$tx")
-# Fail if the HTTP response is not 2XX.
+found=$(curl -s -o /dev/null -w "%{http_code}" "http://$localhost:3030/v1/$network_name/transaction/$tx")
+# Fail if the HTTP response is not 2X.
 if (( found < 200 || found >= 300 )); then
   printf "❌ Test failed! Transaction does not exist or contains an error: \nexecute_result: %s\nfound: %s\n" \
     "$execute_result" "$found"
@@ -244,7 +250,7 @@ fi
 
 # Fail if status does not exist or is not set to "accepted".
 echo "● Testing confirmed transaction endpoint..."
-rest_confirmed=$(curl -s "http://localhost:3030/v2/$network_name/transaction/confirmed/$tx")
+rest_confirmed=$(curl -s "http://$localhost:3030/v2/$network_name/transaction/confirmed/$tx")
 
 rest_status=$(jq --raw-output '.status' <<< "$rest_confirmed")
 if [ "$rest_status" != "accepted" ]; then
@@ -257,7 +263,7 @@ echo "ℹ️Testing REST API and REST Error Handling"
 # Test invalid transaction data (JsonDataError) returns 422 Unprocessable Content
 echo "● Testing invalid transaction data returns 422 status code..."
 (cd program && snarkos developer execute --dev-key 0 --network "$network_id" \
-  --endpoint=localhost:3030  --store txn_data.json --store-format=string \
+  "--endpoint=$localhost:3030"  --store txn_data.json --store-format=string \
   "$program_name" main 1u32 1u32)
 
 # Modify the proof data
@@ -268,7 +274,7 @@ echo "● Testing invalid transaction data returns 422 status code..."
 invalid_tx_status=$(curl -s -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   -d "$(< ./program/invalid_txn_data.json)" \
-  "http://localhost:3030/v2/$network_name/transaction/broadcast" \
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast" \
   -o /dev/null)
 
 if (( invalid_tx_status == 422 )); then
@@ -282,7 +288,7 @@ fi
 json_error=$(curl -s -X POST \
   -H "Content-Type: application/json" \
   -d "$(< ./program/invalid_txn_data.json)" \
-  "http://localhost:3030/v2/$network_name/transaction/broadcast")
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast")
 
 # Ensure the top-level error message is "Invalid transaction"
 if ! jq -e '.message | test("Invalid transaction")' <<< "$json_error" > /dev/null ; then 
@@ -296,7 +302,7 @@ echo "✅ Invalid transaction return valid JSON error"
 malformed_json_response=$(curl -s -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   -d '{"malformed": json}' \
-  "http://localhost:3030/v2/$network_name/transaction/broadcast" \
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast" \
   -o /dev/null)
 
 if (( malformed_json_response == 400 )); then
@@ -310,7 +316,7 @@ fi
 malformed_json_error=$(curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '{"malformed": json}' \
-  "http://localhost:3030/v2/$network_name/transaction/broadcast")
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast")
 
 # Verify the message contains JSON-related error text
 if ! jq -e '.message | test("Invalid JSON")' <<< "$malformed_json_error" > /dev/null; then
@@ -324,7 +330,7 @@ echo "✅ Malformed JSON returns properly formatted RestError with JSON syntax e
 echo "● Testing missing Content-Type header returns 400 status code..."
 missing_content_type_response=$(curl -s -w "%{http_code}" -X POST \
   -d '{"valid": "json"}' \
-  "http://localhost:3030/v2/$network_name/transaction/broadcast" \
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast" \
   -o /dev/null)
 
 if (( missing_content_type_response == 400 )); then
@@ -339,7 +345,7 @@ echo "● Testing missing Content-Type returns valid RestError format..."
 
 missing_content_type_error=$(curl -s -X POST \
   -d '{"valid": "json"}' \
-  "http://localhost:3030/v2/$network_name/transaction/broadcast")
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast")
 
 # Verify the response is valid JSON
 if ! jq . <<< "$missing_content_type_error" > /dev/null 2>&1; then
@@ -356,9 +362,9 @@ fi
 echo "✅ Missing Content-Type returns properly formatted RestError with Content-Type error message"
 
 # Scan the network for records.
-echo "● Testing `snarkos developer scan`..."
+echo "● Testing \`snarkos developer scan\`..."
 
-scan_result=$(snarkos developer scan --dev-key 0 --network "$network_id" --start 0 --endpoint=localhost:3030)
+scan_result=$(snarkos developer scan --dev-key 0 --network "$network_id" --start 0 "--endpoint=$localhost:3030")
 num_records=$(echo "$scan_result" | grep -c "owner")
 # Fail if the scan did not return 4 records.
 if (( num_records != 4 )); then
@@ -392,10 +398,15 @@ done
 echo "❌ Test failed! Not all nodes reached minimum height within 15 minutes."
 
 # Print logs for debugging
-echo "Last 20 lines of validator logs:"
+echo "Last 20 lines of node logs:"
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
   echo "=== Validator $validator_index logs ==="
   tail -n 20 "$log_dir/validator-$validator_index.log"
 done
+for ((client_index = 0; client_index < total_clients; client_index++)); do
+  echo "=== Validator $validator_index logs ==="
+  tail -n 20 "$log_dir/validator-$validator_index.log"
+done
+
 
 exit 1

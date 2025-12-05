@@ -58,6 +58,7 @@ function check_heights() {
     fi
     
     if ! (is_integer "$height") || (( height < min_height )); then
+      echo "Node #${node_index} (port=$port) only reached height $height, expected at least $min_height"
       all_reached=false
     fi
   done
