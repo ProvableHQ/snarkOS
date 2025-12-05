@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1764929606173,
+  "lastUpdate": 1764964139941,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -7092,6 +7092,72 @@ window.BENCHMARK_DATA = {
             "value": 1.48,
             "unit": "blocks/s",
             "extra": "total_wait=168s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "36af76c71752da64f01875d2a968f769b37e0285",
+          "message": "Merge pull request #4037 from ProvableHQ/fix/developer_execute_recursive\n\n[Fix] Use correct edition when recursively fetching programs",
+          "timestamp": "2025-12-05T14:20:53-05:00",
+          "tree_id": "007a8688f5edf9f6f5dfc2e10affa88a4e49f6a5",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/36af76c71752da64f01875d2a968f769b37e0285"
+        },
+        "date": 1764964139413,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.662248492160002,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=84.771977186203, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7918.092570829782,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.103443384170532, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1004.9230833736398,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7960808277130127, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.64,
+            "unit": "blocks/s",
+            "extra": "total_wait=152s, target_height=250, connect_time=21s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.114773,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=149, mean_speed=1.141387, max_speed=2.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.51,
+            "unit": "blocks/s",
+            "extra": "total_wait=165s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
