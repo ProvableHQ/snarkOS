@@ -101,7 +101,10 @@ impl<N: Network> TransactionsQueueInner<N> {
         // If the queue is not full, insert in the appropriate queue.
         if self.len() < self.capacity {
             if priority_fee.is_zero() {
-                self.queue.get_or_insert(transaction_id, || transaction);
+                // Transactions seen multiple times should still be popped LRU-wise.
+                if !self.queue.contains(transaction_id) {
+                    let _ = self.queue.get_or_insert(transaction_id, || transaction);
+                }
             } else {
                 self.priority_queue.insert(transaction_id, transaction, priority_fee);
             }
