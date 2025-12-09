@@ -627,6 +627,46 @@ jobs:
       - check_windows:
           workspace_member: << parameters.workspace_member >>
 
+  check-nix:
+    docker:
+      - image: nixos/nix:latest
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - run:
+          name: Enable Nix Flakes
+          command: |
+            mkdir -p ~/.config/nix
+            echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+            echo "sandbox = false" >> ~/.config/nix/nix.conf
+      - restore_cache:
+          keys:
+            - nix-v1-{{ checksum "flake.lock" }}
+            - nix-v1-{{ checksum "flake.nix" }}
+            - nix-v1-
+      - run:
+          name: Nix Build (snarkos)
+          command: |
+            nix build --print-build-logs --no-update-lock-file .#snarkos
+      - run:
+          name: Nix Develop (snarkos-dev)
+          command: |
+            nix develop --no-update-lock-file .#snarkos-dev --command echo "Dev shell OK"
+      - run:
+          name: Nix Flake Check
+          no_output_timeout: 30m
+          command: |
+            nix flake check --all-systems --no-update-lock-file
+      - run:
+          name: Nix Format Check
+          no_output_timeout: 10m
+          command: |
+            nix fmt -- --ci
+      - save_cache:
+          key: nix-v1-{{ checksum "flake.lock" }}
+          paths:
+            - /nix
+            - ~/.cache/nix
 workflows:
   version: 2
 
@@ -676,3 +716,7 @@ workflows:
                 display,
                 node
               ]
+
+  nix-workflow:
+    jobs:
+      - check-nix

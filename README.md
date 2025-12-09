@@ -95,6 +95,11 @@ Lastly, install `snarkOS`:
 cargo install --locked --path .
 ```
 
+**[For Nix users]** If you have Nix with flakes enabled, you can build and run snarkOS directly:
+```
+nix run github:ProvableHQ/snarkOS -- --help
+```
+
 #### Optional: CUDA Acceleration for Provers
 
 > This CUDA build is optional. The current snarkOS puzzle does not leverage CUDA acceleration—it is a leftover from a previous event, although CUDA may become relevant again with ARC-43.
