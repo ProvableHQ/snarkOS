@@ -515,8 +515,6 @@ impl<N: Network> BFT<N> {
 
 impl<N: Network> BFT<N> {
     /// Stores the certificate in the DAG, and attempts to commit one or more anchors.
-    ///
-    /// Callers of this function are required to hold the write lock to the `LedgerService`, by calling [`Self::pause_for_block_sync`].
     async fn update_dag<const IS_SYNCING: bool>(&self, certificate: BatchCertificate<N>) -> Result<()> {
         // ### First, insert the certificate into the DAG. ###
         // Retrieve the round of the new certificate to add to the DAG.

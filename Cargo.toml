@@ -49,8 +49,8 @@ default-features = false
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
 #rev = "b176b1409"
+branch = "feat/track-error2"
 #version = "=4.4.0"
-branch = "feat/track-error"
 default-features = false
 
 [workspace.dependencies.anyhow]
