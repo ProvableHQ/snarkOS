@@ -49,7 +49,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct PeerStats {
@@ -87,7 +87,63 @@ fn content_style() -> Style {
 
 impl<N: Network> Display<N> {
     /// Initializes a new display.
-    pub fn start(node: Node<N>, log_receiver: Receiver<Vec<u8>>, stoppable: Arc<dyn Stoppable>) -> Result<()> {
+    pub fn start(
+        node: Node<N>,
+        mut log_receiver: mpsc::Receiver<Vec<u8>>,
+        stoppable: Arc<dyn Stoppable>,
+    ) -> Result<()> {
+        // Initialize tui_logger to receive log messages.
+        tui_logger::init_logger(log::LevelFilter::Trace).ok();
+        tui_logger::set_default_level(log::LevelFilter::Trace);
+
+        // Spawn a task to forward log messages from the channel to tui_logger.
+        let stoppable_clone = stoppable.clone();
+        std::thread::spawn(move || {
+            let drain = tui_logger::Drain::new();
+            while !stoppable_clone.is_stopped() {
+                // Use try_recv to avoid blocking
+                match log_receiver.try_recv() {
+                    Ok(bytes) => {
+                        // Parse the log message and forward to tui_logger
+                        if let Ok(msg) = String::from_utf8(bytes) {
+                            let msg = msg.trim();
+                            if !msg.is_empty() {
+                                // Detect log level from the message prefix
+                                let level = if msg.contains(" ERROR ") || msg.contains("ERROR:") {
+                                    log::Level::Error
+                                } else if msg.contains(" WARN ") || msg.contains("WARN:") {
+                                    log::Level::Warn
+                                } else if msg.contains(" DEBUG ") || msg.contains("DEBUG:") {
+                                    log::Level::Debug
+                                } else if msg.contains(" TRACE ") || msg.contains("TRACE:") {
+                                    log::Level::Trace
+                                } else {
+                                    log::Level::Info
+                                };
+
+                                // Create a log record and send it directly to tui_logger
+                                drain.log(
+                                    &log::Record::builder()
+                                        .args(format_args!("{msg}"))
+                                        .level(level)
+                                        .target("snarkos")
+                                        .build(),
+                                );
+                            }
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        // No messages, sleep briefly to avoid busy loop
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        // Channel closed, exit the loop
+                        break;
+                    }
+                }
+            }
+        });
+
         // Initialize the display.
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -101,7 +157,7 @@ impl<N: Network> Display<N> {
             tick_rate: Duration::from_secs(1),
             tabs: Tabs::new(PAGES.to_vec()),
             overview: Overview::new(),
-            logs: Logs::new(log_receiver),
+            logs: Logs::new(),
             io_metrics: IoMetrics::new(),
             sync_metrics: SyncMetrics::new(),
             previous_peer_stats: HashMap::new(),
@@ -138,11 +194,21 @@ impl<N: Network> Display<N> {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
                         KeyCode::Esc => {
+                            if self.tabs.index == 3 {
+                                self.logs.on_escape();
+                            } else {
+                                stoppable.stop();
+                                return Ok(());
+                            }
+                        }
+                        KeyCode::Char('q') => {
                             stoppable.stop();
                             return Ok(());
                         }
                         KeyCode::Left => self.tabs.previous(),
                         KeyCode::Right => self.tabs.next(),
+                        KeyCode::Tab => self.tabs.next(),
+                        KeyCode::BackTab => self.tabs.previous(),
                         KeyCode::Up => {
                             match self.tabs.index {
                                 0 => {
@@ -151,6 +217,7 @@ impl<N: Network> Display<N> {
                                 }
                                 1 => self.io_metrics.scale_up(),
                                 2 => self.sync_metrics.scale_up(),
+                                3 => self.logs.on_up(),
                                 _ => {}
                             }
                         }
@@ -164,7 +231,18 @@ impl<N: Network> Display<N> {
                                 }
                                 1 => self.io_metrics.scale_down(),
                                 2 => self.sync_metrics.scale_down(),
+                                3 => self.logs.on_down(),
                                 _ => {}
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            if self.tabs.index == 3 {
+                                self.logs.on_page_up();
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if self.tabs.index == 3 {
+                                self.logs.on_page_down();
                             }
                         }
                         KeyCode::Char('j') => {
@@ -178,6 +256,16 @@ impl<N: Network> Display<N> {
                             // Alternative up scrolling for peer table (overview tab only)
                             if self.tabs.index == 0 {
                                 self.overview.scroll_up();
+                            }
+                        }
+                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                            if self.tabs.index == 3 {
+                                self.logs.on_plus();
+                            }
+                        }
+                        KeyCode::Char('-') => {
+                            if self.tabs.index == 3 {
+                                self.logs.on_minus();
                             }
                         }
                         _ => {}
@@ -248,10 +336,11 @@ impl<N: Network> Display<N> {
             _ => unreachable!(),
         };
 
-        let help_text = if self.tabs.index == 0 {
-            "Use ← → to switch tabs, ↑ ↓ j k to scroll peer table, ESC to quit"
-        } else {
-            "Use ← → to switch tabs, ↑ ↓ to scale metrics, ESC to quit"
+        let help_text = match self.tabs.index {
+            0 => "Tab: switch tabs | ↑↓ jk: scroll peers | q: quit",
+            1 | 2 => "Tab: switch tabs | ↑↓: scale metrics | q: quit",
+            3 => "←→: tabs | ↑↓: scroll | PgUp/Dn: page | +−: level | Esc: live | q: quit",
+            _ => "",
         };
         let help = Paragraph::new(help_text).style(content_style());
         f.render_widget(help, chunks[2]);

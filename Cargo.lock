@@ -4156,11 +4156,13 @@ version = "4.4.0"
 dependencies = [
  "anyhow",
  "crossterm 0.29.0",
+ "log",
  "ratatui",
  "snarkos-node",
  "snarkos-utilities",
  "snarkvm",
  "tokio",
+ "tui-logger",
 ]
 
 [[package]]
@@ -6236,6 +6238,21 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tui-logger"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3fb54e48fa37d5081603f7804c730734b381235ebd876cb1e66f853a7d2533"
+dependencies = [
+ "chrono",
+ "fxhash",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "ratatui",
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "typed-json"

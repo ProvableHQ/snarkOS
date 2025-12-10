@@ -13,57 +13,126 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{content_style, header_style};
+use crate::header_style;
 
+use log::LevelFilter;
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use std::collections::VecDeque;
-use tokio::sync::mpsc;
+use tui_logger::{TuiLoggerWidget, TuiWidgetEvent, TuiWidgetState};
 
 pub(crate) struct Logs {
-    log_receiver: mpsc::Receiver<Vec<u8>>,
-    log_cache: VecDeque<String>,
-    log_limit: usize,
+    state: TuiWidgetState,
+    min_level: LevelFilter,
 }
 
 impl Logs {
-    pub(crate) fn new(log_receiver: mpsc::Receiver<Vec<u8>>) -> Self {
-        let log_limit = 128; // an arbitrary number fitting the testing terminal room
-
-        Self { log_receiver, log_cache: VecDeque::with_capacity(log_limit), log_limit }
+    pub(crate) fn new() -> Self {
+        Self { state: TuiWidgetState::new(), min_level: LevelFilter::Trace }
     }
 
     pub(crate) fn draw(&mut self, f: &mut Frame, area: Rect) {
-        let mut new_logs = Vec::new();
-        while let Ok(log) = self.log_receiver.try_recv() {
-            new_logs.push(String::from_utf8(log).unwrap_or_default());
-        }
+        // Split area: logs widget takes most space, status bar at bottom
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(1)])
+            .split(area);
 
-        let all_logs = self.log_cache.len() + new_logs.len();
-        if all_logs > self.log_limit {
-            let remaining_room = self.log_limit - self.log_cache.len();
-            let overflow = all_logs - self.log_cache.len();
+        // Render the logs widget
+        let logger_widget = TuiLoggerWidget::default()
+            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Logs"))
+            .style_error(Style::default().fg(Color::Red))
+            .style_warn(Style::default().fg(Color::Yellow))
+            .style_info(Style::default().fg(Color::Cyan))
+            .style_debug(Style::default().fg(Color::Green))
+            .style_trace(Style::default().fg(Color::Gray))
+            .output_file(false)
+            .output_line(false)
+            .output_target(false)
+            .output_timestamp(None) // Disable tui_logger's timestamp since messages already have one
+            .state(&self.state);
+        f.render_widget(logger_widget, chunks[0]);
 
-            if overflow > self.log_limit {
-                self.log_cache.clear();
-            } else {
-                let missing_room = all_logs - remaining_room;
-                for _ in 0..missing_room {
-                    self.log_cache.pop_front();
-                }
-            }
+        // Check if we're in live mode or scrolling
+        let is_live = self.state.inner.lock().opt_timestamp_bottom.is_none();
+        let mode_text = if is_live { "LIVE" } else { "SCROLLING" };
+        let mode_style = if is_live {
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         };
 
-        self.log_cache.extend(new_logs.into_iter().take(self.log_limit));
+        let level_text = format!("{:?}", self.min_level);
+        let level_style = match self.min_level {
+            LevelFilter::Error => Style::default().fg(Color::Red),
+            LevelFilter::Warn => Style::default().fg(Color::Yellow),
+            LevelFilter::Info => Style::default().fg(Color::Cyan),
+            LevelFilter::Debug => Style::default().fg(Color::Green),
+            LevelFilter::Trace => Style::default().fg(Color::Gray),
+            LevelFilter::Off => Style::default().fg(Color::DarkGray),
+        };
 
-        let combined_logs = self.log_cache.iter().map(|s| s.as_str()).collect::<String>();
+        let status_line = Line::from(vec![
+            Span::raw(" Mode: "),
+            Span::styled(mode_text, mode_style),
+            Span::raw(" | Level: ≥"),
+            Span::styled(level_text, level_style),
+            Span::raw(" (+/- to change)"),
+        ]);
+        let status = Paragraph::new(status_line);
+        f.render_widget(status, chunks[1]);
+    }
 
-        let combined_logs = Paragraph::new(combined_logs)
-            .style(content_style())
-            .block(Block::default().borders(Borders::ALL).style(header_style()).title("Logs"));
-        f.render_widget(combined_logs, area);
+    /// Handle key events for scrolling logs
+    /// Note: tui_logger only supports page-based scrolling, not line-by-line
+    pub(crate) fn on_up(&mut self) {
+        self.state.transition(TuiWidgetEvent::PrevPageKey);
+    }
+
+    pub(crate) fn on_down(&mut self) {
+        self.state.transition(TuiWidgetEvent::NextPageKey);
+    }
+
+    pub(crate) fn on_page_up(&mut self) {
+        self.state.transition(TuiWidgetEvent::PrevPageKey);
+    }
+
+    pub(crate) fn on_page_down(&mut self) {
+        self.state.transition(TuiWidgetEvent::NextPageKey);
+    }
+
+    pub(crate) fn on_escape(&mut self) {
+        // Return to bottom of logs (live mode)
+        self.state.transition(TuiWidgetEvent::EscapeKey);
+    }
+
+    pub(crate) fn on_plus(&mut self) {
+        // Increase verbosity (show more log levels)
+        self.min_level = match self.min_level {
+            LevelFilter::Off => LevelFilter::Error,
+            LevelFilter::Error => LevelFilter::Warn,
+            LevelFilter::Warn => LevelFilter::Info,
+            LevelFilter::Info => LevelFilter::Debug,
+            LevelFilter::Debug => LevelFilter::Trace,
+            LevelFilter::Trace => LevelFilter::Trace,
+        };
+        self.state = TuiWidgetState::new().set_default_display_level(self.min_level);
+    }
+
+    pub(crate) fn on_minus(&mut self) {
+        // Decrease verbosity (show fewer log levels)
+        self.min_level = match self.min_level {
+            LevelFilter::Off => LevelFilter::Off,
+            LevelFilter::Error => LevelFilter::Off,
+            LevelFilter::Warn => LevelFilter::Error,
+            LevelFilter::Info => LevelFilter::Warn,
+            LevelFilter::Debug => LevelFilter::Info,
+            LevelFilter::Trace => LevelFilter::Debug,
+        };
+        self.state = TuiWidgetState::new().set_default_display_level(self.min_level);
     }
 }
