@@ -61,15 +61,7 @@ common_flags=(
 )
 
 # Set the trusted peers for the validators as they will not allow connections from unknown peers.
-trusted_peers=""
-for ((client_index = 0; client_index < total_clients; client_index++)); do
-  node_index=$((client_index + total_validators))
-  if (( client_index == 0 )); then
-    trusted_peers+="$localhost:$((4130+node_index))"
-  else
-    trusted_peers+=",$localhost:$((4130+node_index))"
-  fi
-done
+trusted_peers=$(generate_trusted_clients "$total_validators" "$total_clients")
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do

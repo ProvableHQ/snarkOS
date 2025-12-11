@@ -265,3 +265,22 @@ function compute_throughput {
 
   echo "$result"
 }
+
+# Generate the trusted peers for the validators as they will not allow connections from unknown peers.
+function generate_trusted_clients() {
+  local total_validators=$1
+  local total_clients=$2
+
+  local result=""
+
+  for ((client_index = 0; client_index < total_clients; client_index++)); do
+    node_index=$((client_index + total_validators))
+    if (( client_index == 0 )); then
+      result+="127.0.0.1:$((4130+node_index))"
+    else
+      result+=",127.0.0.1:$((4130+node_index))"
+    fi
+  done
+
+  echo "$result"
+}
