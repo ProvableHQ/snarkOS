@@ -78,6 +78,7 @@ use snarkvm::{
     utilities::task::{self, JoinHandle},
 };
 
+use anyhow::Context;
 use colored::Colorize;
 use futures::SinkExt;
 use indexmap::IndexMap;
@@ -261,9 +262,10 @@ impl<N: Network> Gateway<N> {
         };
 
         // Allow at most as many connections as the maximum committe size.
-        // and fail if the chosen port is not available.
         let mut tcp_config = Config::new(ip, Committee::<N>::max_committee_size()?);
-        tcp_config.allow_random_port = false;
+
+        // Needed for testing, as, currently, the TCP stack will not be dropped properly.
+        tcp_config.allow_random_port = true; // needed for testing.
 
         // Initialize the TCP stack.
         let tcp = Tcp::new(tcp_config);
@@ -310,7 +312,7 @@ impl<N: Network> Gateway<N> {
         worker_senders: IndexMap<u8, WorkerSender<N>>,
         primary_callback: Arc<dyn GatewayPrimaryCallback<N>>,
         sync_callback: Option<Arc<dyn GatewaySyncCallback<N>>>,
-    ) {
+    ) -> Result<()> {
         debug!("Starting the gateway for the memory pool...");
 
         self.worker_senders.set(worker_senders).expect("The worker senders are already set");
@@ -329,13 +331,15 @@ impl<N: Network> Gateway<N> {
         self.enable_on_connect().await;
 
         // Enable the TCP listener. Note: This must be called after the above protocols.
-        let listen_addr = self.tcp.enable_listener().await.expect("Failed to enable the TCP listener");
+        let listen_addr = self.tcp.enable_listener().await.with_context(|| "Failed to enable the TCP listener")?;
         debug!("Listening for validator connections at address {listen_addr:?}");
 
         // Initialize the heartbeat.
         self.initialize_heartbeat();
 
         info!("Started the gateway for the memory pool at '{}'", self.local_ip());
+
+        Ok(())
     }
 }
 
@@ -1959,7 +1963,7 @@ mod prop_tests {
             (workers, tx_workers)
         };
 
-        gateway.run(worker_senders, Arc::new(DummyGatewayPrimaryCallback::default()), None).await;
+        gateway.run(worker_senders, Arc::new(DummyGatewayPrimaryCallback::default()), None).await.unwrap();
         assert_eq!(
             gateway.local_ip(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), MEMORY_POOL_PORT + dev.port().unwrap())

@@ -359,6 +359,8 @@ impl Tcp {
         let (tx, rx) = oneshot::channel();
 
         let tcp = self.clone();
+
+        //TODO(kaimast): detaching the TCP task here will mean `Tcp` will never be dropped.
         let listening_task = tokio::spawn(async move {
             trace!(parent: tcp.span(), "Spawned the listening task");
             tx.send(()).unwrap(); // safe; the channel was just opened
@@ -422,6 +424,7 @@ impl Tcp {
 
         self.connecting.lock().insert(addr);
 
+        //TODO(kaimast): detaching the TCP task here will mean `Tcp` will never be dropped.
         let tcp = self.clone();
         tokio::spawn(async move {
             if let Err(e) = tcp.adapt_stream(stream, addr, ConnectionSide::Responder).await {

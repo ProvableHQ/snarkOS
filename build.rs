@@ -106,6 +106,14 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
                     lock_balance -= 1;
                 }
 
+                // Correct for `tokio::sync::RwLockWriteGuard` (and similar) not having a locktick counterpart.
+                if line.contains("RwLockReadGuard") {
+                    lock_balance -= 1;
+                }
+                if line.contains("RwLockWriteGuard") {
+                    lock_balance -= 1;
+                }
+
                 // Correction for `use tokio::Mutex as TMutex` and `use tokio::MutexGuard as TMutexGuard`.
                 lock_balance -= line.matches("TMutex").count() as i8;
             } else if ioi == ImportOfInterest::Locktick {

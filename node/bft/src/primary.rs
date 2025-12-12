@@ -199,7 +199,7 @@ impl<N: Network> Primary<N> {
         // Next, initialize the gateway.
         let gateway_primary_callback = Arc::new(obj.clone()) as Arc<dyn GatewayPrimaryCallback<N>>;
         let gateway_sync_callback = Arc::new(obj.sync.clone());
-        obj.gateway.run(worker_senders, gateway_primary_callback, Some(gateway_sync_callback)).await;
+        obj.gateway.run(worker_senders, gateway_primary_callback, Some(gateway_sync_callback)).await?;
 
         Ok(obj)
     }
