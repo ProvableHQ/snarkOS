@@ -16,7 +16,7 @@ network_id=$3
 min_height=$4
 
 # The verobsity of snarkos nodes.
-NODE_VERBOSITY=1
+NODE_VERBOSITY=3
 
 # Default values if not provided
 : "${total_validators:=4}"
@@ -111,6 +111,16 @@ done
 # Ensure all nodes are up and running.
 wait_for_nodes "$total_validators" "$total_clients"
 
+# Ensure all nodes have at least one peer
+echo "ℹ️ Waiting for all nodes to have at least one peer..."
+SECONDS=0
+for node_index in $(seq 0 $((total_clients+total_validators))); do
+  if ! (wait_for_peers "$node_index" 1); then
+    exit 1
+  fi
+done
+echo "✅ All nodes have at least one peer"
+
 last_seen_consensus_version=0
 last_seen_height=0
 
@@ -139,9 +149,12 @@ function consensus_version_stable() {
 }
 
 # Check consensus versions periodically with a timeout
+echo "ℹ️ Waiting for consensus version to stabilize..."
 total_wait=0
+version_stable=false
 while (( total_wait < 300 )); do  # 5 minutes max
   if consensus_version_stable; then
+    version_stable=true
     break
   fi
 
@@ -151,7 +164,17 @@ while (( total_wait < 300 )); do  # 5 minutes max
   echo "Waited $total_wait seconds so far..."
 done
 
+if ! $version_stable; then
+  echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
+  exit 1
+fi
+
 # Creates a test program.
+
+if ! $version_stable; then
+  echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
+  exit 1
+fi
 mkdir -p program
 program_name="test_program.aleo"
 echo "program ${program_name};
