@@ -251,6 +251,9 @@ function wait_for_nodes() {
       echo "All nodes are ready!"
       return 0
     fi
+
+    # Pause to give the nodes time to start up.
+    sleep 1
   done
 }
 
