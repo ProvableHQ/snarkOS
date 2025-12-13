@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::collapsible_if)]
+
 use snarkos_cli::{commands::CLI, helpers::Updater};
 use snarkvm::utilities::display_error;
 

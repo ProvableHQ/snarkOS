@@ -14,6 +14,7 @@
 // limitations under the License.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::collapsible_if)]
 
 mod pages;
 use pages::*;
