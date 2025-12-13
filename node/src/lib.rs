@@ -14,6 +14,7 @@
 // limitations under the License.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::collapsible_if)]
 #![allow(clippy::too_many_arguments)]
 #![recursion_limit = "256"]
 

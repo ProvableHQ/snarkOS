@@ -15,6 +15,7 @@
 
 // See https://github.com/ProvableHQ/snarkVM/issues/2775
 #![forbid(unsafe_code)]
+#![allow(clippy::collapsible_if)]
 
 #[macro_use]
 extern crate async_trait;

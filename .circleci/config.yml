@@ -21,7 +21,7 @@ executors:
   # The default docker image used in the main-workflow
   rust-docker:
      docker:
-      - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+      - image: cimg/rust:1.92.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
   # The default VM used for devnet tests
   ubuntu-vm:
       machine:
@@ -51,7 +51,7 @@ commands:
 
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.92.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
 
             # Add cargo to PATH
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
@@ -94,7 +94,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
+        default: v4.2.0-rust-1.92.0-snarkos-stable-cache
     steps:
       - run: set -e
       - run:
@@ -134,7 +134,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
+        default: v4.2.0-rust-1.92.0-snarkos-stable-cache
     steps:
       - run: set +e
       - run:
@@ -169,13 +169,13 @@ commands:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: v4.2.0-rust-1.92.0-<< parameters.cache_key >>-cache
 
       - run:
           name: Install cargo-nextest
           command: |
             # Anything newer requires a Rust toolchain upgrade.
-            cargo install cargo-nextest@0.9.114 --locked || true
+            cargo install cargo-nextest@0.9.118 --locked || true
 
       - run:
           name: "Run Tests"
@@ -339,7 +339,7 @@ commands:
       - store_test_results:
           path: target/nextest/ci
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: v4.2.0-rust-1.92.0-<< parameters.cache_key >>-cache
 
   run_serial_long:
     description: "Build and run long running tests"
@@ -639,7 +639,7 @@ jobs:
     steps:
       - run_upgrade_test:
           workspace_member: .
-          cache_key: v4.2.0-rust-1.88.0-upgrade-test-cache
+          cache_key: v4.2.0-rust-1.92.0-upgrade-test-cache
 
   # Check crates that do not have any tests individually
   check-other-crates:
@@ -648,7 +648,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+          cache_key: v4.2.0-rust-1.92.0-check-other-crates-cache
       - run:
           name: Check snarkos-node-metrics crate
           no_output_timeout: 10m
@@ -659,7 +659,7 @@ jobs:
           command: cargo check --package=snarkos-node-metrics --all-features
 
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+          cache_key: v4.2.0-rust-1.92.0-check-other-crates-cache
 
   check-fmt:
     executor: rust-docker
@@ -668,13 +668,13 @@ jobs:
       - checkout
       - install_rust_nightly
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-fmt-cache
+          cache_key: v4.2.0-rust-1.92.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +nightly fmt --all -- --check
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-fmt-cache
+          cache_key: v4.2.0-rust-1.92.0-fmt-cache
 
   check-unused-dependencies:
     executor: rust-docker
@@ -682,7 +682,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-machete-cache
+          cache_key: v4.2.0-rust-1.92.0-machete-cache
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
@@ -690,7 +690,7 @@ jobs:
             cargo install cargo-machete@0.7.0
             cargo machete
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-machete-cache
+          cache_key: v4.2.0-rust-1.92.0-machete-cache
 
   check-cargo-audit:
     executor: rust-docker
@@ -700,7 +700,7 @@ jobs:
       # Use nightly until we bump the MSRV to 1.89.0 or greater
       - install_rust_nightly
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
+          cache_key: v4.2.0-rust-1.92.0-cargo-audit-cache
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
@@ -708,7 +708,7 @@ jobs:
             cargo install cargo-audit@0.22.0 --locked
             cargo audit -D warnings
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
+          cache_key: v4.2.0-rust-1.92.0-cargo-audit-cache
 
   check-clippy:
     executor: rust-docker
@@ -716,7 +716,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-clippy-cache
+          cache_key: v4.2.0-rust-1.92.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -724,7 +724,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-clippy-cache
+          cache_key: v4.2.0-rust-1.92.0-clippy-cache
 
   lint-scripts:
     executor: rust-docker
@@ -732,7 +732,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+          cache_key: v4.2.0-rust-1.92.0-lint-scripts-cache
       - run:
            name: Install shellcheck
            command: |
@@ -745,7 +745,7 @@ jobs:
           command: |
             shellcheck -x .ci/*.sh
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+          cache_key: v4.2.0-rust-1.92.0-lint-scripts-cache
 
   verify-windows:
     executor:
