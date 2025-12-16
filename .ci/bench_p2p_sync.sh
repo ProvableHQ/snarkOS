@@ -22,6 +22,7 @@ log_filter="info,snarkos_node::client=trace,snarkos_node_sync=trace,snarkos_node
 max_wait=2400 # Wait for up to 40 minutes
 poll_interval=1 # Check block heights every second
 
+# shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 # Running sums for variance: use sum and sumsq for unbiased sample variance

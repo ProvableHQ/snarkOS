@@ -10,15 +10,20 @@ declare -a PIDS
 # How many cores should each node use?
 # (Should be half of the number of (v)CPUs)
 # NOTE: when you update this, update TASKSET1/2 as well.
+# shellcheck disable=SC2034
 CORES_PER_NODE=8
 
 # Tasksets to pin processes to specific CPUs.
 # This is a no-op on MacOS.
 if [[ "$(uname)" == "Darwin" ]]; then
+  # shellcheck disable=SC2034
   TASKSET1=""
+  # shellcheck disable=SC2034
   TASKSET2=""
 else
+  # shellcheck disable=SC2034
   TASKSET1="taskset -c 0-7"
+  # shellcheck disable=SC2034
   TASKSET2="taskset -c 8-15"
 fi
 
