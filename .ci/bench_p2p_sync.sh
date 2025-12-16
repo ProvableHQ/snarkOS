@@ -87,7 +87,6 @@ mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs.
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
