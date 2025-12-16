@@ -155,7 +155,8 @@ commands:
       - run:
           name: Install cargo-nextest
           command: |
-            cargo install cargo-nextest --locked || true
+            # Anything newer requires a Rust toolchain upgrade.
+            cargo install cargo-nextest@0.9.114 --locked || true
 
       - run:
           name: "Run Tests"
