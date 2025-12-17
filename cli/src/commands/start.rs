@@ -435,6 +435,8 @@ impl Start {
                 }
                 trusted_validators.push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MEMORY_POOL_PORT + idx)));
             }
+
+            debug!("Trusted validators set to: {trusted_validators:?}");
         }
 
         // Determine if we need to populate `trusted_peers`.
@@ -459,6 +461,8 @@ impl Start {
                     trusted_peers.push(get_devnet_router_address_for_node(validator_idx));
                 }
             }
+
+            debug!("Trusted peers set to: {trusted_peers:?}");
         } else {
             debug!("Trusted peers/validators was set manually. Will not populate them with development addresses.")
         }
