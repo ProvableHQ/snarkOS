@@ -261,7 +261,9 @@ pub struct Start {
 
     /// If development mode is enabled, specify the number of clients.
     /// This is only used by validators to automatically populate their set of trusted peers.
-    #[clap(long, group = "dev_flags")]
+    ///
+    /// This option cannot be used while also passing the `--peers` flag.
+    #[clap(long, group = "dev_flags", conflicts_with = "peers")]
     pub dev_num_clients: Option<u16>,
 
     /// If development mode is enabled, specify whether node 0 should generate traffic to drive the network.
@@ -1219,6 +1221,15 @@ mod tests {
         assert!(!config.prover);
         assert!(config.client);
         assert_eq!(genesis, expected_genesis);
+    }
+
+    /// Tests that you cannot pass the `--dev-num-clients` flag while also passing the `--peers` flag.
+    #[test]
+    fn test_parse_development_num_clients_and_peers() {
+        let result = Start::try_parse_from(
+            ["snarkos", "--validator", "--dev", "1", "--peers", "127.0.0.1:3030", "--dev-num-clients", "1"].iter(),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
