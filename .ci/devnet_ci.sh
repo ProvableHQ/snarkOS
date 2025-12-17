@@ -165,11 +165,6 @@ if ! $version_stable; then
 fi
 
 # Creates a test program.
-
-if ! $version_stable; then
-  echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
-  exit 1
-fi
 mkdir -p program
 program_name="test_program.aleo"
 echo "program ${program_name};
