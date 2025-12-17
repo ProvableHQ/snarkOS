@@ -465,7 +465,9 @@ impl Start {
         //
         // Note: the `node` flag is an option to detect remote devnet testing.
         if self.node.is_none() {
-            let address = get_devnet_router_address_for_node(dev);
+            // Pick 0.0.0.0 here, not localhost.
+            let port = get_devnet_router_address_for_node(dev).port();
+            let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
             debug!("Setting node address to {address} due to dev={dev}");
             self.node = Some(address);
         }
