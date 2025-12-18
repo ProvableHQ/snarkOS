@@ -53,6 +53,7 @@ common_flags=(
   --nobanner --noupdater --nodisplay \
   "--network=$network_id"
   --nocdn
+  "--dev-num-clients=0"
   "--dev-num-validators=$num_validators"
   --no-dev-txs
   "--log-filter=$log_filter"
@@ -125,12 +126,6 @@ while (( SECONDS < max_wait )); do
 done
 
 echo "❌ Benchmark failed! Validators did not sync within 30 minutes."
-
-# Print logs for debugging
-echo "Last 20 lines of validators logs:"
-for ((node_index = 0; node_index <= num_nodes; node_index++)); do
-  echo "=== Node $node_index logs ==="
-  tail -n 20 "$log_dir/validator-$node_index.log"
-done
+print_client_logs "$log_dir" "$num_validators" "$num_nodes"
 
 exit 1

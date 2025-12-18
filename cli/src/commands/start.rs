@@ -664,7 +664,7 @@ impl Start {
         }
 
         // Parse the development configurations.
-        self.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
+        self.parse_development(&mut trusted_peers, &mut trusted_validators)?;
 
         // Parse the CDN.
         let cdn = self.parse_cdn::<N>().with_context(|| "Failed to parse given CDN URL")?;

@@ -98,6 +98,8 @@ function check_logs() {
 
     if grep -q "ERROR" "$log_dir/validator-${validator_index}.log"; then
       echo "❌ Test failed! Validator #${validator_index} logs contain errors."
+      # Print the errors to the console.
+      grep "ERROR" "$log_dir/validator-${validator_index}.log"
       return 1
     fi
   done
@@ -110,6 +112,8 @@ function check_logs() {
 
     if grep -q "ERROR" "$log_dir/client-${client_index}.log"; then
       echo "❌ Test failed! Client #${client_index} logs contain errors."
+      # Print the errors to the console.
+      grep "ERROR" "$log_dir/client-${client_index}.log"
       return 1
     fi
  
@@ -271,4 +275,29 @@ function compute_throughput {
   result=$(bc <<< "scale=$decimal_points; $num_ops/$duration")
 
   echo "$result"
+}
+
+# Print the last 20 lines of logs for all nodes.
+function print_validator_logs() {
+  local log_dir=$1
+  local total_validators=$2
+  local total_clients=$3
+
+  echo "Last 20 lines of node logs:"
+  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+    echo "=== Validator $validator_index logs ==="
+    tail -n 20 "$log_dir/validator-$validator_index.log"
+  done
+}
+
+function print_client_logs() {
+  local log_dir=$1
+  local total_validators=$2
+  local total_clients=$3
+
+  for ((client_index = 0; client_index < total_clients; client_index++)); do
+    echo "=== Client $client_index logs ==="
+    node_index=$((total_validators + client_index))
+    tail -n 20 "$log_dir/client-$client_index.log"
+  done
 }

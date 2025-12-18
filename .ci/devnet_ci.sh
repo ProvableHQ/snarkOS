@@ -409,17 +409,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
 done
 
 echo "❌ Test failed! Not all nodes reached minimum height within 15 minutes."
-
-# Print logs for debugging
-echo "Last 20 lines of node logs:"
-for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-  echo "=== Validator $validator_index logs ==="
-  tail -n 20 "$log_dir/validator-$validator_index.log"
-done
-for ((client_index = 0; client_index < total_clients; client_index++)); do
-  echo "=== Validator $validator_index logs ==="
-  tail -n 20 "$log_dir/validator-$validator_index.log"
-done
-
+print_validator_logs "$log_dir" "$total_validators" "$total_clients"
+print_client_logs "$log_dir" "$total_validators" "$total_clients"
 
 exit 1
