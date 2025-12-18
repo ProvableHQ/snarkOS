@@ -14,6 +14,8 @@ min_height=250
 num_validators=40
 
 # The number of clients that are syncing
+# Note: Because the first indexes 0-39 are resevered for validators, the first client will have index 40.
+# The script works around this by manually setting the storage, ports, and log files for the clients. 
 num_clients=1
 
 # Adjust this to show more/less log messages
@@ -104,22 +106,26 @@ common_flags=(
 
 # The client that has the ledger
 # (runs on the first two cores)
-$TASKSET1 snarkos start --dev 0 --client "${common_flags[@]}" \
-  --logfile="$log_dir/client-0.log" &
+$TASKSET1 snarkos start "--dev=$num_validators" --client "${common_flags[@]}" \
+  "--logfile=$log_dir/client-0.log" "--storage=.ledger-$network_id-0" \
+  "--node=127.0.0.1:4130" "--rest=127.0.0.1:3030" &
 PIDS[0]=$!
 
 # Spawn the clients that will sync the ledger
 # (running on the other two cores)
 for client_index in $(seq 1 "$num_clients"); do
+  node_index=$((num_validators + client_index))
   prev_port=$((4130+client_index-1))
+  node_addr="127.0.0.1:$((4130+client_index))"
   name="client-$client_index"
 
   # Ensure there are no old ledger files and the node syncs from scratch
-  snarkos clean "--dev=$client_index" "--network=$network_id" || true
+  snarkos clean "--dev=$node_index" "--network=$network_id" "--path=.ledger-$network_id-$client_index" || true
 
-  $TASKSET2 snarkos start "--dev=$client_index" --client \
-    "${common_flags[@]}" "--peers=127.0.0.1:$prev_port" \
-    "--logfile=$log_dir/$name.log" &
+  $TASKSET2 snarkos start "--dev=$node_index" --client \
+    "${common_flags[@]}" "--peers=127.0.0.1:$prev_port" "--node=$node_addr" \
+    "--rest=127.0.0.1:$((3030+client_index))" \
+    "--logfile=$log_dir/$name.log" "--storage=.ledger-$network_id-$client_index" &
   PIDS[client_index]=$!
 
   # Add 1-second delay between starting nodes to avoid hitting rate limits
@@ -127,7 +133,7 @@ for client_index in $(seq 1 "$num_clients"); do
 done
 
 # Block until nodes are running and connected to each other.
-wait_for_nodes 0 $((num_clients+1))
+wait_for_nodes $((num_clients+1)) 0
 
 # It takes about 30s for nodes to connect. Do not measure this time.
 SECONDS=0
@@ -149,6 +155,8 @@ while (( SECONDS < 30 )); do
     has_blocks=true
     break
   fi
+
+  sleep $poll_interval
 done
 
 if ! $has_blocks; then
@@ -196,10 +204,6 @@ done
 echo "❌ Benchmark failed! Clients did not sync within 40 minutes."
 
 # Print logs for debugging
-echo "Last 20 lines of client logs:"
-for ((client_index = 0; client_index < num_clients; client_index++)); do
-  echo "=== Client $client_index logs ==="
-  tail -n 20 "$log_dir/client-$client_index.log"
-done
+print_client_logs "$log_dir" "$num_validators" "$num_clients"
 
 exit 1
