@@ -1,5 +1,6 @@
 #!/bin/bash
 
+#shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 # Network parameters
@@ -23,7 +24,6 @@ jwt[3]="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGVvMTJ1eDNnZGF1Y2swdjY
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -56,7 +56,7 @@ function create_checkpoints() {
   return 0
 }
 
-wait_for_nodes "$total_validators" "$total_clients"
+wait_for_nodes "$total_validators" 0 
 
 # Check heights periodically with a timeout
 total_wait=0
@@ -89,16 +89,17 @@ while (( total_wait < 600 )); do  # 10 minutes max
       for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
         # Remove the original ledger
         if (( num_checkpoints == 1 )); then
-          snarkos clean --network $network_id --dev $validator_index
+          snarkos clean "--network=$network_id" "--dev=$validator_index"
         else
           suffix="${validator_index}_$((num_checkpoints-2))"
-          snarkos clean --network $network_id --dev $validator_index --path=/tmp/checkpoint_$suffix
+          snarkos clean "--network=$network_id" "--dev=validator_index" "--path=/tmp/checkpoint_$suffix"
         fi
         # Wait until the cleanup concludes
         sleep 1
         # Restart using the checkpoint
         suffix="${validator_index}_$((num_checkpoints-1))"
-        snarkos start --nodisplay --network $network_id --dev $validator_index --dev-num-validators $total_validators --validator --jwt-secret $jwt_secret --jwt-timestamp $jwt_ts --storage /tmp/checkpoint_$suffix &
+        snarkos start --nodisplay "--network=$network_id" "--dev=$validator_index" "--dev-num-validators=$total_validators" \
+          --validator "--jwt-secret=$jwt_secret" "--jwt-timestamp=$jwt_ts" "--storage=/tmp/checkpoint_$suffix" &
         PIDS[validator_index]=$!
         echo "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
         # Add 1-second delay between starting nodes to avoid hitting rate limits

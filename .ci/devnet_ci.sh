@@ -16,14 +16,15 @@ network_id=$3
 min_height=$4
 
 # The verobsity of snarkos nodes.
-NODE_VERBOSITY=1
+NODE_VERBOSITY=3
 
 # Default values if not provided
 : "${total_validators:=4}"
-: "${total_clients:=2}"
+: "${total_clients:=4}" # need at least 4 clients, so each validator has at least one client connected to it.
 : "${network_id:=0}"
 : "${min_height:=60}" # To likely go past the 100 round garbage collection limit.
 
+# shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 # Determine network name based on network_id
@@ -49,7 +50,6 @@ function exit_handler() {
   rmdir program || true
 }
 trap exit_handler EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -57,19 +57,8 @@ trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" fail
 # Flags used by all nodes.
 common_flags=(
   --nodisplay --nobanner --noupdater "--network=$network_id" "--verbosity=$NODE_VERBOSITY"
-  "--dev-num-validators=$total_validators"
+  "--dev-num-validators=$total_validators"  "--dev-num-clients=$total_clients"
 )
-
-# Set the trusted peers for the validators as they will not allow connections from unknown peers.
-trusted_peers=""
-for ((client_index = 0; client_index < total_clients; client_index++)); do
-  node_index=$((client_index + total_validators))
-  if (( client_index == 0 )); then
-    trusted_peers+="$localhost:$((4130+node_index))"
-  else
-    trusted_peers+=",$localhost:$((4130+node_index))"
-  fi
-done
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
@@ -78,10 +67,10 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --metrics --no-dev-txs "--peers=$trusted_peers" &
+      --validator "--logfile=$log_file" --metrics --no-dev-txs &
   else
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" "--peers=$trusted_peers" &
+      --validator "--logfile=$log_file" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -111,6 +100,16 @@ done
 # Ensure all nodes are up and running.
 wait_for_nodes "$total_validators" "$total_clients"
 
+# Ensure all nodes have at least one peer
+echo "ℹ️ Waiting for all nodes to have at least one peer..."
+SECONDS=0
+for node_index in $(seq 0 $((total_clients+total_validators))); do
+  if ! (wait_for_peers "$node_index" 1); then
+    exit 1
+  fi
+done
+echo "✅ All nodes have at least one peer"
+
 last_seen_consensus_version=0
 last_seen_height=0
 
@@ -118,7 +117,14 @@ last_seen_height=0
 function consensus_version_stable() {
   consensus_version=$(curl -s "http://$localhost:3030/v2/$network_name/consensus_version")
   height=$(curl -s "http://$localhost:3030/v2/$network_name/block/height/latest")
-  if (is_integer "$consensus_version") && (is_integer "$height"); then
+
+  if (! is_integer "$consensus_version"); then
+    echo "❌ Failed to retrieve consensus version: $consensus_version"
+    return 1
+  elif (! is_integer "$height"); then
+    echo "❌ Failed to retrieve height: $height"
+    return 1
+  else
     # If the consensus version is greater than the last seen, we update it.
     if (( consensus_version > last_seen_consensus_version )); then
       echo "✅ Consensus version updated to $consensus_version"
@@ -129,19 +135,21 @@ function consensus_version_stable() {
         return 0
       fi
     fi
-  else
-    echo "❌ Failed to retrieve consensus version or height: $consensus_version, $height"
-    exit 1
+
+    last_seen_consensus_version=$consensus_version
+    last_seen_height=$height
   fi
-  last_seen_consensus_version=$consensus_version
-  last_seen_height=$height
+
   return 1
 }
 
 # Check consensus versions periodically with a timeout
+echo "ℹ️ Waiting for consensus version to stabilize..."
 total_wait=0
+version_stable=false
 while (( total_wait < 300 )); do  # 5 minutes max
   if consensus_version_stable; then
+    version_stable=true
     break
   fi
 
@@ -150,6 +158,11 @@ while (( total_wait < 300 )); do  # 5 minutes max
   total_wait=$((total_wait + 30))
   echo "Waited $total_wait seconds so far..."
 done
+
+if ! $version_stable; then
+  echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
+  exit 1
+fi
 
 # Creates a test program.
 mkdir -p program

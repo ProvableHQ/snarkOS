@@ -11,9 +11,7 @@ network_id=1
 # Adjust this to show more/less log messages
 log_filter="info,snarkos_node_sync=debug,snarkos_node_tcp=warn,snarkos_node_rest=warn"
 
-max_wait=2400 # Wait for up to 40 minutes
-poll_interval=1 # Check block heights every second
-
+#shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 branch_name=$(git rev-parse --abbrev-ref HEAD)
@@ -31,7 +29,6 @@ mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs.
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -55,8 +52,8 @@ PIDS[0]=$!
 # Block until node is running.
 wait_for_nodes 0 1
 
-python ./.ci/rest_api_helper.py "get-block" $CORES_PER_NODE 60
-python ./.ci/rest_api_helper.py "block-height" $CORES_PER_NODE 10000
-python ./.ci/rest_api_helper.py "get-latest-block" $CORES_PER_NODE 100
+python ./.ci/rest_api_helper.py "get-block" "$CORES_PER_NODE" 60
+python ./.ci/rest_api_helper.py "block-height" "$CORES_PER_NODE" 10000
+python ./.ci/rest_api_helper.py "get-latest-block" "$CORES_PER_NODE" 100
 
 exit 0

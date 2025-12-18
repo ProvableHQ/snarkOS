@@ -22,7 +22,8 @@ log_filter="info,snarkos_node_sync=trace,snarkos_node_bft::sync=trace,snarkos_no
 max_wait=1800 # Wait for up to 30 minutes
 poll_interval=1 # Check block heights every second
 
-. ./.ci/utils.sh
+#shellcheck source=SCRIPTDIR/utils.sh
+. .ci/utils.sh
 
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 echo "On branch: ${branch_name}"
@@ -38,11 +39,11 @@ log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
+# shellcheck disable=SC2329
 function exit_handler() {
   stop_nodes
 }
 trap exit_handler EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR

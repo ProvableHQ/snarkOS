@@ -26,6 +26,7 @@ poll_interval=10
 : "${min_height:=250}"
 : "${network_id:=1}"
 
+#shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 git_commit=$(git rev-parse --short=10 HEAD)
@@ -40,6 +41,7 @@ mkdir -p "$log_dir"
 chmod 755 "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
+#shellcheck disable=SC2329
 function exit_handler() {
   stop_nodes
 }
