@@ -155,7 +155,8 @@ commands:
       - run:
           name: Install cargo-nextest
           command: |
-            cargo install cargo-nextest --locked || true
+            # Anything newer requires a Rust toolchain upgrade.
+            cargo install cargo-nextest@0.9.114 --locked || true
 
       - run:
           name: "Run Tests"
@@ -674,6 +675,27 @@ jobs:
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-clippy-cache
 
+  lint-scripts:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+      - run:
+           name: Install shellcheck
+           command: |
+            # Fetch from git so we reliably install the same version.
+            wget https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+            tar -xvf shellcheck-v0.11.0.linux.x86_64.tar.xz
+            sudo mv shellcheck-v0.11.0/shellcheck /usr/local/bin/
+      - run:
+          name: Lint scripts
+          command: |
+            shellcheck -x .ci/*.sh
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+
   verify-windows:
     executor:
       name: windows/default
@@ -697,6 +719,7 @@ workflows:
       - check-unused-dependencies
       - check-cargo-audit
       - check-other-crates
+      - lint-scripts
 
   node-workflow:
     jobs:
