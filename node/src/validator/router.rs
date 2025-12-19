@@ -282,30 +282,22 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         _serialized: UnconfirmedTransaction<N>,
         transaction: Transaction<N>,
     ) -> bool {
-        // Cache the unconfirmed transaction.
-        match self.consensus.cache_unconfirmed_transaction(transaction.clone()).await {
-            Err(error) => {
-                trace!("[UnconfirmedTransaction] {error}");
-                return true; // Maintain the connection.
-            }
-            Ok(transaction_previously_cached) => {
-                // If the transaction was previously propagated and cached, there's no need to propagate again.
-                if transaction_previously_cached {
-                    return true; // Maintain the connection.
-                }
-            }
-        }
-        // Broadcast the unconfirmed transaction so other validators can cache it.
-        self.consensus.bft().primary().gateway().broadcast_unconfirmed_transaction(transaction.clone());
         // Add the unconfirmed transaction to the memory pool.
-        // NOTE: broadcasting the transmission before adding it to our own
-        // mempool ensures that we reduce network resource usage for duplicate
-        // transmissions, at the expense of increased latency for new
-        // transmissions.
-        if let Err(error) = self.consensus.add_unconfirmed_transaction(transaction).await {
+        // NOTE: we must add the transaction to the mempool before caching it,
+        // because otherwise the mempool thinks it is already present.
+        if let Err(error) = self.consensus.add_unconfirmed_transaction(transaction.clone()).await {
             trace!("[UnconfirmedTransaction] {error}");
             return true; // Maintain the connection.
         };
+
+        // Cache the unconfirmed transaction.
+        if let Err(error) = self.consensus.cache_unconfirmed_transaction(transaction.clone()).await {
+            trace!("[UnconfirmedTransaction] {error}");
+            return true; // Maintain the connection.
+        };
+
+        // Broadcast the unconfirmed transaction so other validators can cache it.
+        self.consensus.bft().primary().gateway().broadcast_unconfirmed_transaction(transaction);
 
         true
     }
