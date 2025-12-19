@@ -759,7 +759,11 @@ impl<N: Network> Gateway<N> {
                 // Send the unconfirmed transmission to the worker.
                 if let Some(sender) = self.get_worker_sender(worker_id) {
                     // Send the unconfirmed transmission to the worker.
-                    let _ = sender.tx_unconfirmed_transmission.send((peer_ip, transmission_id, transmission)).await;
+                    if let Err(error) =
+                        sender.tx_unconfirmed_transmission.send((peer_ip, transmission_id, transmission)).await
+                    {
+                        warn!("{CONTEXT} Unable to send unconfirmed transmission to worker {worker_id} - {error}");
+                    }
                 }
                 Ok(true)
             }
