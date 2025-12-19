@@ -76,7 +76,8 @@ pub enum DeveloperCommand {
 }
 
 /// Use the Provable explorer's API by default.
-const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com";
+/// Note, `v2` here refers to the explorer version, not the snarkOS API version.
+const DEFAULT_ENDPOINT: &str = "https://api.explorer.provable.com/v2";
 
 #[derive(Debug, Parser)]
 pub struct Developer {
@@ -361,20 +362,23 @@ impl Developer {
     }
 
     /// Gets the public account balance of an Aleo Address (in microcredits).
-    fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<u64> {
+    fn get_public_balance<N: Network>(endpoint: &Uri, address: &Address<N>) -> Result<Option<u64>> {
         // Initialize the program id and account identifier.
         let account_mapping = Identifier::<N>::from_str("account")?;
         let credits = ProgramID::<N>::from_str("credits.aleo")?;
 
-        // Send a request to the query node.
+        // Request the balance from the endpoint.
+        // If no such balance/account exists, the node returns status code 200 with `null` as the response body.
+        // Nodes should never return 404 for this endpoint.
         let result: Option<Value<N>> =
-            Self::http_get_json::<N, _>(endpoint, &format!("program/{credits}/mapping/{account_mapping}/{address}"))?;
+            Self::http_get_json::<N, _>(endpoint, &format!("program/{credits}/mapping/{account_mapping}/{address}"))?
+                .ok_or_else(|| anyhow!("Got unexpected 404 error when fetching public balance"))?;
 
         // Return the balance in microcredits.
         match result {
-            Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(*amount),
+            Some(Value::Plaintext(Plaintext::Literal(Literal::<N>::U64(amount), _))) => Ok(Some(*amount)),
             Some(..) => bail!("Failed to deserialize balance for {address}"),
-            None => Ok(0),
+            None => Ok(None),
         }
     }
 

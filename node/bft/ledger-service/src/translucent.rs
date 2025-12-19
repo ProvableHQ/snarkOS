@@ -14,12 +14,15 @@
 // limitations under the License.
 
 use crate::{CoreLedgerService, LedgerService};
-use async_trait::async_trait;
-use indexmap::IndexMap;
+
+use snarkos_utilities::Stoppable;
+
 use snarkvm::{
     ledger::{
+        Block,
         Ledger,
-        block::{Block, Transaction},
+        PendingBlock,
+        Transaction,
         committee::Committee,
         narwhal::{Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -27,11 +30,10 @@ use snarkvm::{
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result, narwhal::BatchCertificate},
 };
-use std::{
-    fmt,
-    ops::Range,
-    sync::{Arc, atomic::AtomicBool},
-};
+
+use async_trait::async_trait;
+use indexmap::IndexMap;
+use std::{fmt, ops::Range, sync::Arc};
 
 pub struct TranslucentLedgerService<N: Network, C: ConsensusStorage<N>> {
     inner: CoreLedgerService<N, C>,
@@ -46,8 +48,8 @@ impl<N: Network, C: ConsensusStorage<N>> fmt::Debug for TranslucentLedgerService
 
 impl<N: Network, C: ConsensusStorage<N>> TranslucentLedgerService<N, C> {
     /// Initializes a new ledger service wrapper.
-    pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
-        Self { inner: CoreLedgerService::new(ledger, shutdown) }
+    pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
+        Self { inner: CoreLedgerService::new(ledger, stoppable) }
     }
 }
 
@@ -175,6 +177,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         _transaction: Transaction<N>,
     ) -> Result<()> {
         Ok(())
+    }
+
+    fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+        unimplemented!();
+    }
+
+    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>> {
+        unimplemented!();
     }
 
     /// Always succeeds.

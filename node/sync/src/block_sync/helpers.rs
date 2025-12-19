@@ -17,38 +17,36 @@
 ///
 /// The function expects the input to already be sorted.
 pub fn rangify_heights(heights: &[u32]) -> String {
-    // This impl assumes that the heights are sorted and non-empty.
     let mut iter = heights.iter().copied().peekable();
-    let Some(mut curr_height) = iter.next() else {
-        return String::from("[]");
-    };
-
     let mut ret = String::from("[");
+    let mut first = true;
 
     while let Some(next_height) = iter.next() {
-        if next_height == curr_height + 1 {
-            ret.push_str(&format!("{curr_height}-"));
-            curr_height = next_height;
-            while let Some(next_height) = iter.peek().copied() {
-                if next_height == curr_height + 1 {
-                    curr_height += 1;
-                    let _ = iter.next();
-                } else {
-                    break;
-                }
-            }
-            ret.push_str(&format!("{curr_height}, "));
-            let Some(next_height) = iter.next() else {
+        let start = next_height;
+        let mut curr_height = start;
+
+        while let Some(next_height) = iter.peek().copied() {
+            if next_height == curr_height + 1 {
+                curr_height += 1;
+                let _ = iter.next();
+            } else {
                 break;
-            };
-            curr_height = next_height;
+            }
+        }
+
+        if first {
+            first = false;
         } else {
-            ret.push_str(&format!("{curr_height}, "));
-            curr_height = next_height;
+            ret.push_str(", ");
+        }
+
+        if curr_height == start {
+            ret.push_str(&format!("{curr_height}"));
+        } else {
+            ret.push_str(&format!("{start}-{curr_height}"));
         }
     }
 
-    let mut ret = ret.trim_end_matches(", ").to_owned();
     ret.push(']');
     ret
 }
@@ -63,6 +61,14 @@ mod tests {
 
         let rangified = rangify_heights(heights);
         assert_eq!(rangified, "[]");
+    }
+
+    #[test]
+    fn test_rangify_heights_single_value() {
+        let heights = &[52425];
+
+        let rangified = rangify_heights(heights);
+        assert_eq!(rangified, "[52425]");
     }
 
     #[test]

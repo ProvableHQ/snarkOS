@@ -175,6 +175,9 @@ impl<R: Reading> ReadingInternal for R {
                         if let Err(e) = inbound_message_sender.try_send(msg) {
                             error!(parent: node.span(), "can't process a message from {addr}: {e}");
                             node.stats().register_failure();
+                            if matches!(e, mpsc::error::TrySendError::Closed(_)) {
+                                break;
+                            }
                         }
                         #[cfg(feature = "metrics")]
                         metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);

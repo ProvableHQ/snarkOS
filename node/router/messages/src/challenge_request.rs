@@ -15,8 +15,8 @@
 
 use super::*;
 
-use snarkos_node_network::{NodeType, get_repo_commit_hash};
-use snarkvm::prelude::{FromBytes, ToBytes, io_error};
+use snarkos_node_network::NodeType;
+use snarkvm::prelude::{FromBytes, ToBytes};
 
 use std::borrow::Cow;
 
@@ -59,10 +59,18 @@ impl<N: Network> FromBytes for ChallengeRequest<N> {
         let address = Address::<N>::read_le(&mut reader)?;
         let nonce = u64::read_le(&mut reader)?;
 
-        let snarkos_sha = {
-            let bytes =
-                <[u8; 40]>::read_le(&mut reader).map_err(|err| io_error(format!("Invalid snarkOS SHA - {err}")))?;
-            if bytes == Self::UNKNOWN_COMMIT_HASH { None } else { Some(bytes) }
+        let snarkos_sha = match <[u8; 40]>::read_le(&mut reader) {
+            Ok(bytes) => {
+                if bytes == Self::UNKNOWN_COMMIT_HASH {
+                    None
+                } else {
+                    Some(bytes)
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Invalid snarkOS SHA - {err}");
+                None
+            }
         };
 
         Ok(Self { version, listener_port, node_type, address, nonce, snarkos_sha })
@@ -73,15 +81,14 @@ impl<N: Network> ChallengeRequest<N> {
     /// Constant for an unknown commit hash.
     const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
 
-    pub fn new(listener_port: u16, node_type: NodeType, address: Address<N>, nonce: u64) -> Self {
-        Self {
-            version: Message::<N>::latest_message_version(),
-            listener_port,
-            node_type,
-            address,
-            nonce,
-            snarkos_sha: get_repo_commit_hash(),
-        }
+    pub fn new(
+        listener_port: u16,
+        node_type: NodeType,
+        address: Address<N>,
+        nonce: u64,
+        snarkos_sha: Option<[u8; 40]>,
+    ) -> Self {
+        Self { version: Message::<N>::latest_message_version(), listener_port, node_type, address, nonce, snarkos_sha }
     }
 }
 

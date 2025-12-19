@@ -24,6 +24,8 @@ use snarkos_node::{
     rest::DEFAULT_REST_PORT,
     router::DEFAULT_NODE_PORT,
 };
+use snarkos_utilities::SignalHandler;
+
 use snarkvm::{
     console::{
         account::{Address, PrivateKey},
@@ -57,10 +59,10 @@ use std::{
 };
 use tokio::{
     runtime::{self, Runtime},
-    sync::oneshot,
+    sync::mpsc,
     task,
 };
-use tracing::warn;
+use tracing::{debug, info, warn};
 use ureq::http;
 
 /// The recommended minimum number of 'open files' limit for a validator.
@@ -68,7 +70,7 @@ use ureq::http;
 #[cfg(target_family = "unix")]
 const RECOMMENDED_MIN_NOFILES_LIMIT: u64 = 2048;
 
-/// A mapping of `staker_address` to `(validator_address, withdrawal_address, amount)`.
+// A mapping of `staker_address` to `(validator_address, withdrawal_address, amount)`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BondedBalances(IndexMap<String, (String, String, u64)>);
 
@@ -80,7 +82,7 @@ impl FromStr for BondedBalances {
     }
 }
 
-/// Starts the snarkOS node.
+// Starts the snarkOS node.
 #[derive(Clone, Debug, Parser)]
 #[command(
     // Use kebab-case for all arguments (e.g., use the `private-key` flag for the `private_key` field).
@@ -254,20 +256,27 @@ pub struct Start {
     pub dev: Option<u16>,
 
     /// If development mode is enabled, specify the number of genesis validator.
-    #[clap(long, group = "dev-flags", default_value_t=DEVELOPMENT_MODE_NUM_GENESIS_COMMITTEE_MEMBERS)]
+    #[clap(long, group = "dev_flags", default_value_t=DEVELOPMENT_MODE_NUM_GENESIS_COMMITTEE_MEMBERS)]
     pub dev_num_validators: u16,
 
+    /// If development mode is enabled, specify the number of clients.
+    /// This is only used by validators to automatically populate their set of trusted peers.
+    ///
+    /// This option cannot be used while also passing the `--peers` flag.
+    #[clap(long, group = "dev_flags", conflicts_with = "peers")]
+    pub dev_num_clients: Option<u16>,
+
     /// If development mode is enabled, specify whether node 0 should generate traffic to drive the network.
-    #[clap(long, group = "dev-flag")]
+    #[clap(long, group = "dev_flag")]
     pub no_dev_txs: bool,
 
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
-    #[clap(long, group = "dev-flags")]
+    #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
 }
 
 impl Start {
-    /// Starts the snarkOS node.
+    /// Starts the snarkOS node and blocks until it terminates.
     pub fn parse(self) -> Result<String> {
         // Prepare the shutdown flag.
         let shutdown: Arc<AtomicBool> = Default::default();
@@ -285,56 +294,18 @@ impl Start {
         // Initialize the runtime.
         Self::runtime().block_on(async move {
             // Error messages.
-            let node_parse_error = || "Failed to parse node arguments";
-            let display_start_error = || "Failed to initialize the display";
-
-            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+            let node_parse_error = || "Failed to start node";
 
             // Clone the configurations.
-            let mut cli = self.clone();
-            // Parse the network.
-            match cli.network {
-                MainnetV0::ID => {
-                    // Parse the node from the configurations.
-                    let node = cli
-                        .parse_node::<MainnetV0>(shutdown.clone(), shutdown_tx)
-                        .await
-                        .with_context(node_parse_error)?;
-                    // If the display is enabled, render the display.
-                    if !cli.nodisplay {
-                        // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
-                    }
-                }
-                TestnetV0::ID => {
-                    // Parse the node from the configurations.
-                    let node = cli
-                        .parse_node::<TestnetV0>(shutdown.clone(), shutdown_tx)
-                        .await
-                        .with_context(node_parse_error)?;
-                    // If the display is enabled, render the display.
-                    if !cli.nodisplay {
-                        // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
-                    }
-                }
-                CanaryV0::ID => {
-                    // Parse the node from the configurations.
-                    let node = cli
-                        .parse_node::<CanaryV0>(shutdown.clone(), shutdown_tx)
-                        .await
-                        .with_context(node_parse_error)?;
-                    // If the display is enabled, render the display.
-                    if !cli.nodisplay {
-                        // Initialize the display.
-                        Display::start(node, log_receiver).with_context(display_start_error)?;
-                    }
-                }
+            let mut self_ = self.clone();
+
+            // Parse the node arguments, start it, and block until shutdown.
+            match self_.network {
+                MainnetV0::ID => self_.parse_node::<MainnetV0>(log_receiver).await.with_context(node_parse_error)?,
+                TestnetV0::ID => self_.parse_node::<TestnetV0>(log_receiver).await.with_context(node_parse_error)?,
+                CanaryV0::ID => self_.parse_node::<CanaryV0>(log_receiver).await.with_context(node_parse_error)?,
                 _ => panic!("Invalid network ID specified"),
             };
-
-            // Wait for the shutdown signal.
-            let _ = shutdown_rx.await;
 
             Ok(String::new())
         })
@@ -420,43 +391,101 @@ impl Start {
     }
 
     /// Updates the configurations if the node is in development mode.
-    fn parse_development(&mut self, trusted_peers: &mut Vec<SocketAddr>, trusted_validators: &mut Vec<SocketAddr>) {
+    fn parse_development(
+        &mut self,
+        trusted_peers: &mut Vec<SocketAddr>,
+        trusted_validators: &mut Vec<SocketAddr>,
+    ) -> Result<()> {
+        // If `--dev` is not set, return early.
+        let Some(dev) = self.dev else {
+            return Ok(());
+        };
+
+        // Determine the number of development validators.
+        let num_validators = self.dev_num_validators;
+        ensure!(num_validators >= 4, "Value for `dev_num_validators` is too low. Needs to be at least 4.");
+
         // If `--dev` is set, assume the dev nodes are initialized from 0 to `dev`,
         // and add each of them to the trusted peers. In addition, set the node IP to `4130 + dev`,
         // and the REST port to `3030 + dev`.
+        info!("Development mode enabled with index={dev} and num_validators={num_validators}.");
 
-        if let Some(dev) = self.dev {
-            // Add the dev nodes to the trusted peers.
-            if trusted_peers.is_empty() {
-                for i in 0..dev {
-                    trusted_peers.push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_NODE_PORT + i)));
-                }
-            }
-            // Add the dev nodes to the trusted validators.
-            if trusted_validators.is_empty() {
-                // To avoid ambiguity, we define the first few nodes to be the trusted validators to connect to.
-                for i in 0..2 {
-                    // Don't connect to yourself.
-                    if i == dev {
-                        continue;
-                    }
+        // Nodes only start as validators if the `--validator` flag is set, because the default mode is "client".
+        let is_validator = self.validator;
 
-                    trusted_validators
-                        .push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MEMORY_POOL_PORT + i)));
-                }
-            }
-            // Set the node IP to `4130 + dev`.
-            //
-            // Note: the `node` flag is an option to detect remote devnet testing.
-            if self.node.is_none() {
-                self.node = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_NODE_PORT + dev)));
-            }
-
-            // If the `norest` flag is not set and the REST IP is not already specified set the REST IP to `3030 + dev`.
-            if !self.norest && self.rest.is_none() {
-                self.rest = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_REST_PORT + dev)));
-            }
+        // Ensure the node type and `dev_num_validators` are compatible.
+        if is_validator {
+            ensure!(
+                dev < num_validators,
+                "Development validator index is too high (dev={dev}, dev_num_validators={num_validators})",
+            );
+        } else {
+            ensure!(
+                dev >= self.dev_num_validators,
+                "Development prover/client index is too low (dev={dev}, dev_num_validators={num_validators})",
+            );
         }
+
+        // Add the dev nodes to the trusted validators.
+        if trusted_validators.is_empty() && is_validator {
+            // Validators add all other validators as trusted.
+            for idx in 0..num_validators {
+                if idx == dev {
+                    continue;
+                }
+                trusted_validators.push(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MEMORY_POOL_PORT + idx)));
+            }
+
+            debug!("Trusted validators set to: {trusted_validators:?}");
+        }
+
+        // Determine if we need to populate `trusted_peers`.
+        if trusted_peers.is_empty() {
+            if is_validator {
+                if let Some(num_clients) = self.dev_num_clients {
+                    // Ensure the clients that added this validator as a trusted peer are able to connect to it.
+                    for client_idx in 0..num_clients {
+                        if get_devnet_validators_for_client(client_idx, num_validators).contains(&dev) {
+                            let node_idx = num_validators + client_idx;
+                            trusted_peers.push(get_devnet_router_address_for_node(node_idx));
+                        }
+                    }
+                } else {
+                    warn!(
+                        "Development validator started without trusted peers or `--dev-num-clients`. No clients will be able to connect to it."
+                    );
+                }
+            } else {
+                // Clients/provers add two validators to connect to.
+                for validator_idx in get_devnet_validators_for_client(dev, num_validators) {
+                    trusted_peers.push(get_devnet_router_address_for_node(validator_idx));
+                }
+            }
+
+            debug!("Trusted peers set to: {trusted_peers:?}");
+        } else {
+            debug!("Trusted peers/validators was set manually. Will not populate them with development addresses.")
+        }
+
+        // Set the node's listening port to `4130 + dev`.
+        //
+        // Note: the `node` flag is an option to detect remote devnet testing.
+        if self.node.is_none() {
+            // Pick 0.0.0.0 here, not localhost.
+            let port = get_devnet_router_address_for_node(dev).port();
+            let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
+            debug!("Setting node address to {address} due to dev={dev}");
+            self.node = Some(address);
+        }
+
+        // If the `norest` flag is not set and the REST IP is not already specified set the REST IP to `3030 + dev`.
+        if !self.norest && self.rest.is_none() {
+            let port = DEFAULT_REST_PORT + dev;
+            debug!("Setting REST port to {port} due to dev={dev}");
+            self.rest = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)));
+        }
+
+        Ok(())
     }
 
     /// Returns an alternative genesis block if the node is in development mode.
@@ -600,9 +629,9 @@ impl Start {
         }
     }
 
-    /// Returns the node type corresponding to the given configurations.
+    /// Start the node and blocks until it terminates.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, shutdown: Arc<AtomicBool>, shutdown_tx: oneshot::Sender<()>) -> Result<Node<N>> {
+    async fn parse_node<N: Network>(&mut self, log_receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
@@ -635,7 +664,7 @@ impl Start {
         }
 
         // Parse the development configurations.
-        self.parse_development(&mut trusted_peers, &mut trusted_validators);
+        self.parse_development(&mut trusted_peers, &mut trusted_validators)?;
 
         // Parse the CDN.
         let cdn = self.parse_cdn::<N>().with_context(|| "Failed to parse given CDN URL")?;
@@ -742,24 +771,31 @@ impl Start {
             }
         };
 
-
         // TODO(kaimast): start the display earlier and show sync progress.
         if !self.nodisplay && !self.nocdn {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
 
-        let shutdown_tx = Some(shutdown_tx);
+        // Register the signal handler.
+        let signal_handler = SignalHandler::new();
 
         // Initialize the node.
-        match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, shutdown.clone(), shutdown_tx).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, shutdown.clone(), shutdown_tx).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, shutdown, shutdown_tx).await,
+        let node = match node_type {
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
+        }?;
+
+        if !self.nodisplay {
+            Display::start(node.clone(), log_receiver, signal_handler.clone()).with_context(|| "Failed to start the display")?;
         }
+
+        node.wait_for_signals(&signal_handler).await;
+        Ok(())
     }
 
-    /// Returns a runtime for the node.
+    /// Starts a rayon thread pool and tokio runtime for the node, and returns the tokio `Runtime`.
     fn runtime() -> Runtime {
         // Retrieve the number of cores.
         let num_cores = num_cpus::get();
@@ -770,14 +806,16 @@ impl Start {
         let (num_tokio_worker_threads, max_tokio_blocking_threads, num_rayon_cores_global) =
             (2 * num_cores, 512, num_cores);
 
-        // Initialize the parallelization parameters.
+        // Set up the rayon thread pool.
+        // A custom panic handler is not needed here, as rayon propagates the panic to the calling thread by default (except for `rayon::spawn` which we do not use).
         rayon::ThreadPoolBuilder::new()
             .stack_size(8 * 1024 * 1024)
             .num_threads(num_rayon_cores_global)
             .build_global()
             .unwrap();
 
-        // Initialize the runtime configuration.
+        // Set up the tokio Runtime.
+        // TODO(kaimast): set up a panic handler here for each worker thread once [`tokio::runtime::Builder::unhandled_panic`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.unhandled_panic) is stabilized.
         runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(8 * 1024 * 1024)
@@ -1092,7 +1130,7 @@ mod tests {
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
         let mut config = Start::try_parse_from(["snarkos"].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         let candidate_genesis = config.parse_genesis::<CurrentNetwork>().unwrap();
         assert_eq!(trusted_peers.len(), 0);
         assert_eq!(trusted_validators.len(), 0);
@@ -1100,82 +1138,102 @@ mod tests {
 
         let _config = Start::try_parse_from(["snarkos", "--dev", ""].iter()).unwrap_err();
 
+        // Validator dev mode with default settings.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
-        let mut config = Start::try_parse_from(["snarkos", "--dev", "1"].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        let mut config = Start::try_parse_from(["snarkos", "--dev", "1", "--validator"].iter()).unwrap();
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3031").unwrap()));
+        assert_eq!(trusted_validators.len(), 3);
 
+        // Validator dev mode with `--rest` flag.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
-        let mut config = Start::try_parse_from(["snarkos", "--dev", "1", "--rest", "127.0.0.1:8080"].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        let mut config =
+            Start::try_parse_from(["snarkos", "--dev", "1", "--rest", "127.0.0.1:8080", "--validator"].iter()).unwrap();
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         assert_eq!(config.rest, Some(SocketAddr::from_str("127.0.0.1:8080").unwrap()));
+        assert_eq!(trusted_validators.len(), 3);
 
+        // Validator dev mode with `--norest` flag.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
-        let mut config = Start::try_parse_from(["snarkos", "--dev", "1", "--norest"].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        let mut config = Start::try_parse_from(["snarkos", "--dev", "1", "--norest", "--validator"].iter()).unwrap();
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         assert!(config.rest.is_none());
+        assert_eq!(trusted_validators.len(), 3);
 
+        // Client dev node.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
-        let mut config = Start::try_parse_from(["snarkos", "--dev", "0"].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        let mut config = Start::try_parse_from(["snarkos", "--dev", "5"].iter()).unwrap();
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         let expected_genesis = config.parse_genesis::<CurrentNetwork>().unwrap();
-        assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4130").unwrap()));
-        assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3030").unwrap()));
-        assert_eq!(trusted_peers.len(), 0);
-        assert_eq!(trusted_validators.len(), 1);
+        assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4135").unwrap()));
+        assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3035").unwrap()));
+        assert_eq!(trusted_peers.len(), 2);
+        assert_eq!(trusted_validators.len(), 0);
         assert!(!config.validator);
         assert!(!config.prover);
         assert!(!config.client);
         assert_ne!(expected_genesis, prod_genesis);
 
+        // Validator dev node with `--private-key` flag.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
         let mut config =
             Start::try_parse_from(["snarkos", "--dev", "1", "--validator", "--private-key", ""].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         let genesis = config.parse_genesis::<CurrentNetwork>().unwrap();
         assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4131").unwrap()));
         assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3031").unwrap()));
-        assert_eq!(trusted_peers.len(), 1);
-        assert_eq!(trusted_validators.len(), 1);
+        assert_eq!(trusted_peers.len(), 0);
+        assert_eq!(trusted_validators.len(), 3);
         assert!(config.validator);
         assert!(!config.prover);
         assert!(!config.client);
         assert_eq!(genesis, expected_genesis);
 
+        // Prover dev node with `--private-key` flag.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
         let mut config =
-            Start::try_parse_from(["snarkos", "--dev", "2", "--prover", "--private-key", ""].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+            Start::try_parse_from(["snarkos", "--dev", "6", "--prover", "--private-key", ""].iter()).unwrap();
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         let genesis = config.parse_genesis::<CurrentNetwork>().unwrap();
-        assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4132").unwrap()));
-        assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3032").unwrap()));
+        assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4136").unwrap()));
+        assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3036").unwrap()));
         assert_eq!(trusted_peers.len(), 2);
-        assert_eq!(trusted_validators.len(), 2);
+        assert_eq!(trusted_validators.len(), 0);
         assert!(!config.validator);
         assert!(config.prover);
         assert!(!config.client);
         assert_eq!(genesis, expected_genesis);
 
+        // Client dev node with `--private-key` flag.
         let mut trusted_peers = vec![];
         let mut trusted_validators = vec![];
         let mut config =
-            Start::try_parse_from(["snarkos", "--dev", "3", "--client", "--private-key", ""].iter()).unwrap();
-        config.parse_development(&mut trusted_peers, &mut trusted_validators);
+            Start::try_parse_from(["snarkos", "--dev", "10", "--client", "--private-key", ""].iter()).unwrap();
+        config.parse_development(&mut trusted_peers, &mut trusted_validators).unwrap();
         let genesis = config.parse_genesis::<CurrentNetwork>().unwrap();
-        assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4133").unwrap()));
-        assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3033").unwrap()));
-        assert_eq!(trusted_peers.len(), 3);
-        assert_eq!(trusted_validators.len(), 2);
+        assert_eq!(config.node, Some(SocketAddr::from_str("0.0.0.0:4140").unwrap()));
+        assert_eq!(config.rest, Some(SocketAddr::from_str("0.0.0.0:3040").unwrap()));
+        assert_eq!(trusted_peers.len(), 2);
+        assert_eq!(trusted_validators.len(), 0);
         assert!(!config.validator);
         assert!(!config.prover);
         assert!(config.client);
         assert_eq!(genesis, expected_genesis);
+    }
+
+    /// Tests that you cannot pass the `--dev-num-clients` flag while also passing the `--peers` flag.
+    #[test]
+    fn test_parse_development_num_clients_and_peers() {
+        let result = Start::try_parse_from(
+            ["snarkos", "--validator", "--dev", "1", "--peers", "127.0.0.1:3030", "--dev-num-clients", "1"].iter(),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1213,6 +1271,24 @@ mod tests {
         assert_eq!(start.network, 0);
         assert_eq!(start.peers, Some("IP1,IP2,IP3".to_string()));
         assert_eq!(start.validators, Some("IP1,IP2,IP3".to_string()));
+    }
+
+    /// Ensure two clients do not connect to the same validators.
+    #[test]
+    fn test_parse_development_client_validators() {
+        let mut client1_config =
+            Start::try_parse_from(["snarkos", "--dev", "10", "--client", "--private-key", ""].iter()).unwrap();
+        let mut trusted_peers1 = vec![];
+        let mut trusted_validators1 = vec![];
+        client1_config.parse_development(&mut trusted_peers1, &mut trusted_validators1).unwrap();
+
+        let mut client2_config =
+            Start::try_parse_from(["snarkos", "--dev", "11", "--client", "--private-key", ""].iter()).unwrap();
+        let mut trusted_peers2 = vec![];
+        let mut trusted_validators2 = vec![];
+        client2_config.parse_development(&mut trusted_peers2, &mut trusted_validators2).unwrap();
+
+        assert_ne!(trusted_peers1, trusted_peers2);
     }
 
     #[test]

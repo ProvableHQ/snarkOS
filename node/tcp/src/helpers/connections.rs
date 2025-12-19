@@ -15,7 +15,7 @@
 
 //! Objects associated with connection handling.
 
-use std::{collections::HashMap, net::SocketAddr, ops::Not};
+use std::{collections::HashMap, net::SocketAddr, ops::Not, sync::atomic::AtomicBool};
 
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -33,7 +33,7 @@ use crate::protocols::{Handshake, Reading, Writing};
 
 /// A map of all currently connected addresses to their associated connection.
 #[derive(Default)]
-pub(crate) struct Connections(RwLock<HashMap<SocketAddr, Connection>>);
+pub(crate) struct Connections(pub(crate) RwLock<HashMap<SocketAddr, Connection>>);
 
 impl Connections {
     /// Adds the given connection to the list of active connections.
@@ -85,6 +85,8 @@ pub struct Connection {
     pub(crate) writer: Option<Box<dyn AW>>,
     /// Used to notify the [`Reading`] protocol that the connection is fully ready.
     pub(crate) readiness_notifier: Option<oneshot::Sender<()>>,
+    /// Prevents the OnDisconnect hook from being triggered multiple times.
+    pub(crate) disconnecting: AtomicBool,
     /// Handles to tasks spawned for the connection.
     pub(crate) tasks: Vec<JoinHandle<()>>,
 }
@@ -98,6 +100,7 @@ impl Connection {
             reader: None,
             writer: None,
             readiness_notifier: None,
+            disconnecting: Default::default(),
             side,
             tasks: Default::default(),
         }

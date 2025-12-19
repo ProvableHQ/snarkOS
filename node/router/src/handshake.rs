@@ -20,11 +20,11 @@ use crate::{
     Router,
     messages::{ChallengeRequest, ChallengeResponse, DisconnectReason, Message, MessageCodec, MessageTrait},
 };
-use snarkos_node_network::log_repo_sha_comparison;
+use snarkos_node_network::{get_repo_commit_hash, log_repo_sha_comparison};
 use snarkos_node_tcp::{ConnectionSide, P2P, Tcp};
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{Address, Field, Network, block::Header, error, io_error},
+    prelude::{Address, ConsensusVersion, Field, Network, block::Header, error, io_error},
 };
 
 use anyhow::{Result, bail};
@@ -190,12 +190,21 @@ impl<N: Network> Router<N> {
         // Initialize an RNG.
         let rng = &mut OsRng;
 
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
+
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
         let our_nonce = rng.r#gen();
         // Send a challenge request to the peer.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce);
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
         send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
 
         /* Step 2: Receive the peer's challenge response followed by the challenge request. */
@@ -264,6 +273,14 @@ impl<N: Network> Router<N> {
         // Listen for the challenge request message.
         let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
 
+        // Determine the snarkOS SHA to send to the peer.
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, Some(sha)) => Some(sha),
+            _ => None,
+        };
+
         // Obtain the peer's listening address.
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_request.listener_port));
         let listener_addr = listener_addr.unwrap();
@@ -308,7 +325,8 @@ impl<N: Network> Router<N> {
         // Sample a random nonce.
         let our_nonce = rng.r#gen();
         // Send the challenge request.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce);
+        let our_request =
+            ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
         send(&mut framed, peer_addr, Message::ChallengeRequest(our_request)).await?;
 
         /* Step 3: Receive the challenge response. */

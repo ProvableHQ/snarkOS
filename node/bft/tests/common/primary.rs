@@ -18,6 +18,7 @@ use crate::common::{
     TranslucentLedgerService,
     utils::{fire_unconfirmed_solutions, fire_unconfirmed_transactions, initialize_logger},
 };
+
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
@@ -29,6 +30,8 @@ use snarkos_node_bft::{
 use snarkos_node_bft_storage_service::BFTMemoryService;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::BlockSync;
+use snarkos_utilities::SimpleStoppable;
+
 use snarkvm::{
     console::{
         account::{Address, PrivateKey},
@@ -160,7 +163,7 @@ impl TestNetwork {
         for (id, account) in accounts.into_iter().enumerate() {
             let gen_ledger =
                 genesis_ledger(gen_key, committee.clone(), balances.clone(), bonded_balances.clone(), &mut rng);
-            let ledger = Arc::new(TranslucentLedgerService::new(gen_ledger, Default::default()));
+            let ledger = Arc::new(TranslucentLedgerService::new(gen_ledger, SimpleStoppable::new()));
             let storage = Storage::new(
                 ledger.clone(),
                 Arc::new(BFTMemoryService::new()),
