@@ -35,7 +35,7 @@ EXPECTED_MAX_CONSENSUS_VERSION="${EXPECTED_MAX_CONSENSUS_VERSION:-}"
 # How long to wait between upgrades (seconds); used for block-height window
 WAIT_BETWEEN_UPGRADES="${WAIT_BETWEEN_UPGRADES:-60}"
 
-# Load shared helpers (is_integer, get_network_name, wait_for_nodes, stop_nodes, child_exit_handler, ...)
+# Load shared helpers (is_integer, get_network_name, wait_for_nodes, stop_nodes, ...)
 . ./.ci/utils.sh
 
 ########################################
@@ -199,7 +199,6 @@ exit_handler() {
 
 # Install signal handlers.
 trap exit_handler EXIT
-trap child_exit_handler CHLD
 trap 'echo "Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 common_flags=(
