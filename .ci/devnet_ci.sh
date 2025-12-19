@@ -60,9 +60,6 @@ common_flags=(
   "--dev-num-validators=$total_validators"  "--dev-num-clients=$total_clients"
 )
 
-# Set the trusted peers for the validators as they will not allow connections from unknown peers.
-trusted_peers=$(generate_trusted_clients "$total_validators" "$total_clients")
-
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"
