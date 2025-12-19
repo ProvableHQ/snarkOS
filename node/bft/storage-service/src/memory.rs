@@ -15,16 +15,23 @@
 
 use crate::StorageService;
 use snarkvm::{
-    ledger::narwhal::{BatchHeader, Transmission, TransmissionID},
+    ledger::{
+        committee::Committee,
+        narwhal::{BatchHeader, Transmission, TransmissionID},
+    },
     prelude::{Field, Network, Result, bail},
 };
 
 use indexmap::{IndexMap, IndexSet, indexset, map::Entry};
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::RwLock;
+use locktick::parking_lot::{Mutex, RwLock};
+use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::RwLock;
-use std::collections::{HashMap, HashSet};
+use parking_lot::{Mutex, RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroUsize,
+};
 use tracing::error;
 
 /// A BFT in-memory storage service.
@@ -34,6 +41,8 @@ pub struct BFTMemoryService<N: Network> {
     transmissions: RwLock<IndexMap<TransmissionID<N>, (Transmission<N>, IndexSet<Field<N>>)>>,
     /// The map of `aborted transmission ID` to `certificate IDs` entries.
     aborted_transmission_ids: RwLock<IndexMap<TransmissionID<N>, IndexSet<Field<N>>>>,
+    /// The LRU cache for `transmission ID` to `transmission` entries that are part of the memory storage.
+    cache_transmissions: Mutex<LruCache<TransmissionID<N>, Transmission<N>>>,
 }
 
 impl<N: Network> Default for BFTMemoryService<N> {
@@ -46,7 +55,16 @@ impl<N: Network> Default for BFTMemoryService<N> {
 impl<N: Network> BFTMemoryService<N> {
     /// Initializes a new BFT in-memory storage service.
     pub fn new() -> Self {
-        Self { transmissions: Default::default(), aborted_transmission_ids: Default::default() }
+        let max_committee_size = Committee::<N>::max_committee_size().unwrap();
+        let capacity =
+            NonZeroUsize::new((max_committee_size as usize) * (BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH) * 2)
+                .unwrap();
+
+        Self {
+            transmissions: Default::default(),
+            aborted_transmission_ids: Default::default(),
+            cache_transmissions: Mutex::new(LruCache::new(capacity)),
+        }
     }
 }
 
@@ -61,6 +79,11 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
     /// Returns the transmission for the given `transmission ID`.
     /// If the transmission does not exist in storage, `None` is returned.
     fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>> {
+        // Try to get the transmission from the cache first.
+        if let Some(transmission) = self.cache_transmissions.lock().get(&transmission_id) {
+            return Some(transmission.clone());
+        }
+
         // Get the transmission.
         self.transmissions.read().get(&transmission_id).map(|(transmission, _)| transmission).cloned()
     }
@@ -102,11 +125,7 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
     ///
     /// Returns whether the transaction is already present in the cache.
     fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
-        // Acquire the transmissions write lock.
-        let mut transmissions = self.transmissions.write();
-        // Insert the transmission.
-        // TODO: fix the insertion or interface.
-        transmissions.insert(transmission_id, (transmission, indexset! {})).is_some()
+        self.cache_transmissions.lock().put(transmission_id, transmission).is_some()
     }
 
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
@@ -145,7 +164,9 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
                     // Prepare the set of certificate IDs.
                     let certificate_ids = indexset! { certificate_id };
                     // Insert the transmission and a new set with the certificate ID.
-                    vacant_entry.insert((transmission, certificate_ids));
+                    vacant_entry.insert((transmission.clone(), certificate_ids));
+                    // Insert the transmission into the cache.
+                    self.cache_transmissions.lock().put(transmission_id, transmission);
                 }
             }
         }
