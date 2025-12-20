@@ -489,6 +489,9 @@ impl<N: Network> Worker<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((_peer_ip, transmission_id, transmission)) = rx_unconfirmed_transmission.recv().await {
+                // NOTE: to improve the chance of a transaction landing, besides
+                // caching incoming transactions we can also consider adding it
+                // to the mempool.
                 self_.cache_transmission(transmission_id, transmission);
             }
         });
