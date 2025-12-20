@@ -44,8 +44,8 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
         // Development testing contains optional bootstrap peers loaded from the environment.
         match std::env::var("TEST_BOOTSTRAP_PEERS") {
             Ok(peers) => peers.split(',').map(|peer| SocketAddr::from_str(peer).unwrap()).collect(),
-            Err(err) => {
-                warn!("Failed to load bootstrap peers from environment: {err}");
+            Err(_err) => {
+                // error may include the innocent 'environment variable not found'
                 vec![]
             }
         }
