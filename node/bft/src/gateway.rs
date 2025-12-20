@@ -1622,7 +1622,11 @@ impl<N: Network> Gateway<N> {
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
         let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
-        log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        if consensus_version >= ConsensusVersion::V12 {
+            log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+        }
 
         let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 
