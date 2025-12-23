@@ -588,14 +588,16 @@ jobs:
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
+      # Use nightly until we bump the MSRV to 1.89.0 or greater
+      - install_rust_nightly
       - setup_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
           command: |
-            cargo install cargo-audit@0.21.2 --locked
-            cargo audit -D warnings
+            cargo +nightly install cargo-audit@0.22.0 --locked
+            cargo +nightly audit -D warnings
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
 
