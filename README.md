@@ -272,6 +272,20 @@ APrivateKey1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 Note, using the `--raw` flag with the command will sign plaintext messages as bytes rather than [Aleo values](https://developer.aleo.org/guides/aleo/language#data-types-and-values) such as `1u8` or `100field`.
 
+### 5. What the different between `node-data` and `ledger`?
+Ledger contains only public ledger information, while `node-data` contains information specific to the node that created it. The latter should not be shared with untrusted sources, and, for validators, contains data required to participate in consensus.
+
+### 6. At startup I get an error telling me the nodes still uses the old storage format. What should I do?
+The node should have created a new folder for the node data. For example, for mainnet a folder should exist at `~/.aleo/storage/node-data-0`. 
+
+The error message will tell you what data to migrate. Alternatively, you can start the node with `--auto-migrate-node-data` and it will attempt to do this automatically.
+
+The following is an overview of all files that may be needed to be migrated. 
+- The JSON Web token secret, located at `~/.aleo/storage/jwt_secrect_{address}.txt`. Move it to `~/.aleo/storage/node-data-0/jwt_secret_{address}.txt`.
+  Note, if you are running different nodes with different addresses there may be multiple of these. The error message will tell you which one to migrate. 
+- The router peer cache located at `~/.aleo/storage/ledger-0/cache_router_peers`. Migrate it to `~/.aleo/storage/node-data-0/router-peer-cache`.
+- The gateway peer cache located at `~/.aleo/storage/ledger-0/cache_gateway_peers` (only for validators). Migrate it to `~/.aleo/storage/node-data-0/gateway-peer-cache`.
+- The latest proposal cache located at `~/.aleo/storage/current-proposal-cache-0` (only for validators). Migrate it to `~/.aleo/storage/node-data-0/current-proposal-cache`.
 
 ## 5. Command Line Interface
 

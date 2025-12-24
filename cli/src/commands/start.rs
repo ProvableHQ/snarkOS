@@ -57,6 +57,7 @@ use rand_chacha::ChaChaRng;
 use serde::{Deserialize, Serialize};
 
 use std::{
+    fs,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -285,6 +286,10 @@ pub struct Start {
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
     #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
+
+    /// If the flag is set, the node will attempt to automatically migrate the node data to the new format.
+    #[clap(long)]
+    pub auto_migrate_node_data: bool,
 }
 
 impl Start {
@@ -737,7 +742,7 @@ impl Start {
 
         // Checks for the old storage format and prints instructions to migrate.
         // We perform this check after creating the node data directory, so that migrating the data is easier.
-        Self::check_for_old_storage_format(&aleo_ledger_dir(N::ID, &storage_mode), &account.address(), &node_data_dir, self.dev).with_context(|| "Node still uses the old storage format")?;
+        Self::check_for_old_storage_format(&aleo_ledger_dir(N::ID, &storage_mode), &account.address(), &node_data_dir, self.dev, self.auto_migrate_node_data).with_context(|| "Node still uses the old storage format.")?;
 
         // Compute the optional REST server JWT.
         let jwt_token = if self.nojwt {
@@ -845,6 +850,7 @@ impl Start {
         address: &Address<N>,
         node_data_dir: &NodeDataDir,
         dev: Option<u16>,
+        auto_migrate: bool,
     ) -> Result<()> {
         let ledger_parent_dir = ledger_dir.parent().unwrap();
 
@@ -854,24 +860,62 @@ impl Start {
         let old_proposal_cache_path = ledger_dir.join(node_data::legacy_current_proposal_cache_file(N::ID, dev));
         let old_jwt_secret_path = ledger_parent_dir.join(node_data::jwt_secret_file(address));
 
-        if old_router_cache_path.exists() {
-            let new_router_cache_path = node_data_dir.router_peer_cache_path();
-            bail!("Please migrate {old_router_cache_path:?} to {new_router_cache_path:?} before restarting.");
-        }
+        if auto_migrate {
+            if old_router_cache_path.exists() {
+                let new_router_cache_path = node_data_dir.router_peer_cache_path();
+                info!("Migrating node data file \"{old_router_cache_path:?}\" to \"{new_router_cache_path:?}\"");
+                fs::rename(old_router_cache_path, new_router_cache_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
 
-        if old_gatway_cache_path.exists() {
-            let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
-            bail!("Please migrate {old_gatway_cache_path:?} to {new_gateway_cache_path:?} before restarting.");
-        }
+            if old_gatway_cache_path.exists() {
+                let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
+                info!("Migrating node data file \"{old_gatway_cache_path:?}\" to \"{new_gateway_cache_path:?}\"");
+                fs::rename(old_gatway_cache_path, new_gateway_cache_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
 
-        if old_proposal_cache_path.exists() {
-            let new_proposal_cache_path = node_data_dir.current_proposal_cache_path();
-            bail!("Please migrate {old_proposal_cache_path:?} to {new_proposal_cache_path:?} before restarting.");
-        }
+            if old_proposal_cache_path.exists() {
+                let new_proposal_cache_path = node_data_dir.current_proposal_cache_path();
+                info!("Migrating node data file \"{old_proposal_cache_path:?}\" to \"{new_proposal_cache_path:?}\"");
+                fs::rename(old_proposal_cache_path, new_proposal_cache_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
 
-        if old_jwt_secret_path.exists() {
-            let new_jwt_secret_path = node_data_dir.jwt_secret_path(&address);
-            bail!("Please migrate {old_jwt_secret_path:?} to {new_jwt_secret_path:?} before restarting.");
+            if old_jwt_secret_path.exists() {
+                let new_jwt_secret_path = node_data_dir.jwt_secret_path(&address);
+                info!("Migrating node data file \"{old_jwt_secret_path:?}\" to \"{new_jwt_secret_path:?}\"");
+                fs::rename(old_jwt_secret_path, new_jwt_secret_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
+        } else {
+            if old_router_cache_path.exists() {
+                let new_router_cache_path = node_data_dir.router_peer_cache_path();
+                bail!(
+                    "Please migrate the node data file \"{old_router_cache_path:?}\" to \"{new_router_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+
+            if old_gatway_cache_path.exists() {
+                let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
+                bail!(
+                    "Please migrate the node data file \"{old_gatway_cache_path:?}\" to \"{new_gateway_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+
+            if old_proposal_cache_path.exists() {
+                let new_proposal_cache_path = node_data_dir.current_proposal_cache_path();
+                bail!(
+                    "Please migrate the node data file \"{old_proposal_cache_path:?}\" to \"{new_proposal_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+
+            if old_jwt_secret_path.exists() {
+                let new_jwt_secret_path = node_data_dir.jwt_secret_path(&address);
+                bail!(
+                    "Please migrate the node data file \"{old_jwt_secret_path:?}\" to \"{new_jwt_secret_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
         }
 
         Ok(())
