@@ -86,7 +86,7 @@ impl<N: Network> ProposalCache<N> {
 
         // Ensure the proposal cache is valid.
         if !proposal_cache.is_valid(expected_signer) {
-            bail!("The proposal cache is invalid for the given address {expected_signer}");
+            bail!("The proposal cache at {} is invalid for the given address {expected_signer}", path.display());
         }
 
         info!("Loaded the proposal cache from {} at round {}", path.display(), proposal_cache.latest_round);
