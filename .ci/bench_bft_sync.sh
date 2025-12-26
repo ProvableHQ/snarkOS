@@ -22,7 +22,8 @@ log_filter="info,snarkos_node_sync=trace,snarkos_node_bft::sync=trace,snarkos_no
 max_wait=1800 # Wait for up to 30 minutes
 poll_interval=1 # Check block heights every second
 
-. ./.ci/utils.sh
+#shellcheck source=SCRIPTDIR/utils.sh
+. .ci/utils.sh
 
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 echo "On branch: ${branch_name}"
@@ -38,11 +39,11 @@ log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
+# shellcheck disable=SC2329
 function exit_handler() {
   stop_nodes
 }
 trap exit_handler EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -52,6 +53,7 @@ common_flags=(
   --nobanner --noupdater --nodisplay \
   "--network=$network_id"
   --nocdn
+  "--dev-num-clients=0"
   "--dev-num-validators=$num_validators"
   --no-dev-txs
   "--log-filter=$log_filter"
@@ -124,12 +126,6 @@ while (( SECONDS < max_wait )); do
 done
 
 echo "❌ Benchmark failed! Validators did not sync within 30 minutes."
-
-# Print logs for debugging
-echo "Last 20 lines of validators logs:"
-for ((node_index = 0; node_index <= num_nodes; node_index++)); do
-  echo "=== Node $node_index logs ==="
-  tail -n 20 "$log_dir/validator-$node_index.log"
-done
+print_client_logs "$log_dir" "$num_validators" "$num_nodes"
 
 exit 1

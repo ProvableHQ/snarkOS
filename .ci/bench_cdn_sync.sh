@@ -15,6 +15,7 @@ log_filter="info,snarkos_node_rest=warn,snarkos_node_cdn=debug"
 max_wait=1800 # Wait for up to 30 minutes
 poll_interval=1 # Check block heights every second
 
+# shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 network_name=$(get_network_name $network_id)
@@ -25,11 +26,11 @@ log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
+# shellcheck disable=SC2329
 function exit_handler() {
   stop_nodes
 }
 trap exit_handler EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs.
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -42,7 +43,7 @@ args=(
   "--network=$network_id"
   --nobanner --noupdater --nodisplay # reduce clutter in the output and hide TUI
   --rest-rps=1000000 # ensure benchmarks don't fail due to rate limiting
-  --log-filter=$log_filter # only show the logs we care about
+  "--log-filter=$log_filter" # only show the logs we care about
 )
 
 # Spawn the client that will sync the ledger.

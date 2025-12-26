@@ -7,33 +7,37 @@
 # Array to store PIDs of all processes
 declare -a PIDS
 
-# Flag is set true once a node process stopped
-node_stopped=false
-
 # How many cores should each node use?
 # (Should be half of the number of (v)CPUs)
 # NOTE: when you update this, update TASKSET1/2 as well.
+# shellcheck disable=SC2034
 CORES_PER_NODE=8
 
 # Tasksets to pin processes to specific CPUs.
 # This is a no-op on MacOS.
 if [[ "$(uname)" == "Darwin" ]]; then
+  # shellcheck disable=SC2034
   TASKSET1=""
+  # shellcheck disable=SC2034
   TASKSET2=""
 else
+  # shellcheck disable=SC2034
   TASKSET1="taskset -c 0-7"
+  # shellcheck disable=SC2034
   TASKSET2="taskset -c 8-15"
 fi
 
-# Handler for a child process exiting
-function child_exit_handler() {
-  # only set to true if this was indeed a node
+# Check if any tracked node process has exited.
+# Returns 0 if a node stopped, 1 otherwise.
+function check_node_stopped() {
   for i in "${!PIDS[@]}"; do
-    if [[ "${PIDS[i]}" -eq "$pid" ]]; then
-      echo "Node #${i} (pid=$pid) exited"
-      node_stopped=true
+    local pid="${PIDS[i]}"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "Node #${i} (pid=$pid) has exited unexpectedly"
+      return 0
     fi
   done
+  return 1
 }
 
 # Function checking that each node in the given range [start_index, end_index)
@@ -94,6 +98,8 @@ function check_logs() {
 
     if grep -q "ERROR" "$log_dir/validator-${validator_index}.log"; then
       echo "❌ Test failed! Validator #${validator_index} logs contain errors."
+      # Print the errors to the console.
+      grep "ERROR" "$log_dir/validator-${validator_index}.log"
       return 1
     fi
   done
@@ -106,6 +112,8 @@ function check_logs() {
 
     if grep -q "ERROR" "$log_dir/client-${client_index}.log"; then
       echo "❌ Test failed! Client #${client_index} logs contain errors."
+      # Print the errors to the console.
+      grep "ERROR" "$log_dir/client-${client_index}.log"
       return 1
     fi
  
@@ -242,8 +250,8 @@ function wait_for_nodes() {
   local total_clients=$2
 
   while true; do
-    if [ "$node_stopped" = true ]; then
-      echo "Something went wrong: one more nodes stopped unexpectedly"
+    if check_node_stopped; then
+      echo "ERROR: one or more nodes stopped unexpectedly"
       return 1
     fi
     
@@ -251,6 +259,9 @@ function wait_for_nodes() {
       echo "All nodes are ready!"
       return 0
     fi
+
+    # Pause to give the nodes time to start up.
+    sleep 1
   done
 }
 
@@ -264,4 +275,29 @@ function compute_throughput {
   result=$(bc <<< "scale=$decimal_points; $num_ops/$duration")
 
   echo "$result"
+}
+
+# Print the last 20 lines of logs for all nodes.
+function print_validator_logs() {
+  local log_dir=$1
+  local total_validators=$2
+  local total_clients=$3
+
+  echo "Last 20 lines of node logs:"
+  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+    echo "=== Validator $validator_index logs ==="
+    tail -n 20 "$log_dir/validator-$validator_index.log"
+  done
+}
+
+function print_client_logs() {
+  local log_dir=$1
+  local total_validators=$2
+  local total_clients=$3
+
+  for ((client_index = 0; client_index < total_clients; client_index++)); do
+    echo "=== Client $client_index logs ==="
+    node_index=$((total_validators + client_index))
+    tail -n 20 "$log_dir/client-$client_index.log"
+  done
 }

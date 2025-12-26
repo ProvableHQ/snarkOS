@@ -946,6 +946,10 @@ impl<N: Network> Gateway<N> {
         // Log the validators that are not connected.
         let num_not_connected = validators_total.saturating_sub(connected_validators.len());
         if num_not_connected > 0 {
+            // Cache the total stake for computing percentages.
+            let total_stake = committee.total_stake();
+            let total_stake_f64 = total_stake as f64;
+
             // Collect the committee members.
             let committee_members: HashSet<_> =
                 self.ledger.current_committee().map(|c| c.members().keys().copied().collect()).unwrap_or_default();
@@ -954,7 +958,8 @@ impl<N: Network> Gateway<N> {
                 .difference(&connected_validator_addresses)
                 .map(|address| {
                     let address_stake = committee.get_stake(*address);
-                    let address_stake_as_percentage = address_stake as f64 / committee.total_stake() as f64 * 100.0;
+                    let address_stake_as_percentage =
+                        if total_stake == 0 { 0.0 } else { address_stake as f64 / total_stake_f64 * 100.0 };
                     debug!(
                         "{}",
                         format!("  Not connected to {address} ({address_stake_as_percentage:.2}% of total stake)")
@@ -964,11 +969,20 @@ impl<N: Network> Gateway<N> {
                 })
                 .sum();
 
-            let not_connected_stake_as_percentage = not_connected_stake as f64 / committee.total_stake() as f64 * 100.0;
+            let not_connected_stake_as_percentage =
+                if total_stake == 0 { 0.0 } else { not_connected_stake as f64 / total_stake_f64 * 100.0 };
             warn!(
                 "Not connected to {num_not_connected} validators {total_validators} ({not_connected_stake_as_percentage:.2}% of total stake not connected)"
             );
-        }
+            #[cfg(feature = "metrics")]
+            {
+                let connected_stake_as_percentage = 100.0 - not_connected_stake_as_percentage;
+                metrics::gauge(metrics::bft::CONNECTED_STAKE, connected_stake_as_percentage);
+            }
+        } else {
+            #[cfg(feature = "metrics")]
+            metrics::gauge(metrics::bft::CONNECTED_STAKE, 100.0);
+        };
 
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
             // Not being connected to a quorum of validators is begning during startup.
