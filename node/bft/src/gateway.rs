@@ -70,6 +70,7 @@ use snarkvm::{
     prelude::{Address, Field},
 };
 
+use aleo_std::aleo_ledger_dir;
 use colored::Colorize;
 use futures::SinkExt;
 use indexmap::IndexMap;
@@ -83,6 +84,7 @@ use rand::{
 };
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     future::Future,
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -118,6 +120,9 @@ const IP_BAN_TIME_IN_SECS: u64 = 300;
 
 /// The name of the file containing cached validators.
 const VALIDATOR_CACHE_FILENAME: &str = "cached_gateway_peers";
+
+/// The name of the file containing the dynamic validator whitelist.
+const VALIDATOR_WHITELIST_FILENAME: &str = "dynamic_validator_whitelist";
 
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
@@ -876,6 +881,8 @@ impl<N: Network> Gateway<N> {
         self.handle_min_connected_validators();
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
+        // Update the dynamic validator whitelist.
+        self.update_validator_whitelist();
     }
 
     /// Logs the connected validators.
@@ -1118,6 +1125,30 @@ impl<N: Network> Gateway<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.tcp.banned_peers().remove_old_bans(IP_BAN_TIME_IN_SECS);
+    }
+
+    // Update the dynamic validator whitelist.
+    fn update_validator_whitelist(&self) {
+        // Collect the addresses of all the connected validators.
+        let connected_validator_addrs = self.connected_peers();
+
+        // Create or truncate the existing whitelist file.
+        let mut path = aleo_ledger_dir(N::ID, &self.storage_mode);
+        path.push(VALIDATOR_WHITELIST_FILENAME);
+        let mut whitelist = match fs::File::create(path) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!("Couldn't create the validator whitelist file at {VALIDATOR_WHITELIST_FILENAME}: {e}");
+                return;
+            }
+        };
+
+        // Save all the addresses in a space-delimited format for trivial script extraction.
+        for addr in connected_validator_addrs {
+            if let Err(e) = writeln!(whitelist, "{} {}", addr.ip(), addr.port()) {
+                warn!("Couldn't save {addr} to the validator whitelist: {e}");
+            }
+        }
     }
 }
 
