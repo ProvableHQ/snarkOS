@@ -739,13 +739,13 @@ impl<N: Network> Gateway<N> {
                 Ok(true)
             }
             Event::UnconfirmedTransaction(event) => {
+                // Calculate the transmission checksum.
+                let checksum = event.transaction.to_checksum::<N>()?;
                 // Perform the deferred non-blocking deserialization of the transaction.
                 let transaction = match event.transaction.deserialize().await {
                     Ok(transaction) => transaction,
                     Err(error) => bail!("[UnconfirmedTransaction] {error}"),
                 };
-                // Calculate the transmission checksum.
-                let checksum = Data::<Transaction<N>>::Buffer(transaction.to_bytes_le()?.into()).to_checksum::<N>()?;
                 // Construct the transmission ID.
                 let transmission_id = TransmissionID::Transaction(transaction.id(), checksum);
                 // Construct the transmission.
@@ -1150,10 +1150,8 @@ impl<N: Network> Gateway<N> {
     }
 
     /// Broadcast an unconfirmed transaction so other validators can cache it.
-    pub fn broadcast_unconfirmed_transaction(&self, transaction: Transaction<N>) {
-        let event = Event::UnconfirmedTransaction(crate::events::UnconfirmedTransaction {
-            transaction: Data::Object(transaction),
-        });
+    pub fn broadcast_unconfirmed_transaction(&self, transaction: Data<Transaction<N>>) {
+        let event = Event::UnconfirmedTransaction(crate::events::UnconfirmedTransaction { transaction });
         Transport::broadcast(self, event);
     }
 }

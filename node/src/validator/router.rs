@@ -279,7 +279,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
     async fn unconfirmed_transaction(
         &self,
         _peer_ip: SocketAddr,
-        _serialized: UnconfirmedTransaction<N>,
+        serialized: UnconfirmedTransaction<N>,
         transaction: Transaction<N>,
     ) -> bool {
         // Add the unconfirmed transaction to the memory pool.
@@ -291,13 +291,13 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Validator<N, C> {
         };
 
         // Cache the unconfirmed transaction.
-        if let Err(error) = self.consensus.cache_unconfirmed_transaction(transaction.clone()).await {
+        if let Err(error) = self.consensus.cache_unconfirmed_transaction(transaction).await {
             trace!("[UnconfirmedTransaction] {error}");
             return true; // Maintain the connection.
         };
 
         // Broadcast the unconfirmed transaction so other validators can cache it.
-        self.consensus.bft().primary().gateway().broadcast_unconfirmed_transaction(transaction);
+        self.consensus.bft().primary().gateway().broadcast_unconfirmed_transaction(serialized.transaction);
 
         true
     }
