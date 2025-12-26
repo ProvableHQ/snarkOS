@@ -70,7 +70,6 @@ use snarkvm::{
     prelude::{Address, Field},
 };
 
-use aleo_std::aleo_ledger_dir;
 use colored::Colorize;
 use futures::SinkExt;
 use indexmap::IndexMap;
@@ -84,7 +83,6 @@ use rand::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     future::Future,
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -850,7 +848,7 @@ impl<N: Network> Gateway<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None) {
+        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None, true) {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
@@ -1129,25 +1127,10 @@ impl<N: Network> Gateway<N> {
 
     // Update the dynamic validator whitelist.
     fn update_validator_whitelist(&self) {
-        // Collect the addresses of all the connected validators.
-        let connected_validator_addrs = self.connected_peers();
-
-        // Create or truncate the existing whitelist file.
-        let mut path = aleo_ledger_dir(N::ID, &self.storage_mode);
-        path.push(VALIDATOR_WHITELIST_FILENAME);
-        let mut whitelist = match fs::File::create(path) {
-            Ok(file) => file,
-            Err(e) => {
-                warn!("Couldn't create the validator whitelist file at {VALIDATOR_WHITELIST_FILENAME}: {e}");
-                return;
-            }
-        };
-
-        // Save all the addresses in a space-delimited format for trivial script extraction.
-        for addr in connected_validator_addrs {
-            if let Err(e) = writeln!(whitelist, "{} {}", addr.ip(), addr.port()) {
-                warn!("Couldn't save {addr} to the validator whitelist: {e}");
-            }
+        if let Err(e) =
+            self.save_best_peers(&self.storage_mode, VALIDATOR_WHITELIST_FILENAME, Some(MAX_VALIDATORS_TO_SEND), false)
+        {
+            warn!("Couldn't update the validator whitelist: {e}");
         }
     }
 }
