@@ -4,17 +4,22 @@
 wasm/Cargo.lock
 **/build
 **.history-*
-**.logs-*
 validator-*
 **.bft-storage-*/
 **proptest-regressions/
 **package-lock.json
 **node_modules/
 
+# Devent and CI logs
+**.logs-*/
+
 # Data created when running a node
 **.current-proposal-cache-*
 **.ledger-*
+**.node-data-*
 jwt_secret*.txt
+cached_router_peers
+cached_gateway_peers
 
 # For release upgrde CI
 .ci/release-snarkos
