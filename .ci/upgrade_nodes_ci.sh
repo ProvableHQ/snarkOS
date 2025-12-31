@@ -251,7 +251,7 @@ function start_node() {
   log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin")"
 }
 
-stop_node() {
+function stop_node() {
   local node_index="$1"
   local pid="${PIDS[node_index]:-}"
 
@@ -274,7 +274,7 @@ stop_node() {
   fi
 }
 
-get_latest_height() {
+function get_latest_height() {
   local h
   h=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest" || echo "")
   if is_integer "$h"; then
@@ -284,7 +284,7 @@ get_latest_height() {
   return 1
 }
 
-get_consensus_and_height() {
+function get_consensus_and_height() {
   local cv h
   cv=$(curl -s "http://localhost:3030/v2/$network_name/consensus_version" || echo "")
   h=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest" || echo "")
@@ -292,7 +292,7 @@ get_consensus_and_height() {
 }
 
 # Start a temporary client with $bin just to fetch /version JSON.
-fetch_version_json_from_bin() {
+function fetch_version_json_from_bin() {
   local bin="$1"
   local label="$2"   # for logs
   local version_log="$log_dir/version-${label}.log"
@@ -340,7 +340,7 @@ fetch_version_json_from_bin() {
 }
 
 # Build heights string: for L, we want exactly L entries: 0,5,10,...,5*(L-1)
-build_consensus_heights() {
+function build_consensus_heights() {
   local lcv="$1"
   local step=5
 
@@ -366,7 +366,7 @@ build_consensus_heights() {
 
 # Build heights string for PR when its latest_consensus_version differs from release:
 # same as build_consensus_heights, but last step is +100 instead of +5.
-build_consensus_heights_with_big_last() {
+function build_consensus_heights_with_big_last() {
   local lcv="$1"
   local step=5
 
@@ -403,7 +403,7 @@ build_consensus_heights_with_big_last() {
   echo "$heights"
 }
 
-ci_cargo_install_snarkos() {
+function ci_cargo_install_snarkos() {
   CARGO_PROFILE_RELEASE_LTO=off \
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
   CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
@@ -572,7 +572,8 @@ function wait_for_height_increase_window() {
     elapsed=$((elapsed + interval))
   done
 
-  if (( increased == 1 )); then
+  # Wait multiple blocks in case the previous height was slightly outdated.
+  if (( increased >= 5 )); then
     log "✅ Height increased from $previous_height to $current_height during upgrade window."
     return 0
   else
