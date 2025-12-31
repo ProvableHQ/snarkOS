@@ -36,6 +36,7 @@ EXPECTED_MAX_CONSENSUS_VERSION="${EXPECTED_MAX_CONSENSUS_VERSION:-}"
 WAIT_BETWEEN_UPGRADES="${WAIT_BETWEEN_UPGRADES:-60}"
 
 # Load shared helpers (is_integer, get_network_name, wait_for_nodes, stop_nodes, ...)
+# shellcheck source=utils.sh
 . ./.ci/utils.sh
 
 ########################################
@@ -206,10 +207,12 @@ common_flags=(
   "--dev-num-validators=$total_validators"
 )
 
-# validators trust the clients as peers
+# The set of all clients passed to each validators, so that clients can connect to validators.
+# NOTE: In newer versions of snarkOS, the set of trusted clients is populated automatically through `--dev-num-clients`
+# and this code can be removed eventually.
 trusted_peers=$(generate_trusted_clients "$total_validators" "$total_clients")
 
-start_node() {
+function start_node() {
   local bin="$1"
   local node_index="$2"
   local role="$3"    # "validator" or "client"
@@ -218,7 +221,24 @@ start_node() {
   local flags=( "${common_flags[@]}" "--dev=$node_index" )
 
   if [ "$role" = "validator" ]; then
-    flags+=( --validator "--logfile=$log_file" --peers "$trusted_peers" )
+    # The set of other validators to connect to.
+    # NOTE: In newever versions of snarkOS, the set of peers is populated automatically through `--dev-num-validators`
+    # and this code can be removed evetually. 
+    trusted_validators=""
+    for ((peer_index = 0; peer_index < total_validators; peer_index++)); do
+      if [ "$peer_index" -eq "$node_index" ]; then
+        continue
+      else
+        # append "," if this is not the first trusted validator 
+        if [ -n "$trusted_validators" ]; then
+          trusted_validators+=","
+        fi
+        trusted_validators+="127.0.0.1:$((5000+peer_index))"
+      fi
+    done
+
+    # Validators trust the clients as peers
+    flags+=( --validator "--logfile=$log_file" "--peers=$trusted_peers" "--validators=$trusted_validators" )
     if [ "$node_index" -eq 0 ]; then
       flags+=( --metrics --no-dev-txs )
     fi
@@ -280,8 +300,8 @@ fetch_version_json_from_bin() {
   require_cmd jq
   require_cmd curl
 
-  log "Starting temporary ${label} snarkos client to fetch version info…"
-  "$bin" start --client --network="$network_id" --dev 0 --nodisplay --logfile="$version_log" &
+  log "Starting temporary ${label} snarkOS node to fetch version info…"
+  "$bin" start --validator "--network=$network_id" --dev 0 --nodisplay --logfile="$version_log" &
   local pid=$!
 
   local json=""
@@ -392,7 +412,7 @@ ci_cargo_install_snarkos() {
 }
 
 # Probe release + PR binaries, compute heights, and rebuild both with those heights.
-derive_consensus_env_from_version() {
+function derive_consensus_env_from_version() {
   require_cmd jq
 
   local json_release=""
@@ -469,7 +489,7 @@ derive_consensus_env_from_version() {
   log "Exported CONSENSUS_VERSION_HEIGHTS=${CONSENSUS_VERSION_HEIGHTS}"
 }
 
-wait_for_highest_consensus_version() {
+function wait_for_highest_consensus_version() {
   local timeout="${1:-900}"   # default 15 min
   local interval="${2:-10}"
   local elapsed=0
@@ -528,7 +548,7 @@ wait_for_highest_consensus_version() {
   fi
 }
 
-wait_for_height_increase_window() {
+function wait_for_height_increase_window() {
   local previous_height="$1"
   local duration="${2:-60}"
   local interval="${3:-5}"
@@ -584,12 +604,14 @@ for ((node_index = 0; node_index < total_validators + total_clients; node_index+
   "$SNARKOS_RELEASE_BIN" clean "--dev=$node_index" "--network=$network_id"
 done
 
+log "Starting $total_validators validator nodes with release binary..."
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
   log_file="$log_dir/validator-$validator_index.log"
   start_node "$SNARKOS_RELEASE_BIN" "$validator_index" "validator" "$log_file"
   sleep 1
 done
 
+log "Starting $total_clients client nodes with release binary..."
 for ((client_index = 0; client_index < total_clients; client_index++)); do
   node_index=$((client_index + total_validators))
   log_file="$log_dir/client-$client_index.log"
