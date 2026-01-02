@@ -50,8 +50,8 @@ impl Clean {
     /// Cleans the snarkOS node storage.
     pub fn parse(self) -> Result<String> {
         // Remove the specified node configuration from storage.
-        let node_config_dir = parse_node_data_dir(&self.node_data_path, self.network, self.dev)?;
-        println!("{}", Self::remove_node_data(&node_config_dir)?);
+        let node_data_dir = parse_node_data_dir(&self.node_data_path, self.network, self.dev)?;
+        println!("{}", Self::remove_node_data(&node_data_dir)?);
 
         // Remove the specified ledger from storage.
         let storage_mode = match self.path {

@@ -57,14 +57,14 @@ impl NodeDataDir {
 
     pub fn new_test(dev: Option<u16>) -> Self {
         if let Some(dev) = dev {
-            Self { path: PathBuf::from(format!(".node-config-test-{dev}")) }
+            Self { path: PathBuf::from(format!(".node-data-test-{dev}")) }
         } else {
-            Self { path: PathBuf::from(".node-config-test") }
+            Self { path: PathBuf::from(".node-data-test") }
         }
     }
 
     pub fn new_development(dev: u16) -> Self {
-        Self { path: PathBuf::from(format!(".node-config-{dev}")) }
+        Self { path: PathBuf::from(format!(".node-data-{dev}")) }
     }
 
     pub fn path(&self) -> &Path {

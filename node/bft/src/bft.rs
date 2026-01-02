@@ -101,7 +101,7 @@ impl<N: Network> BFT<N> {
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
-        node_config_dir: NodeDataDir,
+        node_data_dir: NodeDataDir,
         dev: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
@@ -113,7 +113,7 @@ impl<N: Network> BFT<N> {
                 ip,
                 trusted_validators,
                 trusted_peers_only,
-                node_config_dir,
+                node_data_dir,
                 dev,
             )?,
             dag: Default::default(),

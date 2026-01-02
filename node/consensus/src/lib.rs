@@ -125,7 +125,7 @@ impl<N: Network> Consensus<N> {
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
         storage_mode: StorageMode,
-        node_config_dir: NodeDataDir,
+        node_data_dir: NodeDataDir,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
     ) -> Result<Self> {
@@ -144,7 +144,7 @@ impl<N: Network> Consensus<N> {
             ip,
             trusted_validators,
             trusted_peers_only,
-            node_config_dir,
+            node_data_dir,
             dev,
         )?;
         // Create a new instance of Consensus.
