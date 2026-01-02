@@ -500,7 +500,7 @@ mod tests {
         let node = SocketAddr::from_str("0.0.0.0:4130").unwrap();
         let rest = SocketAddr::from_str("0.0.0.0:3030").unwrap();
         let storage_mode = StorageMode::Development(0);
-        let node_data_dir = NodeDataDir::new_development(0);
+        let node_data_dir = NodeDataDir::new_development(CurrentNetwork::ID, 0);
         let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.

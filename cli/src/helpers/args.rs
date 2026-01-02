@@ -88,14 +88,7 @@ pub(crate) fn parse_node_data_dir(
     }
 
     let config = if let Some(dev) = dev {
-        // Development mode
-        let mut path = match std::env::current_dir() {
-            Ok(current_dir) => current_dir,
-            _ => PathBuf::from(env!("CARGO_MANIFEST_DIR")),
-        };
-
-        path.push(format!(".node-data-{network}-{dev}"));
-        NodeDataDir::new(path)
+        NodeDataDir::new_development(network, dev)
     } else {
         // Production mode
         let path = aleo_dir().join("storage").join(format!("node-data-{network}"));

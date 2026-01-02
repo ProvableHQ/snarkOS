@@ -51,10 +51,12 @@ pub struct NodeDataDir {
 }
 
 impl NodeDataDir {
+    /// Initializes the node data directory the given path.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
+    /// Initializes the node data directory to a location suitable for unit/integration tests.
     pub fn new_test(dev: Option<u16>) -> Self {
         if let Some(dev) = dev {
             Self { path: PathBuf::from(format!(".node-data-test-{dev}")) }
@@ -63,8 +65,15 @@ impl NodeDataDir {
         }
     }
 
-    pub fn new_development(dev: u16) -> Self {
-        Self { path: PathBuf::from(format!(".node-data-{dev}")) }
+    /// Initializes the node data directory path to the development path for the specified network and node index.
+    pub fn new_development(network: u16, dev: u16) -> Self {
+        // Use the current directory as the base path, and fall back to the
+        // cargo manifest directory if the current directory is not available.
+        let path = std::env::current_dir()
+            .unwrap_or(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+            .join(format!(".node-data-{network}-{dev}"));
+
+        Self::new(path)
     }
 
     pub fn path(&self) -> &Path {
