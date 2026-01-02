@@ -856,7 +856,7 @@ impl Start {
 
         // Determine the old paths used for node configuration files.
         let old_router_cache_path = ledger_dir.join(node_data::LEGACY_ROUTER_PEER_CACHE_FILE);
-        let old_gatway_cache_path = ledger_dir.join(node_data::LEGACY_GATWAY_PEER_CACHE_FILE);
+        let old_gateway_cache_path = ledger_dir.join(node_data::LEGACY_GATEWAY_PEER_CACHE_FILE);
         let old_proposal_cache_path = ledger_dir.join(node_data::legacy_current_proposal_cache_file(N::ID, dev));
         let old_jwt_secret_path = ledger_parent_dir.join(node_data::jwt_secret_file(address));
 
@@ -868,10 +868,10 @@ impl Start {
                     .with_context(|| "Failed to migrate node data file")?;
             }
 
-            if old_gatway_cache_path.exists() {
+            if old_gateway_cache_path.exists() {
                 let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
-                info!("Migrating node data file \"{old_gatway_cache_path:?}\" to \"{new_gateway_cache_path:?}\"");
-                fs::rename(old_gatway_cache_path, new_gateway_cache_path)
+                info!("Migrating node data file \"{old_gateway_cache_path:?}\" to \"{new_gateway_cache_path:?}\"");
+                fs::rename(old_gateway_cache_path, new_gateway_cache_path)
                     .with_context(|| "Failed to migrate node data file")?;
             }
 
@@ -896,10 +896,10 @@ impl Start {
                 );
             }
 
-            if old_gatway_cache_path.exists() {
+            if old_gateway_cache_path.exists() {
                 let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
                 bail!(
-                    "Please migrate the node data file \"{old_gatway_cache_path:?}\" to \"{new_gateway_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                    "Please migrate the node data file \"{old_gateway_cache_path:?}\" to \"{new_gateway_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
                 );
             }
 

@@ -16,9 +16,9 @@
 use std::path::{Path, PathBuf};
 
 /// The filename of the gateway peer cache.
-pub const GATWAY_PEER_CACHE_FILE: &str = "gateway-peer-cache";
+pub const GATEWAY_PEER_CACHE_FILE: &str = "gateway-peer-cache";
 /// The old filename of the gateway peer cache.
-pub const LEGACY_GATWAY_PEER_CACHE_FILE: &str = "cached_gateway_peers";
+pub const LEGACY_GATEWAY_PEER_CACHE_FILE: &str = "cached_gateway_peers";
 
 /// The filename of the router peer cache.
 pub const ROUTER_PEER_CACHE_FILE: &str = "router-peer-cache";
@@ -89,7 +89,7 @@ impl NodeDataDir {
     }
 
     pub fn gateway_peer_cache_path(&self) -> PathBuf {
-        self.path.join(GATWAY_PEER_CACHE_FILE)
+        self.path.join(GATEWAY_PEER_CACHE_FILE)
     }
 
     pub fn validator_whitelist_path(&self) -> PathBuf {

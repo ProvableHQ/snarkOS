@@ -842,7 +842,7 @@ impl<N: Network> Gateway<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.node_data_dir.gateway_peer_cache_path(), None, true) {
+        if let Err(e) = self.save_best_peers(&self.node_data_dir.gateway_peer_cache_path(), None, false) {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
