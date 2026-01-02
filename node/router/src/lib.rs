@@ -276,7 +276,9 @@ impl<N: Network> Router<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the router...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.node_data_dir.router_peer_cache_path(), Some(MAX_PEERS_TO_SEND)) {
+        if let Err(e) =
+            self.save_best_peers(&self.node_data_dir.router_peer_cache_path(), Some(MAX_PEERS_TO_SEND), true)
+        {
             warn!("Failed to persist best peers to disk: {e}");
         }
         // Abort the tasks.

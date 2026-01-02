@@ -842,7 +842,7 @@ impl<N: Network> Gateway<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.node_data_dir.gateway_peer_cache_path(), None) {
+        if let Err(e) = self.save_best_peers(&self.node_data_dir.gateway_peer_cache_path(), None, true) {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
@@ -873,6 +873,8 @@ impl<N: Network> Gateway<N> {
         self.handle_min_connected_validators();
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
+        // Update the dynamic validator whitelist.
+        self.update_validator_whitelist();
     }
 
     /// Logs the connected validators.
@@ -1115,6 +1117,15 @@ impl<N: Network> Gateway<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.tcp.banned_peers().remove_old_bans(IP_BAN_TIME_IN_SECS);
+    }
+
+    // Update the dynamic validator whitelist.
+    fn update_validator_whitelist(&self) {
+        if let Err(e) =
+            self.save_best_peers(&self.node_data_dir.validator_whitelist_path(), Some(MAX_VALIDATORS_TO_SEND), false)
+        {
+            warn!("Couldn't update the validator whitelist: {e}");
+        }
     }
 }
 

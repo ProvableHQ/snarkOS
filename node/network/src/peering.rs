@@ -488,7 +488,12 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Preserve the peers who have the greatest known block heights, and the lowest
     /// number of registered network failures.
-    fn save_best_peers(&self, path: &Path, max_entries: Option<usize>) -> Result<()> {
+    ///
+    /// # Arguments
+    /// * `path` - The path to the file to save the peers to.
+    /// * `max_entries` - The maximum number of peers to save (if there are more, the extra ones are truncated).
+    /// * `store_ports` - Whether to store the ports of the peers, or just the IP addresses.
+    fn save_best_peers(&self, path: &Path, max_entries: Option<usize>, store_ports: bool) -> Result<()> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
 
@@ -512,7 +517,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // Dump the connected peers to a file.
         let mut file = fs::File::create(path)?;
         for peer in peers {
-            writeln!(file, "{}", peer.listener_addr())?;
+            writeln!(
+                file,
+                "{}",
+                if store_ports { peer.listener_addr().to_string() } else { peer.listener_addr().ip().to_string() }
+            )?;
         }
 
         Ok(())
