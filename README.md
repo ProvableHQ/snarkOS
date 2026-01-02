@@ -272,7 +272,7 @@ APrivateKey1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 Note, using the `--raw` flag with the command will sign plaintext messages as bytes rather than [Aleo values](https://developer.aleo.org/guides/aleo/language#data-types-and-values) such as `1u8` or `100field`.
 
-### 5. What the different between `node-data` and `ledger`?
+### 5. What is the different between `node-data` and `ledger`?
 Ledger contains only public ledger information, while `node-data` contains information specific to the node that created it. The latter should not be shared with untrusted sources, and, for validators, contains data required to participate in consensus.
 
 ### 6. At startup I get an error telling me the nodes still uses the old storage format. What should I do?

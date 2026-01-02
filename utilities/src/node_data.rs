@@ -48,39 +48,27 @@ pub fn legacy_current_proposal_cache_file(network: u16, dev: Option<u16>) -> Pat
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeDataDir {
     path: PathBuf,
-
-    /// Is the node a development node?
-    /// This will eventually be removed when the development storage format is no longer supported.
-    dev: Option<u16>,
 }
 
 impl NodeDataDir {
     pub fn new(path: PathBuf) -> Self {
-        Self { path, dev: None }
+        Self { path }
     }
 
     pub fn new_test(dev: Option<u16>) -> Self {
         if let Some(dev) = dev {
-            Self { path: PathBuf::from(format!(".node-config-test-{dev}")), dev: Some(dev) }
+            Self { path: PathBuf::from(format!(".node-config-test-{dev}")) }
         } else {
-            Self { path: PathBuf::from(".node-config-test"), dev: None }
+            Self { path: PathBuf::from(".node-config-test") }
         }
     }
 
     pub fn new_development(dev: u16) -> Self {
-        Self { path: PathBuf::from(format!(".node-config-{dev}")), dev: Some(dev) }
+        Self { path: PathBuf::from(format!(".node-config-{dev}")) }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    pub fn is_dev(&self) -> bool {
-        self.dev.is_some()
-    }
-
-    pub fn dev(&self) -> Option<u16> {
-        self.dev
     }
 
     /// The location to store the previous peer cache.

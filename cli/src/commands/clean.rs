@@ -31,9 +31,11 @@ pub struct Clean {
     /// Specify the network to remove from storage (0 = mainnet, 1 = testnet, 2 = canary)
     #[clap(default_value_t=MainnetV0::ID, long = "network", value_parser = clap::value_parser!(u16).range((MainnetV0::ID as i64)..=(CanaryV0::ID as i64)))]
     pub network: u16,
+
     /// Enables development mode, specify the unique ID of the local node to clean.
     #[clap(long)]
     pub dev: Option<u16>,
+
     /// Specify the path to a directory containing the ledger. Overrides the default path (also for
     /// dev).
     #[clap(long = "path")]
@@ -41,14 +43,14 @@ pub struct Clean {
 
     /// Sets a custom path for the node configuration.
     #[clap(long)]
-    pub node_config_dir: Option<PathBuf>,
+    pub node_data_path: Option<PathBuf>,
 }
 
 impl Clean {
     /// Cleans the snarkOS node storage.
     pub fn parse(self) -> Result<String> {
         // Remove the specified node configuration from storage.
-        let node_config_dir = parse_node_data_dir(&self.node_config_dir, self.network, self.dev)?;
+        let node_config_dir = parse_node_data_dir(&self.node_data_path, self.network, self.dev)?;
         println!("{}", Self::remove_node_data(&node_config_dir)?);
 
         // Remove the specified ledger from storage.
