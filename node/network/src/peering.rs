@@ -491,7 +491,13 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Preserve the peers who have the greatest known block heights, and the lowest
     /// number of registered network failures.
-    fn save_best_peers(&self, storage_mode: &StorageMode, filename: &str, max_entries: Option<usize>) -> Result<()> {
+    fn save_best_peers(
+        &self,
+        storage_mode: &StorageMode,
+        filename: &str,
+        max_entries: Option<usize>,
+        store_ports: bool,
+    ) -> Result<()> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
 
@@ -517,7 +523,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         path.push(filename);
         let mut file = fs::File::create(path)?;
         for peer in peers {
-            writeln!(file, "{}", peer.listener_addr())?;
+            writeln!(
+                file,
+                "{}",
+                if store_ports { peer.listener_addr().to_string() } else { peer.listener_addr().ip().to_string() }
+            )?;
         }
 
         Ok(())

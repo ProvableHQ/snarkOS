@@ -119,6 +119,9 @@ const IP_BAN_TIME_IN_SECS: u64 = 300;
 /// The name of the file containing cached validators.
 const VALIDATOR_CACHE_FILENAME: &str = "cached_gateway_peers";
 
+/// The name of the file containing the dynamic validator whitelist.
+const VALIDATOR_WHITELIST_FILENAME: &str = "dynamic_validator_whitelist";
+
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
 #[async_trait]
@@ -874,7 +877,7 @@ impl<N: Network> Gateway<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None) {
+        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None, true) {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
@@ -905,6 +908,8 @@ impl<N: Network> Gateway<N> {
         self.handle_min_connected_validators();
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
+        // Update the dynamic validator whitelist.
+        self.update_validator_whitelist();
     }
 
     /// Logs the connected validators.
@@ -1153,6 +1158,15 @@ impl<N: Network> Gateway<N> {
     pub fn broadcast_unconfirmed_transaction(&self, transaction: Data<Transaction<N>>) {
         let event = Event::UnconfirmedTransaction(crate::events::UnconfirmedTransaction { transaction });
         Transport::broadcast(self, event);
+    }
+
+    // Update the dynamic validator whitelist.
+    fn update_validator_whitelist(&self) {
+        if let Err(e) =
+            self.save_best_peers(&self.storage_mode, VALIDATOR_WHITELIST_FILENAME, Some(MAX_VALIDATORS_TO_SEND), false)
+        {
+            warn!("Couldn't update the validator whitelist: {e}");
+        }
     }
 }
 
