@@ -17,6 +17,7 @@ use crate::{LedgerService, fmt_id};
 use snarkvm::{
     ledger::{
         Block,
+        CheckBlockError,
         PendingBlock,
         Transaction,
         committee::Committee,
@@ -213,11 +214,15 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         Ok(())
     }
 
-    fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+    fn check_block_subdag(
+        &self,
+        _block: Block<N>,
+        _prefix: &[PendingBlock<N>],
+    ) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>> {
         unimplemented!();
     }
 
-    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>> {
+    fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>> {
         unimplemented!();
     }
 

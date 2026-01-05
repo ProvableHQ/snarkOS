@@ -870,7 +870,7 @@ impl<N: Network> Sync<N> {
 
                     return Ok(());
                 } else {
-                    return Err(err);
+                    return Err(err.into());
                 }
             }
         };
