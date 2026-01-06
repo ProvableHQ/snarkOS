@@ -475,10 +475,15 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
     };
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || bincode::deserialize::<T>(&bytes)).await {
-        Ok(Ok(objects)) => Ok(objects),
-        Ok(Err(error)) => bail!("Failed to deserialize {ctx} - {error}"),
-        Err(error) => bail!("Failed to join task for {ctx} - {error}"),
+    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
+        Ok((Ok(objects), _)) => Ok(objects),
+        Ok((Err(error), response_bytes)) => {
+            let bytes_as_string = String::from_utf8_lossy(&response_bytes);
+            bail!("Failed to deserialize {ctx} - {error} - {bytes_as_string}")
+        }
+        Err(error) => {
+            bail!("Failed to join task for {ctx} - {error}")
+        }
     }
 }
 
