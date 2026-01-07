@@ -419,12 +419,9 @@ impl Start {
                 dev < num_validators,
                 "Development validator index is too high (dev={dev}, dev_num_validators={num_validators})",
             );
-        } else {
-            ensure!(
-                dev >= self.dev_num_validators,
-                "Development prover/client index is too low (dev={dev}, dev_num_validators={num_validators})",
-            );
         }
+        // A dev client or prover is allowed to have an index lower than
+        // `dev_num_validators` in order to have a balance at startup.
 
         // Add the dev nodes to the trusted validators.
         if trusted_validators.is_empty() && is_validator {
