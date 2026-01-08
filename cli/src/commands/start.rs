@@ -719,10 +719,21 @@ impl Start {
             },
         };
 
+        // Users may have unintentionally set a custom path for the ledger, but not for the node data.
+        // For validators, we make this an errors, so important files like the proposal cache are stored at the location
+        // exepcted by the node operator.
         if self.node_data.is_some() && !matches!(storage_mode, StorageMode::Custom(_)) {
-            warn!("Custom path set for `--storage`, but not for `--node-data`. The latter will use the default path.");   
+            if node_type == NodeType::Validator {
+                bail!("Custom path set for `--storage`, but not for `--node-data`.")
+            } else {
+                warn!("Custom path set for `--storage`, but not for `--node-data`. The latter will use the default path.");   
+            }
         } else if matches!(storage_mode, StorageMode::Custom(_)) && self.node_data.is_none() {
-            warn!("Custom path set for `--storage`, but `--node-data` is not set. The latter will use the default path.");
+            if node_type == NodeType::Validator {
+                bail!("Custom path set for `--storage`, but `--node-data` is not set.");
+            } else {
+                warn!("Custom path set for `--storage`, but `--node-data` is not set. The latter will use the default path.");
+            }
         }
 
         // Parse the node data directory.
