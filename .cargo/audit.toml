@@ -9,6 +9,8 @@ ignore = [
   "RUSTSEC-2025-0055",
   # TODO remove once `self_update` updates its dependency for `indicatif`.
   "RUSTSEC-2025-0119",
+  # TODO remove once no longer lru 0.12.x is unsound via ratatui; upgrade ratatui when available
+  "RUSTSEC-2026-0002",
   # TODO remove once we migrate away from bincode, or it becomes maintained again.
   "RUSTSEC-2025-0141",
 ]
