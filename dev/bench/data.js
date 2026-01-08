@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767864090058,
+  "lastUpdate": 1767879220441,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -7692,6 +7692,72 @@ window.BENCHMARK_DATA = {
             "value": 1.2,
             "unit": "blocks/s",
             "extra": "total_wait=207s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f9bd768d6d15101be697ce4faa22105d3bd3b865",
+          "message": "Merge pull request #4061 from ProvableHQ/ci/cargo-audit\n\n[Chore] Update ratatui dependency",
+          "timestamp": "2026-01-08T14:03:54+01:00",
+          "tree_id": "36e6f125d5b269340ae648e7d6e916bf92621892",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f9bd768d6d15101be697ce4faa22105d3bd3b865"
+        },
+        "date": 1767879219819,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.424511752267717,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=88.48722648620605, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7295.3049640199815,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.965956926345825, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1005.5826289440679,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7955586910247803, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.72,
+            "unit": "blocks/s",
+            "extra": "total_wait=145s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.004623,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=141, mean_speed=1.080142, max_speed=2.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.58,
+            "unit": "blocks/s",
+            "extra": "total_wait=158s, target_height=250, connect_time=0, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.2,
+            "unit": "blocks/s",
+            "extra": "total_wait=208s, target_height=250"
           }
         ]
       }
