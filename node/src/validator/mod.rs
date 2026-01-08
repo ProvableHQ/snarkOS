@@ -38,12 +38,15 @@ use snarkos_node_tcp::{
 };
 use snarkos_utilities::SignalHandler;
 
-use snarkvm::prelude::{
-    Ledger,
-    Network,
-    block::{Block, Header},
-    puzzle::Solution,
-    store::ConsensusStorage,
+use snarkvm::{
+    prelude::{
+        Ledger,
+        Network,
+        block::{Block, Header},
+        puzzle::Solution,
+        store::ConsensusStorage,
+    },
+    utilities::task::{self, JoinHandle},
 };
 
 use aleo_std::StorageMode;
@@ -54,7 +57,6 @@ use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::task::JoinHandle;
 
 /// A validator is a full node, capable of validating blocks.
 #[derive(Clone)]
@@ -182,8 +184,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Initialize the routing.
         node.initialize_routing().await;
-        // Initialize the notification message loop.
-        node.handles.lock().push(crate::start_notification_message_loop());
 
         // Return the node.
         Ok(node)
@@ -446,7 +446,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     pub fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        self.handles.lock().push(task::spawn(future));
     }
 }
 
