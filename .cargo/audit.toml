@@ -9,4 +9,6 @@ ignore = [
   "RUSTSEC-2025-0055",
   # TODO remove once `self_update` updates its dependency for `indicatif`.
   "RUSTSEC-2025-0119",
+  # TODO remove once we migrate away from bincode, or it becomes maintained again.
+  "RUSTSEC-2025-0141",
 ]

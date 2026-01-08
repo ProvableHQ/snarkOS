@@ -28,7 +28,7 @@ workspace = true
 workspace = true
 
 [dependencies.ratatui]
-version = "0.29"
+version = "0.30"
 
 [dependencies.snarkos-node]
 workspace = true

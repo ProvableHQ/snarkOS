@@ -594,7 +594,7 @@ jobs:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
           command: |
-            cargo install cargo-audit@0.21.2 --locked
+            cargo install cargo-audit@0.22.0 --locked
             cargo audit -D warnings
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
