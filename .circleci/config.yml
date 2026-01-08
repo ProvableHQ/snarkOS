@@ -85,7 +85,7 @@ commands:
           command: |
             # Note: sccache cache is disabled for now
             # it causes longer build times and causes some builds to fail
-    
+
             # echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
             # echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
             # Disable incremental builds so that sccache works as expected
@@ -107,7 +107,7 @@ commands:
           name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -342,6 +342,58 @@ commands:
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
+  run_upgrade_test:
+    description: "Run upgrade test"
+    parameters:
+      workspace_member:
+        type: string
+      cache_key:
+        type: string
+      validators:
+        type: integer
+        default: 4
+      clients:
+        type: integer
+        default: 2
+      network_id:
+        type: integer
+        default: 0
+      min_height:
+        type: integer
+        default: 45
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-snarkos-release-
+      - setup_environment:
+          cache_key: << parameters.cache_key >>
+      - run:
+          name: "Install snarkos"
+          no_output_timeout: 20m
+          command: |
+            export CARGO_TARGET_DIR="$PWD/.ci/target"
+            CARGO_PROFILE_RELEASE_LTO=off \
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
+            CARGO_PROFILE_RELEASE_DEBUG=0 \
+              cargo install --locked --path . --features test_network
+      - run:
+          name: "Run upgrade nodes test"
+          timeout: 30m  # Allow 30 minutes total
+          environment:
+            WAIT_BETWEEN_UPGRADES: "60"
+          command: |
+            ./.ci/upgrade_nodes_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+      - save_cache:
+          key: v1-snarkos-release-
+          paths:
+            - .ci/release-snarkos
+            - .ci/release-snarkos-src
+            - .ci/target
+      - clear_environment:
+          cache_key: << parameters.cache_key >>
+
   run_devnet:
     description: "Run devnet for integration testing"
     parameters:
@@ -533,6 +585,14 @@ jobs:
           workspace_member: .
           cache_key: v4.2.0-rust-1.88.0-devnet-test-cache
 
+  upgrade-test:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - run_upgrade_test:
+          workspace_member: .
+          cache_key: v4.2.0-rust-1.88.0-upgrade-test-cache
+
   # Check crates that do not have any tests individually
   check-other-crates:
     executor: rust-docker
@@ -594,7 +654,7 @@ jobs:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
           command: |
-            cargo install cargo-audit@0.21.2 --locked
+            cargo install cargo-audit@0.22.0 --locked
             cargo audit -D warnings
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
@@ -682,6 +742,12 @@ workflows:
     jobs:
       - devnet-test
 
+  upgrade-workflow:
+    when:
+      equal: [ staging, << pipeline.git.branch >> ]
+    jobs:
+      - upgrade-test
+
   snarkos-workflow:
     jobs:
       - snarkos
@@ -689,6 +755,8 @@ workflows:
       - cli
 
   windows-workflow:
+    when:
+      equal: [ staging, << pipeline.git.branch >> ]
     jobs:
       - verify-windows:
           matrix:
