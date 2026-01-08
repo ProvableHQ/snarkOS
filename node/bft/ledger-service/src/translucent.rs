@@ -20,6 +20,7 @@ use snarkos_utilities::Stoppable;
 use snarkvm::{
     ledger::{
         Block,
+        CheckBlockError,
         Ledger,
         PendingBlock,
         Transaction,
@@ -179,11 +180,15 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         Ok(())
     }
 
-    fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>> {
+    fn check_block_subdag(
+        &self,
+        _block: Block<N>,
+        _prefix: &[PendingBlock<N>],
+    ) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>> {
         unimplemented!();
     }
 
-    fn check_block_content(&self, _block: PendingBlock<N>) -> Result<Block<N>> {
+    fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>> {
         unimplemented!();
     }
 

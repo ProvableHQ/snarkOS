@@ -448,7 +448,10 @@ async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &http
     // Parse the bytes for the string.
     let latest_state_string = match bincode::deserialize::<String>(&bytes) {
         Ok(string) => string,
-        Err(error) => bail!("Failed to deserialize the CDN height response - {error}"),
+        Err(error) => {
+            let bytes_as_string = String::from_utf8_lossy(&bytes);
+            bail!("Failed to deserialize the CDN height response - {error} - {bytes_as_string}")
+        }
     };
     // Parse the string for the tip.
     let tip = match serde_json::from_str::<LatestState>(&latest_state_string) {
@@ -475,10 +478,15 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
     };
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || bincode::deserialize::<T>(&bytes)).await {
-        Ok(Ok(objects)) => Ok(objects),
-        Ok(Err(error)) => bail!("Failed to deserialize {ctx} - {error}"),
-        Err(error) => bail!("Failed to join task for {ctx} - {error}"),
+    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
+        Ok((Ok(objects), _)) => Ok(objects),
+        Ok((Err(error), response_bytes)) => {
+            let bytes_as_string = String::from_utf8_lossy(&response_bytes);
+            bail!("Failed to deserialize {ctx} - {error} - {bytes_as_string}")
+        }
+        Err(error) => {
+            bail!("Failed to join task for {ctx} - {error}")
+        }
     }
 }
 

@@ -9,6 +9,14 @@ validator-*
 **proptest-regressions/
 **package-lock.json
 **node_modules/
+
+# Devent and CI logs
+**.logs-*/
+
+# Data created when running a node
+**.current-proposal-cache-*
+**.ledger-*
+**.node-data-*
 jwt_secret*.txt
 
 # Files created by a running snarkOS node

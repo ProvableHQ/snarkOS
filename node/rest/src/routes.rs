@@ -108,7 +108,7 @@ struct SyncStatus<'a> {
 impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// GET /<network>/version
     pub(crate) async fn get_version() -> ErasedJson {
-        ErasedJson::pretty(VersionInfo::get())
+        ErasedJson::pretty(VersionInfo::get::<N>())
     }
 
     /// Get /<network>/consensus_version
