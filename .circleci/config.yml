@@ -743,10 +743,15 @@ workflows:
       - devnet-test
 
   upgrade-workflow:
-    when:
-      equal: [ staging, << pipeline.git.branch >> ]
     jobs:
-      - upgrade-test
+      - upgrade-test:
+          filters:
+            branches:
+              only:
+                - canary
+                - testnet
+                - mainnet
+                - staging
 
   snarkos-workflow:
     jobs:
@@ -755,10 +760,15 @@ workflows:
       - cli
 
   windows-workflow:
-    when:
-      equal: [ staging, << pipeline.git.branch >> ]
     jobs:
       - verify-windows:
+          filters:
+            branches:
+              only:
+                - canary
+                - testnet
+                - mainnet
+                - staging
           matrix:
             parameters:
               workspace_member: [
