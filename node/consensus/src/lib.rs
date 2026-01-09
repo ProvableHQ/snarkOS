@@ -42,6 +42,7 @@ use snarkos_node_bft::{
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_bft_storage_service::BFTPersistentStorage;
 use snarkos_node_sync::{BlockSync, Ping};
+use snarkos_utilities::NodeDataDir;
 
 use snarkvm::{
     ledger::{
@@ -124,6 +125,7 @@ impl<N: Network> Consensus<N> {
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
     ) -> Result<Self> {
@@ -142,7 +144,7 @@ impl<N: Network> Consensus<N> {
             ip,
             trusted_validators,
             trusted_peers_only,
-            storage_mode,
+            node_data_dir,
             dev,
         )?;
         // Create a new instance of Consensus.

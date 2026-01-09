@@ -23,7 +23,6 @@ use crate::{
 
 use snarkos_account::Account;
 use snarkos_node_network::{NodeType, PeerPoolHandling};
-
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
@@ -36,7 +35,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{SignalHandler, Stoppable};
+use snarkos_utilities::{NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::{
     ledger::narwhal::Data,
@@ -49,7 +48,6 @@ use snarkvm::{
     synthesizer::VM,
 };
 
-use aleo_std::StorageMode;
 use anyhow::Result;
 use colored::Colorize;
 use core::{marker::PhantomData, time::Duration};
@@ -104,7 +102,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
-        storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
         signal_handler: Arc<SignalHandler>,
@@ -121,7 +119,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             trusted_peers_only,
-            storage_mode,
+            node_data_dir,
             dev.is_some(),
         )
         .await?;

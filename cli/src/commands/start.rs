@@ -13,7 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::helpers::{args::network_id_parser, dev::*};
+use crate::helpers::{
+    args::{network_id_parser, parse_node_data_dir},
+    dev::*,
+};
 
 use snarkos_account::Account;
 use snarkos_display::Display;
@@ -24,7 +27,7 @@ use snarkos_node::{
     rest::DEFAULT_REST_PORT,
     router::DEFAULT_NODE_PORT,
 };
-use snarkos_utilities::SignalHandler;
+use snarkos_utilities::{NodeDataDir, SignalHandler, jwt_secret_file, node_data};
 
 use snarkvm::{
     console::{
@@ -42,7 +45,7 @@ use snarkvm::{
     utilities::to_bytes_le,
 };
 
-use aleo_std::StorageMode;
+use aleo_std::{StorageMode, aleo_ledger_dir};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use clap::Parser;
@@ -52,9 +55,11 @@ use indexmap::IndexMap;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 use serde::{Deserialize, Serialize};
+
 use std::{
+    fs,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::{
@@ -232,10 +237,20 @@ pub struct Start {
     #[clap(long, requires = "metrics")]
     pub metrics_ip: Option<SocketAddr>,
 
-    /// Specify the path to a directory containing the storage database for the ledger.
+    /// Specify the directory that holds all ledger data, e.g., blocks and transactions.
     /// This flag overrides the default path, even when `--dev` is set.
-    #[clap(long)]
-    pub storage: Option<PathBuf>,
+    ///
+    /// The old name for this flag (`--storage`) is DEPRECATED and will eventually be removed.
+    #[clap(long, verbatim_doc_comment, alias = "storage")]
+    pub ledger_storage: Option<PathBuf>,
+
+    /// Specify the directory that holds node-specific data, that is not part of the global ledger.
+    /// This flag overrides the default path, even when `--dev` is set.
+    ///
+    /// That folder may contain sensitive data, such as the JWT secret, and should not be shared with untrusted parties.
+    /// For validators, it also contains the latest proposal cache, which is required to participate in consensus.
+    #[clap(long, verbatim_doc_comment)]
+    pub node_data_storage: Option<PathBuf>,
 
     /// Enables the node to prefetch initial blocks from a CDN
     #[clap(long, conflicts_with = "nocdn")]
@@ -273,6 +288,10 @@ pub struct Start {
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
     #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
+
+    /// If the flag is set, the node will attempt to automatically migrate the node data to the new format.
+    #[clap(long)]
+    pub auto_migrate_node_data: bool,
 }
 
 impl Start {
@@ -485,6 +504,11 @@ impl Start {
         Ok(())
     }
 
+    /// Returns the path to where the JWT secret for the node is stored.
+    fn jwt_secret_path<N: Network>(node_data_dir: &NodeDataDir, address: &Address<N>) -> PathBuf {
+        node_data_dir.path().join(jwt_secret_file(address))
+    }
+
     /// Returns an alternative genesis block if the node is in development mode.
     /// Otherwise, returns the actual genesis block.
     fn parse_genesis<N: Network>(&self) -> Result<Block<N>> {
@@ -684,7 +708,7 @@ impl Start {
         };
 
         // Initialize the storage mode.
-        let storage_mode = match &self.storage {
+        let storage_mode = match &self.ledger_storage {
             Some(path) => StorageMode::Custom(path.clone()),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),
@@ -692,13 +716,42 @@ impl Start {
             },
         };
 
-        // Helper function to store the JWT secret.
-        let store_jwt_secret = |network: u16, storage_mode: &StorageMode, address: &Address<N>, token: String| -> Result<()> {
-            let mut jwt_secret_path = aleo_std::aleo_ledger_dir(network, storage_mode);
-            std::fs::create_dir_all(&jwt_secret_path)?;
-            jwt_secret_path.push(format!("jwt_secret_{address}.txt"));
-            Ok(std::fs::write(jwt_secret_path, token)?)
-        };
+        // Users may have unintentionally set a custom path for the ledger, but not for the node data.
+        // For validators, we make this an errors, so important files like the proposal cache are stored at the location
+        // exepcted by the node operator.
+        if self.node_data_storage.is_some() && !matches!(storage_mode, StorageMode::Custom(_)) {
+            if node_type == NodeType::Validator {
+                bail!("Custom path set for `--node-data-storage`, but not for `--ledger-storage`.")
+            } else {
+                warn!("Custom path set for `--node-data-storage`, but not for `--ledger-storage`. The latter will use the default path.");   
+            }
+        } else if matches!(storage_mode, StorageMode::Custom(_)) && self.node_data_storage.is_none() {
+            if node_type == NodeType::Validator {
+                bail!("Custom path set for `--ledger-storage`, but not for `--node-data-storage`.");
+            } else {
+                warn!("Custom path set for `--ledger-storage`, but not for `--node-data-storage`. The latter will use the default path.");
+            }
+        }
+
+        // Parse the node data directory.
+        let node_data_dir = parse_node_data_dir(&self.node_data_storage, N::ID, self.dev).with_context(|| "Failed to setup node configuration directory")?;
+
+        // Make sure the directory exists before continue.
+        let data_path = node_data_dir.path();
+        if !data_path.exists() {
+            info!("Creating directore for node data storage at {data_path:?}");
+            std::fs::create_dir_all(data_path)
+                .with_context(|| format!("Failed to create directory for node data storage at {data_path:?}"))?
+        } else if !data_path.is_dir() {
+            bail!("Node data storage location at {data_path:?} is not a directory");
+        } else {
+            debug!("Using existing directory at {data_path:?} for node data storage");
+        }
+
+        // Checks for the old storage format and prints instructions to migrate.
+        // We perform this check after creating the node data directory, so that migrating the data is easier.
+        Self::check_for_old_storage_format(&aleo_ledger_dir(N::ID, &storage_mode), &account.address(), &node_data_dir, self.dev, self.auto_migrate_node_data).with_context(|| "Node still uses the old storage format.")?;
+
         // Compute the optional REST server JWT.
         let jwt_token = if self.nojwt {
             None
@@ -711,14 +764,16 @@ impl Start {
             // Create the JWT token based on the given secret.
             let jwt_token = snarkos_node_rest::Claims::new(account.address(), Some(jwt_bytes), self.jwt_timestamp).to_jwt_string()?;
             // Store the JWT secret to a file.
-            store_jwt_secret(self.network, &storage_mode, &account.address(), jwt_token.clone())?;
+            let path = Self::jwt_secret_path(&node_data_dir, &account.address());
+            std::fs::write(path, &jwt_token)?;
             // Return the JWT token for optional printing.
             Some(jwt_token)
         } else {
             // Create a random JWT token.
             let jwt_token = snarkos_node_rest::Claims::new(account.address(), None, self.jwt_timestamp).to_jwt_string()?;
             // Store the JWT secret to a file.
-            store_jwt_secret(self.network, &storage_mode, &account.address(), jwt_token.clone())?;
+            let path = Self::jwt_secret_path(&node_data_dir, &account.address());
+            std::fs::write(path, &jwt_token)? ;
             // Return the JWT token for optional printing.
             Some(jwt_token)
         };
@@ -778,9 +833,9 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
-            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, storage_mode, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
@@ -789,6 +844,88 @@ impl Start {
         }
 
         node.wait_for_signals(&signal_handler).await;
+        Ok(())
+    }
+
+    /// Check if the node is still using the old storage format,
+    /// in which case we print an error and exit.
+    /// We detect this by checking if
+    /// - a peer-cache file exists inside the ledger directory,
+    /// - a current-proposal-cache file exists at the parent directory of the ledger directory
+    /// - a jwt_secret_*.txt file exists at the parent directory of the ledger directory
+    fn check_for_old_storage_format<N: Network>(
+        ledger_dir: &Path,
+        address: &Address<N>,
+        node_data_dir: &NodeDataDir,
+        dev: Option<u16>,
+        auto_migrate: bool,
+    ) -> Result<()> {
+        let ledger_parent_dir = ledger_dir.parent().unwrap();
+
+        // Determine the old paths used for node configuration files.
+        let old_router_cache_path = ledger_dir.join(node_data::LEGACY_ROUTER_PEER_CACHE_FILE);
+        let old_gateway_cache_path = ledger_dir.join(node_data::LEGACY_GATEWAY_PEER_CACHE_FILE);
+        let old_proposal_cache_path = ledger_dir.join(node_data::legacy_current_proposal_cache_file(N::ID, dev));
+        let old_jwt_secret_path = ledger_parent_dir.join(node_data::jwt_secret_file(address));
+
+        if auto_migrate {
+            if old_router_cache_path.exists() {
+                let new_router_cache_path = node_data_dir.router_peer_cache_path();
+                info!("Migrating node data file \"{old_router_cache_path:?}\" to \"{new_router_cache_path:?}\"");
+                fs::rename(old_router_cache_path, new_router_cache_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
+
+            if old_gateway_cache_path.exists() {
+                let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
+                info!("Migrating node data file \"{old_gateway_cache_path:?}\" to \"{new_gateway_cache_path:?}\"");
+                fs::rename(old_gateway_cache_path, new_gateway_cache_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
+
+            if old_proposal_cache_path.exists() {
+                let new_proposal_cache_path = node_data_dir.current_proposal_cache_path();
+                info!("Migrating node data file \"{old_proposal_cache_path:?}\" to \"{new_proposal_cache_path:?}\"");
+                fs::rename(old_proposal_cache_path, new_proposal_cache_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
+
+            if old_jwt_secret_path.exists() {
+                let new_jwt_secret_path = node_data_dir.jwt_secret_path(&address);
+                info!("Migrating node data file \"{old_jwt_secret_path:?}\" to \"{new_jwt_secret_path:?}\"");
+                fs::rename(old_jwt_secret_path, new_jwt_secret_path)
+                    .with_context(|| "Failed to migrate node data file")?;
+            }
+        } else {
+            if old_router_cache_path.exists() {
+                let new_router_cache_path = node_data_dir.router_peer_cache_path();
+                bail!(
+                    "Please migrate the node data file \"{old_router_cache_path:?}\" to \"{new_router_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+
+            if old_gateway_cache_path.exists() {
+                let new_gateway_cache_path = node_data_dir.gateway_peer_cache_path();
+                bail!(
+                    "Please migrate the node data file \"{old_gateway_cache_path:?}\" to \"{new_gateway_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+
+            if old_proposal_cache_path.exists() {
+                let new_proposal_cache_path = node_data_dir.current_proposal_cache_path();
+                bail!(
+                    "Please migrate the node data file \"{old_proposal_cache_path:?}\" to \"{new_proposal_cache_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+
+            if old_jwt_secret_path.exists() {
+                let new_jwt_secret_path = node_data_dir.jwt_secret_path(&address);
+                bail!(
+                    "Please migrate the node data file \"{old_jwt_secret_path:?}\" to \"{new_jwt_secret_path:?}\" before restarting, or restart with `--auto-migrate-node-data`."
+                );
+            }
+        }
+
         Ok(())
     }
 

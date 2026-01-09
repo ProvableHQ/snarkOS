@@ -22,6 +22,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+
 use tokio::sync::oneshot;
 
 use tracing::{debug, error, trace};
@@ -62,7 +63,7 @@ impl Stoppable for SimpleStoppable {
 /// Helper for signal handling that implements the `Stoppable` trait.
 ///
 /// This struct will set itself to "stopped" as soon as the process receives Ctrl+C.
-/// It can also be manually stopped (e.g., when the node encounters a fatal error).
+/// It can also be manually stopped (e.g., when the node encounters a fatal error)
 pub struct SignalHandler {
     /// This sender is used to notify a waiting task that the node has been stopped.
     /// If this is `None`, the node is in the process of shutting down.

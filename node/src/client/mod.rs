@@ -37,7 +37,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{SignalHandler, Stoppable};
+use snarkos_utilities::{NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::{
     console::network::Network,
@@ -143,6 +143,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
         signal_handler: Arc<SignalHandler>,
@@ -167,7 +168,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             trusted_peers_only,
-            storage_mode.clone(),
+            node_data_dir.clone(),
             dev.is_some(),
         )
         .await?;

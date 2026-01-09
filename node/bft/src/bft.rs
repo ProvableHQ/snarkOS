@@ -28,9 +28,12 @@ use crate::{
         now,
     },
 };
+
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_sync::{BlockSync, Ping};
+use snarkos_utilities::NodeDataDir;
+
 use snarkvm::{
     console::account::Address,
     ledger::{
@@ -43,7 +46,6 @@ use snarkvm::{
     utilities::flatten_error,
 };
 
-use aleo_std::StorageMode;
 use anyhow::Context;
 use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
@@ -99,7 +101,7 @@ impl<N: Network> BFT<N> {
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
-        storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         dev: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
@@ -111,7 +113,7 @@ impl<N: Network> BFT<N> {
                 ip,
                 trusted_validators,
                 trusted_peers_only,
-                storage_mode,
+                node_data_dir,
                 dev,
             )?,
             dag: Default::default(),
@@ -994,6 +996,8 @@ mod tests {
     use snarkos_node_bft_ledger_service::{LedgerService, MockLedgerService};
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkos_node_sync::BlockSync;
+    use snarkos_utilities::NodeDataDir;
+
     use snarkvm::{
         console::account::{Address, PrivateKey},
         ledger::{
@@ -1013,7 +1017,6 @@ mod tests {
         utilities::TestRng,
     };
 
-    use aleo_std::StorageMode;
     use anyhow::Result;
     use indexmap::{IndexMap, IndexSet};
     use std::sync::Arc;
@@ -1060,7 +1063,7 @@ mod tests {
             None,
             &[],
             false,
-            StorageMode::new_test(None),
+            NodeDataDir::new_test(None),
             None,
         )
     }

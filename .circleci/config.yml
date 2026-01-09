@@ -648,6 +648,8 @@ jobs:
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
+      # Use nightly until we bump the MSRV to 1.89.0 or greater
+      - install_rust_nightly
       - setup_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
       - run:

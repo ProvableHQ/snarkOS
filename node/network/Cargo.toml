@@ -20,9 +20,6 @@ edition = "2024"
 locktick = [ "dep:locktick", "snarkos-node-tcp/locktick" ]
 test = [ ]
 
-[dependencies.aleo-std]
-workspace = true
-
 [dependencies.anyhow]
 workspace = true
 

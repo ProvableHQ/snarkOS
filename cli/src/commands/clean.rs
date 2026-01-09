@@ -13,11 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkos_node::bft::helpers::proposal_cache_path;
+use crate::helpers::args::parse_node_data_dir;
+
+use snarkos_utilities::NodeDataDir;
+
 use snarkvm::console::network::{CanaryV0, MainnetV0, Network};
 
 use aleo_std::StorageMode;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 use colored::Colorize;
 use std::path::PathBuf;
@@ -28,19 +31,29 @@ pub struct Clean {
     /// Specify the network to remove from storage (0 = mainnet, 1 = testnet, 2 = canary)
     #[clap(default_value_t=MainnetV0::ID, long = "network", value_parser = clap::value_parser!(u16).range((MainnetV0::ID as i64)..=(CanaryV0::ID as i64)))]
     pub network: u16,
+
     /// Enables development mode, specify the unique ID of the local node to clean.
     #[clap(long)]
     pub dev: Option<u16>,
+
     /// Specify the path to a directory containing the ledger. Overrides the default path (also for
     /// dev).
     #[clap(long = "path")]
     pub path: Option<PathBuf>,
+
+    /// Sets a custom path for the node configuration.
+    #[clap(long)]
+    pub node_data_path: Option<PathBuf>,
 }
 
 impl Clean {
     /// Cleans the snarkOS node storage.
     pub fn parse(self) -> Result<String> {
-        // Initialize the storage mode.
+        // Remove the specified node configuration from storage.
+        let node_data_dir = parse_node_data_dir(&self.node_data_path, self.network, self.dev)?;
+        println!("{}", Self::remove_node_data(&node_data_dir)?);
+
+        // Remove the specified ledger from storage.
         let storage_mode = match self.path {
             Some(path) => StorageMode::Custom(path),
             None => match self.dev {
@@ -48,16 +61,23 @@ impl Clean {
                 None => StorageMode::Production,
             },
         };
-
-        // Remove the current proposal cache file, if it exists.
-        let proposal_cache_path = proposal_cache_path(self.network, &storage_mode);
-        if proposal_cache_path.exists() {
-            if let Err(err) = std::fs::remove_file(&proposal_cache_path) {
-                bail!("Failed to remove the current proposal cache file at {}: {err}", proposal_cache_path.display());
-            }
-        }
-        // Remove the specified ledger from storage.
         Self::remove_ledger(self.network, &storage_mode)
+    }
+
+    /// Removes the specified node configuration from storage.
+    fn remove_node_data(node_data_dir: &NodeDataDir) -> Result<String> {
+        // With the new layout, we can remove the entire folder.
+        let data_path = node_data_dir.path();
+
+        // Prepare the path string.
+        let path_string = format!("(in \"{}\")", data_path.display()).dimmed();
+
+        if data_path.exists() {
+            std::fs::remove_dir_all(data_path).with_context(|| format!("Failed to remove node data {path_string}"))?;
+            Ok(format!("✅ Cleaned up node data {path_string}"))
+        } else {
+            Ok(format!("✅ No node data was found {path_string}"))
+        }
     }
 
     /// Removes the specified ledger from storage.
@@ -71,14 +91,11 @@ impl Clean {
         // Check if the path to the ledger exists in storage.
         if path.exists() {
             // Remove the ledger files from storage.
-            match std::fs::remove_dir_all(&path) {
-                Ok(_) => Ok(format!("✅ Cleaned the snarkOS node storage {path_string}")),
-                Err(error) => {
-                    bail!("Failed to remove the snarkOS node storage {path_string}\n{}", error.to_string().dimmed())
-                }
-            }
+            std::fs::remove_dir_all(&path)
+                .with_context(|| format!("Failed to remove the snarkOS ledger {path_string}"))?;
+            Ok(format!("✅ Cleaned the snarkOS ledger {path_string}"))
         } else {
-            Ok(format!("✅ No snarkOS node storage was found {path_string}"))
+            Ok(format!("✅ No snarkOS ledger was found {path_string}"))
         }
     }
 }

@@ -24,7 +24,6 @@ use crate::{
     helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
-use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
     BlockRequest,
@@ -61,6 +60,7 @@ use snarkos_node_tcp::{
     Tcp,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
+use snarkos_utilities::NodeDataDir;
 use snarkvm::{
     console::prelude::*,
     ledger::{
@@ -116,12 +116,6 @@ const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
 /// The amount of time an IP address is prohibited from connecting.
 const IP_BAN_TIME_IN_SECS: u64 = 300;
 
-/// The name of the file containing cached validators.
-const VALIDATOR_CACHE_FILENAME: &str = "cached_gateway_peers";
-
-/// The name of the file containing the dynamic validator whitelist.
-const VALIDATOR_WHITELIST_FILENAME: &str = "dynamic_validator_whitelist";
-
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
 #[async_trait]
@@ -169,7 +163,7 @@ pub struct InnerGateway<N: Network> {
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
-    storage_mode: StorageMode,
+    node_data_dir: NodeDataDir,
     /// If the flag is set, the node will only connect to trusted peers.
     trusted_peers_only: bool,
     /// The development mode.
@@ -212,7 +206,7 @@ impl<N: Network> Gateway<N> {
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
-        storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the gateway IP.
@@ -229,7 +223,7 @@ impl<N: Network> Gateway<N> {
 
         // Load entries from the validator cache (if present and if we are not in trusted peers only mode).
         if !trusted_peers_only {
-            let cached_peers = Self::load_cached_peers(&storage_mode, VALIDATOR_CACHE_FILENAME)?;
+            let cached_peers = Self::load_cached_peers(&node_data_dir.gateway_peer_cache_path())?;
             for addr in cached_peers {
                 initial_peers.insert(addr, Peer::new_candidate(addr, false));
             }
@@ -254,7 +248,7 @@ impl<N: Network> Gateway<N> {
             worker_senders: Default::default(),
             sync_sender: Default::default(),
             handles: Default::default(),
-            storage_mode,
+            node_data_dir,
             trusted_peers_only,
             dev,
         })))
@@ -848,7 +842,7 @@ impl<N: Network> Gateway<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the gateway...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.storage_mode, VALIDATOR_CACHE_FILENAME, None, true) {
+        if let Err(e) = self.save_best_peers(&self.node_data_dir.gateway_peer_cache_path(), None, true) {
             warn!("Failed to persist best validators to disk: {e}");
         }
         // Abort the tasks.
@@ -1128,7 +1122,7 @@ impl<N: Network> Gateway<N> {
     // Update the dynamic validator whitelist.
     fn update_validator_whitelist(&self) {
         if let Err(e) =
-            self.save_best_peers(&self.storage_mode, VALIDATOR_WHITELIST_FILENAME, Some(MAX_VALIDATORS_TO_SEND), false)
+            self.save_best_peers(&self.node_data_dir.validator_whitelist_path(), Some(MAX_VALIDATORS_TO_SEND), false)
         {
             warn!("Couldn't update the validator whitelist: {e}");
         }
@@ -1683,12 +1677,14 @@ mod prop_tests {
         gateway::prop_tests::GatewayAddress::{Dev, Prod},
         helpers::{Storage, init_primary_channels, init_worker_channels},
     };
-    use aleo_std::StorageMode;
+
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkos_node_network::PeerPoolHandling;
     use snarkos_node_tcp::P2P;
+    use snarkos_utilities::NodeDataDir;
+
     use snarkvm::{
         ledger::{
             committee::{
@@ -1759,7 +1755,7 @@ mod prop_tests {
                         address.ip(),
                         &[],
                         false,
-                        StorageMode::new_test(None),
+                        NodeDataDir::new_test(None),
                         address.port(),
                     )
                     .unwrap()
@@ -1812,7 +1808,7 @@ mod prop_tests {
             dev.ip(),
             &[],
             false,
-            StorageMode::new_test(None),
+            NodeDataDir::new_test(None),
             dev.port(),
         )
         .unwrap();
@@ -1837,7 +1833,7 @@ mod prop_tests {
             dev.ip(),
             &[],
             false,
-            StorageMode::new_test(None),
+            NodeDataDir::new_test(None),
             dev.port(),
         )
         .unwrap();
@@ -1872,7 +1868,7 @@ mod prop_tests {
             dev.ip(),
             &[],
             false,
-            StorageMode::new_test(None),
+            NodeDataDir::new_test(None),
             dev.port(),
         )
         .unwrap();
@@ -1946,7 +1942,7 @@ mod prop_tests {
             dev.ip(),
             &[],
             false,
-            StorageMode::new_test(None),
+            NodeDataDir::new_test(None),
             dev.port(),
         )
         .unwrap();

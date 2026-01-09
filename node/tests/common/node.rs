@@ -17,7 +17,7 @@ use crate::common::test_peer::sample_genesis_block;
 
 use snarkos_account::Account;
 use snarkos_node::{Client, Prover, Validator};
-use snarkos_utilities::SignalHandler;
+use snarkos_utilities::{NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
 
@@ -34,6 +34,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         sample_genesis_block(),
         None, // No CDN.
         StorageMode::new_test(None),
+        NodeDataDir::new_test(None),
         false, // Connect to untrusted peers.
         None,
         SignalHandler::new(),
@@ -48,7 +49,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
-        StorageMode::new_test(None),
+        NodeDataDir::new_test(None),
         false,
         None,
         SignalHandler::new(),
@@ -69,6 +70,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         sample_genesis_block(), // Should load the current network's genesis block.
         None,                   // No CDN.
         StorageMode::new_test(None),
+        NodeDataDir::new_test(None),
         false, // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,

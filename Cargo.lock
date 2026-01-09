@@ -2472,9 +2472,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.179"
+version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5a2d376baa530d1238d133232d15e239abad80d05838b4b59354e5268af431f"
+checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
 name = "libgit2-sys"
@@ -4652,6 +4652,7 @@ dependencies = [
  "snarkos-node-bft-storage-service",
  "snarkos-node-metrics",
  "snarkos-node-sync",
+ "snarkos-utilities",
  "snarkvm",
  "tokio",
  "tracing",
@@ -4674,7 +4675,6 @@ dependencies = [
 name = "snarkos-node-network"
 version = "4.4.0"
 dependencies = [
- "aleo-std",
  "anyhow",
  "built",
  "locktick",
@@ -4725,7 +4725,6 @@ dependencies = [
 name = "snarkos-node-router"
 version = "4.4.0"
 dependencies = [
- "aleo-std",
  "anyhow",
  "async-trait",
  "colored 3.0.0",
@@ -4748,6 +4747,7 @@ dependencies = [
  "snarkos-node-sync-communication-service",
  "snarkos-node-sync-locators",
  "snarkos-node-tcp",
+ "snarkos-utilities",
  "snarkvm",
  "time",
  "tokio",
