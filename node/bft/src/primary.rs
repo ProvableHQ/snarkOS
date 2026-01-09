@@ -847,7 +847,8 @@ impl<N: Network> Primary<N> {
         }
 
         // If the peer is ahead, use the batch header to sync up to the peer.
-        let mut missing_transmissions = self.sync_with_batch_header_from_peer::<false>(peer_ip, &batch_header).await?;
+        let mut missing_transmissions =
+            self.sync_with_batch_header_from_peer::<false, true>(peer_ip, &batch_header).await?;
 
         // Check that the transmission ids match and are not fee transactions.
         if let Err(err) = cfg_iter_mut!(&mut missing_transmissions).try_for_each(|(transmission_id, transmission)| {
@@ -1756,7 +1757,8 @@ impl<N: Network> Primary<N> {
         }
 
         // If the peer is ahead, use the batch header to sync up to the peer.
-        let missing_transmissions = self.sync_with_batch_header_from_peer::<IS_SYNCING>(peer_ip, batch_header).await?;
+        let missing_transmissions =
+            self.sync_with_batch_header_from_peer::<IS_SYNCING, false>(peer_ip, batch_header).await?;
 
         // Check if the certificate needs to be stored.
         if !self.storage.contains_certificate(certificate.id()) {
@@ -1778,7 +1780,7 @@ impl<N: Network> Primary<N> {
     }
 
     /// Recursively syncs using the given batch header.
-    async fn sync_with_batch_header_from_peer<const IS_SYNCING: bool>(
+    async fn sync_with_batch_header_from_peer<const IS_SYNCING: bool, const CHECK_PREVIOUS_CERTIFICATES: bool>(
         &self,
         peer_ip: SocketAddr,
         batch_header: &BatchHeader<N>,
@@ -1833,6 +1835,13 @@ impl<N: Network> Primary<N> {
 
         // Iterate through the missing previous certificates.
         for batch_certificate in missing_previous_certificates {
+            // Check if the missing previous certificate is valid. This is only
+            // needed if we are processing an incoming batch header from a peer.
+            // For incoming certificates, validity is assured by checking the
+            // root certificate in `process_batch_certificate_from_peer`.
+            if CHECK_PREVIOUS_CERTIFICATES {
+                self.storage.check_incoming_certificate(&batch_certificate)?;
+            }
             // Store the batch certificate (recursively fetching any missing previous certificates).
             self.sync_with_certificate_from_peer::<IS_SYNCING>(peer_ip, batch_certificate).await?;
         }
