@@ -27,7 +27,7 @@ use snarkos_node::{
     rest::DEFAULT_REST_PORT,
     router::DEFAULT_NODE_PORT,
 };
-use snarkos_utilities::{NodeDataDir, SignalHandler, node_data};
+use snarkos_utilities::{NodeDataDir, SignalHandler, jwt_secret_file, node_data};
 
 use snarkvm::{
     console::{
@@ -508,10 +508,8 @@ impl Start {
     }
 
     /// Returns the path to where the JWT secret for the node is stored.
-    fn jwt_secret_path<N: Network>(node_data_dir: &NodeDataDir, address: &Address<N>) -> Result<PathBuf> {
-        let mut path = node_data_dir.path().to_path_buf();
-        path.push(format!("jwt_secret_{address}.txt"));
-        Ok(path)
+    fn jwt_secret_path<N: Network>(node_data_dir: &NodeDataDir, address: &Address<N>) -> PathBuf {
+        node_data_dir.path().join(jwt_secret_file(address))
     }
 
     /// Returns an alternative genesis block if the node is in development mode.
@@ -769,7 +767,7 @@ impl Start {
             // Create the JWT token based on the given secret.
             let jwt_token = snarkos_node_rest::Claims::new(account.address(), Some(jwt_bytes), self.jwt_timestamp).to_jwt_string()?;
             // Store the JWT secret to a file.
-            let path = Self::jwt_secret_path(&node_data_dir, &account.address())?;
+            let path = Self::jwt_secret_path(&node_data_dir, &account.address());
             std::fs::write(path, &jwt_token)?;
             // Return the JWT token for optional printing.
             Some(jwt_token)
@@ -777,7 +775,7 @@ impl Start {
             // Create a random JWT token.
             let jwt_token = snarkos_node_rest::Claims::new(account.address(), None, self.jwt_timestamp).to_jwt_string()?;
             // Store the JWT secret to a file.
-            let path = Self::jwt_secret_path(&node_data_dir, &account.address())?;
+            let path = Self::jwt_secret_path(&node_data_dir, &account.address());
             std::fs::write(path, &jwt_token)? ;
             // Return the JWT token for optional printing.
             Some(jwt_token)
