@@ -91,12 +91,12 @@ wait_for_nodes $((num_nodes+1)) 0 "$network_name"
 
 SECONDS=0
 
-# TODO add API call for number of connected validators.
-#for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
-#  if ! (wait_for_peers "$node_index" $num_nodes); then
-#    exit 1
-#  fi
-#done
+# Wait for all validators to be connected to each other via the gateway.
+for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
+  if ! (wait_for_bft_connections "$node_index" $num_nodes "$network_name"); then
+    exit 1
+  fi
+done
 
 connect_time=$SECONDS
 echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."

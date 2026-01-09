@@ -200,10 +200,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/find/transactionID/{transition_id}", get(Self::find_transaction_id_from_transition_id))
             .route("/find/transitionID/{input_or_output_id}", get(Self::find_transition_id))
 
-            // GET ../peers/..
+            // GET ../peers/.. (with /connections/p2p/.. aliases)
             .route("/peers/count", get(Self::get_peers_count))
             .route("/peers/all", get(Self::get_peers_all))
             .route("/peers/all/metrics", get(Self::get_peers_all_metrics))
+            .route("/connections/p2p/count", get(Self::get_peers_count))
+            .route("/connections/p2p/all", get(Self::get_peers_all))
+            .route("/connections/p2p/all/metrics", get(Self::get_peers_all_metrics))
 
             // GET ../program/..
             .route("/program/{id}", get(Self::get_program))
@@ -234,6 +237,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/committee/latest", get(Self::get_committee_latest))
             .route("/committee/{height}", get(Self::get_committee))
             .route("/delegators/{validator}", get(Self::get_delegators_for_validator));
+
+        // If the node is a validator, enable the BFT connections endpoints.
+        let routes = match self.consensus {
+            Some(_) => routes
+                .route("/connections/bft/count", get(Self::get_bft_connections_count))
+                .route("/connections/bft/all", get(Self::get_bft_connections_all)),
+            None => routes,
+        };
 
         // If the node is a validator and `telemetry` features is enabled, enable the additional endpoint.
         #[cfg(feature = "telemetry")]
