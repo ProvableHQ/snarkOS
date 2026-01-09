@@ -65,7 +65,10 @@ use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{
+    sync::{Notify, oneshot},
+    task::JoinHandle,
+};
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -113,6 +116,8 @@ pub struct Consensus<N: Network> {
     ping: Arc<Ping<N>>,
     /// The block sync logic.
     block_sync: Arc<BlockSync<N>>,
+    /// Notifies when a block is committed, and relays it to the primary.
+    block_commit_notify: Arc<Notify>,
 }
 
 impl<N: Network> Consensus<N> {
@@ -163,6 +168,7 @@ impl<N: Network> Consensus<N> {
             transmissions_tracker: Default::default(),
             handles: Default::default(),
             ping: ping.clone(),
+            block_commit_notify: Arc::new(Notify::new()),
         };
 
         info!("Starting the consensus instance...");
@@ -501,13 +507,17 @@ impl<N: Network> Consensus<N> {
 
         // Process the unconfirmed transactions in the memory pool.
         //
-        // TODO (kaimast): This shouldn't happen periodically but only when new batches/blocks are accepted
-        // by the BFT layer, after which the worker's ready queue may have capacity for more transactions/solutions.
+        // This loop wakes up either when a block is committed (signaled via notify) or after a timeout.
+        // When a block is committed, the BFT workers have freed capacity for more transmissions.
+        // The timeout serves as a fallback for startup or idle periods when blocks are not being produced.
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                // Wait for either a block commit notification or timeout.
+                tokio::select! {
+                    _ = self_.block_commit_notify.notified() => {}
+                    _ = tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)) => {}
+                }
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(err) = self_.process_unconfirmed_transactions().await {
                     warn!("{}", flatten_error(err.context("Cannot process unconfirmed transactions")));
@@ -541,6 +551,9 @@ impl<N: Network> Consensus<N> {
         if result.is_err() {
             // On failure, reinsert the transmissions into the memory pool.
             self.reinsert_transmissions(transmissions).await;
+        } else {
+            // On success, notify that the BFT workers have freed capacity for more transmissions.
+            self.block_commit_notify.notify_one();
         }
         // Send the callback **after** advancing to the next block.
         // Note: We must await the block to be advanced before sending the callback.
