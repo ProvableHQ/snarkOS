@@ -406,11 +406,14 @@ The following are the options for the `snarkos start` command:
       --metrics-ip <METRICS_IP>
           Specify the IP address and port for the metrics exporter
 
-      --storage <STORAGE>
-          Specify the path to a directory containing the storage database for the ledger. This flag overrides the default path, even when `--dev` is set
+      --ledger-storage <LEDGER_STORAGE>
+          Specify the directory that holds all ledger data, e.g., blocks and transactions.
+          This flag overrides the default path, even when `--dev` is set.
+          
+          The old name for this flag (`--storage`) is DEPRECATED and will eventually be removed.
 
-      --node-data <NODE_DATA>
-          Set a custom path for the node-specific data.
+      --node-data-storage <NODE_DATA_STORAGE>
+          Specify the directory that holds node-specific data, that is not part of the global ledger.
           This flag overrides the default path, even when `--dev` is set.
           
           That folder may contain sensitive data, such as the JWT secret, and should not be shared with untrusted parties.

@@ -237,18 +237,20 @@ pub struct Start {
     #[clap(long, requires = "metrics")]
     pub metrics_ip: Option<SocketAddr>,
 
-    /// Specify the path to a directory containing the storage database for the ledger.
+    /// Specify the directory that holds all ledger data, e.g., blocks and transactions.
     /// This flag overrides the default path, even when `--dev` is set.
-    #[clap(long)]
-    pub storage: Option<PathBuf>,
+    ///
+    /// The old name for this flag (`--storage`) is DEPRECATED and will eventually be removed.
+    #[clap(long, verbatim_doc_comment, alias = "storage")]
+    pub ledger_storage: Option<PathBuf>,
 
-    /// Set a custom path for the node-specific data.
+    /// Specify the directory that holds node-specific data, that is not part of the global ledger.
     /// This flag overrides the default path, even when `--dev` is set.
     ///
     /// That folder may contain sensitive data, such as the JWT secret, and should not be shared with untrusted parties.
     /// For validators, it also contains the latest proposal cache, which is required to participate in consensus.
     #[clap(long, verbatim_doc_comment)]
-    pub node_data: Option<PathBuf>,
+    pub node_data_storage: Option<PathBuf>,
 
     /// Enables the node to prefetch initial blocks from a CDN
     #[clap(long, conflicts_with = "nocdn")]
@@ -711,7 +713,7 @@ impl Start {
         };
 
         // Initialize the storage mode.
-        let storage_mode = match &self.storage {
+        let storage_mode = match &self.ledger_storage {
             Some(path) => StorageMode::Custom(path.clone()),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),
@@ -722,33 +724,33 @@ impl Start {
         // Users may have unintentionally set a custom path for the ledger, but not for the node data.
         // For validators, we make this an errors, so important files like the proposal cache are stored at the location
         // exepcted by the node operator.
-        if self.node_data.is_some() && !matches!(storage_mode, StorageMode::Custom(_)) {
+        if self.node_data_storage.is_some() && !matches!(storage_mode, StorageMode::Custom(_)) {
             if node_type == NodeType::Validator {
-                bail!("Custom path set for `--storage`, but not for `--node-data`.")
+                bail!("Custom path set for `--node-data-storage`, but not for `--ledger-storage`.")
             } else {
-                warn!("Custom path set for `--storage`, but not for `--node-data`. The latter will use the default path.");   
+                warn!("Custom path set for `--node-data-storage`, but not for `--ledger-storage`. The latter will use the default path.");   
             }
-        } else if matches!(storage_mode, StorageMode::Custom(_)) && self.node_data.is_none() {
+        } else if matches!(storage_mode, StorageMode::Custom(_)) && self.node_data_storage.is_none() {
             if node_type == NodeType::Validator {
-                bail!("Custom path set for `--storage`, but `--node-data` is not set.");
+                bail!("Custom path set for `--ledger-storage`, but not for `--node-data-storage`.");
             } else {
-                warn!("Custom path set for `--storage`, but `--node-data` is not set. The latter will use the default path.");
+                warn!("Custom path set for `--ledger-storage`, but not for `--node-data-storage`. The latter will use the default path.");
             }
         }
 
         // Parse the node data directory.
-        let node_data_dir = parse_node_data_dir(&self.node_data, N::ID, self.dev).with_context(|| "Failed to setup node configuration directory")?;
+        let node_data_dir = parse_node_data_dir(&self.node_data_storage, N::ID, self.dev).with_context(|| "Failed to setup node configuration directory")?;
 
         // Make sure the directory exists before continue.
         let data_path = node_data_dir.path();
         if !data_path.exists() {
-            info!("Creating node data directory at {data_path:?}");
+            info!("Creating directore for node data storage at {data_path:?}");
             std::fs::create_dir_all(data_path)
-                .with_context(|| format!("Failed to create node data directory at {data_path:?}"))?
+                .with_context(|| format!("Failed to create directory for node data storage at {data_path:?}"))?
         } else if !data_path.is_dir() {
-            bail!("Node data directory at {data_path:?} is not a directory");
+            bail!("Node data storage location at {data_path:?} is not a directory");
         } else {
-            debug!("Using existing node data directory at {data_path:?}");
+            debug!("Using existing directory at {data_path:?} for node data storage");
         }
 
         // Checks for the old storage format and prints instructions to migrate.
@@ -836,7 +838,7 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn,  storage_mode, node_data_dir, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,

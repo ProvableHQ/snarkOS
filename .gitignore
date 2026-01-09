@@ -4,19 +4,21 @@
 wasm/Cargo.lock
 **/build
 **.history-*
-**.logs-*
 validator-*
 **proptest-regressions/
 **package-lock.json
 **node_modules/
-jwt_secret*.txt
 
 # Files created by a running snarkOS node
 **.ledger-*
-**node-data-*
+**.node-data-*
+
+# Files created by the devnet script
+**.logs-*
 
 # Legacy files created by a running snarkOS node
 **.current-proposal-cache-*
 **cached_gateway_peers
 **cached_router_peers
 **.bft-storage-*/
+**jwt_secret*.txt
