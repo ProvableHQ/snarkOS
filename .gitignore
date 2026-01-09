@@ -9,12 +9,12 @@ validator-*
 **package-lock.json
 **node_modules/
 
-# Files created by a running snarkOS node
+# Devent and CI logs
+**.logs-*/
+
+# Data created when running a node
 **.ledger-*
 **.node-data-*
-
-# Files created by the devnet script
-**.logs-*
 
 # Legacy files created by a running snarkOS node
 **.current-proposal-cache-*
@@ -22,3 +22,7 @@ validator-*
 **cached_router_peers
 **.bft-storage-*/
 **jwt_secret*.txt
+
+# For release upgrde CI
+.ci/release-snarkos
+.ci/release-snarkos-src

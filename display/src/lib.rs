@@ -26,7 +26,7 @@ use snarkos_utilities::Stoppable;
 
 use snarkvm::prelude::Network;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -53,6 +53,7 @@ pub struct Display<N: Network> {
     /// An instance of the node.
     node: Node<N>,
     /// The tick rate of the display.
+    /// This determines how frequent the UI is redrawn.
     tick_rate: Duration,
     /// The state of the tabs.
     tabs: Tabs,
@@ -87,31 +88,29 @@ impl<N: Network> Display<N> {
         };
 
         // Render the display.
-        let res = display.render(&mut terminal, stoppable);
+        let result = display.render(&mut terminal, stoppable);
 
-        // Terminate the display.
+        // Shut down the display and return to normal terminal mode.
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
         terminal.show_cursor()?;
 
-        // Exit.
-        if let Err(err) = res {
-            println!("{err:?}")
-        }
-
-        Ok(())
+        // Return error (if any).
+        result
     }
 }
 
 impl<N: Network> Display<N> {
     /// Renders the display.
-    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>, stoppable: Arc<dyn Stoppable>) -> io::Result<()> {
+    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>, stoppable: Arc<dyn Stoppable>) -> Result<()> {
         let mut last_tick = Instant::now();
         loop {
-            terminal.draw(|f| self.draw(f))?;
+            if let Err(err) = terminal.draw(|f| self.draw(f)) {
+                return Err(anyhow!("{err}").context("Failed to draw terminal UI"));
+            }
 
-            // Set the timeout duration.
-            let timeout = self.tick_rate.checked_sub(last_tick.elapsed()).unwrap_or_else(|| Duration::from_secs(0));
+            // Determine how long to wait for an input event, before we redraw.
+            let timeout = self.tick_rate.saturating_sub(last_tick.elapsed());
 
             if event::poll(timeout)? {
                 if let Event::Key(key) = event::read()? {
@@ -127,6 +126,7 @@ impl<N: Network> Display<N> {
                 }
             }
 
+            // Rate-limit how often we redraw the UI.
             if last_tick.elapsed() >= self.tick_rate {
                 thread::sleep(Duration::from_millis(50));
                 last_tick = Instant::now();

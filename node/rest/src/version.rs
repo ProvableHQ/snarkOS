@@ -13,8 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::*;
 use serde::Serialize;
 use std::sync::OnceLock;
+
+use snarkvm::prelude::ConsensusVersion;
 
 // Include the generated build information
 mod built_info {
@@ -32,15 +35,26 @@ pub struct VersionInfo {
     pub git_commit: String,
     /// Git branch name
     pub git_branch: String,
+    /// The latest consensus version in the moment
+    pub latest_consensus_version: u16,
+    /// A list of all the consensus heights
+    pub consensus_heights: Vec<u32>,
 }
 
 impl VersionInfo {
     /// Get the cached version information
-    pub fn get() -> &'static VersionInfo {
+    pub fn get<N: Network>() -> &'static VersionInfo {
+        let latest = ConsensusVersion::latest();
+        let latest_num: u16 = latest as u16;
+
+        let consensus_heights: Vec<u32> = N::CONSENSUS_VERSION_HEIGHTS().iter().map(|(_, height)| *height).collect();
+
         VERSION_INFO.get_or_init(|| VersionInfo {
             version: built_info::PKG_VERSION.to_string(),
             git_commit: built_info::GIT_COMMIT_HASH.unwrap_or("unknown").to_string(),
             git_branch: built_info::GIT_HEAD_REF.unwrap_or("unknown").to_string(),
+            latest_consensus_version: latest_num,
+            consensus_heights,
         })
     }
 }
