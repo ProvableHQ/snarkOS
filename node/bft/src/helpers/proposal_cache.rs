@@ -65,14 +65,14 @@ impl<N: Network> ProposalCache<N> {
             && self.signed_proposals.is_valid(expected_signer)
     }
 
-    /// Returns `true` if a proposal cache  given network and `dev`.
+    /// Returns `true` if a proposal cache exists for the given network and `dev`.
     pub fn exists(node_data_dir: &NodeDataDir) -> bool {
         proposal_cache_path(node_data_dir).exists()
     }
 
     /// Load the proposal cache from the file system and ensure that the proposal cache is valid.
     pub fn load(expected_signer: Address<N>, node_data_dir: &NodeDataDir) -> Result<Self> {
-        // Construct the proposal cache file system pa
+        // Construct the proposal cache file system path.
         let path = proposal_cache_path(node_data_dir);
 
         // Deserialize the proposal cache from the file system.

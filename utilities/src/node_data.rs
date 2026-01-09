@@ -30,7 +30,7 @@ pub const CURRENT_PROPOSAL_CACHE_FILE: &str = "current-proposal-cache";
 /// The filename of the validator whitelist.
 pub const VALIDATOR_WHITELIST_FILE: &str = "validator-whitelist";
 
-/// The old filename of the JWT secret for a given address.
+/// The filename of the JWT secret for a given address.
 pub fn jwt_secret_file<D: std::fmt::Display>(address: &D) -> PathBuf {
     PathBuf::from(format!("jwt_secret_{address}.txt"))
 }

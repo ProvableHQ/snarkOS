@@ -79,11 +79,11 @@ pub(crate) fn parse_private_key<N: Network>(
 
 /// Returns the path to the node configuration directory.
 pub(crate) fn parse_node_data_dir(
-    node_data_dir: &Option<PathBuf>,
+    custom_node_data_dir: &Option<PathBuf>,
     network: u16,
     dev: Option<u16>,
 ) -> Result<NodeDataDir> {
-    if let Some(custom) = node_data_dir {
+    if let Some(custom) = custom_node_data_dir {
         return Ok(NodeDataDir::new(custom.clone()));
     }
 
