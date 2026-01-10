@@ -84,18 +84,20 @@ fn main() {
             infos.sort_unstable_by(|l1, l2| l1.location.cmp(&l2.location));
 
             for lock in infos {
-                let mut guards = lock.known_guards.values().collect::<Vec<_>>();
+                // Show all guards that are held or that threads are waiting for.
+                let mut guards = lock.known_guards.values().filter(|g| g.is_in_use()).collect::<Vec<_>>();
                 guards.sort_unstable_by(|g1, g2| g1.location.cmp(&g2.location));
 
-                for guard in guards.iter().filter(|g| g.num_active_uses() != 0) {
+                for guard in guards {
                     let location = &guard.location;
                     let kind = guard.kind;
                     let num_uses = guard.num_uses;
                     let active_users = guard.num_active_uses();
                     let avg_duration = guard.avg_duration();
                     let avg_wait_time = guard.avg_wait_time();
+                    let num_waiting = guard.num_waiting();
                     tracing::info!(
-                        "[locktick] {location} ({:?}): {num_uses}; {active_users} active; avg d: {:?}; avg w: {:?}",
+                        "[locktick] {location} ({:?}): {num_uses}; {active_users} active; {num_waiting} waiting; avg d: {:?}; avg w: {:?}",
                         kind,
                         avg_duration,
                         avg_wait_time
