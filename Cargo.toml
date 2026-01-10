@@ -95,7 +95,7 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.4"
+version = "0.5"
 
 [workspace.dependencies.lru]
 version = "0.16"
@@ -306,7 +306,7 @@ workspace = true
 features = [ "derive" ]
 
 [dependencies.locktick]
-version = "0.4"
+workspace = true
 optional = true
 
 [dependencies.snarkos-account]
