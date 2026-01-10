@@ -370,8 +370,8 @@ opt-level = 3
 lto = "thin"
 incremental = true
 # uncomment the 2 lines below when building with the locktick feature
-# debug = "line-tables-only"
-# strip = "none"
+debug = "line-tables-only"
+strip = "none"
 
 [profile.bench]
 opt-level = 3
@@ -406,3 +406,6 @@ ignored = [
   "snarkos-node-router", # Needed for cuda and locktick features
   "snarkos-node-metrics", # Needed for locktick feature
 ]
+
+[patch.crates-io]
+locktick = { git="https://github.com/kaimast/locktick.git", branch="feat/lazy-lock" }

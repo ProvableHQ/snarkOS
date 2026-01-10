@@ -7740,3 +7740,8 @@ dependencies = [
  "log",
  "simd-adler32",
 ]
+
+[[patch.unused]]
+name = "locktick"
+version = "0.4.0"
+source = "git+https://github.com/kaimast/locktick.git?branch=feat%2Flazy-lock#ccd81a17b018674098db3de187de4a3450e0741d"
