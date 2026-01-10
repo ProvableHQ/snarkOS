@@ -2392,9 +2392,9 @@ dependencies = [
 
 [[package]]
 name = "instability"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "357b7205c6cd18dd2c86ed312d1e70add149aea98e7ef72b9fdf0270e555c11d"
+checksum = "5eb2d60ef19920a3a9193c3e371f726ec1dafc045dac788d0fb3704272458971"
 dependencies = [
  "darling",
  "indoc",
@@ -6592,7 +6592,7 @@ dependencies = [
  "toml_datetime",
  "toml_parser",
  "toml_writer",
- "winnow",
+ "winnow 0.7.15",
 ]
 
 [[package]]
@@ -6606,18 +6606,18 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.0.9+spec-1.1.0"
+version = "1.0.10+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "702d4415e08923e7e1ef96cd5727c0dfed80b4d2fa25db9647fe5eb6f7c5a4c4"
+checksum = "7df25b4befd31c4816df190124375d5a20c6b6921e2cad937316de3fccd63420"
 dependencies = [
- "winnow",
+ "winnow 1.0.0",
 ]
 
 [[package]]
 name = "toml_writer"
-version = "1.0.6+spec-1.1.0"
+version = "1.0.7+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab16f14aed21ee8bfd8ec22513f7287cd4a91aa92e44edfe2c17ddd004e92607"
+checksum = "f17aaa1c6e3dc22b1da4b6bba97d066e354c7945cac2f7852d4e4e7ca7a6b56d"
 
 [[package]]
 name = "tonic"
@@ -7631,6 +7631,12 @@ name = "winnow"
 version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+
+[[package]]
+name = "winnow"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a90e88e4667264a994d34e6d1ab2d26d398dcdca8b7f52bec8668957517fc7d8"
 
 [[package]]
 name = "wit-bindgen"
