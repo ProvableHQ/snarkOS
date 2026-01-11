@@ -70,7 +70,7 @@ use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::{
     parking_lot::{Mutex, RwLock},
-    tokio::Mutex as TMutex,
+    tokio::RwLock as TRwLock,
 };
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
@@ -86,11 +86,11 @@ use std::{
     time::Duration,
 };
 #[cfg(not(feature = "locktick"))]
-use tokio::sync::Mutex as TMutex;
-use tokio::task::JoinHandle;
+use tokio::sync::RwLock as TRwLock;
+use tokio::{sync::Notify, task::JoinHandle};
 
-/// A helper type for an optional proposed batch.
-pub type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
+/// A helper type to keep track of the latest proposed batch.
+pub(crate) type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
 
 /// This callback trait allows listening to changes in the Primary, such as round advancement.
 /// This is currently used by BFT.
@@ -119,22 +119,31 @@ pub struct Primary<N: Network> {
     workers: Arc<OnceLock<Vec<Worker<N>>>>,
     /// The primary callback (used by [`BFT`]).
     primary_callback: Arc<CallbackHandle<Arc<dyn PrimaryCallback<N>>>>,
+
     /// The batch proposal, if the primary is currently proposing a batch.
     proposed_batch: Arc<ProposedBatch<N>>,
-    /// The timestamp of the most recent proposed batch.
-    latest_proposed_batch_timestamp: Arc<RwLock<i64>>,
+
     /// The instant at which the current batch was proposed (used to measure certification latency).
     /// (used for higher precision in the metrics compared to the batch timestamp)
     #[cfg(feature = "metrics")]
     batch_propose_start: Arc<Mutex<Option<Instant>>>,
+
+    /// Holds the most recent round and timestamp that the primary proposed a batch for.
+    /// TODO(kaimast): avoiding using an async lock here, so this can be merged with the `proposed_batch`,
+    /// to have a unified `primary_state` field.
+    latest_proposed_batch: Arc<TRwLock<Option<(u64, i64)>>>,
+
     /// The recently-signed batch proposals.
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
+
     /// The handles for all background tasks spawned by this primary.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The lock for propose_batch. It holds the most recent round that was proposed for.
-    propose_lock: Arc<TMutex<u64>>,
+
     /// The node configuration directory.
     node_data_dir: NodeDataDir,
+
+    /// Allows notifying the proposal taks when a new batch can be proposed.
+    is_ready_notify: Arc<Notify>,
 }
 
 impl<N: Network> Primary<N> {
@@ -174,16 +183,16 @@ impl<N: Network> Primary<N> {
             gateway,
             storage,
             ledger,
+            node_data_dir,
             workers: Default::default(),
             primary_callback: Default::default(),
             proposed_batch: Default::default(),
-            latest_proposed_batch_timestamp: Default::default(),
             #[cfg(feature = "metrics")]
             batch_propose_start: Default::default(),
+            latest_proposed_batch: Default::default(),
             signed_proposals: Default::default(),
             handles: Default::default(),
-            propose_lock: Default::default(),
-            node_data_dir,
+            is_ready_notify: Default::default(),
         })
     }
 
@@ -198,26 +207,9 @@ impl<N: Network> Primary<N> {
                     let (latest_certificate_round, proposed_batch, signed_proposals, pending_certificates) =
                         proposal_cache.into();
 
-                    // Verify that the proposal cache is not too far ahead of the ledger.
-                    // If the cache round exceeds the ledger round by more than MAX_GC_ROUNDS, the ledger
-                    // snapshot is too old to recover from the cached state. The operator must restore a
-                    // more recent ledger snapshot before restarting the node.
-                    let ledger_round = self.ledger.latest_round();
-                    let max_gc_rounds = BatchHeader::<N>::MAX_GC_ROUNDS as u64;
-                    if latest_certificate_round > ledger_round.saturating_add(max_gc_rounds) {
-                        bail!(
-                            "The proposal cache (round {latest_certificate_round}) is more than {max_gc_rounds} \
-                             rounds ahead of the ledger (round {ledger_round}). \
-                             Please restore a more recent ledger snapshot before restarting the node."
-                        );
-                    }
-
-                    // Write the proposed batch.
+                    *self.latest_proposed_batch.write().await = Some((latest_certificate_round, now()));
                     *self.proposed_batch.write() = proposed_batch;
-                    // Write the signed proposals.
                     *self.signed_proposals.write() = signed_proposals;
-                    // Writ the propose lock.
-                    *self.propose_lock.lock().await = latest_certificate_round;
 
                     // Update the storage with the pending certificates.
                     for certificate in pending_certificates {
@@ -338,11 +330,6 @@ impl<N: Network> Primary<N> {
     pub fn workers(&self) -> &[Worker<N>] {
         self.workers.get().expect("Primary is not running yet")
     }
-
-    /// Returns the batch proposal of our primary, if one currently exists.
-    pub fn proposed_batch(&self) -> &Arc<ProposedBatch<N>> {
-        &self.proposed_batch
-    }
 }
 
 impl<N: Network> Primary<N> {
@@ -404,9 +391,13 @@ impl<N: Network> Primary<N> {
     /// 2. Sign the batch.
     /// 3. Set the batch proposal in the primary.
     /// 4. Broadcast the batch header to all validators for signing.
+    ///
     pub async fn propose_batch(&self) -> Result<()> {
-        // This function isn't re-entrant.
-        let mut lock_guard = self.propose_lock.lock().await;
+        // Ensure there are not concurrent executions of this function.
+        //
+        // Note, in the current design, this function is only invoked from the batch proposal task, and it is technically
+        // not possible for there to be concurrent invocations of the function, but we keep this lock for now.
+        let mut lock_guard = self.latest_proposed_batch.write().await;
 
         // Check if the proposed batch has expired, and clear it if it has expired.
         if let Err(err) = self
@@ -428,14 +419,16 @@ impl<N: Network> Primary<N> {
         ensure!(round > 0, "Round 0 cannot have transaction batches");
 
         // If the current storage round is below the latest proposal round, then return early.
-        if round < *lock_guard {
-            warn!("Cannot propose a batch for round {round} - the latest proposal cache round is {}", *lock_guard);
+        if let Some((latest_round, _)) = &*lock_guard
+            && round < *latest_round
+        {
+            warn!("Cannot propose a batch for round {round} - the latest proposal cache round is {latest_round}");
             return Ok(());
         }
 
         // If there is a batch being proposed already,
         // rebroadcast the batch header to the non-signers, and return early.
-        if let Some(proposal) = self.proposed_batch.read().as_ref() {
+        if let Some(proposal) = &*self.proposed_batch.read() {
             // Ensure that the storage is caught up to the proposal before proceeding to rebroadcast this.
             if round < proposal.round()
                 || proposal
@@ -479,7 +472,9 @@ impl<N: Network> Primary<N> {
         metrics::gauge(metrics::bft::PROPOSAL_ROUND, round as f64);
 
         // Ensure that the primary does not create a new proposal too quickly.
-        if let Err(err) = self.check_proposal_timestamp(previous_round, self.gateway.account().address(), now()) {
+        if let Some((_, latest_timestamp)) = &*lock_guard
+            && let Err(err) = self.check_own_proposal_timesatmp(previous_round, *latest_timestamp, now())
+        {
             debug!(
                 "{}",
                 flatten_error(err.context(format!("Primary is safely skipping a batch proposal for round {round}")))
@@ -507,7 +502,9 @@ impl<N: Network> Primary<N> {
         // good for network reliability and should not be prevented for the already existing proposed_batch.
         // If a certificate already exists for the current round, an attempt should be made to advance the
         // round as early as possible.
-        if round == *lock_guard {
+        if let Some((latest_round, _)) = &*lock_guard
+            && *latest_round == round
+        {
             debug!("Primary is safely skipping a batch proposal - round {round} already proposed");
             return Ok(());
         }
@@ -698,11 +695,11 @@ impl<N: Network> Primary<N> {
         // Determine the current timestamp.
         let current_timestamp = now();
 
-        *lock_guard = round;
-
         /* Proceeding to sign & propose the batch. */
         info!("Proposing a batch with {} transmissions for round {round}...", transmissions.len());
 
+        // Update the latest proposed round and timestamp.
+        *lock_guard = Some((round, current_timestamp));
         // Retrieve the private key.
         let private_key = *self.gateway.account().private_key();
         // Retrieve the committee ID.
@@ -731,17 +728,17 @@ impl<N: Network> Primary<N> {
                 error!("{}", flatten_error(err.context("Failed to reinsert transmissions")));
             }
         })?;
+
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
-        // Set the timestamp of the latest proposed batch.
-        *self.latest_proposed_batch_timestamp.write() = proposal.timestamp();
+        // Store the proposal.
+        *self.proposed_batch.write() = Some(proposal);
         // Record the wall-clock time at which the batch was proposed.
         #[cfg(feature = "metrics")]
         {
             *self.batch_propose_start.lock() = Some(Instant::now());
         }
-        // Set the proposed batch.
-        *self.proposed_batch.write() = Some(proposal);
+
         Ok(())
     }
 
@@ -854,7 +851,7 @@ impl<N: Network> Primary<N> {
         // Compute the previous round.
         let previous_round = batch_round.saturating_sub(1);
         // Ensure that the peer did not propose a batch too quickly.
-        if let Err(err) = self.check_proposal_timestamp(previous_round, batch_author, batch_header.timestamp()) {
+        if let Err(err) = self.check_peer_proposal_timestamp(previous_round, batch_author, batch_header.timestamp()) {
             // Proceed to disconnect the validator.
             self.gateway.disconnect(peer_ip);
             return Err(err.context(format!("Malicious behavior of peer '{peer_ip}'")));
@@ -1227,9 +1224,9 @@ impl<N: Network> Primary<N> {
         // Determine if we are currently proposing a round that is relevant.
         // Note: This is important, because while our peers have advanced,
         // they may not be proposing yet, and thus still able to sign our proposed batch.
-        let should_advance = match &*self.proposed_batch.read() {
+        let should_advance = match &*self.latest_proposed_batch.read().await {
             // We advance if the proposal round is less than the current round that was just certified.
-            Some(proposal) => proposal.round() < certificate_round,
+            Some((latest_round, _)) => *latest_round < certificate_round,
             // If there's no proposal, we consider advancing.
             None => true,
         };
@@ -1371,32 +1368,28 @@ impl<N: Network> Primary<N> {
             }
         });
 
-        // Start the batch proposer.
+        // Start the batch proposal task.
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                // Sleep briefly, but longer than if there were no batch.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                // Wait until the timeout or for is_ready=true.
+                tokio::select! {
+                    _ = self_.is_ready_notify.notified() => {}
+                    _ = tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)) => {}
+                }
+
                 let current_round = self_.current_round();
                 // If the primary is not synced, then do not propose a batch.
                 if !self_.sync.is_synced() {
                     debug!("Skipping batch proposal for round {current_round} {}", "(node is syncing)".dimmed());
                     continue;
                 }
-                // A best-effort attempt to skip the scheduled batch proposal if
-                // round progression already triggered one.
-                if self_.propose_lock.try_lock().is_err() {
-                    trace!(
-                        "Skipping batch proposal for round {current_round} {}",
-                        "(node is already proposing)".dimmed()
-                    );
-                    continue;
-                };
+
                 // If there is no proposed batch, attempt to propose a batch.
                 // Note: Do NOT spawn a task around this function call. Proposing a batch is a critical path,
                 // and only one batch needs to be proposed at a time.
-                if let Err(e) = self_.propose_batch().await {
-                    warn!("Cannot propose a batch - {e}");
+                if let Err(err) = self_.propose_batch().await {
+                    warn!("{}", flatten_error(err.context("Cannot propose a batch")));
                 }
             }
         });
@@ -1629,10 +1622,8 @@ impl<N: Network> Primary<N> {
                 false => debug!("Primary is not ready to propose the next round"),
             }
 
-            // If the node is ready, propose a batch for the next round.
-            if is_ready {
-                self.propose_batch().await?;
-            }
+            // If the node is ready, wake up the proposal task.
+            self.is_ready_notify.notify_one();
         }
         Ok(())
     }
@@ -1664,19 +1655,31 @@ impl<N: Network> Primary<N> {
 
     /// Ensure the primary is not creating batch proposals too frequently.
     /// This checks that the certificate timestamp for the previous round is within the expected range.
-    fn check_proposal_timestamp(&self, previous_round: u64, author: Address<N>, timestamp: i64) -> Result<()> {
+    fn check_peer_proposal_timestamp(&self, previous_round: u64, author: Address<N>, timestamp: i64) -> Result<()> {
+        ensure!(author != self.gateway.account().address(), "Peer cannot propose a batch that is authored by myself");
+
         // Retrieve the timestamp of the previous timestamp to check against.
         let previous_timestamp = match self.storage.get_certificate_for_round_with_author(previous_round, author) {
             // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
             Some(certificate) => certificate.timestamp(),
-            None => match self.gateway.account().address() == author {
-                // If we are the author, then ensure the previous proposal was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
-                true => *self.latest_proposed_batch_timestamp.read(),
-                // If we do not see a previous certificate for the author, then proceed optimistically.
-                false => return Ok(()),
-            },
+            // If we do not see a previous certificate for the author, then proceed optimistically.
+            None => return Ok(()),
         };
 
+        // Determine the elapsed time since the previous timestamp.
+        let elapsed = timestamp
+            .checked_sub(previous_timestamp)
+            .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
+        // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
+        match elapsed < MIN_BATCH_DELAY_IN_SECS as i64 {
+            true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
+            false => Ok(()),
+        }
+    }
+
+    /// Ensure the primary is not creating batch proposals too frequently.
+    /// This checks that the certificate timestamp for the previous round is within the expected range.
+    fn check_own_proposal_timesatmp(&self, previous_round: u64, previous_timestamp: i64, timestamp: i64) -> Result<()> {
         // Determine the elapsed time since the previous timestamp.
         let elapsed = timestamp
             .checked_sub(previous_timestamp)
@@ -2021,7 +2024,10 @@ impl<N: Network> Primary<N> {
         let proposal_cache = {
             let proposal = self.proposed_batch.write().take();
             let signed_proposals = self.signed_proposals.read().clone();
-            let latest_round = proposal.as_ref().map(Proposal::round).unwrap_or(*self.propose_lock.lock().await);
+            let latest_round = proposal
+                .as_ref()
+                .map(Proposal::round)
+                .unwrap_or(self.latest_proposed_batch.read().await.map(|(round, _)| round).unwrap_or(0));
             let pending_certificates = self.storage.get_pending_certificates();
             ProposalCache::new(latest_round, proposal, signed_proposals, pending_certificates)
         };
@@ -2815,15 +2821,17 @@ mod tests {
         primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Set the proposal lock to a round ahead of the storage.
-        let old_proposal_lock_round = *primary.propose_lock.lock().await;
-        *primary.propose_lock.lock().await = round + 1;
+        let (old_proposal_round, old_proposal_timestamp) =
+            primary.latest_proposed_batch.read().await.map(|(round, timestamp)| (round, timestamp)).unwrap_or((0, 0));
+        *primary.latest_proposed_batch.write().await =
+            Some((round + 1, old_proposal_timestamp + MIN_BATCH_DELAY_IN_SECS as i64));
 
         // Propose a batch and enforce that it fails.
         assert!(primary.propose_batch().await.is_ok());
         assert!(primary.proposed_batch.read().is_none());
 
         // Set the proposal lock back to the old round.
-        *primary.propose_lock.lock().await = old_proposal_lock_round;
+        *primary.latest_proposed_batch.write().await = Some((old_proposal_round, old_proposal_timestamp));
 
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
