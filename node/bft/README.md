@@ -31,6 +31,17 @@ f + 1 vertices that vote for the anchor, or 2f + 1 vertices that do not, or a ti
 ```
 Note that in this quote `2f + 1` should really be `n - f`.
 
+#### Batch Proposal
+
+Batch proposals are driven by a dedicated **batch proposal task** that runs in a loop and is the only place that calls `propose_batch()`. This keeps proposal on a single execution path and avoids concurrent proposal attempts.
+
+The task waits for one of two events before attempting to propose:
+
+1. **Ready notification** — When the primary advances to a new round (e.g. after a certificate is committed or in the Narwhal case when storage increments the round), it signals readiness by notifying the batch proposal task (`is_ready_notify`). The task wakes up and, if the node is synced, calls `propose_batch()`.
+2. **Maximum delay timeout** — If no notification occurs within the configured maximum batch delay, the task wakes up anyway and tries to propose. This provides a fallback so that rounds still progress even when no round-advancement event has occurred.
+
+The primary tracks the latest proposed **(round, timestamp)** in `latest_proposed_batch`. This state is used to: avoid proposing the same round twice; rate-limit the primary's own proposals (via a dedicated check against the previous proposal timestamp); and decide whether to advance when a certificate is received. Peer proposal timestamps are validated separately so that the primary does not accept batches proposed too soon after a peer's previous proposal.
+
 ### Ledger Advancement
 
 The BFT module also advances the ledger as new certificates are added to the DAG. There are two different ways the ledger can advance.

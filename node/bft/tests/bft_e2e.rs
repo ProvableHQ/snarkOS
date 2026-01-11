@@ -239,7 +239,7 @@ async fn test_leader_election_consistency() {
         println!("Found {} validators with a leader ({} out of sync)", leaders.len(), validators.len() - leaders.len());
 
         // Assert that all leaders are equal
-        assert!(leaders.iter().all_equal());
+        assert!(leaders.iter().all_equal(), "Leaders are not equal: {leaders:?} for round {target_round}");
     }
 }
 
