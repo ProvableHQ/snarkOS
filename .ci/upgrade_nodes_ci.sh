@@ -242,6 +242,10 @@ function start_node() {
     if [ "$node_index" -eq 0 ]; then
       flags+=( --metrics --no-dev-txs )
     fi
+
+    if [ "$bin" = "$SNARKOS_CURRENT_BIN" ]; then
+      flags+=( --auto-migrate-node-data )
+    fi
   else
     flags+=( --client "--logfile=$log_file" )
   fi

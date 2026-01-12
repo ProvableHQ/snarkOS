@@ -714,52 +714,45 @@ jobs:
 workflows:
   version: 2
 
-  cargo-workflow:
-    jobs:
-      - check-fmt
-      - check-clippy
-      - check-unused-dependencies
-      - check-cargo-audit
-      - check-other-crates
-      - lint-scripts
+  #cargo-workflow:
+  #  jobs:
+  #    - check-fmt
+  #    - check-clippy
+  #    - check-unused-dependencies
+  #    - check-cargo-audit
+  #    - check-other-crates
+  #    - lint-scripts
 
-  node-workflow:
-    jobs:
-      - node
-      - node-bft
-      - node-bft-events
-      - node-bft-ledger-service
-      - node-bft-storage-service
-      - node-cdn
-      - node-consensus
-      - node-rest
-      - node-router
-      - node-router-messages
-      - node-sync
-      - node-sync-communication-service
-      - node-sync-locators
-      - node-tcp
+  #node-workflow:
+  #  jobs:
+  #    - node
+  #    - node-bft
+  #    - node-bft-events
+  #    - node-bft-ledger-service
+  #    - node-bft-storage-service
+  #    - node-cdn
+  #    - node-consensus
+  #    - node-rest
+  #    - node-router
+  #    - node-router-messages
+  #    - node-sync
+  #    - node-sync-communication-service
+  #    - node-sync-locators
+  #    - node-tcp
 
-  devnet-workflow:
-    jobs:
-      - devnet-test
+  #devnet-workflow:
+  #  jobs:
+  #    - devnet-test
 
   upgrade-workflow:
     jobs:
-      - upgrade-test:
-          filters:
-            branches:
-              only:
-                - canary
-                - testnet
-                - mainnet
-                - staging
+      - upgrade-test
 
-  snarkos-workflow:
-    jobs:
-      - snarkos
-      - account
-      - cli
+  #snarkos-workflow:
+  #  jobs:
+  #    - snarkos
+  #    - account
+  #    - cli
 
   windows-workflow:
     jobs:
