@@ -1,5 +1,5 @@
 <p align="center"> 
-    <img alt="snarkOS" width="1412" src="https://aleo.org/snarkOS.png">
+    <img alt="snarkOS" width="1412" src="https://aleo.org/snarkOS.webp">
 </p>
 
 <p align="center">
