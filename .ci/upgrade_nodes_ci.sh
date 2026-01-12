@@ -243,6 +243,7 @@ function start_node() {
       flags+=( --metrics --no-dev-txs )
     fi
 
+    # TODO Remove once old nodes are no longer on v4.4.0!
     if [ "$bin" = "$SNARKOS_CURRENT_BIN" ]; then
       flags+=( --auto-migrate-node-data )
     fi
