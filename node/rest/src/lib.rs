@@ -196,7 +196,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/find/blockHash/{tx_id}", get(Self::find_block_hash))
             .route("/find/blockHeight/{state_root}", get(Self::find_block_height_from_state_root))
             .route("/find/transactionID/deployment/{program_id}", get(Self::find_latest_transaction_id_from_program_id))
-            .route("/find/transactionID/deployment/{program_id}/{edition}", get(Self::find_transaction_id_from_program_id_and_edition))
+            .route("/find/transactionID/deployment/{program_id}/{edition}", get(Self::find_latest_transaction_id_from_program_id_and_edition))
+            .route("/find/transactionID/deployment/{program_id}/{edition}/original", get(Self::find_original_deployment_transaction_id))
+            .route("/find/transactionID/deployment/{program_id}/{edition}/{amendment}", get(Self::find_transaction_id_from_program_id_edition_and_amendment))
             .route("/find/transactionID/{transition_id}", get(Self::find_transaction_id_from_transition_id))
             .route("/find/transitionID/{input_or_output_id}", get(Self::find_transition_id))
 
@@ -211,6 +213,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/program/{id}/{edition}", get(Self::get_program_for_edition))
             .route("/program/{id}/mappings", get(Self::get_mapping_names))
             .route("/program/{id}/mapping/{name}/{key}", get(Self::get_mapping_value))
+            .route("/program/{id}/amendment_count", get(Self::get_program_amendment_count))
+            .route("/program/{id}/{edition}/amendment_count", get(Self::get_program_amendment_count_for_edition))
 
             // GET ../sync/..
             // Note: keeping ../sync_status for compatibility
