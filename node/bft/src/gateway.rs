@@ -1101,16 +1101,16 @@ impl<N: Network> Gateway<N> {
     /// Processes a message received from the network.
     async fn process_message_inner(&self, peer_addr: SocketAddr, message: Event<N>) {
         // Process the message. Disconnect if the peer violated the protocol.
-        if let Err(error) = self.inbound(peer_addr, message).await {
-            if let Some(peer_ip) = self.resolver.read().get_listener(peer_addr) {
-                warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
-                let self_ = self.clone();
-                tokio::spawn(async move {
-                    Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
-                    // Disconnect from this peer.
-                    self_.disconnect(peer_ip);
-                });
-            }
+        if let Err(error) = self.inbound(peer_addr, message).await
+            && let Some(peer_ip) = self.resolver.read().get_listener(peer_addr)
+        {
+            warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
+            let self_ = self.clone();
+            tokio::spawn(async move {
+                Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
+                // Disconnect from this peer.
+                self_.disconnect(peer_ip);
+            });
         }
     }
 
@@ -1289,14 +1289,12 @@ impl<N: Network> Disconnect for Gateway<N> {
 #[async_trait]
 impl<N: Network> OnConnect for Gateway<N> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
-        if let Some(listener_addr) = self.resolve_to_listener(&peer_addr) {
-            if let Some(peer) = self.get_connected_peer(listener_addr) {
-                if peer.node_type == NodeType::BootstrapClient {
-                    let _ =
-                        <Self as Transport<N>>::send(self, listener_addr, Event::ValidatorsRequest(ValidatorsRequest))
-                            .await;
-                }
-            }
+        if let Some(listener_addr) = self.resolve_to_listener(&peer_addr)
+            && let Some(peer) = self.get_connected_peer(listener_addr)
+            && peer.node_type == NodeType::BootstrapClient
+        {
+            let _ =
+                <Self as Transport<N>>::send(self, listener_addr, Event::ValidatorsRequest(ValidatorsRequest)).await;
         }
     }
 }

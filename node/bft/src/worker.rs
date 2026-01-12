@@ -319,14 +319,13 @@ impl<N: Network> Worker<N> {
         // This takes heavy transaction verification out of the hot path during block generation.
         if let (TransmissionID::Transaction(tx_id, _), Transmission::Transaction(Data::Object(tx))) =
             (transmission_id, &transmission)
+            && tx.is_execute()
         {
-            if tx.is_execute() {
-                let self_ = self.clone();
-                let tx_ = tx.clone();
-                tokio::spawn(async move {
-                    let _ = self_.ledger.check_transaction_basic(tx_id, tx_).await;
-                });
-            }
+            let self_ = self.clone();
+            let tx_ = tx.clone();
+            tokio::spawn(async move {
+                let _ = self_.ledger.check_transaction_basic(tx_id, tx_).await;
+            });
         }
         // If the transmission ID and transmission type matches, then insert the transmission into the ready queue.
         if is_well_formed && self.ready.write().insert(transmission_id, transmission) {
