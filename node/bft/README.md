@@ -31,6 +31,49 @@ f + 1 vertices that vote for the anchor, or 2f + 1 vertices that do not, or a ti
 ```
 Note that in this quote `2f + 1` should really be `n - f`.
 
+### Ledger Advancement
+
+The BFT module also advances the ledger as new certificates are added to the DAG. There are two different ways the ledger can advance.
+
+#### 1. Consensus Path (Normal Operation)
+
+When the node is actively participating in consensus and is synced with the network:
+
+1. **Certificate Collection**: The Primary receives batch certificates from validators and inserts them into the DAG via `update_dag()`.
+2. **Leader Election**: Leaders are elected in even rounds. When a certificate arrives for round `r`, the BFT checks if the leader certificate for round `r-1` can be committed.
+3. **Availability Threshold**: The leader certificate is ready to commit when the availability threshold is reached—i.e., enough validators in round `r` have included the leader's certificate in their previous certificate IDs.
+4. **Commit Chain**: `commit_leader_certificate()` is called, which:
+   - Walks backwards through the DAG to find all uncommitted leader certificates that are linked to the current one
+   - Builds a subDAG containing all certificates to be committed
+   - Sends the subDAG to the Consensus module via `tx_consensus_subdag`
+5. **Block Creation**: The Consensus module receives the subDAG and calls `try_advance_to_next_block()`, which:
+   - Prepares a new block from the subDAG and its transmissions
+   - Validates and advances the ledger to the new block
+
+#### 2. Sync Path (Catching Up)
+
+When the node is behind and syncing blocks from peers, the `bft::Sync` module handles synchronization. The behavior differs based on how far behind the node is:
+
+##### Within GC Range (Normal Sync)
+
+When the node is within the garbage collection range of the network tip:
+
+1. **Block Reception**: `bft::Sync` requests and receives blocks from peer nodes via `BlockSync`.
+2. **Certificate Insertion**: Each certificate from the block's subDAG is added to the BFT's DAG via the `SyncCallback::add_new_certificates()` trait method. This populates the DAG with the certificates needed for consensus.
+3. **BFT-Driven Ledger Advancement**: The BFT module handles block creation through its normal consensus path—when enough certificates are added to the DAG, the BFT commits leader certificates and creates blocks just as it does during normal operation.
+4. **Pending Blocks**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks`. This step is needed in case the node switches back to block-based fast sync.
+5. **Pending Block Cleanup**: When the ledger advances because of leader commits (see 3), pending blocks are removed from the queue.
+
+##### Outside GC Range (Fast Sync)
+When the node is too far behind (outside the GC range):
+
+1. **Block Reception**: `bft::Sync` requests and receives blocks from peer nodes via `BlockSync` (same as with normal sync).
+2. **No DAG Updates**: Certificates are **not** added to the BFT's DAG, since they are too old to be useful for consensus.
+3. **Pending Blocks**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks` (same as with normal sync).
+4. **Availability Threshold Check**: The Sync module checks whether each pending block's leader certificate has reached the availability threshold. This requires certificates from subsequent blocks that reference the leader certificate.
+5. **Ledger Advancement**: Once the availability threshold is confirmed, the Sync module directly advances the ledger by calling `advance_to_next_block()` for each confirmed block, and updates storage height and round.
+6. **Transition to Normal Sync**: Once the node catches up to within the GC range, it runs the bootup synchronization routine and switches back to normal BFT-driven sync.
+
 ## Workers
 
 The workers are simple entry replicators that receive transactions from the network and append them to their memory pool.

@@ -125,7 +125,7 @@ pub struct Primary<N: Network> {
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
     /// The handles for all background tasks spawned by this primary.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The lock for propose_batch.
+    /// The lock for propose_batch. It holds the most recent round that was proposed for.
     propose_lock: Arc<TMutex<u64>>,
     /// The node configuration directory.
     node_data_dir: NodeDataDir,

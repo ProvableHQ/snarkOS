@@ -52,9 +52,10 @@ use parking_lot::Mutex;
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     future::Future,
     net::SocketAddr,
+    ops::Deref,
     sync::Arc,
     time::Duration,
 };
@@ -68,7 +69,8 @@ use tokio::{sync::oneshot, task::JoinHandle};
 pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
     fn sync_bft_dag_at_bootup(&self, certificates: &[BatchCertificate<N>]);
 
-    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
+    fn add_certificate(&self, certificate: BatchCertificate<N>);
+    fn commit_certificate(&self, certificate: &BatchCertificate<N>);
 }
 
 /// Block synchronization logic for validators.
@@ -419,28 +421,38 @@ impl<N: Network> Sync<N> {
 
 // Methods to manage storage.
 impl<N: Network> Sync<N> {
-    /// Syncs the storage with the ledger at bootup.
-    ///
-    /// This is called when starting the validator and after finishing a sync without BFT.
+    /// This functions inserts the certificates from the most recent blocks into the BFT DAG.
+    /// It is called when starting the validator and after finishing a sync without BFT.
     async fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
-        // Retrieve the latest block in the ledger.
-        let latest_block = self.ledger.latest_block();
+        let mut pending_blocks = self.pending_blocks.lock();
+        let latest_ledger_block = self.ledger.latest_block();
 
-        // Retrieve the block height.
-        let block_height = latest_block.height();
+        // Remove any obsolete pending blocks.
+        while let Some(block) = pending_blocks.front()
+            && block.height() <= latest_ledger_block.height()
+        {
+            pending_blocks.pop_front();
+        }
+
+        let latest_block: &Block<N> = pending_blocks.back().map(|block| block.deref()).unwrap_or(&latest_ledger_block);
+        let max_height = latest_block.height();
+
         // Determine the maximum number of blocks corresponding to rounds
         // that would not have been garbage collected, i.e. that would be kept in storage.
         // Since at most one block is created every two rounds,
         // this is half of the maximum number of rounds kept in storage.
         let max_gc_blocks = u32::try_from(self.storage.max_gc_rounds())?.saturating_div(2);
+
         // Determine the earliest height of blocks corresponding to rounds kept in storage,
         // conservatively set to the block height minus the maximum number of blocks calculated above.
         // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
-        let gc_height = block_height.saturating_sub(max_gc_blocks);
-        // Retrieve the blocks.
-        let blocks = self.ledger.get_blocks(gc_height..block_height.saturating_add(1))?;
+        let gc_height = max_height.saturating_sub(max_gc_blocks);
 
-        debug!("Syncing storage with the ledger from block {} to {}...", gc_height, block_height.saturating_add(1));
+        // Retrieve the DAGs of all blocks..
+        let ledger_blocks = self.ledger.get_blocks(gc_height..(latest_ledger_block.height() + 1))?;
+
+        let blocks = ledger_blocks.iter().chain(pending_blocks.iter().map(|block| block.deref()));
+        debug!("Syncing storage with the ledger from block {} to {}...", gc_height, latest_block.height());
 
         /* Sync storage */
 
@@ -450,13 +462,14 @@ impl<N: Network> Sync<N> {
         self.storage.sync_round_with_block(latest_block.round());
         // Perform GC on the latest block round.
         self.storage.garbage_collect_certificates(latest_block.round());
+
         // Iterate over the blocks.
-        for block in &blocks {
-            // If the block authority is a sub-DAG, then sync the batch certificates with the block.
-            // Note that the block authority is always a sub-DAG in production;
-            // beacon signatures are only used for testing,
-            // and as placeholder (irrelevant) block authority in the genesis block.
+        for block in blocks.clone() {
             if let Authority::Quorum(subdag) = block.authority() {
+                // If the block authority is a sub-DAG, then sync the batch certificates with the block.
+                // Note that the block authority is always a sub-DAG in production;
+                // beacon signatures are only used for testing,
+                // and as placeholder (irrelevant) block authority in the genesis block.
                 // Reconstruct the unconfirmed transactions.
                 let unconfirmed_transactions = cfg_iter!(block.transactions())
                     .filter_map(|tx| {
@@ -467,7 +480,7 @@ impl<N: Network> Sync<N> {
                 // Iterate over the certificates.
                 for certificates in subdag.values().cloned() {
                     cfg_into_iter!(certificates).for_each(|certificate| {
-                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
+                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions)
                     });
                 }
 
@@ -475,30 +488,33 @@ impl<N: Network> Sync<N> {
                 #[cfg(feature = "telemetry")]
                 self.gateway.validator_telemetry().insert_subdag(subdag);
             }
-        }
 
-        /* Sync the BFT DAG */
-
-        // Construct a list of the certificates.
-        let certificates = blocks
-            .iter()
-            .flat_map(|block| {
-                match block.authority() {
-                    // If the block authority is a beacon, then skip the block.
-                    Authority::Beacon(_) => None,
-                    // If the block authority is a subdag, then retrieve the certificates.
-                    Authority::Quorum(subdag) => Some(subdag.values().flatten().cloned().collect::<Vec<_>>()),
+            if let Some(cb) = self.sync_callback.get() {
+                // Insert and commit ledger block certificates.
+                for block in ledger_blocks.iter() {
+                    if let Authority::Quorum(subdag) = block.authority() {
+                        for round in subdag.values() {
+                            for certificate in round {
+                                cb.add_certificate(certificate.clone());
+                                cb.commit_certificate(certificate);
+                            }
+                        }
+                    }
                 }
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-
-        // If a BFT sender was provided, send the certificates to the BFT.
-        if let Some(cb) = self.sync_callback.get() {
-            cb.sync_bft_dag_at_bootup(&certificates);
+                // Insert (but do not commit) pending block certificates.
+                for block in pending_blocks.iter() {
+                    if let Authority::Quorum(subdag) = block.authority() {
+                        for round in subdag.values() {
+                            for certificate in round {
+                                cb.add_certificate(certificate.clone());
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        self.block_sync.set_sync_height(block_height);
+        self.block_sync.set_sync_height(max_height);
 
         Ok(())
     }
@@ -556,9 +572,6 @@ impl<N: Network> Sync<N> {
     /// If blocks are not confirmed yet, they will be kept in [`Self::pending_blocks`].
     /// It will also pass certificates from synced blocks to the BFT module so that consensus can progress as expected
     /// (see [`Self::sync_storage_with_block`] for more details).
-    ///
-    /// If the node falls behind more than GC rounds, this function calls [`Self::sync_storage_without_bft`] instead,
-    /// which syncs without updating the BFT state.
     async fn try_advancing_block_synchronization_inner(&self) -> Result<bool> {
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
@@ -619,7 +632,7 @@ impl<N: Network> Sync<N> {
                 };
                 info!("Syncing the BFT to block {}...", block.height());
                 // Sync the storage with the block.
-                match self.sync_storage_with_block(block).await {
+                match self.sync_storage_with_block(block, true).await {
                     Ok(_) => {
                         // Update the current height if sync succeeds.
                         current_height = next_height;
@@ -641,8 +654,8 @@ impl<N: Network> Sync<N> {
 
             trace!("Try advancing block responses without BFT (starting at block {current_height})");
 
-            // Try to advance the ledger *to tip* without updating the BFT.
-            // TODO(kaimast): why to tip and not to tip-GC?
+            // Try to advance the ledger *to tip* without updating the BFT,
+            // The BFT will only be updated if we reached the GC range after adding the new blocks.
             loop {
                 let next_height = current_height + 1;
 
@@ -652,7 +665,7 @@ impl<N: Network> Sync<N> {
                 info!("Syncing the ledger to block {}...", block.height());
 
                 // Sync the ledger with the block without BFT.
-                match self.sync_ledger_with_block_without_bft(block).await {
+                match self.sync_storage_with_block(block, false).await {
                     Ok(_) => {
                         // Update the current height if sync succeeds.
                         current_height = next_height;
@@ -679,52 +692,6 @@ impl<N: Network> Sync<N> {
         }
     }
 
-    /// Syncs the ledger with the given block without updating the BFT.
-    ///
-    /// This is only used by `[Self::try_advancing_block_synchronization`].
-    async fn sync_ledger_with_block_without_bft(&self, block: Block<N>) -> Result<()> {
-        let self_ = self.clone();
-        spawn_blocking!({
-            let block_height = block.height();
-
-            let ledger_update = match self_.ledger.begin_ledger_update() {
-                Ok(update) => update,
-                Err(BeginLedgerUpdateError::ShuttingDown) => {
-                    debug!("BlockSync cannot advance the ledger any more. The node is shutting down.");
-                    return Ok(());
-                }
-                Err(err) => {
-                    return Err(anyhow!("Unexpected error when beginning ledger update: {err}"));
-                }
-            };
-
-            // Check the next block.
-            let block = match ledger_update.check_next_block(block) {
-                Ok(block) => block,
-                Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
-                    debug!("Skipping a block at height {block_height}. The ledger already advanced.");
-                    self_.block_sync.remove_block_response(block_height);
-                    return Ok(());
-                }
-                Err(err) => {
-                    return Err(err.into_anyhow());
-                }
-            };
-
-            // Attempt to advance to the next block.
-            ledger_update.advance_to_next_block(&block)?;
-
-            // Sync the height with the block.
-            self_.storage.sync_height_with_block(block_height);
-            // Sync the round with the block.
-            self_.storage.sync_round_with_block(block.round());
-            // Mark the block height as processed in block_sync.
-            self_.block_sync.remove_block_response(block_height);
-
-            Ok(())
-        })
-    }
-
     /// Helper function for [`Self::sync_storage_with_block`].
     /// It syncs the batch certificates with the BFT, if the block's authority is a sub-DAG.
     ///
@@ -742,18 +709,18 @@ impl<N: Network> Sync<N> {
             .collect::<HashMap<_, _>>();
 
         // Iterate over the certificates.
-        for certificates in subdag.values().cloned() {
-            cfg_into_iter!(certificates.clone()).for_each(|certificate| {
+        for certificates in subdag.values() {
+            cfg_into_iter!(certificates).for_each(|certificate| {
                 // Sync the batch certificate with the block.
                 self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions);
             });
+        }
 
-            // Sync the BFT DAG with the certificates.
-            if let Some(cb) = self.sync_callback.get() {
-                for certificate in certificates {
-                    // If a BFT sender was provided, send the certificate to the BFT.
-                    // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                    cb.add_new_certificate(certificate).await.with_context(|| "Failed to sync certificate")?;
+        // Sync the BFT DAG with the block's certificates.
+        if let Some(cb) = self.sync_callback.get() {
+            for round in subdag.values() {
+                for certificate in round {
+                    cb.add_certificate(certificate.clone());
                 }
             }
         }
@@ -765,7 +732,11 @@ impl<N: Network> Sync<N> {
     ///
     /// It checks that successor of a given block contains enough votes to commit it.
     /// This can only return `Ok(true)` if the certificates of the block's successor were added to the storage.
-    fn is_block_availability_threshold_reached(&self, block: &PendingBlock<N>) -> Result<bool> {
+    fn is_block_availability_threshold_reached(
+        &self,
+        block: &PendingBlock<N>,
+        successors: &[PendingBlock<N>],
+    ) -> Result<bool> {
         // Fetch the leader certificate and the relevant rounds.
         let leader_certificate = match block.authority() {
             Authority::Quorum(subdag) => subdag.leader_certificate().clone(),
@@ -777,17 +748,27 @@ impl<N: Network> Sync<N> {
 
         // Get the committee lookback for the round just after the leader.
         let certificate_committee_lookback = self.ledger.get_committee_lookback_for_round(certificate_round)?;
-        // Retrieve all of the certificates for the round just after the leader.
-        let certificates = self.storage.get_certificates_for_round(certificate_round);
+
         // Construct a set over the authors, at the round just after the leader,
         // who included the leader's certificate in their previous certificate IDs.
-        let authors = certificates
+        let authors = successors
             .iter()
-            .filter_map(|c| match c.previous_certificate_ids().contains(&leader_certificate.id()) {
-                true => Some(c.author()),
-                false => None,
+            .filter_map(|successor| {
+                let Authority::Quorum(subdag) = successor.authority() else {
+                    return None;
+                };
+
+                subdag.get(&certificate_round)
             })
-            .collect();
+            .flatten()
+            .filter_map(|certificate| {
+                if certificate.previous_certificate_ids().contains(&leader_certificate.id()) {
+                    Some(certificate.author())
+                } else {
+                    None
+                }
+            })
+            .collect::<HashSet<_>>();
 
         // Check if the leader is ready to be committed.
         if certificate_committee_lookback.is_availability_threshold_reached(&authors) {
@@ -816,7 +797,7 @@ impl<N: Network> Sync<N> {
     /// # Usage
     /// This function assumes that blocks are passed in order, i.e.,
     /// that the given block is a direct successor of the block that was last passed to this function.
-    async fn sync_storage_with_block(&self, new_block: Block<N>) -> Result<()> {
+    async fn sync_storage_with_block(&self, new_block: Block<N>, within_gc_range: bool) -> Result<()> {
         let new_block_height = new_block.height();
 
         // If this block has already been processed, return early.
@@ -826,15 +807,16 @@ impl<N: Network> Sync<N> {
             return Ok(());
         }
 
-        // Append the certificates to the storage.
-        self.add_block_subdag_to_bft(&new_block).await?;
+        // Append the certificates to the storage, if the block is within the GC range.
+        if within_gc_range {
+            self.add_block_subdag_to_bft(&new_block).await?;
+        }
 
         // This optimistically performs updates to the pending block set.
-        // Because BFT can advance concurrently, we may have to abort and retry.
         let _self = self.clone();
 
         spawn_blocking!({
-            while !_self.try_sync_storage_with_block(&new_block)? {
+            while !_self.try_sync_storage_with_block(&new_block, within_gc_range)? {
                 trace!("Retrying to sync storage with block at height {new_block_height}");
             }
 
@@ -843,12 +825,16 @@ impl<N: Network> Sync<N> {
     }
 
     /// Tries to sync the storage with the given block.
-    ///  
-    /// # Returns
+    ///
+    /// # Arguments
+    /// - `new_block`: The new block to sync the storage with.
+    /// - `within_gc_range`: Whether the block is within the GC range.
+    ///
+    ///  # Returns
     /// - Ok(true) if the storage was synced with the block, or a pending block already exists for the given height.
     /// - Ok(false) if the block, or one of the pending blocks, is out of order.
     /// - Err(anyhow::Error) if any other error occured.
-    fn try_sync_storage_with_block(&self, new_block: &Block<N>) -> Result<bool> {
+    fn try_sync_storage_with_block(&self, new_block: &Block<N>, within_gc_range: bool) -> Result<bool> {
         // Acquire the pending blocks lock.
         let mut pending_blocks = self.pending_blocks.lock();
 
@@ -919,28 +905,38 @@ impl<N: Network> Sync<N> {
         );
         pending_blocks.push_back(new_block);
 
+        // Fetch the latest block height.
+        let ledger_block_height = self.ledger.latest_block_height();
+
+        // We can only commit a pending block when there are at least two, as a successor with sufficient votes is required.
+        let Some(penultimate_index) = pending_blocks.len().checked_sub(1) else {
+            return Ok(true);
+        };
+
         // Now, figure out if and which pending block we can commit.
         // To do this effectively and because commits are transitive,
         // we iterate in reverse so that we can stop at the first successful check.
         //
         // Note, that if the storage already contains certificates for the round after new block,
         // the availability threshold for the new block could also be reached.
-        let mut commit_height = None;
-        for block in pending_blocks.iter().rev() {
-            // This check assumes that the pending blocks are properly linked together, based on the fact that,
-            // to generate the sequence of `PendingBlocks`, each block needs to successfully be processed by `Ledger::check_block_subdag`.
-            // As a result, the safety of this piece of code relies on the correctness `Ledger::check_block_subdag`,
-            // which is tested in `snarkvm/ledger/tests/pending_block.rs`.
-            if self
-                .is_block_availability_threshold_reached(block)
-                .with_context(|| "Availability threshold check failed")?
-            {
-                commit_height = Some(block.height());
-                break;
-            }
-        }
+        let commit_height = 'outer: {
+            let pending_blocks = pending_blocks.make_contiguous();
+            for index in (0..penultimate_index).rev() {
+                let block = &pending_blocks[index];
+                let successors = &pending_blocks[index + 1..];
 
-        let Some(commit_height) = commit_height else {
+                // This check assumes that the pending blocks are properly linked together, based on the fact that,
+                // to generate the sequence of `PendingBlocks`, each block needs to successfully be processed by `Ledger::check_block_subdag`.
+                // As a result, the safety of this piece of code relies on the correctness `Ledger::check_block_subdag`,
+                // which is tested in `snarkvm/ledger/tests/pending_block.rs`.
+                if self
+                    .is_block_availability_threshold_reached(block, successors)
+                    .with_context(|| "Availability threshold check failed")?
+                {
+                    break 'outer block.height();
+                }
+            }
+
             trace!("No pending block are ready to be committed ({} block(s) are pending)", pending_blocks.len());
             return Ok(true);
         };
@@ -996,6 +992,17 @@ impl<N: Network> Sync<N> {
             storage.sync_height_with_block(block.height());
             // Sync the round with the block.
             storage.sync_round_with_block(block.round());
+
+            if within_gc_range
+                && let Some(cb) = self.sync_callback.get()
+                && let Authority::Quorum(subdag) = block.authority()
+            {
+                for round in subdag.values() {
+                    for certificate in round {
+                        cb.commit_certificate(certificate);
+                    }
+                }
+            }
         }
 
         Ok(true)
@@ -1118,7 +1125,7 @@ impl<N: Network> Sync<N> {
 mod tests {
     use super::*;
 
-    use crate::{helpers::now, ledger_service::CoreLedgerService, storage_service::BFTMemoryService};
+    use crate::{BFT, helpers::now, ledger_service::CoreLedgerService, storage_service::BFTMemoryService};
 
     use snarkos_account::Account;
     use snarkos_node_sync::BlockSync;
@@ -1140,34 +1147,37 @@ mod tests {
     use aleo_std::StorageMode;
     use indexmap::IndexSet;
     use rand::Rng;
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::OnceLock};
 
     type CurrentNetwork = MainnetV0;
     type CurrentLedger = Ledger<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
     type CurrentConsensusStore = ConsensusStore<CurrentNetwork, ConsensusMemory<CurrentNetwork>>;
 
-    /// Tests that commits work as expected when some anchors are not committed immediately.
-    #[tokio::test]
-    #[tracing_test::traced_test]
-    async fn test_commit_chain() -> anyhow::Result<()> {
-        let rng = &mut TestRng::default();
+    /// Create four blocks, where only the last one contains enough certificates to advance the ledger.
+    async fn setup_commit_chain(rng: &mut TestRng) -> (Block<CurrentNetwork>, Vec<Block<CurrentNetwork>>) {
+        static CHAIN_CACHE: OnceLock<(Block<CurrentNetwork>, Vec<Block<CurrentNetwork>>)> = OnceLock::new();
+
+        // Use cached version if it exists.
+        if let Some((genesis, blocks)) = CHAIN_CACHE.get() {
+            return (genesis.clone(), blocks.clone());
+        }
+
         // Initialize the round parameters.
         let max_gc_rounds = BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64;
 
         // The first round of the first block.
-        let first_round = 1;
+        let first_round: u64 = 1;
         // The total number of blocks we test
         let num_blocks = 3;
-        // The number of certificate rounds needed.
-        // There is one additional round to provide availability for the inal block.
-        let num_rounds = first_round + num_blocks * 2 + 1;
+        // The last round of the last block.
+        let last_round = first_round + num_blocks * 2;
         // The first round that has at least N-f certificates referencing the anchor from the previous round.
         // This is also the last round we use in the test.
-        let first_committed_round = num_rounds - 1;
+        let first_threshold_round = 5;
 
         // Initialize the store.
         let store = CurrentConsensusStore::open(StorageMode::new_test(None)).unwrap();
-        let account: Account<CurrentNetwork> = Account::new(rng)?;
+        let account: Account<CurrentNetwork> = Account::new(rng).unwrap();
 
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
         let seed: u64 = rng.r#gen();
@@ -1179,9 +1189,9 @@ mod tests {
         let genesis_rng = &mut TestRng::from_seed(seed);
         let private_keys = [
             *account.private_key(),
-            PrivateKey::new(genesis_rng)?,
-            PrivateKey::new(genesis_rng)?,
-            PrivateKey::new(genesis_rng)?,
+            PrivateKey::new(genesis_rng).unwrap(),
+            PrivateKey::new(genesis_rng).unwrap(),
+            PrivateKey::new(genesis_rng).unwrap(),
         ];
 
         // Initialize the ledger with the genesis block.
@@ -1193,10 +1203,10 @@ mod tests {
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
             let addresses = vec![
-                Address::try_from(private_keys[0])?,
-                Address::try_from(private_keys[1])?,
-                Address::try_from(private_keys[2])?,
-                Address::try_from(private_keys[3])?,
+                Address::try_from(private_keys[0]).unwrap(),
+                Address::try_from(private_keys[1]).unwrap(),
+                Address::try_from(private_keys[2]).unwrap(),
+                Address::try_from(private_keys[3]).unwrap(),
             ];
 
             let committee = ledger.latest_committee().unwrap();
@@ -1206,7 +1216,7 @@ mod tests {
                 HashMap::new();
             let mut previous_certificates: IndexSet<BatchCertificate<CurrentNetwork>> = IndexSet::with_capacity(4);
 
-            for round in first_round..=first_committed_round {
+            for round in first_round..=last_round {
                 let mut current_certificates = IndexSet::new();
                 let previous_certificate_ids: IndexSet<_> = if round == 0 || round == 1 {
                     IndexSet::new()
@@ -1215,22 +1225,32 @@ mod tests {
                 };
 
                 let committee_id = committee.id();
-                let prev_leader = committee.get_leader(round - 1).unwrap();
 
-                // For the first two blocks non-leaders will not reference the leader certificate.
-                // This means, while there is an anchor, it is isn't committed
-                // until later.
+                // Determine if there was a leader in the previous round.
+                let is_certificate_round = !round.is_multiple_of(2);
+                let prev_leader = if is_certificate_round && let Some(prev_round) = round.checked_sub(1) {
+                    Some(committee.get_leader(prev_round).unwrap())
+                } else {
+                    None
+                };
+
+                // Generate all certificates for the round.
                 for (i, private_key) in private_keys.iter().enumerate() {
-                    let leader_index = addresses.iter().position(|&address| address == prev_leader).unwrap();
-                    let is_certificate_round = round % 2 == 1;
-                    let is_leader = i == leader_index;
+                    let previous_leader_index =
+                        addresses.iter().position(|&addr| prev_leader.is_some_and(|prev_leader| addr == prev_leader));
 
-                    let previous_certs = if round < first_committed_round && is_certificate_round && !is_leader {
+                    // For the first two blocks non-leaders will not reference the leader certificate.
+                    // This means, while there was an anchor in the previous round, it is not committed until later.
+                    let previous_certs = if let Some(previous_leader_index) = previous_leader_index
+                        && round < first_threshold_round
+                        && i != previous_leader_index
+                    {
+                        // Remove the reference to the previous leader certificate.
                         previous_certificate_ids
                             .iter()
                             .cloned()
                             .enumerate()
-                            .filter(|(idx, _)| *idx != leader_index)
+                            .filter(|(idx, _)| *idx != previous_leader_index)
                             .map(|(_, id)| id)
                             .collect()
                     } else {
@@ -1267,13 +1287,13 @@ mod tests {
 
         // Initialize the storage.
         let storage = Storage::new(core_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
-        // Insert all certificates into storage.
-        let mut certificates: Vec<BatchCertificate<CurrentNetwork>> = Vec::new();
-        for i in first_round..=first_committed_round {
-            let c = (*round_to_certificates_map.get(&i).unwrap()).clone();
-            certificates.extend(c);
-        }
-        for certificate in certificates.clone().iter() {
+
+        // Create a list of all certificates.
+        let certificates: Vec<_> =
+            round_to_certificates_map.into_iter().flat_map(|(_, certificates)| certificates.into_iter()).collect();
+
+        // insert all certificates into storage.
+        for certificate in certificates.iter() {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
         }
 
@@ -1311,7 +1331,7 @@ mod tests {
                 subdag_map.insert(leader_round - 2, previous_commit_cert_map);
             }
 
-            let subdag = Subdag::from(subdag_map.clone())?;
+            let subdag = Subdag::from(subdag_map.clone()).unwrap();
             previous_leader_cert = Some(leader_certificate);
 
             let core_ledger = core_ledger.clone();
@@ -1320,10 +1340,22 @@ mod tests {
                 let block = ledger_update.prepare_advance_to_next_quorum_block(subdag, Default::default())?;
                 ledger_update.advance_to_next_block(&block)?;
                 Ok(block)
-            })?;
+            })
+            .unwrap();
 
             blocks.push(block);
         }
+
+        CHAIN_CACHE.get_or_init(|| (genesis, blocks)).clone()
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_commit_chain_with_bft() {
+        let rng = &mut TestRng::default();
+
+        let (genesis, mut blocks) = setup_commit_chain(rng).await;
+        let max_gc_rounds = BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64;
 
         // ### Test that sync works as expected ###
         let storage_mode = StorageMode::new_test(None);
@@ -1338,26 +1370,192 @@ mod tests {
             ))
         };
 
-        // Set up sync and its dependencies.
+        let account = Account::new(rng).unwrap();
+        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
         let gateway = Gateway::new(
             account.clone(),
-            storage.clone(),
+            syncing_storage.clone(),
             syncing_ledger.clone(),
             None,
             &[],
             false,
             NodeDataDir::new_test(None),
             None,
-        )?;
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
-        let sync = Sync::new(gateway.clone(), storage.clone(), syncing_ledger.clone(), block_sync);
+        )
+        .unwrap();
 
-        let mut block_iter = blocks.into_iter();
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
+
+        let syncing_bft = BFT::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            block_sync,
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+
+        // -- Run test -- //
+
+        let last_block = blocks.pop().unwrap();
 
         // Insert the blocks into the new sync module
-        for _ in 0..num_blocks - 1 {
-            let block = block_iter.next().unwrap();
-            sync.sync_storage_with_block(block).await?;
+        for block in blocks {
+            sync.sync_storage_with_block(block, true).await.unwrap();
+            // Availability threshold is not met, so we should not advance yet.
+            assert_eq!(syncing_bft.testing_only_latest_committed_round(), 0);
+        }
+
+        // Only for the final block, the availability threshold is met,
+        // because certificates for the subsequent round are already in storage.
+        sync.sync_storage_with_block(last_block, true).await.unwrap();
+
+        // Ensure the leaders are committed.
+        // (blocks are not created as there is no active consensus instance)
+        assert_eq!(syncing_bft.testing_only_latest_committed_round(), 4);
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_commit_chain_with_swich_to_bft() {
+        let rng = &mut TestRng::default();
+        let (genesis, mut blocks) = setup_commit_chain(rng).await;
+        let max_gc_rounds = BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64;
+        let storage_mode = StorageMode::new_test(None);
+
+        // Create a new ledger to test with, but use the existing storage
+        // so that the certificates exist.
+        let syncing_ledger = {
+            let storage_mode = storage_mode.clone();
+            Arc::new(CoreLedgerService::new(
+                spawn_blocking!(CurrentLedger::load(genesis, storage_mode)).unwrap(),
+                SimpleStoppable::new(),
+            ))
+        };
+
+        let account = Account::new(rng).unwrap();
+        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let gateway = Gateway::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
+
+        let syncing_bft = BFT::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            block_sync,
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+
+        // -- Run test -- //
+        let last_block = blocks.pop().unwrap();
+
+        // Insert all but the last block into the sync module
+        // These are added without BFT.
+        for block in blocks {
+            sync.sync_storage_with_block(block, false).await.unwrap();
+
+            // Availability threshold is not met, so we should not advance yet.
+            assert_eq!(syncing_ledger.latest_block_height(), 0);
+        }
+
+        // -- Switch to BFT --
+        sync.sync_storage_with_ledger_at_bootup().await.unwrap();
+
+        // Ensure blocks did not commit yet.
+        assert_eq!(syncing_ledger.latest_block_height(), 0);
+        assert_eq!(syncing_bft.testing_only_latest_committed_round(), 0);
+
+        // Only for the final block, the availability threshold is met,
+        // because certificates for the subsequent round are already in storage.
+        sync.sync_storage_with_block(last_block, true).await.unwrap();
+
+        // Ensure blocks 1 and 2 were added to the ledger.
+        // Unlike with normal sync, the ledger is advanced by Sync when pending blocks are committed.
+        assert_eq!(syncing_bft.testing_only_latest_committed_round(), 4);
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_commit_chain_without_bft() {
+        let rng = &mut TestRng::default();
+        let (genesis, mut blocks) = setup_commit_chain(rng).await;
+        let max_gc_rounds = BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64;
+        let storage_mode = StorageMode::new_test(None);
+
+        // Create a new ledger to test with, but use the existing storage
+        // so that the certificates exist.
+        let syncing_ledger = {
+            let storage_mode = storage_mode.clone();
+            Arc::new(CoreLedgerService::new(
+                spawn_blocking!(CurrentLedger::load(genesis, storage_mode)).unwrap(),
+                SimpleStoppable::new(),
+            ))
+        };
+
+        let account = Account::new(rng).unwrap();
+        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let gateway = Gateway::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
+
+        let syncing_bft = BFT::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            block_sync,
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+
+        // -- Run test -- //
+        let last_block = blocks.pop().unwrap();
+
+        // Insert all but the last block into the sync module
+        for block in blocks {
+            sync.sync_storage_with_block(block, false).await.unwrap();
 
             // Availability threshold is not met, so we should not advance yet.
             assert_eq!(syncing_ledger.latest_block_height(), 0);
@@ -1365,14 +1563,12 @@ mod tests {
 
         // Only for the final block, the availability threshold is met,
         // because certificates for the subsequent round are already in storage.
-        sync.sync_storage_with_block(block_iter.next().unwrap()).await?;
-        assert_eq!(syncing_ledger.latest_block_height(), 3);
+        sync.sync_storage_with_block(last_block, false).await.unwrap();
+        assert_eq!(syncing_ledger.latest_block_height(), 2);
 
         // Ensure blocks 1 and 2 were added to the ledger.
         assert!(syncing_ledger.contains_block_height(1));
         assert!(syncing_ledger.contains_block_height(2));
-
-        Ok(())
     }
 
     #[tokio::test]
