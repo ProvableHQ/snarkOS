@@ -110,7 +110,7 @@ function apply_filter() {
 
     echo "Applying filters for ports $start_port to $end_port..."
 
-    for (( port=$start_port; port<=$end_port; port++ )); do
+    for port in $(seq "$start_port" "$end_port"); do
         # Filter for IPv4
         run tc filter add dev "$INTERFACE" protocol ip parent 1:0 prio 1 u32 \
             match ip dport "$port" 0xffff flowid "$PARENT"
