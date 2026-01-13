@@ -1,0 +1,33 @@
+name: Chaotic Devnet Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - staging
+      - mainnet
+
+jobs:
+  chaos-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev
+
+      - name: Build snarkOS
+        run: |
+          echo "Building snarkOS..."
+          cargo install --locked --path . --features test_network
+
+      - name: Run Tests with Chaos
+        # Arguments: <PORT_RANGE> <TEST_COMMAND>
+        run: ./chaos-runner.sh 5000-5003 ../.ci/devnet_ci.sh 4 0 0 45
