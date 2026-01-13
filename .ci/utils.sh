@@ -91,6 +91,7 @@ function check_logs() {
   local highest_height=0
 
   # The maximum number of warnings allow in each node's log file.
+  # Nodes may create some warnings at startup because they cannot connect to each other yet.
   local max_warnings=10
 
   for ((validator_index = 0; validator_index < total_validators; validator_index++)); do

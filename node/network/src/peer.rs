@@ -48,6 +48,11 @@ pub struct CandidatePeer {
     pub trusted: bool,
     /// The latest block height known to be associated with the peer.
     pub last_height_seen: Option<u32>,
+    /// The last time we attempted to connect to the peer.
+    /// `None` if there was no attempt to connect since the peer was last connected, or no attempt at all.
+    pub last_connection_attempt: Option<Instant>,
+    /// The total number of connection attempts, since the peer was last connected.
+    pub total_connection_attempts: u32,
 }
 
 /// A fully connected peer.
@@ -85,7 +90,13 @@ pub enum ConnectionMode {
 impl<N: Network> Peer<N> {
     /// Create a candidate peer.
     pub const fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Candidate(CandidatePeer { listener_addr, trusted, last_height_seen: None })
+        Self::Candidate(CandidatePeer {
+            listener_addr,
+            trusted,
+            last_height_seen: None,
+            last_connection_attempt: None,
+            total_connection_attempts: 0,
+        })
     }
 
     /// Create a connecting peer.
@@ -132,6 +143,8 @@ impl<N: Network> Peer<N> {
             listener_addr,
             trusted: self.is_trusted(),
             last_height_seen: self.last_height_seen(),
+            last_connection_attempt: None,
+            total_connection_attempts: 0,
         });
     }
 

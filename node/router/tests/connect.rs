@@ -43,7 +43,7 @@ async fn test_connect_without_handshake() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -57,7 +57,7 @@ async fn test_connect_without_handshake() {
     }
     {
         // Connect node0 from node1 again.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -71,7 +71,7 @@ async fn test_connect_without_handshake() {
     }
     {
         // Connect node1 from node0.
-        node1.connect(node0.local_ip());
+        let _ = node1.connect(node0.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -109,7 +109,7 @@ async fn test_connect_with_handshake() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
@@ -130,7 +130,7 @@ async fn test_connect_with_handshake() {
     }
     {
         // Connect node0 to node1 again.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
@@ -151,7 +151,7 @@ async fn test_connect_with_handshake() {
     }
     {
         // Connect node1 to node0.
-        node1.connect(node0.local_ip());
+        let _ = node1.connect(node0.local_ip());
         // Await for node0 to be connected.
         let node1_ip = node1.local_ip();
         let node0_ = node0.clone();
@@ -197,7 +197,7 @@ async fn test_validator_connection() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
@@ -262,9 +262,9 @@ async fn test_connect_simultaneously_with_handshake() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Connect node1 to node0.
-        node1.connect(node0.local_ip());
+        let _ = node1.connect(node0.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 

@@ -25,10 +25,7 @@ use locktick::parking_lot::RwLock;
 use parking_lot::RwLock;
 use std::{
     cmp,
-    collections::{
-        HashSet,
-        hash_map::{Entry, HashMap},
-    },
+    collections::hash_map::{Entry, HashMap},
     fs,
     io::{self, Write},
     net::{IpAddr, SocketAddr},
@@ -130,30 +127,31 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
             return Err(ConnectError::other("no untrusted peers allowed"));
         }
+
         Ok(())
     }
 
     /// Attempts to connect to the given peer's listener address.
     ///
-    /// Returns None if we are already connected to the peer or cannot connect.
+    /// Returns an earlier error, if, for example, we are already connected to the peer.
     /// Otherwise, it returns a handle to the tokio tasks that sets up the connection.
-    fn connect(&self, listener_addr: SocketAddr) -> Option<task::JoinHandle<Result<(), ConnectError>>> {
+    ///
+    /// # Concurrency
+    /// Only one task may call this function for a given listener address at a time.
+    fn connect(&self, listener_addr: SocketAddr) -> Result<task::JoinHandle<Result<(), ConnectError>>, ConnectError> {
         // Return early if the attempt is against the protocol rules.
-        match self.check_connection_attempt(listener_addr) {
-            Ok(()) => {}
-            Err(error @ ConnectError::AlreadyConnected { .. })
-            | Err(error @ ConnectError::AlreadyConnecting { .. }) => {
-                debug!("{} Dropping connection attempt to {listener_addr}: {error}", Self::OWNER);
-                return None;
-            }
-            Err(error) => {
-                warn!("{} Dropping connection attempt to {listener_addr}: {error}", Self::OWNER);
-                return None;
-            }
+        self.check_connection_attempt(listener_addr)?;
+
+        // Update the last connection attempt time for the peer.
+        if let Some(Peer::Candidate(peer)) = self.peer_pool().write().get_mut(&listener_addr) {
+            peer.last_connection_attempt = Some(Instant::now());
+            peer.total_connection_attempts += 1;
+        } else {
+            warn!("{} No candidate peer entry exists for '{listener_addr:?}' while connecting.", Self::OWNER);
         }
 
         let tcp = self.tcp().clone();
-        Some(tokio::spawn(async move {
+        Ok(tokio::spawn(async move {
             debug!("{} Connecting to {listener_addr}...", Self::OWNER);
             tcp.connect(listener_addr).await
         }))
@@ -455,14 +453,20 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             .collect()
     }
 
-    /// Returns the list of unconnected trusted peers.
-    fn unconnected_trusted_peers(&self) -> HashSet<SocketAddr> {
+    /// Returns the list of trusted candidate peers.
+    fn get_trusted_candidate_peers(&self) -> Vec<CandidatePeer> {
         self.peer_pool()
             .read()
-            .iter()
-            .filter_map(
-                |(addr, peer)| if let Peer::Candidate(peer) = peer { peer.trusted.then_some(*addr) } else { None },
-            )
+            .values()
+            .filter_map(|peer| {
+                if let Peer::Candidate(peer) = peer
+                    && peer.trusted
+                {
+                    Some(peer.clone())
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 

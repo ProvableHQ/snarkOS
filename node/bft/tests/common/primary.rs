@@ -258,7 +258,7 @@ impl TestNetwork {
     pub async fn connect_validators(&self, first_id: u16, second_id: u16) {
         let first_validator = self.validators.get(&first_id).unwrap();
         let second_validator_ip = self.validators.get(&second_id).unwrap().primary.gateway().local_ip();
-        first_validator.primary.gateway().connect(second_validator_ip);
+        let _ = first_validator.primary.gateway().connect(second_validator_ip);
         // Give the connection time to be established.
         sleep(Duration::from_millis(100)).await;
     }
@@ -268,7 +268,7 @@ impl TestNetwork {
         for (validator, other_validator) in self.validators.values().tuple_combinations() {
             // Connect to the node.
             let ip = other_validator.primary.gateway().local_ip();
-            validator.primary.gateway().connect(ip);
+            let _ = validator.primary.gateway().connect(ip);
             // Give the connection time to be established.
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
@@ -281,7 +281,7 @@ impl TestNetwork {
         for validator in self.validators.values() {
             if validator.id != id {
                 // Connect to the node.
-                validator.primary.gateway().connect(target_ip);
+                let _ = validator.primary.gateway().connect(target_ip);
                 // Give the connection time to be established.
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }

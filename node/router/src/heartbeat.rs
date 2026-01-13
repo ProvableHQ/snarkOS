@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use crate::{
+    CandidatePeer,
     ConnectedPeer,
     NodeType,
     Outbound,
@@ -22,13 +23,15 @@ use crate::{
     bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
 };
-use snarkvm::prelude::Network;
 
 use snarkos_node_tcp::{ConnectError, P2P};
+
+use snarkvm::prelude::Network;
 
 use colored::Colorize;
 use futures::future::join_all;
 use rand::{prelude::IteratorRandom, rngs::OsRng};
+use std::time::Duration;
 use tokio::task::JoinError;
 
 /// A helper function to compute the maximum of two numbers.
@@ -43,9 +46,13 @@ pub const fn max(a: usize, b: usize) -> usize {
 #[async_trait]
 pub trait Heartbeat<N: Network>: Outbound<N> {
     /// The duration in seconds to sleep in between heartbeat executions.
-    const HEARTBEAT_IN_SECS: u64 = 25; // 25 seconds
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
     /// The minimum number of peers required to maintain connections with.
     const MINIMUM_NUMBER_OF_PEERS: usize = 3;
+    /// The minimum time between connection attempts to a peer.
+    const MINIMUM_TIME_BETWEEN_CONNECTION_ATTEMPTS: Duration = Duration::from_secs(10);
+    /// The time we consider the node to be starting up and avoid certain warnings such as "No connected peers".
+    const STARTUP_GRACE_PERIOD: Duration = Duration::from_secs(60);
     /// The median number of peers to maintain connections with.
     const MEDIAN_NUMBER_OF_PEERS: usize = max(Self::MAXIMUM_NUMBER_OF_PEERS / 2, Self::MINIMUM_NUMBER_OF_PEERS);
     /// The maximum number of peers permitted to maintain connections with.
@@ -56,9 +63,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     const IP_BAN_TIME_IN_SECS: u64 = 300;
 
     /// Handles the heartbeat request.
-    async fn heartbeat(&self) {
+    async fn heartbeat(&self, uptime: Duration) {
         self.safety_check_minimum_number_of_peers();
-        self.log_connected_peers();
+        self.log_connected_peers(uptime);
 
         // Remove any stale connected peers.
         self.remove_stale_connected_peers();
@@ -88,12 +95,17 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     }
 
     /// This function logs the connected peers.
-    fn log_connected_peers(&self) {
+    fn log_connected_peers(&self, uptime: Duration) {
         // Log the connected peers.
         let connected_peers = self.router().connected_peers();
         let connected_peers_fmt = format!("{connected_peers:?}").dimmed();
         match connected_peers.len() {
-            0 => warn!("No connected peers"),
+            0 => {
+                // Only log a warning if the node has been running for a while.
+                if uptime > Self::STARTUP_GRACE_PERIOD {
+                    warn!("No connected peers")
+                }
+            }
             1 => debug!("Connected to 1 peer: {connected_peers_fmt}"),
             num_connected => debug!("Connected to {num_connected} peers {connected_peers_fmt}"),
         }
@@ -106,7 +118,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Disconnect if the peer has not communicated back within the predefined time.
             let elapsed = peer.last_seen.elapsed();
             if elapsed > Router::<N>::MAX_RADIO_SILENCE {
-                warn!("Peer {} has not communicated in {elapsed:?}", peer.listener_addr);
+                warn!("Peer '{}' has not communicated in {elapsed:?}", peer.listener_addr);
                 // Disconnect from this peer.
                 self.router().disconnect(peer.listener_addr);
             }
@@ -262,22 +274,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             let other_peers =
                 other_peers.into_iter().choose_multiple(rng, num_deficient.saturating_sub(num_higher_peers));
 
-            let hdls: Vec<_> = higher_peers
-                .into_iter()
-                .chain(other_peers)
-                .filter_map(|peer| {
-                    let hdl = self.router().connect(peer.listener_addr);
-                    if hdl.is_none() {
-                        trace!("Could not initiate connection to peer at `{}`", peer.listener_addr);
-                    }
-                    hdl
-                })
-                .collect();
-
-            // Wait for all the connection attempts to complete.
-            for result in join_all(hdls).await {
-                Self::log_if_connect_error(result, "Could not connect to peer");
-            }
+            // Initiate connection attempts and wait for them to complete.
+            self.try_connect_to_peers(higher_peers.into_iter().chain(other_peers)).await;
 
             if !self.router().trusted_peers_only() {
                 // Request more peers from the connected peers.
@@ -310,10 +308,14 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // Attempt to connect to a random bootstrap peer.
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.router().connect(peer_ip) {
-                    Some(hdl) => {
-                        Self::log_if_connect_error(hdl.await, "Could not connect to bootstrap peer");
+                    Ok(hdl) => {
+                        Self::log_if_connect_error(
+                            hdl.await,
+                            &format!("Could not connect to bootstrap peer at '{peer_ip:?}'"),
+                        );
                     }
-                    None => warn!("Could not initiate connection to bootstrap peer at {peer_ip}"),
+                    Err(ConnectError::AlreadyConnected { .. }) | Err(ConnectError::AlreadyConnecting { .. }) => {}
+                    Err(err) => warn!("Could not initiate connection to bootstrap peer at '{peer_ip:?}' - {err}"),
                 }
             }
         }
@@ -332,27 +334,57 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         }
     }
 
-    /// This function attempts to connect to any disconnected trusted peers.
-    async fn handle_trusted_peers(&self) {
-        // Ensure that the trusted nodes are connected.
-        let handles: Vec<_> = self
-            .router()
-            .unconnected_trusted_peers()
-            .iter()
-            .filter_map(|listener_addr| {
-                debug!("Attempting to (re-)connect to trusted peer `{listener_addr}`");
-                let hdl = self.router().connect(*listener_addr);
-                if hdl.is_none() {
-                    warn!("Could not initiate connection to trusted peer at `{listener_addr}`");
+    /// Helper function that attempts to connect the given peers.
+    ///
+    /// Used by [`Self::handle_trusted_peers`] and [`Self::handle_connected_peers`].
+    async fn try_connect_to_peers(&self, peers: impl Iterator<Item = CandidatePeer> + Send + 'static) {
+        let (peer_info, hdls): (Vec<_>, Vec<_>) = peers
+            .filter_map(|peer| {
+                if let Some(last_connection_attempt) = peer.last_connection_attempt
+                    && last_connection_attempt.elapsed() < Self::MINIMUM_TIME_BETWEEN_CONNECTION_ATTEMPTS
+                {
+                    return None;
                 }
-                hdl
+
+                let peer_type = if peer.trusted { "trusted peer" } else { "peer" };
+
+                // Do not attempt to reconnect too frequently.
+                // TODO (kaimast): Consider increasing the minimum time based on the number of failed attempts.
+                if let Some(last_connection_attempt) = peer.last_connection_attempt
+                    && last_connection_attempt.elapsed() < Self::MINIMUM_TIME_BETWEEN_CONNECTION_ATTEMPTS
+                {
+                    return None;
+                }
+
+                // Get the peers address.
+                let addr = peer.listener_addr;
+                let attempt_no = peer.total_connection_attempts + 1;
+
+                // Start connection attempt.
+                debug!("(Re-)connecting to {peer_type} '{addr}' (attempt #{attempt_no})");
+                match self.router().connect(addr) {
+                    Ok(hdl) => Some(((addr, attempt_no, peer_type), hdl)),
+                    Err(ConnectError::AlreadyConnected { .. }) | Err(ConnectError::AlreadyConnecting { .. }) => None,
+                    Err(err) => {
+                        warn!("Could not initiate connection to {peer_type} at '{addr:?}' - {err}");
+                        None
+                    }
+                }
             })
-            .collect();
+            .unzip();
 
         // Wait for all the connection attempts to complete.
-        for result in join_all(handles).await {
-            Self::log_if_connect_error(result, "Could not connect to trusted peer");
+        for ((peer_addr, attempt_no, peer_type), result) in peer_info.into_iter().zip(join_all(hdls).await) {
+            Self::log_if_connect_error(
+                result,
+                &format!("Could not connect to {peer_type} at '{peer_addr}' (attempt #{attempt_no})"),
+            );
         }
+    }
+
+    /// This function attempts to connect to any disconnected trusted peers.
+    async fn handle_trusted_peers(&self) {
+        self.try_connect_to_peers(self.router().get_trusted_candidate_peers().into_iter()).await;
     }
 
     /// This function updates the puzzle if network has updated.

@@ -50,6 +50,7 @@ use crate::messages::{BlockRequest, Message, MessageCodec};
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::{
+    CandidatePeer,
     ConnectedPeer,
     ConnectionMode,
     NodeType,

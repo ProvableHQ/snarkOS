@@ -73,7 +73,7 @@ use snarkvm::{
 };
 
 use colored::Colorize;
-use futures::SinkExt;
+use futures::{SinkExt, future::join_all};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -847,6 +847,8 @@ impl<N: Network> Gateway<N> {
 }
 
 impl<N: Network> Gateway<N> {
+    /// The minimum time between connection attempts to a peer.
+    const MINIMUM_TIME_BETWEEN_CONNECTION_ATTEMPTS: Duration = Duration::from_secs(10);
     /// The uptime after which nodes log a warning about missing validator connections.
     const MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD: Duration = Duration::from_secs(60);
 
@@ -864,7 +866,7 @@ impl<N: Network> Gateway<N> {
         // Removes any validators that not in the current committee.
         self.handle_unauthorized_validators();
         // If the number of connected validators is less than the minimum, send a `ValidatorsRequest`.
-        self.handle_min_connected_validators();
+        self.handle_min_connected_validators().await;
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
         // Update the dynamic validator whitelist.
@@ -909,7 +911,7 @@ impl<N: Network> Gateway<N> {
 
         // Log the validators that are not connected.
         let num_not_connected = validators_total.saturating_sub(connected_validators.len());
-        if num_not_connected > 0 {
+        if num_not_connected > 0 && uptime > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
             // Cache the total stake for computing percentages.
             let total_stake = committee.total_stake();
             let total_stake_f64 = total_stake as f64;
@@ -980,15 +982,16 @@ impl<N: Network> Gateway<N> {
         let handles: Vec<JoinHandle<_>> = trusted_peers
             .iter()
             .filter_map(|validator_ip| {
-                // If the trusted_validator is not connected, attempt to connect to it.
-                if !self.is_local_ip(*validator_ip)
-                    && !self.is_connecting(*validator_ip)
-                    && !self.is_connected(*validator_ip)
-                {
-                    // Attempt to connect to the trusted validator.
-                    self.connect(*validator_ip)
-                } else {
-                    None
+                // Attempt to connect to the trusted validator.
+                match self.connect(*validator_ip) {
+                    Ok(hdl) => Some(hdl),
+                    Err(ConnectError::SelfConnect { .. })
+                    | Err(ConnectError::AlreadyConnected { .. })
+                    | Err(ConnectError::AlreadyConnecting { .. }) => None,
+                    Err(err) => {
+                        warn!("Could not initiate connection to trusted validator at '{validator_ip:?}' - {err}");
+                        None
+                    }
                 }
             })
             .collect();
@@ -1019,13 +1022,16 @@ impl<N: Network> Gateway<N> {
             // Attempt to connect to a bootstrap peer.
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.connect(peer_ip) {
-                    Some(hdl) => {
+                    Ok(hdl) => {
                         let result = hdl.await;
                         if let Err(err) = result {
-                            warn!("Failed to connect to bootstrap peer at {peer_ip}: {err}");
+                            warn!("{CONTEXT} Failed to connect to bootstrap peer at '{peer_ip}' - {err}");
                         }
                     }
-                    None => warn!("Could not initiate connect to bootstrap peer at {peer_ip}"),
+                    Err(ConnectError::AlreadyConnected { .. }) | Err(ConnectError::AlreadyConnecting { .. }) => {}
+                    Err(err) => {
+                        warn!("{CONTEXT} Could not initiate connection to bootstrap peer at '{peer_ip}' - {err}")
+                    }
                 }
             }
         }
@@ -1078,15 +1084,44 @@ impl<N: Network> Gateway<N> {
     /// This function sends a `ValidatorsRequest` to a random validator,
     /// if the number of connected validators is less than the minimum.
     /// It also attempts to connect to known unconnected validators.
-    fn handle_min_connected_validators(&self) {
+    async fn handle_min_connected_validators(&self) {
         // Attempt to connect to untrusted validators we're not connected to yet.
         // The trusted ones are already handled by `handle_trusted_validators`.
         let trusted_validators = self.trusted_peers();
         if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
-            for peer in self.get_candidate_peers() {
-                if !trusted_validators.contains(&peer.listener_addr) {
-                    // Attempt to connect to unconnected validators.
-                    self.connect(peer.listener_addr);
+            let (addrs, handles): (Vec<_>, Vec<_>) = self
+                .get_candidate_peers()
+                .iter()
+                .filter_map(|peer| {
+                    if trusted_validators.contains(&peer.listener_addr) {
+                        return None;
+                    }
+
+                    if let Some(previous_attempt) = peer.last_connection_attempt
+                        && previous_attempt.elapsed() < Self::MINIMUM_TIME_BETWEEN_CONNECTION_ATTEMPTS
+                    {
+                        return None;
+                    }
+
+                    match self.connect(peer.listener_addr) {
+                        Ok(hdl) => Some((peer.listener_addr, hdl)),
+                        Err(ConnectError::AlreadyConnected { .. })
+                        | Err(ConnectError::AlreadyConnecting { .. })
+                        | Err(ConnectError::SelfConnect { .. }) => None,
+                        Err(err) => {
+                            warn!(
+                                "{CONTEXT}Could not initiate connection to validator at '{}' - {err}",
+                                peer.listener_addr
+                            );
+                            None
+                        }
+                    }
+                })
+                .unzip();
+
+            for (addr, result) in addrs.into_iter().zip(join_all(handles).await) {
+                if let Err(err) = result {
+                    warn!("Failed to connect to validator at '{addr:?}' - {err}");
                 }
             }
 
