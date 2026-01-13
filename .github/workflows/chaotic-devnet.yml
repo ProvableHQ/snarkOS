@@ -1,0 +1,66 @@
+name: Chaotic Devnet Test
+
+on: # TODO: adjust
+  pull_request:
+  push:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-snarkos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo Registry & target
+        uses: swatinem/rust-cache@v2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev
+
+      - name: Build snarkOS
+        run: |
+          echo "Building snarkOS..."
+          cargo install --locked --path . --features test_network
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-snarkos # The key used to retrieve the built binary
+          path: ~/.cargo/bin/snarkos     # The actual folder to save
+          retention-days: 1   # Keep it briefly to save space
+
+  chaos-test:
+    runs-on: ubuntu-latest
+    needs: build-snarkos
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download snarkOS
+        uses: actions/download-artifact@v4
+        with:
+          name: built-snarkos
+          path: bin  # Where to put it
+
+      - name: Setup Path and Permissions
+        run: |
+          # Make it executable (permissions may get lost)
+          chmod +x bin/snarkos
+
+          # Add the 'bin' folder to the system PATH
+          echo "$(pwd)/bin" >> $GITHUB_PATH
+
+      - name: Run Tests with Chaos
+        # Arguments: <PORT_RANGE> <TEST_COMMAND>
+        run: ./scripts/chaotic-network-runner.sh 5000-5003 ./.ci/devnet_ci.sh 4 2 0 45
