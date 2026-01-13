@@ -82,13 +82,16 @@ function check_heights() {
 
 # Function checking that nodes created logs on disk and they contain no errors.
 function check_logs() {
-  echo "Checking logs exist for all nodes..."
+  echo "Checking logs exist for all nodes and contain no errors..."
   local log_dir=$1
   local total_validators=$2
   local total_clients=$3
   
   local all_reached=true
   local highest_height=0
+
+  # The maximum number of warnings allow in each node's log file.
+  local max_warnings=10
 
   for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
     if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
@@ -100,6 +103,12 @@ function check_logs() {
       echo "❌ Test failed! Validator #${validator_index} logs contain errors."
       # Print the errors to the console.
       grep "ERROR" "$log_dir/validator-${validator_index}.log"
+      return 1
+    fi
+
+    num_warnings=$(grep -c "WARN" "$log_dir/validator-${validator_index}.log")
+    if (( num_warnings > max_warnings )); then
+      echo "❌ Test failed! Validator #${validator_index} logs contain more than ${max_warnings} warnings."
       return 1
     fi
   done
@@ -116,7 +125,12 @@ function check_logs() {
       grep "ERROR" "$log_dir/client-${client_index}.log"
       return 1
     fi
- 
+
+    num_warnings=$(grep -c "WARN" "$log_dir/client-${client_index}.log")
+    if (( num_warnings > max_warnings )); then
+      echo "❌ Test failed! Client #${client_index} logs contain more than ${max_warnings} warnings."
+      return 1
+    fi
   done
 
   return 0
