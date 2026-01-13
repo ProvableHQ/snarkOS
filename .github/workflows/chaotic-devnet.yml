@@ -2,10 +2,12 @@ name: Chaotic Devnet Test
 
 on:
   pull_request:
-  push:
-    branches:
-      - staging
-      - mainnet
+    branches: [ "**" ]
+  # push:
+  #   branches:
+  #     - staging
+  #     - mainnet
+  workflow_dispatch:
 
 jobs:
   chaos-test:
