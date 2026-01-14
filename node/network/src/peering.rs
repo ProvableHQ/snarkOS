@@ -517,13 +517,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         // Dump the connected and deduplicated peers to a file.
         let addrs: HashSet<_> = peers
             .iter()
-            .map(|peer| {
-                if store_ports {
-                    peer.listener_addr().to_string()
-                } else {
-                    peer.listener_addr().ip().to_string()
-                }
-            })
+            .map(
+                |peer| {
+                    if store_ports { peer.listener_addr().to_string() } else { peer.listener_addr().ip().to_string() }
+                },
+            )
             .collect();
 
         let mut file = fs::File::create(path)?;
