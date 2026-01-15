@@ -183,7 +183,7 @@ impl Execute {
                 Some(&query),
                 rng,
             )
-            .with_context(|| "VM failed to execute transaction locally")?
+            .map_err(|err| anyhow!("VM failed to execute transaction locally {err}"))?
         };
 
         // Check if the public balance is sufficient.
@@ -191,7 +191,7 @@ impl Execute {
             // Fetch the public balance.
             let address = Address::try_from(&private_key)?;
             let public_balance = Developer::get_public_balance::<N>(&endpoint, &address)
-                .with_context(|| "Failed to check for sufficient funds to send transaction")?
+                .map_err(|err| anyhow!("Failed to check for sufficient funds to send transaction - {err}"))?
                 .ok_or_else(|| {
                     anyhow!(
                         "No public balance found for sending account `{}`. It may not exist.",

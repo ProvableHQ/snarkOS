@@ -287,6 +287,7 @@ impl Developer {
     fn http_get_json<N: Network, O: DeserializeOwned>(base_url: &http::Uri, route: &str) -> Result<Option<O>> {
         let (endpoint, _api_version) = Self::build_endpoint::<N>(base_url, route)?;
         debug!("Issuing GET request to \"{endpoint}\"");
+        println!("Issuing GET request to \"{endpoint}\"");
 
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
