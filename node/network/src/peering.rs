@@ -25,7 +25,10 @@ use locktick::parking_lot::RwLock;
 use parking_lot::RwLock;
 use std::{
     cmp,
-    collections::hash_map::{Entry, HashMap},
+    collections::{
+        HashSet,
+        hash_map::{Entry, HashMap},
+    },
     fs,
     io::{self, Write},
     net::{IpAddr, SocketAddr},
