@@ -24,7 +24,14 @@ use crate::{
 use snarkos_node_bft_events::{CertificateRequest, CertificateResponse, Event};
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::PeerPoolHandling;
-use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+use snarkos_node_sync::{
+    BLOCK_REQUEST_BATCH_DELAY,
+    BlockSync,
+    InsertBlockResponseError,
+    Ping,
+    PrepareSyncRequest,
+    locators::BlockLocators,
+};
 
 use snarkvm::{
     console::{
@@ -379,8 +386,7 @@ impl<N: Network> Sync<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<()> {
-        // Verify that the response is valid and add it to block sync.
+    ) -> Result<(), InsertBlockResponseError> {
         self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)
 
         // No need to advance block sync here, as the new response will

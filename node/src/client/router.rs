@@ -218,7 +218,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
-            warn!("{}", flatten_error(err.context("Failed to insert block response")));
+            warn!("Failed to insert block response from '{peer_ip}' - {err}");
             false
         } else {
             true

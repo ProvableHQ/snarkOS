@@ -26,7 +26,7 @@ use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     prelude::block::Block,
-    utilities::ensure_equals,
+    utilities::flatten_error,
 };
 
 use anyhow::{Result, bail, ensure};
@@ -115,6 +115,20 @@ pub struct BlockRequestInfo {
 pub struct BlockRequestsSummary {
     outstanding: String,
     completed: String,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum InsertBlockResponseError {
+    #[error("Empty block response")]
+    EmptyBlockResponse,
+    #[error("The peer did not send a consensus version")]
+    NoConsensusVersion,
+    #[error(
+        "The peer's consensus version for height {last_height} does not match ours: expected {expected_version}, got {peer_version}"
+    )]
+    ConsensusVersionMismatch { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
+    #[error("{}", flatten_error(.0))]
+    Other(#[from] anyhow::Error),
 }
 
 impl<N: Network> OutstandingRequest<N> {
@@ -458,9 +472,9 @@ impl<N: Network> BlockSync<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<()> {
+    ) -> Result<(), InsertBlockResponseError> {
         let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
-            bail!("Empty block response");
+            return Err(InsertBlockResponseError::EmptyBlockResponse);
         };
 
         let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
@@ -468,14 +482,16 @@ impl<N: Network> BlockSync<N> {
         // Perform consensus version check, if possible.
         // This check is only enabled after nodes have reached V12.
         if expected_consensus_version >= ConsensusVersion::V12 {
-            if let Some(latest_consensus_version) = latest_consensus_version {
-                ensure_equals!(
-                    latest_consensus_version,
-                    expected_consensus_version,
-                    "the peer's consensus version for height {last_height} does not match ours"
-                );
+            if let Some(peer_version) = latest_consensus_version {
+                if peer_version != expected_consensus_version {
+                    return Err(InsertBlockResponseError::ConsensusVersionMismatch {
+                        peer_version,
+                        expected_version: expected_consensus_version,
+                        last_height,
+                    });
+                }
             } else {
-                bail!("The peer did not send a consensus version");
+                return Err(InsertBlockResponseError::NoConsensusVersion);
             }
         }
 
@@ -483,7 +499,7 @@ impl<N: Network> BlockSync<N> {
         for block in blocks {
             if let Err(error) = self.insert_block_response(peer_ip, block) {
                 self.remove_block_requests_to_peer(&peer_ip);
-                bail!("{error}");
+                return Err(error.into());
             }
         }
         Ok(())
