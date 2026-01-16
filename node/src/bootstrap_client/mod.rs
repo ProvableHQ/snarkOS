@@ -187,8 +187,10 @@ impl<N: Network> BootstrapClient<N> {
         if now - *timestamp >= Self::COMMITTEE_REFRESH_TIME {
             debug!("Updating the validator committee");
             *timestamp = now;
-            let committe_query_addr = format!("https://api.explorer.provable.com/v2/{}/committee/latest", N::NAME);
+            let committe_query_addr =
+                format!("https://api.explorer.provable.com/v2/{}/committee/latest", N::SHORT_NAME);
             let response = self.http_client.get(committe_query_addr).send().await?;
+            debug!("Received response from the explorer: {:?}", response);
             let json = response.text().await?;
             let full_committee = Committee::from_str(&json)?;
             *committee = full_committee.members().keys().copied().collect();
