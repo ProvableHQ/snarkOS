@@ -470,8 +470,8 @@ impl<N: Network> BlockSync<N> {
         if expected_consensus_version >= ConsensusVersion::V12 {
             if let Some(latest_consensus_version) = latest_consensus_version {
                 ensure_equals!(
-                    expected_consensus_version,
                     latest_consensus_version,
+                    expected_consensus_version,
                     "the peer's consensus version for height {last_height} does not match ours"
                 );
             } else {

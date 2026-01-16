@@ -256,7 +256,7 @@ impl<N: Network> Sync<N> {
                 let result = self_.insert_block_response(peer_ip, blocks, latest_consensus_version).await;
                 //TODO remove this once channels are gone
                 if let Err(err) = &result {
-                    warn!("Failed to insret block response: {err:?}");
+                    warn!("Failed to insert block response - {err}");
                 }
 
                 callback.send(result).ok();

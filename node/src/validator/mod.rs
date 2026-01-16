@@ -415,21 +415,32 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                 let inputs = [Value::from(Literal::Address(self_.address())), Value::from(Literal::U64(U64::new(1)))];
                 // Execute the transaction.
                 let self__ = self_.clone();
-                let transaction = match spawn_blocking!(self__.ledger.vm().execute(
-                    self__.private_key(),
-                    locator,
-                    inputs.into_iter(),
-                    None,
-                    10_000,
-                    None,
-                    &mut rand::thread_rng(),
-                )) {
-                    Ok(transaction) => transaction,
-                    Err(error) => {
+                let transaction = match tokio::task::spawn_blocking(move || {
+                    self__.ledger.vm().execute(
+                        self__.private_key(),
+                        locator,
+                        inputs.into_iter(),
+                        None,
+                        10_000,
+                        None,
+                        &mut rand::thread_rng(),
+                    )
+                })
+                .await
+                {
+                    Ok(Ok(transaction)) => transaction,
+                    Ok(Err(error)) => {
+                        // VM execution error.
                         error!("Transaction pool encountered an execution error - {error}");
                         continue;
                     }
+                    Err(error) => {
+                        // The tokio task failed for some other reason.
+                        error!("Transaction pool encountered an error - {error}");
+                        continue;
+                    }
                 };
+
                 // Broadcast the transaction.
                 if self_
                     .unconfirmed_transaction(
