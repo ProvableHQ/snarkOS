@@ -63,9 +63,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     const IP_BAN_TIME_IN_SECS: u64 = 300;
 
     /// Handles the heartbeat request.
-    async fn heartbeat(&self, uptime: Duration) {
+    async fn heartbeat(&self) {
         self.safety_check_minimum_number_of_peers();
-        self.log_connected_peers(uptime);
+        self.log_connected_peers();
 
         // Remove any stale connected peers.
         self.remove_stale_connected_peers();
@@ -95,14 +95,14 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     }
 
     /// This function logs the connected peers.
-    fn log_connected_peers(&self, uptime: Duration) {
+    fn log_connected_peers(&self) {
         // Log the connected peers.
         let connected_peers = self.router().connected_peers();
         let connected_peers_fmt = format!("{connected_peers:?}").dimmed();
         match connected_peers.len() {
             0 => {
                 // Only log a warning if the node has been running for a while.
-                if uptime > Self::STARTUP_GRACE_PERIOD {
+                if self.router().tcp().uptime() > Self::STARTUP_GRACE_PERIOD {
                     warn!("No connected peers")
                 }
             }
@@ -340,12 +340,6 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     async fn try_connect_to_peers(&self, peers: impl Iterator<Item = CandidatePeer> + Send + 'static) {
         let (peer_info, hdls): (Vec<_>, Vec<_>) = peers
             .filter_map(|peer| {
-                if let Some(last_connection_attempt) = peer.last_connection_attempt
-                    && last_connection_attempt.elapsed() < Self::MINIMUM_TIME_BETWEEN_CONNECTION_ATTEMPTS
-                {
-                    return None;
-                }
-
                 let peer_type = if peer.trusted { "trusted peer" } else { "peer" };
 
                 // Do not attempt to reconnect too frequently.

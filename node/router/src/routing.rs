@@ -52,12 +52,9 @@ pub trait Routing<N: Network>:
         self.router().spawn(async move {
             let mut last_update = Instant::now();
 
-            // Track the start time so we know long the tasks has been running.
-            let start = Instant::now();
-
             loop {
                 // Process a heartbeat in the router.
-                self_clone.heartbeat(start.elapsed()).await;
+                self_clone.heartbeat().await;
 
                 // The heartbeat itself may take a while (as it is waiting for connection attempts to complete).
                 // Take this time into account when rate-limiting the heartbeat.

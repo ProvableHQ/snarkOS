@@ -172,6 +172,11 @@ impl Tcp {
         tcp
     }
 
+    /// How long has this node accepting connections?
+    pub fn uptime(&self) -> Duration {
+        self.stats.timestamp().elapsed()
+    }
+
     /// Returns the name assigned.
     #[inline]
     pub fn name(&self) -> &str {

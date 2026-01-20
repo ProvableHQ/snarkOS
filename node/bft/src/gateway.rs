@@ -88,7 +88,7 @@ use std::{
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     net::TcpStream,
@@ -811,14 +811,12 @@ impl<N: Network> Gateway<N> {
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
         self.spawn(async move {
-            let start = Instant::now();
             // Sleep briefly to ensure the other nodes are ready to connect.
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
-                let uptime = start.elapsed();
-                self_clone.heartbeat(uptime).await;
+                self_clone.heartbeat().await;
                 // Sleep for the heartbeat interval.
                 tokio::time::sleep(Duration::from_secs(15)).await;
             }
@@ -852,9 +850,9 @@ impl<N: Network> Gateway<N> {
     const MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD: Duration = Duration::from_secs(60);
 
     /// Handles the heartbeat request.
-    async fn heartbeat(&self, uptime: Duration) {
+    async fn heartbeat(&self) {
         // Log the connected validators.
-        self.log_connected_validators(uptime);
+        self.log_connected_validators();
         // Log the validator participation scores.
         #[cfg(feature = "telemetry")]
         self.log_participation_scores();
@@ -873,7 +871,7 @@ impl<N: Network> Gateway<N> {
     }
 
     /// Logs the connected validators.
-    fn log_connected_validators(&self, uptime: Duration) {
+    fn log_connected_validators(&self) {
         // Retrieve the connected validators and current committee.
         let connected_validators = self.connected_peers();
         let committee = match self.ledger.current_committee() {
@@ -910,7 +908,7 @@ impl<N: Network> Gateway<N> {
 
         // Log the validators that are not connected.
         let num_not_connected = validators_total.saturating_sub(connected_validators.len());
-        if num_not_connected > 0 && uptime > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
+        if num_not_connected > 0 && self.tcp().uptime() > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
             // Cache the total stake for computing percentages.
             let total_stake = committee.total_stake();
             let total_stake_f64 = total_stake as f64;
@@ -951,7 +949,7 @@ impl<N: Network> Gateway<N> {
 
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
             // Not being connected to a quorum of validators is begning during startup.
-            if uptime > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
+            if self.tcp().uptime() > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
                 error!("Not connected to a quorum of validators");
             } else {
                 debug!("Not connected to a quorum of validators");
