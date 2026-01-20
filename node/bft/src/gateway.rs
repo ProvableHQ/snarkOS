@@ -1577,11 +1577,6 @@ impl<N: Network> Gateway<N> {
         *peer_ip = Some(SocketAddr::new(peer_addr.ip(), peer_request.listener_port));
         let peer_ip = peer_ip.unwrap();
 
-        // Knowing the peers listening address, ensure we are not already connecting/connected to it.
-        if self.is_connecting_or_connected(peer_addr) {
-            return Err(ConnectError::AlreadyConnected { address: peer_addr });
-        }
-
         // Knowing the peer's listening address, ensure it is allowed to connect.
         if let Err(reason) = self.ensure_peer_is_allowed(peer_ip) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
