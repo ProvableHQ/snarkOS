@@ -14,6 +14,7 @@ total_validators=$1
 total_clients=$2
 network_id=$3
 min_height=$4
+max_warnings=$5
 
 # The verobsity of snarkos nodes.
 NODE_VERBOSITY=3
@@ -23,6 +24,7 @@ NODE_VERBOSITY=3
 : "${total_clients:=4}" # need at least 4 clients, so each validator has at least one client connected to it.
 : "${network_id:=0}"
 : "${min_height:=60}" # To likely go past the 100 round garbage collection limit.
+: "${max_warnings:=10}"
 
 # shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
@@ -395,7 +397,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
   if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$total_wait"; then
     echo "🎉 Test passed! All nodes reached minimum height."
 
-    if check_logs "$log_dir" "$total_validators" "$total_clients"; then
+    if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
       exit 0
     else
       exit 1

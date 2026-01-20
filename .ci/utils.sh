@@ -86,13 +86,13 @@ function check_logs() {
   local log_dir=$1
   local total_validators=$2
   local total_clients=$3
-  
-  local all_reached=true
-  local highest_height=0
-
   # The maximum number of warnings allow in each node's log file.
   # Nodes may create some warnings at startup because they cannot connect to each other yet.
-  local max_warnings=10
+  local max_warnings=$4
+
+ 
+  local all_reached=true
+  local highest_height=0
 
   for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
     if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
