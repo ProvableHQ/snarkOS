@@ -16,11 +16,9 @@
 use snarkos_node_tcp::ConnectError;
 use snarkvm::prelude::{FromBytes, ToBytes, io_error};
 
-use anyhow::anyhow;
 use std::{io, net::SocketAddr};
 
 /// The reason behind the node disconnecting from a peer.
-// TODO(kaimast): implement Display
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DisconnectReason {
     /// The fork length limit was exceeded.
@@ -64,6 +62,8 @@ pub enum DisconnectReason {
     /// The disconnect reason is not known. This is used for when the peers sends a disconnect reason that is not known to us.
     UnknownReason,
 }
+
+impl snarkos_node_tcp::ApplicationError for DisconnectReason {}
 
 impl ToBytes for DisconnectReason {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
@@ -162,26 +162,13 @@ impl std::fmt::Display for DisconnectReason {
     }
 }
 
-impl From<ConnectError> for DisconnectReason {
-    fn from(error: ConnectError) -> Self {
-        match error {
-            ConnectError::NoExternalPeersAllowed => Self::NoExternalPeersAllowed,
-            ConnectError::SelfConnect { .. } => Self::SelfConnect,
-            ConnectError::AlreadyConnected { .. } => Self::AlreadyConnected,
-            ConnectError::AlreadyConnecting { .. } => Self::AlreadyConnecting,
-            _ => Self::UnknownReason,
-        }
-    }
-}
-
 impl DisconnectReason {
     pub fn into_connect_error(self, address: SocketAddr) -> ConnectError {
         match self {
-            DisconnectReason::NoExternalPeersAllowed => ConnectError::NoExternalPeersAllowed,
             DisconnectReason::SelfConnect => ConnectError::SelfConnect { address },
             DisconnectReason::AlreadyConnected => ConnectError::AlreadyConnected { address },
             DisconnectReason::AlreadyConnecting => ConnectError::AlreadyConnecting { address },
-            _ => ConnectError::Other(anyhow!("{self}").into()),
+            _ => ConnectError::application(self),
         }
     }
 }

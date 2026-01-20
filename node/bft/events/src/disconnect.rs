@@ -15,6 +15,8 @@
 
 use super::*;
 
+use snarkos_node_tcp::ConnectError;
+
 use tracing::warn;
 
 /// The reason behind the node disconnecting from a peer.
@@ -37,9 +39,17 @@ pub enum DisconnectReason {
     AlreadyConnecting = 6,
     /// Already connected to the same node (through another TCP channel).
     AlreadyConnected = 7,
+    /// Already connected to the given Aleo address.
+    AlreadyConnectedToAleoAddress = 8,
+    /// The sent challenge request is invalid.
+    InvalidChallengeRequest = 9,
+    /// The peer is not an authorized validator.
+    UnauthorizedValidator = 10,
     /// The disconnect reason is not known. This is used for when the peers sends a disconnect reason that is not known to us.
     UnknownReason = u8::MAX,
 }
+
+impl snarkos_node_tcp::ApplicationError for DisconnectReason {}
 
 impl std::fmt::Display for DisconnectReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -52,7 +62,21 @@ impl std::fmt::Display for DisconnectReason {
             Self::NoExternalPeersAllowed => write!(f, "no external peers allowed"),
             Self::AlreadyConnecting => write!(f, "already connecting"),
             Self::AlreadyConnected => write!(f, "already connected"),
+            Self::AlreadyConnectedToAleoAddress => write!(f, "already connected to the given Aleo address"),
+            Self::InvalidChallengeRequest => write!(f, "invalid challenge request"),
+            Self::UnauthorizedValidator => write!(f, "unauthorized validator"),
             Self::UnknownReason => write!(f, "unknown"),
+        }
+    }
+}
+
+impl DisconnectReason {
+    pub fn into_connect_error(self, address: SocketAddr) -> ConnectError {
+        match self {
+            DisconnectReason::SelfConnect => ConnectError::SelfConnect { address },
+            DisconnectReason::AlreadyConnected => ConnectError::AlreadyConnected { address },
+            DisconnectReason::AlreadyConnecting => ConnectError::AlreadyConnecting { address },
+            _ => ConnectError::application(self),
         }
     }
 }
@@ -102,6 +126,9 @@ impl FromBytes for Disconnect {
             5 => DisconnectReason::NoExternalPeersAllowed,
             6 => DisconnectReason::AlreadyConnecting,
             7 => DisconnectReason::AlreadyConnected,
+            8 => DisconnectReason::AlreadyConnectedToAleoAddress,
+            9 => DisconnectReason::InvalidChallengeRequest,
+            10 => DisconnectReason::UnauthorizedValidator,
             val => {
                 warn!("received unknown disconnect reason (id={val})");
                 DisconnectReason::UnknownReason
@@ -128,6 +155,13 @@ mod tests {
             DisconnectReason::InvalidChallengeResponse,
             DisconnectReason::OutdatedClientVersion,
             DisconnectReason::SelfConnect,
+            DisconnectReason::NoExternalPeersAllowed,
+            DisconnectReason::AlreadyConnecting,
+            DisconnectReason::AlreadyConnected,
+            DisconnectReason::AlreadyConnectedToAleoAddress,
+            DisconnectReason::InvalidChallengeRequest,
+            DisconnectReason::UnauthorizedValidator,
+            DisconnectReason::UnknownReason,
         ];
 
         for reason in all_reasons.iter() {

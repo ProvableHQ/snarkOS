@@ -38,9 +38,6 @@ workspace = true
 [dependencies.snarkvm]
 workspace = true
 
-[dependencies.anyhow]
-workspace = true
-
 [dependencies.tokio-util]
 workspace = true
 features = [ "codec" ]

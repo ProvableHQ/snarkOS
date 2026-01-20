@@ -986,7 +986,7 @@ impl<N: Network> Gateway<N> {
                     | Err(ConnectError::AlreadyConnected { .. })
                     | Err(ConnectError::AlreadyConnecting { .. }) => None,
                     Err(err) => {
-                        warn!("Could not initiate connection to trusted validator at '{validator_ip:?}' - {err}");
+                        warn!("Could not initiate connection to trusted validator at '{validator_ip}' - {err}");
                         None
                     }
                 }
@@ -1039,7 +1039,7 @@ impl<N: Network> Gateway<N> {
             let rng = &mut OsRng;
             // Proceed to send disconnect requests to these bootstrap peers.
             for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
-                info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
+                info!("{CONTEXT} Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
                 <Self as Transport<N>>::send(
                     self,
                     peer.listener_addr,
@@ -1107,7 +1107,7 @@ impl<N: Network> Gateway<N> {
                         | Err(ConnectError::SelfConnect { .. }) => None,
                         Err(err) => {
                             warn!(
-                                "{CONTEXT}Could not initiate connection to validator at '{}' - {err}",
+                                "{CONTEXT} Could not initiate connection to validator at '{}' - {err}",
                                 peer.listener_addr
                             );
                             None
@@ -1118,7 +1118,7 @@ impl<N: Network> Gateway<N> {
 
             for (addr, result) in addrs.into_iter().zip(join_all(handles).await) {
                 if let Err(err) = result {
-                    warn!("Failed to connect to validator at '{addr:?}' - {err}");
+                    warn!("{CONTEXT} Failed to connect to validator at '{addr}' - {err}");
                 }
             }
 
@@ -1164,10 +1164,10 @@ impl<N: Network> Gateway<N> {
 
     // Update the dynamic validator whitelist.
     fn update_validator_whitelist(&self) {
-        if let Err(e) =
+        if let Err(err) =
             self.save_best_peers(&self.node_data_dir.validator_whitelist_path(), Some(MAX_VALIDATORS_TO_SEND), false)
         {
-            warn!("Couldn't update the validator whitelist: {e}");
+            warn!("{CONTEXT} Could not update the validator whitelist: {err}");
         }
     }
 }
@@ -1313,8 +1313,8 @@ impl<N: Network> Disconnect for Gateway<N> {
             if let Some(sync_sender) = self.sync_sender.get() {
                 let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                        warn!("Unable to remove '{peer_ip}' from the sync module - {e}");
+                    if let Err(err) = tx_block_sync_remove_peer_.send(peer_ip).await {
+                        warn!("{CONTEXT} Unable to remove '{peer_ip}' from the sync module - {err}");
                     }
                 });
             }
@@ -1358,7 +1358,7 @@ impl<N: Network> Handshake for Gateway<N> {
             // If the IP is already banned reject the connection.
             if self.is_ip_banned(peer_addr.ip()) {
                 trace!("{CONTEXT} Rejected a connection request from banned IP '{}'", peer_addr.ip());
-                return Err(ConnectError::other(anyhow!("'{}' is a banned IP address", peer_addr.ip())));
+                return Err(ConnectError::BannedIp { ip: peer_addr.ip() });
             }
 
             let num_attempts = self.cache.insert_inbound_connection(peer_addr.ip(), CONNECTION_ATTEMPTS_SINCE_SECS);
@@ -1516,18 +1516,13 @@ impl<N: Network> Gateway<N> {
             .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(ConnectError::other(anyhow!("{reason}")));
+            return Err(ConnectError::application(reason));
         }
 
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            if reason == DisconnectReason::NoReasonGiven {
-                // The Aleo address is already connected; no reason to return an error.
-                return Err(ConnectError::AlreadyConnectedToAleoAddress);
-            } else {
-                return Err(ConnectError::other(anyhow!("{reason}")));
-            }
+            return Err(reason.into_connect_error(peer_addr));
         }
 
         /* Step 3: Send the challenge response. */
@@ -1574,7 +1569,7 @@ impl<N: Network> Gateway<N> {
         // Knowing the peer's listening address, ensure it is allowed to connect.
         if let Err(reason) = self.ensure_peer_is_allowed(peer_ip) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(ConnectError::other(anyhow!("{reason:?}")));
+            return Err(reason.into_connect_error(peer_addr));
         }
 
         // Introduce the peer into the peer pool.
@@ -1583,12 +1578,7 @@ impl<N: Network> Gateway<N> {
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            if reason == DisconnectReason::NoReasonGiven {
-                // The Aleo address is already connected; no reason to return an error.
-                return Err(ConnectError::AlreadyConnectedToAleoAddress);
-            } else {
-                return Err(ConnectError::other(anyhow!("{reason}")));
-            }
+            return Err(reason.into_connect_error(peer_addr));
         }
 
         /* Step 2: Send the challenge response followed by own challenge request. */
@@ -1630,7 +1620,7 @@ impl<N: Network> Gateway<N> {
             .await
         {
             send_event(&mut framed, peer_addr, reason.into()).await?;
-            Err(ConnectError::other(anyhow!("{reason}")))
+            Err(reason.into_connect_error(peer_addr))
         } else {
             Ok(peer_request)
         }
@@ -1652,19 +1642,18 @@ impl<N: Network> Gateway<N> {
         // If the node is in trusted peers only mode, ensure the peer is trusted.
         if self.trusted_peers_only && !self.is_trusted(listener_addr) {
             warn!("{CONTEXT} Dropping '{peer_addr}' for being an untrusted validator ({address})");
-            return Some(DisconnectReason::ProtocolViolation);
+            return Some(DisconnectReason::NoExternalPeersAllowed);
         }
         if !bootstrap_peers::<N>(self.dev().is_some()).contains(&listener_addr) {
             // Ensure the address is a current committee member.
             if !self.is_authorized_validator_address(address) {
-                warn!("{CONTEXT} Dropping '{peer_addr}' for being an unauthorized validator ({address})");
-                return Some(DisconnectReason::ProtocolViolation);
+                return Some(DisconnectReason::UnauthorizedValidator);
             }
         }
 
         // Ensure the address is not already connected.
         if self.is_connected_address(address) {
-            return Some(DisconnectReason::ProtocolViolation);
+            return Some(DisconnectReason::AlreadyConnectedToAleoAddress);
         }
 
         None

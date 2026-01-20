@@ -360,7 +360,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                     Ok(hdl) => Some(((addr, attempt_no, peer_type), hdl)),
                     Err(ConnectError::AlreadyConnected { .. }) | Err(ConnectError::AlreadyConnecting { .. }) => None,
                     Err(err) => {
-                        warn!("Could not initiate connection to {peer_type} at '{addr:?}' - {err}");
+                        warn!("Could not initiate connection to {peer_type} at '{addr}' - {err}");
                         None
                     }
                 }

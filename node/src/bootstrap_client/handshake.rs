@@ -15,7 +15,7 @@
 
 use crate::{
     BootstrapClient,
-    bft::events::{self, Event},
+    bft::events::{self, DisconnectReason, Event},
     bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
     network::{ConnectionMode, NodeType, PeerPoolHandling, log_repo_sha_comparison},
     router::messages::{self, Message},
@@ -188,7 +188,7 @@ impl<N: Network> BootstrapClient<N> {
 
         // Verify the challenge request.
         if !self.verify_challenge_request(peer_addr, &mut framed, &peer_request).await? {
-            return Err(ConnectError::other(format!("Handshake with '{peer_addr}' failed: invalid challenge request")));
+            return Err(ConnectError::application(DisconnectReason::InvalidChallengeRequest));
         };
 
         /* Step 2: Send the challenge response followed by own challenge request. */
@@ -258,9 +258,7 @@ impl<N: Network> BootstrapClient<N> {
                 let msg = Event::Disconnect::<N>(events::DisconnectReason::InvalidChallengeResponse.into());
                 send_msg!(msg, framed, peer_addr)?;
             }
-            return Err(ConnectError::other(format!(
-                "Handshake with '{peer_addr}' failed: invalid challenge response"
-            )));
+            return Err(ConnectError::application(DisconnectReason::InvalidChallengeResponse));
         }
 
         Ok((peer_port, peer_aleo_addr, peer_node_type, peer_version, connection_mode))

@@ -50,6 +50,7 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Validator<N, C> {
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        //TODO(kaimast): if this fails, the validator must be corrupted. Handle this with higher severity.
         let genesis_header = self.ledger.get_header(0).map_err(ConnectError::other)?;
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
         self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
