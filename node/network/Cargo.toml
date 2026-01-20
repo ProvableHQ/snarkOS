@@ -23,9 +23,6 @@ test = [ ]
 [dependencies.anyhow]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]

@@ -4683,7 +4683,6 @@ dependencies = [
  "snarkos-node-network",
  "snarkos-node-tcp",
  "snarkvm",
- "thiserror 2.0.17",
  "tokio",
  "tracing",
 ]
