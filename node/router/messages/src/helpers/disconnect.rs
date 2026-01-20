@@ -180,7 +180,7 @@ impl DisconnectReason {
             DisconnectReason::NoExternalPeersAllowed => ConnectError::NoExternalPeersAllowed,
             DisconnectReason::SelfConnect => ConnectError::SelfConnect { address },
             DisconnectReason::AlreadyConnected => ConnectError::AlreadyConnected { address },
-            DisconnectReason::AlreadyConnecting => ConnectError::NoExternalPeersAllowed,
+            DisconnectReason::AlreadyConnecting => ConnectError::AlreadyConnecting { address },
             _ => ConnectError::Other(anyhow!("{self}").into()),
         }
     }
