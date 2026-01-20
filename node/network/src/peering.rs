@@ -104,12 +104,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         if self.is_local_ip(listener_addr) {
             return Err(ConnectError::SelfConnect { address: listener_addr });
         }
-        // Ensure the peer IP is not banned.
-        if self.is_ip_banned(listener_addr.ip()) {
-            return Err(ConnectError::other(format!(
-                "Rejected a connection attempt to a banned IP '{}'",
-                listener_addr.ip()
-            )));
+        // Ensure the node does not surpass the maximum number of peer connections.
+        if self.number_of_connected_peers() >= self.max_connected_peers() {
+            return Err(ConnectError::MaximumConnectionsReached { limit: self.max_connected_peers() as u16 });
         }
         // Ensure the node is not already connected to this peer.
         if self.is_connected(listener_addr) {
@@ -119,9 +116,12 @@ pub trait PeerPoolHandling<N: Network>: P2P {
         if self.is_connecting(listener_addr) {
             return Err(ConnectError::AlreadyConnecting { address: listener_addr });
         }
-        // Ensure the node does not surpass the maximum number of peer connections.
-        if self.number_of_connected_peers() >= self.max_connected_peers() {
-            return Err(ConnectError::MaximumConnectionsReached { limit: self.max_connected_peers() as u16 });
+        // Ensure the peer IP is not banned.
+        if self.is_ip_banned(listener_addr.ip()) {
+            return Err(ConnectError::other(format!(
+                "Rejected a connection attempt to a banned IP '{}'",
+                listener_addr.ip()
+            )));
         }
         // If the node is in trusted peers only mode, ensure the peer is trusted.
         if self.trusted_peers_only() && !self.is_trusted(listener_addr) {
