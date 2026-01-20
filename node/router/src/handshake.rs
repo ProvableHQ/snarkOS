@@ -174,7 +174,7 @@ impl<N: Network> Router<N> {
     ) -> Result<ChallengeRequest<N>, ConnectError> {
         // Introduce the peer into the peer pool.
         // If we are connecting, the peer and listener address are identical.
-        self.add_connecting_peer(peer_addr).map_err(|err| err.into_connect_error(peer_addr))?;
+        self.add_connecting_peer(peer_addr)?;
 
         // Construct the stream.
         let mut framed = Framed::new(stream, MessageCodec::<N>::handshake());
@@ -285,7 +285,7 @@ impl<N: Network> Router<N> {
         }
 
         // Introduce the peer into the peer pool.
-        self.add_connecting_peer(listener_addr).map_err(|err| err.into_connect_error(listener_addr))?;
+        self.add_connecting_peer(listener_addr)?;
 
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {

@@ -35,25 +35,6 @@ use std::{
 };
 use tokio::task;
 use tracing::*;
-
-/// Errors that can occur when adding a peer to the pool.
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum AddPeerError {
-    #[error("already connecting")]
-    AlreadyConnected,
-    #[error("already connected")]
-    AlreadyConnecting,
-}
-
-impl AddPeerError {
-    pub fn into_connect_error(self, address: SocketAddr) -> ConnectError {
-        match self {
-            AddPeerError::AlreadyConnected => ConnectError::AlreadyConnected { address },
-            AddPeerError::AlreadyConnecting => ConnectError::AlreadyConnecting { address },
-        }
-    }
-}
-
 pub trait PeerPoolHandling<N: Network>: P2P {
     const OWNER: &str;
 
@@ -542,7 +523,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     // a known candidate peer to a connecting one. The returned boolean indicates
     // whether the peer has been added/promoted, or rejected due to already being
     // shaken hands with or connected.
-    fn add_connecting_peer(&self, listener_addr: SocketAddr) -> Result<(), AddPeerError> {
+    fn add_connecting_peer(&self, listener_addr: SocketAddr) -> Result<(), ConnectError> {
         match self.peer_pool().write().entry(listener_addr) {
             Entry::Vacant(entry) => {
                 entry.insert(Peer::new_connecting(listener_addr, false));
@@ -553,8 +534,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                     entry.insert(Peer::new_connecting(listener_addr, peer.is_trusted()));
                     Ok(())
                 }
-                Peer::Connecting(_) => Err(AddPeerError::AlreadyConnecting),
-                Peer::Connected(_) => Err(AddPeerError::AlreadyConnected),
+                Peer::Connecting(_) => Err(ConnectError::AlreadyConnecting { address: listener_addr }),
+                Peer::Connected(_) => Err(ConnectError::AlreadyConnected { address: listener_addr }),
             },
         }
     }

@@ -17,7 +17,7 @@ use crate::{
     BootstrapClient,
     bft::events::{self, Event},
     bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
-    network::{AddPeerError, ConnectionMode, NodeType, PeerPoolHandling, log_repo_sha_comparison},
+    network::{ConnectionMode, NodeType, PeerPoolHandling, log_repo_sha_comparison},
     router::messages::{self, Message},
     tcp::{ConnectError, Connection, ConnectionSide, protocols::*},
 };
@@ -184,10 +184,7 @@ impl<N: Network> BootstrapClient<N> {
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_port));
 
         // Introduce the peer into the peer pool.
-        self.add_connecting_peer(peer_addr).map_err(|err| match err {
-            AddPeerError::AlreadyConnected => ConnectError::AlreadyConnected { address: peer_addr },
-            AddPeerError::AlreadyConnecting => ConnectError::AlreadyConnecting { address: peer_addr },
-        })?;
+        self.add_connecting_peer(peer_addr)?;
 
         // Verify the challenge request.
         if !self.verify_challenge_request(peer_addr, &mut framed, &peer_request).await? {

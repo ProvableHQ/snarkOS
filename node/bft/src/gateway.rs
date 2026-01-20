@@ -42,7 +42,6 @@ use snarkos_node_bft_events::{
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::{
-    AddPeerError,
     ConnectionMode,
     NodeType,
     Peer,
@@ -1483,10 +1482,7 @@ impl<N: Network> Gateway<N> {
         stream: &'a mut TcpStream,
     ) -> Result<ChallengeRequest<N>, ConnectError> {
         // Introduce the peer into the peer pool.
-        self.add_connecting_peer(peer_addr).map_err(|err| match err {
-            AddPeerError::AlreadyConnected => ConnectError::AlreadyConnected { address: peer_addr },
-            AddPeerError::AlreadyConnecting => ConnectError::AlreadyConnecting { address: peer_addr },
-        })?;
+        self.add_connecting_peer(peer_addr)?;
 
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
@@ -1584,10 +1580,7 @@ impl<N: Network> Gateway<N> {
         }
 
         // Introduce the peer into the peer pool.
-        self.add_connecting_peer(peer_ip).map_err(|err| match err {
-            AddPeerError::AlreadyConnected => ConnectError::AlreadyConnected { address: peer_addr },
-            AddPeerError::AlreadyConnecting => ConnectError::AlreadyConnecting { address: peer_addr },
-        })?;
+        self.add_connecting_peer(peer_ip)?;
 
         // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
         if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
