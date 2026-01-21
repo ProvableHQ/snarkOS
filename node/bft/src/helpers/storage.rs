@@ -284,13 +284,13 @@ impl<N: Network> Storage<N> {
         self.batch_ids.read().contains_key(&batch_id)
     }
 
-    /// Returns `true` if the storage contains the specified `transmission ID`.
+    /// Returns `true` if the storage contains the specified transmission, or it was recorded as aborted.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_transmission(transmission_id.into())
     }
 
     /// Returns the transmission for the given `transmission ID`.
-    /// If the transmission ID does not exist in storage, `None` is returned.
+    /// If the transmission ID does not exist in storage or was aborted, `None` is returned.
     pub fn get_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> Option<Transmission<N>> {
         self.transmissions.get_transmission(transmission_id.into())
     }
@@ -469,7 +469,7 @@ impl<N: Network> Storage<N> {
         // Check the timestamp for liveness.
         check_timestamp_for_liveness(batch_header.timestamp())?;
 
-        // Retrieve the missing transmissions in storage from the given transmissions.
+        // Determine which transmissions in this batch are missing from storage.
         let missing_transmissions = self
             .transmissions
             .find_missing_transmissions(batch_header, transmissions, aborted_transmissions)
@@ -811,18 +811,18 @@ impl<N: Network> Storage<N> {
         block: &Block<N>,
         certificate: BatchCertificate<N>,
         unconfirmed_transactions: &HashMap<N::TransactionID, Transaction<N>>,
-    ) {
+    ) -> Result<()> {
         // Skip if the certificate round is below the GC round.
         let gc_round = self.gc_round();
         if certificate.round() <= gc_round {
             trace!("Got certificate for round {} below GC round ({gc_round}). Will not store it.", certificate.round());
-            return;
+            return Ok(());
         }
 
         // If the certificate ID already exists in storage, skip it.
         if self.contains_certificate(certificate.id()) {
             trace!("Got certificate {} for round {} more than once.", certificate.id(), certificate.round());
-            return;
+            return Ok(());
         }
         // Retrieve the transmissions for the certificate.
         let mut missing_transmissions = HashMap::new();
@@ -848,54 +848,32 @@ impl<N: Network> Storage<N> {
             match transmission_id {
                 TransmissionID::Ratification => (),
                 TransmissionID::Solution(solution_id, _) => {
-                    // Retrieve the solution.
-                    match block.get_solution(solution_id) {
-                        // Insert the solution.
-                        Some(solution) => missing_transmissions.insert(*transmission_id, (*solution).into()),
-                        // Otherwise, try to load the solution from the ledger.
-                        None => match self.ledger.get_solution(solution_id) {
-                            // Insert the solution.
-                            Ok(solution) => missing_transmissions.insert(*transmission_id, solution.into()),
-                            // Check if the solution is in the aborted solutions.
-                            Err(_) => {
-                                // Insert the aborted solution if it exists in the block or ledger.
-                                match aborted_solutions.contains(solution_id)
-                                    || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
-                                {
-                                    true => {
-                                        aborted_transmissions.insert(*transmission_id);
-                                    }
-                                    false => error!("Missing solution {solution_id} in block {}", block.height()),
-                                }
-                                continue;
-                            }
-                        },
-                    };
+                    // Try to extract the solution from the block.
+                    if let Some(solution) = block.get_solution(solution_id) {
+                        missing_transmissions.insert(*transmission_id, (*solution).into());
+                    } else if let Some(solution) = self.ledger.get_solution(solution_id)? {
+                        // The solution was already contained in the ledger.
+                        missing_transmissions.insert(*transmission_id, solution.into());
+                    } else if aborted_solutions.contains(solution_id) {
+                        // The solution was already marked as aborted.
+                        aborted_transmissions.insert(*transmission_id);
+                    } else {
+                        error!("Missing solution {solution_id} in block {}", block.height());
+                    }
                 }
                 TransmissionID::Transaction(transaction_id, _) => {
-                    // Retrieve the transaction.
-                    match unconfirmed_transactions.get(transaction_id) {
-                        // Insert the transaction.
-                        Some(transaction) => missing_transmissions.insert(*transmission_id, transaction.clone().into()),
-                        // Otherwise, try to load the unconfirmed transaction from the ledger.
-                        None => match self.ledger.get_unconfirmed_transaction(*transaction_id) {
-                            // Insert the transaction.
-                            Ok(transaction) => missing_transmissions.insert(*transmission_id, transaction.into()),
-                            // Check if the transaction is in the aborted transactions.
-                            Err(_) => {
-                                // Insert the aborted transaction if it exists in the block or ledger.
-                                match aborted_transactions.contains(transaction_id)
-                                    || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
-                                {
-                                    true => {
-                                        aborted_transmissions.insert(*transmission_id);
-                                    }
-                                    false => warn!("Missing transaction {transaction_id} in block {}", block.height()),
-                                }
-                                continue;
-                            }
-                        },
-                    };
+                    // Try to retrieve the transaction from set of unconfirmed transactions.
+                    if let Some(transaction) = unconfirmed_transactions.get(transaction_id) {
+                        missing_transmissions.insert(*transmission_id, transaction.clone().into());
+                    } else if let Some(transaction) = self.ledger.get_unconfirmed_transaction(*transaction_id)? {
+                        // The transaction was already contained in the ledger.
+                        missing_transmissions.insert(*transmission_id, transaction.into());
+                    } else if aborted_transactions.contains(transaction_id) {
+                        // The transaction was already marked as aborted.
+                        aborted_transmissions.insert(*transmission_id);
+                    } else {
+                        warn!("Missing transaction {transaction_id} in block {}", block.height());
+                    }
                 }
             }
         }
@@ -913,6 +891,8 @@ impl<N: Network> Storage<N> {
         {
             error!("{}", &flatten_error(&error));
         }
+
+        Ok(())
     }
 }
 

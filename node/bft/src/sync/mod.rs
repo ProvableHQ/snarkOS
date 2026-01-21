@@ -459,9 +459,9 @@ impl<N: Network> Sync<N> {
 
                 // Iterate over the certificates.
                 for certificates in subdag.values().cloned() {
-                    cfg_into_iter!(certificates).for_each(|certificate| {
-                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
-                    });
+                    cfg_into_iter!(certificates).try_for_each(|certificate| {
+                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions)
+                    })?;
                 }
 
                 // Update the validator telemetry.
@@ -718,28 +718,21 @@ impl<N: Network> Sync<N> {
             .filter_map(|tx| tx.to_unconfirmed_transaction().map(|unconfirmed| (unconfirmed.id(), unconfirmed)).ok())
             .collect::<HashMap<_, _>>();
 
-        // Iterate over the certificates.
-        for certificates in subdag.values().cloned() {
-            cfg_into_iter!(certificates.clone()).for_each(|certificate| {
-                // Sync the batch certificate with the block.
-                self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions);
-            });
+        // Extract all certificates from the block.
+        let certificates: Vec<_> = subdag.values().flatten().cloned().collect();
 
-            // Sync the BFT DAG with the certificates.
-            for certificate in certificates {
-                // If a BFT sender was provided, send the certificate to the BFT.
-                // For validators, BFT spawns a receiver task in `BFT::start_handlers`.
-                if let Some(bft_sender) = self.bft_sender.get() {
-                    let (callback_tx, callback_rx) = oneshot::channel();
-                    bft_sender
-                        .tx_sync_bft
-                        .send((certificate, callback_tx))
-                        .await
-                        .with_context(|| "Failed to sync certificate")?;
-                    callback_rx.await?.with_context(|| "Failed to sync certificate")?;
-                }
-            }
+        // Insert certificate into storage.
+        cfg_iter!(certificates).try_for_each(|certificate| {
+            self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions)
+        })?;
+
+        // Sync the BFT DAG with the block's certificates.
+        if let Some(bft_sender) = self.bft_sender.get() {
+            bft_sender.send_sync_bft_block(certificates).await.with_context(|| {
+                format!("Failed to sync certificates of block {} at height {} to BFT", block.hash(), block.height())
+            })?;
         }
+
         Ok(())
     }
 

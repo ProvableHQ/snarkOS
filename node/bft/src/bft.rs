@@ -907,7 +907,7 @@ impl<N: Network> BFT<N> {
             mut rx_primary_round,
             mut rx_primary_certificate,
             mut rx_sync_bft_dag_at_bootup,
-            mut rx_sync_bft,
+            mut rx_sync_bft_block,
         } = bft_receiver;
 
         // Process the current round from the primary.
@@ -941,9 +941,18 @@ impl<N: Network> BFT<N> {
         // Handler for new certificates that were fetched by the sync module.
         let self_ = self.clone();
         self.spawn(async move {
-            while let Some((certificate, callback)) = rx_sync_bft.recv().await {
-                // Update the DAG with the certificate.
-                let result = self_.update_dag::<true, true>(certificate).await;
+            while let Some((certificates, callback)) = rx_sync_bft_block.recv().await {
+                let result = 'outer: {
+                    for certificate in certificates {
+                        // Update the DAG with the certificate.
+                        let result = self_.update_dag::<true, true>(certificate).await;
+                        if let Err(err) = result {
+                            break 'outer Err(err);
+                        }
+                    }
+                    Ok(())
+                };
+
                 // Send the callback **after** updating the DAG.
                 // Note: We must await the DAG update before proceeding.
                 callback.send(result).ok();

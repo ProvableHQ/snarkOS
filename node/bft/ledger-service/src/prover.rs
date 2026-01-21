@@ -107,12 +107,12 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
         bail!("Solution '{solution_id}' does not exist in prover")
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
         bail!("Transaction '{transaction_id}' does not exist in prover")
     }
 
