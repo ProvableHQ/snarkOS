@@ -149,6 +149,7 @@ mod tests {
     #[test]
     fn serialize_deserialize() {
         // TODO switch to an iteration method that doesn't require manually updating this vec if enums are added
+        // Note, do not include `UnknownReason` here, as it is not a valid disconnect reason to send over the wire.
         let all_reasons = [
             DisconnectReason::ProtocolViolation,
             DisconnectReason::NoReasonGiven,
@@ -161,7 +162,6 @@ mod tests {
             DisconnectReason::AlreadyConnectedToAleoAddress,
             DisconnectReason::InvalidChallengeRequest,
             DisconnectReason::UnauthorizedValidator,
-            DisconnectReason::UnknownReason,
         ];
 
         for reason in all_reasons.iter() {
