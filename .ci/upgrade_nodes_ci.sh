@@ -6,12 +6,10 @@
 # 1. Download latest snarkOS release source from GitHub.
 # 2. Build it via `cargo install --locked --path . --features test_network`
 #    into a separate prefix (SNARKOS_RELEASE_DIR).
-# 3. Probe latest_consensus_version for release and PR binaries.
-# 4. Compute CONSENSUS_VERSION_HEIGHTS for release and PR.
-# 5. Rebuild release snarkOS with its heights.
-# 6. Rebuild PR snarkOS with its heights.
-# 7. Start a devnet with the release binary.
-# 8. Restart nodes one-by-one to the PR binary.
+# 3. Probe latest_consensus_version for latest release and PR binaries.
+# 4. Compute CONSENSUS_VERSION_HEIGHTS for latest release and PR.
+# 5. Start the devnet with latest release binaries and pass CONSENSUS_VERSION_HEIGHTS to nodes.
+# 6. Restart nodes one-by-one with the PR binary.
 ####################################################
 
 set -eo pipefail  # error on any command failure
@@ -271,13 +269,6 @@ function get_latest_height() {
   return 1
 }
 
-function get_consensus_and_height() {
-  local cv h
-  cv=$(curl -s "http://localhost:3030/v2/$network_name/consensus_version" || echo "")
-  h=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest" || echo "")
-  echo "$cv $h"
-}
-
 # Start a temporary client with $bin just to fetch /version JSON.
 function fetch_version_json_from_bin() {
   local bin="$1"
@@ -331,14 +322,14 @@ function build_consensus_heights() {
   local lcv="$1"
   local step=5
 
-  if ! is_integer "$lcv" || [ "$lcv" -le 0 ]; then
+  if ! is_integer "$lcv" || (( lcv <= 0 )); then
     echo ""
     return 0
   fi
 
   local heights=""
   local i=0
-  while [ "$i" -lt "$lcv" ]; do
+  while (( i < lcv )); do
     local h=$(( i * step ))
     if [ -z "$heights" ]; then
       heights="$h"
@@ -357,13 +348,13 @@ function build_consensus_heights_with_big_last() {
   local lcv="$1"
   local step=5
 
-  if ! is_integer "$lcv" || [ "$lcv" -le 0 ]; then
+  if ! is_integer "$lcv" || (( lcv <= 0)) ; then
     echo ""
     return 0
   fi
 
   # Degenerate case: only one consensus version → just "0"
-  if [ "$lcv" -eq 1 ]; then
+  if (( lcv == 1 )); then
     echo "0"
     return 0
   fi
@@ -372,7 +363,7 @@ function build_consensus_heights_with_big_last() {
   local i=0
 
   # Up to the penultimate entry with step 5
-  while [ "$i" -lt $(( lcv - 1 )) ]; do
+  while (( i < (lcv - 1) )); do
     local h=$(( i * step ))
     if [ -z "$heights" ]; then
       heights="$h"
@@ -455,20 +446,7 @@ function derive_consensus_env_from_version() {
   log "Release CONSENSUS_VERSION_HEIGHTS=${heights_release}"
   log "Current CONSENSUS_VERSION_HEIGHTS=${heights_current}"
 
-  # 3) Rebuild release snarkos with its heights.
-  log "Rebuilding release snarkos with CONSENSUS_VERSION_HEIGHTS (may re-download source)…"
-  FORCE_REBUILD_RELEASE=1 \
-  CONSENSUS_VERSION_HEIGHTS="$heights_release" \
-  CARGO_PROFILE_RELEASE_LTO=off \
-    download_and_build_latest_snarkos 1
-
-  # 4) Rebuild PR snarkos with its heights.
-  log "Rebuilding PR snarkos with CONSENSUS_VERSION_HEIGHTS=${heights_current}"
-  CARGO_PROFILE_RELEASE_LTO=off \
-  CONSENSUS_VERSION_HEIGHTS="$heights_current" \
-    ci_cargo_install_snarkos
-
-  # 5) Use PR latest version as EXPECTED_MAX_CONSENSUS_VERSION for the test.
+  # 4) Use PR latest version as EXPECTED_MAX_CONSENSUS_VERSION for the test.
   export CONSENSUS_VERSION_HEIGHTS="$heights_current"
   export EXPECTED_MAX_CONSENSUS_VERSION="$lcv_current"
 
@@ -485,7 +463,9 @@ function wait_for_highest_consensus_version() {
     log "Waiting for consensus_version >= ${EXPECTED_MAX_CONSENSUS_VERSION}…"
     local last_height=""
     while (( elapsed < timeout )); do
-      read -r cv h <<< "$(get_consensus_and_height)"
+      cv=$(get_consensus_version "$network_name")
+      h=$(get_block_height 0 "$network_name")
+
       if is_integer "$cv" && is_integer "$h"; then
         log "consensus_version=$cv height=$h"
         if (( cv >= EXPECTED_MAX_CONSENSUS_VERSION )); then

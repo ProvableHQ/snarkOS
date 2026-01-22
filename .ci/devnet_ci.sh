@@ -36,9 +36,6 @@ echo "Using network: $network_name (ID: $network_id)"
 # Create log directory
 init_log_dir
 
-# Ensures we use IPv4 localhost everywhere.
-localhost="127.0.0.1"
-
 # Define a trap handler that cleans up all processes on exit.
 # shellcheck disable=SC2329
 function exit_handler() {
@@ -123,56 +120,8 @@ if (( total_clients > 0 )); then
   log "✅ All clients have at least one peer"
 fi
 
-last_seen_consensus_version=0
-last_seen_height=0
-
-# Function checking that the first node reached the latest (unchanging) consensus version.
-function consensus_version_stable() {
-  consensus_version=$(curl -s "http://$localhost:3030/v2/$network_name/consensus_version")
-  height=$(curl -s "http://$localhost:3030/v2/$network_name/block/height/latest")
-
-  if (! is_integer "$consensus_version"); then
-    log "❌ Failed to retrieve consensus version: $consensus_version"
-    return 1
-  elif (! is_integer "$height"); then
-    log "❌ Failed to retrieve height: $height"
-    return 1
-  else
-    # If the consensus version is greater than the last seen, we update it.
-    if (( consensus_version > last_seen_consensus_version )); then
-      log "✅ Consensus version updated to $consensus_version"
-    # If the consensus version is the same whereas the block height is different and at least 10, we can assume that the consensus version is stable
-    else
-      if (( (height != last_seen_height) && (height >= 10) )); then
-        log "✅ Consensus version is stable at $consensus_version with height $height"
-        return 0
-      fi
-    fi
-
-    last_seen_consensus_version=$consensus_version
-    last_seen_height=$height
-  fi
-
-  return 1
-}
-
-# Check consensus versions periodically with a timeout
-log "ℹ️ Waiting for consensus version to stabilize..."
-SECONDS=0
-version_stable=false
-while (( SECONDS < 300 )); do  # 5 minutes max
-  if consensus_version_stable; then
-    version_stable=true
-    break
-  fi
-
-  # Continue waiting
-  sleep 30
-  log "Waited $SECONDS seconds so far..."
-done
-
-if ! $version_stable; then
-  log "❌ Test failed! Consensus version did not stabilize within 5 minutes."
+if ! wait_for_stable_consensus_version 0 "$network_name"; then
+  echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
   exit 1
 fi
 

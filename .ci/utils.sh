@@ -10,6 +10,9 @@ declare -a PIDS
 # The log directory variable. Will be initialized by init_log_dirl
 log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
 
+# Ensures we use IPv4 localhost everywhere.
+localhost="127.0.0.1"
+
 # How many cores should each node use?
 # (Should be half of the number of (v)CPUs)
 # NOTE: when you update this, update TASKSET1/2 as well.
@@ -53,7 +56,7 @@ function init_log_dir() {
 # Checks that the given command is available in the PATH.
 function require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    echo "ERROR: required command '$1' not found in PATH" >&2
+    log "ERROR: required command '$1' not found in PATH"
     exit 1
   fi
 }
@@ -62,7 +65,8 @@ function require_cmd() {
 function log() {
   msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
   echo "$msg" >> "$log_dir/ci-runner.log"
-  echo "$msg"
+  # Print to stderr so logs are always visible in the console.
+  echo "$msg" >&2
 }
 
 # Function checking that each node in the given range [start_index, end_index)
@@ -209,7 +213,7 @@ function check_nodes() {
 
   for node_index in $(seq 0 $((total_validators+total_clients-1))); do
     port=$((3030 + node_index))
-    status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/v2/$network_name/version")
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://$localhost:$port/v2/$network_name/version")
     # Fail if the HTTP response is not 2XX.
     if (( status < 200 || status > 300 )); then
       log "Node #${node_index} (port=$port) is not ready yet"
@@ -251,7 +255,7 @@ function wait_for_peers() {
   SECONDS=0
   
   while (( SECONDS < max_wait )); do
-    result=$(curl -s "http://localhost:$port/v2/$network_name/peers/count")
+    result=$(curl -s "http://$localhost:$port/v2/$network_name/peers/count")
 
     if (is_integer "$result"); then
       if (( result < min_peers )); then
@@ -278,13 +282,12 @@ function wait_for_bft_connections() {
   local min_peers=$2
   local network_name=$3
 
-  local total_wait=0
   local max_wait=300
   local poll_interval=1
   local port=$((3030 + node_index))
   
   while (( total_wait < max_wait )); do
-    result=$(curl -s "http://localhost:$port/v2/$network_name/connections/bft/count")
+    result=$(curl -s "http://$localhost:$port/v2/$network_name/connections/bft/count")
 
     if ! (is_integer "$result"); then
       log "Failed to get number of BFT connections for node #${node_index} (port=$port). Will retry..."
@@ -296,7 +299,6 @@ function wait_for_bft_connections() {
 
     # Continue waiting
     sleep $poll_interval
-    total_wait=$((total_wait+poll_interval))
   done
 
   log "❌ BFT connections did not reach $min_peers within 5 minutes."
@@ -415,4 +417,65 @@ function generate_trusted_clients() {
   done
 
   echo "$result"
+}
+
+# Get the consensus version of the specified node
+function get_consensus_version {
+  local node_index=$1
+  local network_name=$2
+
+  port=$(3030+node_index)
+  curl -s "http://localhost:$port/v2/$network_name/block/height/latest" || echo ""
+}
+
+# Get the block height of the specified node
+function get_block_height {
+  local node_index=$1
+  local network_name=$2
+
+  port=$(3030+node_index)
+  curl -s "http://localhost:$port/v2/$network_name/consensus_version" || echo ""
+}
+
+# Function checking that the first node reached the latest (unchanging) consensus version.
+function wait_for_stable_consensus_version() {
+  local node_index=$1
+  local network_name=$2
+  
+  local last_seen_consensus_version=0
+  local last_seen_height=0
+
+
+  # Check consensus versions periodically with a timeout
+  echo "ℹ️ Waiting for consensus version to stabilize..."
+  total_wait=0
+  while (( total_wait < 300 )); do  # 5 minutes max
+     consensus_version=$(get_consensus_version "$node_index" "$network_name")
+     height=$(get_node_height "$node_index" "$network_name")
+     if (! is_integer "$consensus_version"); then
+      echo "❌ Failed to retrieve consensus version: $consensus_version"
+    elif (! is_integer "$height"); then
+      echo "❌ Failed to retrieve height: $height"
+    else
+      # If the consensus version is greater than the last seen, we update it.
+      if (( consensus_version > last_seen_consensus_version )); then
+        echo "✅ Consensus version updated to $consensus_version"
+      # If the consensus version is the same whereas the block height is different and at least 10, we can assume that the consensus version is stable
+      else
+        if (( (height != last_seen_height) && (height >= 10) )); then
+          echo "✅ Consensus version is stable at $consensus_version with height $height"
+          return 0
+        fi
+      fi
+
+      last_seen_consensus_version=$consensus_version
+      last_seen_height=$height
+    fi
+    # Continue waiting
+    sleep 30
+    total_wait=$((total_wait + 30))
+    echo "Waited $total_wait seconds so far..."
+  done
+
+  return 1
 }
