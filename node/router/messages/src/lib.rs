@@ -116,7 +116,10 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V10, 21),
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
-        (ConsensusVersion::V13, 24),
+        // For ConsensusVersion::V13, we forgot to run CI and increment the
+        // message version before the canary release, so we keep it the same.
+        // We can bump it again on Canary for V14.
+        (ConsensusVersion::V13, 23),
     ];
 
     /// Returns the latest message version.
