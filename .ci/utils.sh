@@ -36,7 +36,7 @@ function check_node_stopped() {
   for i in "${!PIDS[@]}"; do
     local pid="${PIDS[i]}"
     if ! kill -0 "$pid" 2>/dev/null; then
-      echo "Node #${i} (pid=$pid) has exited unexpectedly"
+      log "Node #${i} (pid=$pid) has exited unexpectedly"
       return 0
     fi
   done
@@ -92,18 +92,18 @@ function check_heights() {
     fi
     
     if ! (is_integer "$height") || (( height < min_height )); then
-      echo "Node #${node_index} (port=$port) only reached height $height, expected at least $min_height"
+      log "Node #${node_index} (port=$port) only reached height $height, expected at least $min_height"
       all_reached=false
     fi
   done
   
   if $all_reached; then
-    echo "✅ SUCCESS: All nodes reached minimum height of $min_height"
+    log "✅ SUCCESS: All nodes reached minimum height of $min_height"
     return 0
   else
     if (( elapsed > 0 && ((elapsed % 60) == 0) )); then
       elapsed_mins=$((elapsed / 60))
-      echo "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height, elapsed: $elapsed_mins minutes)"
+      log "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height, elapsed: $elapsed_mins minutes)"
     fi
 
     return 1
@@ -112,7 +112,7 @@ function check_heights() {
 
 # Function checking that nodes created logs on disk and they contain no errors.
 function check_logs() {
-  echo "Checking logs exist for all nodes..."
+  log "Checking logs exist for all nodes..."
   local log_dir=$1
   local total_validators=$2
   local total_clients=$3
