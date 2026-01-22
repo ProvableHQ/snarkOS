@@ -143,7 +143,7 @@ function get_network_name() {
   esac
 }
 
-# Stops all running processe in the given list.
+# Stops all running processes in the PIDS list.
 function stop_nodes() {
   echo "🚨 Cleaning up ${#PIDS[@]} process(es)…"
   for pid in "${PIDS[@]}"; do
@@ -154,6 +154,49 @@ function stop_nodes() {
 
   # block until all nodes have shut down
   wait
+}
+
+# Generates the given number of random indices up to max_index.
+function generate_random_indices() {
+  local count=$1
+  local max_index=$2
+
+  # Check if count is greater than max_index + 1 (impossible request)
+  if (( count > max_index + 1 )); then
+    echo "Error: Cannot request more unique indices than exist." >&2
+    return 1
+  fi
+
+  # shuf -i generates a range (0 to max), -n picks N items
+  shuf -i 0-"$max_index" -n "$count"
+}
+
+# Stops select running processes from the PIDS list.
+function stop_some_nodes() {
+  local indices=("$@")
+  local killed_pids=()
+
+  echo "🚨 Stopping ${#indices[@]} selected node(s)..."
+
+  for i in "${indices[@]}"; do
+    # Get the PID from the global PIDS array using the index
+    local pid="${PIDS[$i]}"
+
+    # Check if PID exists (is not empty) and is currently running
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "Killing PIDS[$i] -> $pid"
+      kill -9 "$pid" 2>/dev/null || true
+      # Add to list of PIDs to wait for specifically
+      killed_pids+=("$pid")
+    else
+      echo "Skipping PIDS[$i] (PID: $pid) - Already dead or invalid."
+    fi
+  done
+
+  # Wait only for the processes we just killed to ensure they are gone
+  if [ ${#killed_pids[@]} -gt 0 ]; then
+    wait "${killed_pids[@]}" 2>/dev/null || true
+  fi
 }
 
 # Succeeds if all nodes are available.
