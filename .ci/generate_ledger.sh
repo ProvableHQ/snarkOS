@@ -29,16 +29,14 @@ poll_interval=10
 #shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
+# Create log directory
+init_log_dir
+
 git_commit=$(git rev-parse --short=10 HEAD)
 echo "On git commit ${git_commit}"
 
 network_name=$(get_network_name "$network_id")
 echo "Network set to $network_name with $total_validators validators"
-
-# Create log directory
-log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
-chmod 755 "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
 #shellcheck disable=SC2329

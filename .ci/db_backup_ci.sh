@@ -3,6 +3,9 @@
 #shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
+# Change this to increase/decrease log verbosity
+log_verbosity=2
+
 # Network parameters
 total_validators=4
 network_id=0
@@ -13,6 +16,9 @@ checkpoint_height=3
 rollback_height=10
 num_checkpoints=0
 remaining_checkpoints=2
+
+# Create log directory
+init_log_dir
 
 # Use fixed JWT values in order to be able to create checkpoints
 jwt_secret="ZGJjaGVja3BvaW50dGVzdA=="
@@ -26,15 +32,17 @@ jwt[3]="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGVvMTJ1eDNnZGF1Y2swdjY
 trap stop_nodes EXIT
 
 # Define a trap handler that prints a message when an error occurs 
-trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
+trap 'log "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Start all validator nodes in the background
 for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
   snarkos clean --dev $validator_index --network=$network_id
 
-  snarkos start --nodisplay --network $network_id --dev $validator_index --dev-num-validators $total_validators --validator --jwt-secret $jwt_secret --jwt-timestamp $jwt_ts &
+  log_file="$log_dir/validator-$validator_index.log"
+  snarkos start --nodisplay --network $network_id --dev $validator_index --dev-num-validators $total_validators \
+    --validator --jwt-secret $jwt_secret --jwt-timestamp $jwt_ts --verbosity $log_verbosity "--logfile=$log_file" &
   PIDS[validator_index]=$!
-  echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
+  log "Started validator $validator_index with PID ${PIDS[$validator_index]}"
   # Add 1-second delay between starting nodes to avoid hitting rate limits
   sleep 1
 done
@@ -52,18 +60,18 @@ function create_checkpoints() {
     fi
   done
 
-  echo "All nodes created a checkpoint"
+  log "All nodes created a checkpoint"
   return 0
 }
 
-wait_for_nodes "$total_validators" 0 
+wait_for_nodes "$total_validators" 0 "$network_name"
 
 # Check heights periodically with a timeout
 total_wait=0
 checkpoint_created=false
 while (( total_wait < 600 )); do  # 10 minutes max
   # Apply short-circuiting
-  if [[ $checkpoint_created = true ]] || check_heights  "$total_validators" 0 "$checkpoint_height" "$network_name"; then
+  if [[ $checkpoint_created = true ]] || check_heights  0 "$total_validators" "$checkpoint_height" "$network_name"; then
     if [[ $checkpoint_created = false ]]; then
       # Create checkpoints at the specified height
       create_checkpoints $num_checkpoints
@@ -71,13 +79,13 @@ while (( total_wait < 600 )); do  # 10 minutes max
       checkpoint_height=$((checkpoint_height+2))
       num_checkpoints=$((num_checkpoints+1))
 
-      echo "num_checkpoints: $num_checkpoints"
+      log "num_checkpoints: $num_checkpoints"
       sleep 2
     fi
 
     # Wait until the specified rollback height is reached
-    if check_heights "$total_validators" 0 "$rollback_height" "$network_name"; then
-      echo "All nodes reached rollback height."
+    if check_heights 0 "$total_validators" "$rollback_height" "$network_name"; then
+      log "All nodes reached rollback height."
 
       checkpoint_created=false
 
@@ -92,32 +100,38 @@ while (( total_wait < 600 )); do  # 10 minutes max
           snarkos clean "--network=$network_id" "--dev=$validator_index"
         else
           suffix="${validator_index}_$((num_checkpoints-2))"
-          snarkos clean "--network=$network_id" "--dev=validator_index" "--path=/tmp/checkpoint_$suffix"
+          # only remove ledger, until node-data is backed up properly.
+          rm -rf "/tmp/checkpoint_$suffix"
+          #snarkos clean "--network=$network_id" "--dev=validator_index" \
+          #    "--node-data-storage=/tmp/node_data" "--ledger-storage=/tmp/checkpoint_$suffix"
         fi
         # Wait until the cleanup concludes
         sleep 1
+
         # Restart using the checkpoint
         suffix="${validator_index}_$((num_checkpoints-1))"
+        log_file="$log_dir/validator-$validator_index.log"
         snarkos start --nodisplay "--network=$network_id" "--dev=$validator_index" "--dev-num-validators=$total_validators" \
-          --validator "--jwt-secret=$jwt_secret" "--jwt-timestamp=$jwt_ts" "--storage=/tmp/checkpoint_$suffix" &
+          --validator "--jwt-secret=$jwt_secret" "--jwt-timestamp=$jwt_ts" --verbosity $log_verbosity "--logfile=$log_file" \
+          "--node-data-storage=/tmp/node_data" "--ledger-storage=/tmp/checkpoint_$suffix" &
         PIDS[validator_index]=$!
-        echo "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
+        log "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
         # Add 1-second delay between starting nodes to avoid hitting rate limits
         sleep 1
 
         port=$((3030 + validator_index))
         height=$(curl -s "http://127.0.0.1:$port/$network_name/block/height/latest" || echo "0")
-        echo "Node height after restart: $height"
+        log "Node height after restart: $height"
 
         # Ensure that the height is below the rollback height
         if [[ "$height" =~ ^[0-9]+$ ]] && (( height >= rollback_height )) && (( height < checkpoint_height )); then
-          echo "❌ Test failed!"
+          log "❌ Test failed!"
           exit 1
         fi
       done
 
       if (( remaining_checkpoints == 0 )); then
-        echo "SUCCESS!"
+        log "SUCCESS!"
         exit 0
       fi
 
@@ -128,9 +142,9 @@ while (( total_wait < 600 )); do  # 10 minutes max
   # Continue waiting
   sleep 3
   total_wait=$((total_wait + 3))
-  echo "Waited $total_wait seconds so far..."
+  log "Waited $total_wait seconds so far..."
 done
 
 # The main loop has expired by now
-echo "❌ Test failed!"
+log "❌ Test failed!"
 exit 1
