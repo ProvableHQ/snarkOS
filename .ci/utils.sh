@@ -90,7 +90,7 @@ function check_logs() {
   local all_reached=true
   local highest_height=0
 
-  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+  for validator_index in $(seq 0 $((total_validators-1))); do 
     if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
       echo "❌ Test failed! Validator #${validator_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -104,7 +104,7 @@ function check_logs() {
     fi
   done
 
-  for ((client_index = 0; client_index < total_clients; client_index++)); do
+  for client_index in $(seq 0 $((total_clients-1))); do
     if [ ! -s "$log_dir/client-${client_index}.log" ]; then
       echo "❌ Test failed! Client #${client_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -160,12 +160,14 @@ function stop_nodes() {
 function check_nodes() {
   local total_validators=$1
   local total_clients=$2
+  local network_name=$3
 
-  for ((node_index = 0; node_index < total_validators + total_clients; node_index++)); do
+  for node_index in $(seq 0 $((total_validators+total_clients-1))); do
     port=$((3030 + node_index))
-    status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/version")
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/v2/$network_name/version")
     # Fail if the HTTP response is not 2XX.
     if (( status < 200 || status > 300 )); then
+      echo "Node #${node_index} (port=$port) is not ready yet"
       return 1
     fi
   done
@@ -195,13 +197,15 @@ function is_float() {
 function wait_for_peers() {
   local node_index=$1
   local min_peers=$2
+  local network_name=$3
 
   local total_wait=0
   local max_wait=300
   local poll_interval=1
+  local port=$((3030+node_index))
   
   while (( total_wait < max_wait )); do
-    result=$(curl -s "http://localhost:3030/v2/$network_name/peers/count")
+    result=$(curl -s "http://localhost:$port/v2/$network_name/peers/count")
 
     if (is_integer "$result") && (( result >= min_peers )); then
       return 0
@@ -248,21 +252,30 @@ function wait_for_nodes() {
   
   local total_validators=$1
   local total_clients=$2
+  local network_name=$3
 
-  while true; do
+  local max_wait=60
+  local poll_interval=1
+
+  SECONDS=0
+
+  while (( SECONDS < max_wait )); do
     if check_node_stopped; then
       echo "ERROR: one or more nodes stopped unexpectedly"
       return 1
     fi
     
-    if check_nodes "$total_validators" "$total_clients"; then
-      echo "All nodes are ready!"
+    if check_nodes "$total_validators" "$total_clients" "$network_name"; then
+      echo "✅ All nodes are ready!"
       return 0
     fi
 
     # Pause to give the nodes time to start up.
-    sleep 1
+    sleep $poll_interval
   done
+
+  echo "❌ Nodes did not become ready within 60 seconds."
+  return 1
 }
 
 # Compute the throughput for a number of operation over some time.

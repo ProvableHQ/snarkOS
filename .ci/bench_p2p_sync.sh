@@ -133,12 +133,12 @@ for client_index in $(seq 1 "$num_clients"); do
 done
 
 # Block until nodes are running and connected to each other.
-wait_for_nodes $((num_clients+1)) 0
+wait_for_nodes $((num_clients+1)) 0 "$network_name"
 
 # It takes about 30s for nodes to connect. Do not measure this time.
 SECONDS=0
 for node_index in $(seq 0 "$num_clients"); do
-  if ! (wait_for_peers "$node_index" $num_clients); then
+  if ! (wait_for_peers "$node_index" $num_clients "$network_name"); then
     exit 1
   fi
 done

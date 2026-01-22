@@ -88,7 +88,7 @@ for node_index in $(seq 1 "$num_nodes"); do
 done
 
 # Block until nodes are running and connected to each other.
-wait_for_nodes $((num_nodes+1)) 0
+wait_for_nodes $((num_nodes+1)) 0 "$network_name"
 
 SECONDS=0
 

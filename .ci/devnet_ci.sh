@@ -61,16 +61,17 @@ common_flags=(
 )
 
 # Start all validator nodes in the background
-for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+for validator_index in $(seq 0 $((total_validators-1))); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"
 
   log_file="$log_dir/validator-$validator_index.log"
-  if [ $validator_index -eq 0 ]; then
+  if (( validator_index == 0 )); then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" --metrics --no-dev-txs &
+      --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+validator_index))" \
+      --metrics --no-dev-txs &
   else
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" &
+      --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+validator_index))" &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -80,7 +81,7 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
 done
 
 # Start all client nodes in the background.
-for ((client_index = 0; client_index < total_clients; client_index++)); do
+for client_index in $(seq 0 $((total_clients-1))); do
   # compute the absolute index for this node.
   node_index=$((client_index + total_validators))
 
@@ -88,7 +89,7 @@ for ((client_index = 0; client_index < total_clients; client_index++)); do
 
   log_file="$log_dir/client-$client_index.log"
   snarkos start "${common_flags[@]}" "--dev=$node_index" \
-    --client "--logfile=$log_file" &
+    --client "--logfile=$log_file" "--rest=127.0.0.1:$((3030+node_index))" &
   PIDS[node_index]=$!
   echo "Started client $client_index with PID ${PIDS[$node_index]}"
   # Add 1-second delay between starting nodes to avoid hitting rate limits
@@ -98,13 +99,13 @@ for ((client_index = 0; client_index < total_clients; client_index++)); do
 done
 
 # Ensure all nodes are up and running.
-wait_for_nodes "$total_validators" "$total_clients"
+wait_for_nodes "$total_validators" "$total_clients" "$network_name"
 
 # Ensure all nodes have at least one peer
 echo "ℹ️ Waiting for all nodes to have at least one peer..."
 SECONDS=0
-for node_index in $(seq 0 $((total_clients+total_validators))); do
-  if ! (wait_for_peers "$node_index" 1); then
+for node_index in $(seq 0 $((total_clients+total_validators-1))); do
+  if ! (wait_for_peers "$node_index" 1 "$network_name"); then
     exit 1
   fi
 done
@@ -145,9 +146,9 @@ function consensus_version_stable() {
 
 # Check consensus versions periodically with a timeout
 echo "ℹ️ Waiting for consensus version to stabilize..."
-total_wait=0
+SECONDS=0
 version_stable=false
-while (( total_wait < 300 )); do  # 5 minutes max
+while (( SECONDS < 300 )); do  # 5 minutes max
   if consensus_version_stable; then
     version_stable=true
     break
@@ -155,8 +156,7 @@ while (( total_wait < 300 )); do  # 5 minutes max
 
   # Continue waiting
   sleep 30
-  total_wait=$((total_wait + 30))
-  echo "Waited $total_wait seconds so far..."
+  echo "Waited $SECONDS seconds so far..."
 done
 
 if ! $version_stable; then
