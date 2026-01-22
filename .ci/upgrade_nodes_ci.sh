@@ -39,22 +39,8 @@ WAIT_BETWEEN_UPGRADES="${WAIT_BETWEEN_UPGRADES:-60}"
 # shellcheck disable=SC1091
 . ./.ci/utils.sh
 
-########################################
-# Logging helpers
-########################################
-
-# Log a message to the console.
-function log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-}
-
-# Checks that the given command is available in the PATH.
-function require_cmd() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "ERROR: required command '$1' not found in PATH" >&2
-    exit 1
-  fi
-}
+# Set up logging directory
+init_log_dir
 
 # Reuse the same target dir for all builds (release + PR) to get incremental builds.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/.ci/target}"
@@ -186,10 +172,6 @@ SNARKOS_CURRENT_BIN="${SNARKOS_CURRENT_BIN:-snarkos}"
 network_name=$(get_network_name "$network_id")
 log "Using network: $network_name (ID: $network_id)"
 
-log_dir="$PWD/.logs-upgrade-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
-chmod 755 "$log_dir"
-
 declare -a PIDS
 
 # Handler that stops all nodes on shutdown.
@@ -200,7 +182,7 @@ exit_handler() {
 
 # Install signal handlers.
 trap exit_handler EXIT
-trap 'echo "Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
+trap 'log "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 common_flags=(
   --nodisplay "--network=$network_id" "--verbosity=$NODE_VERBOSITY"

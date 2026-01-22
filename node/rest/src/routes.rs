@@ -565,17 +565,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
     }
 
-    /// GET /<network>/peers/count (alias: /connections/p2p/count)
+    /// GET /<network>/peers/count
     pub(crate) async fn get_peers_count(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().number_of_connected_peers())
     }
 
-    /// GET /<network>/peers/all (alias: /connections/p2p/all)
+    /// GET /<network>/peers/all
     pub(crate) async fn get_peers_all(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().connected_peers())
     }
 
-    /// GET /<network>/peers/all/metrics (alias: /connections/p2p/all/metrics)
+    /// GET /<network>/peers/all/metrics
     pub(crate) async fn get_peers_all_metrics(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().connected_metrics())
     }

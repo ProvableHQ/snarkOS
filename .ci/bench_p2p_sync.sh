@@ -27,6 +27,9 @@ poll_interval=1 # Check block heights every second
 # shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
+# Create log directory
+init_log_dir
+
 # Running sums for variance: use sum and sumsq for unbiased sample variance
 sum_speed=0
 sumsq_speed=0
@@ -83,10 +86,6 @@ echo "Using network: $network_name (ID: $network_id)"
 
 snapshot_info=$(<info.txt)
 echo "Snapshot_info: ${snapshot_info}"
-
-# Create log directory
-log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
