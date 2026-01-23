@@ -17,6 +17,9 @@ log_filter="info,snarkos_node_sync=debug,snarkos_node_tcp=warn,snarkos_node_rest
 #shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
+# Create log directory
+init_log_dir
+
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 echo "On branch: ${branch_name}"
 
@@ -25,10 +28,6 @@ echo "Using network: $network_name (ID: $network_id)"
 
 snapshot_info=$(<info.txt)
 echo "Snapshot_info: ${snapshot_info}"
-
-# Create log directory
-log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
