@@ -5,13 +5,13 @@
 
 # Network parameters
 total_validators=7
-minority=$(( (total_validators - 1) / 3 ))
+majority=$(( (total_validators - 1) / 3 + 1 ))
 network_id=0
 network_name="mainnet"
 
 # Stopping conditions
-num_iterations=3
-final_height=40
+restart_height=10
+final_height=20
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
@@ -33,38 +33,39 @@ done
 wait_for_nodes "$total_validators" 0 
 
 total_wait=0
-for ((iter = 1; iter <= num_iterations; iter++)); do
-  restart_height=$(( iter * 10 ));
+while true; do
+  if check_heights 0 "$total_validators" "$restart_height" "$network_name"; then
+    echo "All nodes reached restart height."
 
-  while true; do
-    if check_heights 0 "$total_validators" "$restart_height" "$network_name"; then
-      echo "All nodes reached restart height."
+    # Gracefully shut down a majority of the validators
+    targets=( $(generate_random_indices "$majority" $(( ${#PIDS[@]} - 1 ))) )
+    stop_some_nodes "${targets[@]}"
 
-      # Gracefully shut down a minority of the validators
-      targets=( $(generate_random_indices "$minority" $(( ${#PIDS[@]} - 1 ))) )
-      stop_some_nodes "${targets[@]}"
+    for target_index in "${targets[@]}"; do
+      # Remove the original ledger
+      snarkos clean "--network=$network_id" "--dev=$target_index"
+    done
 
-      for target_index in "${targets[@]}"; do
-        # Remove the original ledger
-        snarkos clean "--network=$network_id" "--dev=$target_index"
-        # Wait until the cleanup concludes
-        sleep 1
-        # Restart
-        snarkos start --nodisplay "--network=$network_id" "--dev=$target_index" "--dev-num-validators=$total_validators" \
-          --validator &
-        PIDS[target_index]=$!
-        echo "Restarted a fresh validator $target_index with PID ${PIDS[$target_index]}"
-        # Add 1-second delay between starting nodes to avoid hitting rate limits
-        sleep 1
-        total_wait=$((total_wait + 2))
-      done
+    # wait for a non-trivial amount of time
+    sleep 30
 
-      break
-    fi
+    for target_index in "${targets[@]}"; do
+      # Restart
+      snarkos start --nodisplay "--network=$network_id" "--dev=$target_index" "--dev-num-validators=$total_validators" \
+        --validator &
+      PIDS[target_index]=$!
+      echo "Restarted a fresh validator $target_index with PID ${PIDS[$target_index]}"
+      # Add 1-second delay between starting nodes to avoid hitting rate limits
+      sleep 1
+    done
 
-    sleep 3
-    total_wait=$((total_wait + 3))
-  done
+    total_wait=$((total_wait + 30 + $majority))
+
+    break
+  fi
+
+  sleep 3
+  total_wait=$((total_wait + 3))
 done
 
 while (( total_wait < 600 )); do  # 10 minutes max
