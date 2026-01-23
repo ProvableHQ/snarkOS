@@ -200,7 +200,7 @@ pub async fn start_primary(
     let trusted_peers_only = false;
     // Initialize the primary instance.
     let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-    let mut primary = Primary::<CurrentNetwork>::new(
+    let primary = Primary::<CurrentNetwork>::new(
         account,
         storage,
         ledger,

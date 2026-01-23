@@ -80,7 +80,7 @@ use std::{
     collections::{HashMap, HashSet},
     future::Future,
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 #[cfg(not(feature = "locktick"))]
@@ -103,7 +103,7 @@ pub struct Primary<N: Network> {
     /// The ledger service.
     ledger: Arc<dyn LedgerService<N>>,
     /// The workers.
-    workers: Arc<[Worker<N>]>,
+    workers: Arc<OnceLock<Vec<Worker<N>>>>,
     /// The BFT sender.
     bft_sender: Arc<OnceCell<BFTSender<N>>>,
     /// The batch proposal, if the primary is currently proposing a batch.
@@ -157,7 +157,7 @@ impl<N: Network> Primary<N> {
             gateway,
             storage,
             ledger,
-            workers: Arc::from(vec![]),
+            workers: Default::default(),
             bft_sender: Default::default(),
             proposed_batch: Default::default(),
             latest_proposed_batch_timestamp: Default::default(),
@@ -226,7 +226,7 @@ impl<N: Network> Primary<N> {
 
     /// Run the primary instance.
     pub async fn run(
-        &mut self,
+        &self,
         ping: Option<Arc<Ping<N>>>,
         bft_sender: Option<BFTSender<N>>,
         primary_sender: PrimarySender<N>,
@@ -264,7 +264,9 @@ impl<N: Network> Primary<N> {
             worker_senders.insert(id, tx_worker);
         }
         // Set the workers.
-        self.workers = Arc::from(workers);
+        if self.workers.set(workers).is_err() {
+            bail!("Workers already set. `Primary::run` cannot be called more than once.");
+        }
 
         // First, initialize the sync channels.
         let (sync_sender, sync_receiver) = init_sync_channels();
@@ -310,12 +312,12 @@ impl<N: Network> Primary<N> {
 
     /// Returns the number of workers.
     pub fn num_workers(&self) -> u8 {
-        u8::try_from(self.workers.len()).expect("Too many workers")
+        u8::try_from(self.workers.get().expect("Primary is not running yet").len()).expect("Too many workers")
     }
 
     /// Returns the workers.
-    pub const fn workers(&self) -> &Arc<[Worker<N>]> {
-        &self.workers
+    pub fn workers(&self) -> &[Worker<N>] {
+        self.workers.get().expect("Primary is not running yet")
     }
 
     /// Returns the batch proposal of our primary, if one currently exists.
@@ -327,51 +329,51 @@ impl<N: Network> Primary<N> {
 impl<N: Network> Primary<N> {
     /// Returns the number of unconfirmed transmissions.
     pub fn num_unconfirmed_transmissions(&self) -> usize {
-        self.workers.iter().map(|worker| worker.num_transmissions()).sum()
+        self.workers().iter().map(|worker| worker.num_transmissions()).sum()
     }
 
     /// Returns the number of unconfirmed ratifications.
     pub fn num_unconfirmed_ratifications(&self) -> usize {
-        self.workers.iter().map(|worker| worker.num_ratifications()).sum()
+        self.workers().iter().map(|worker| worker.num_ratifications()).sum()
     }
 
     /// Returns the number of unconfirmed solutions.
     pub fn num_unconfirmed_solutions(&self) -> usize {
-        self.workers.iter().map(|worker| worker.num_solutions()).sum()
+        self.workers().iter().map(|worker| worker.num_solutions()).sum()
     }
 
     /// Returns the number of unconfirmed transactions.
     pub fn num_unconfirmed_transactions(&self) -> usize {
-        self.workers.iter().map(|worker| worker.num_transactions()).sum()
+        self.workers().iter().map(|worker| worker.num_transactions()).sum()
     }
 }
 
 impl<N: Network> Primary<N> {
     /// Returns the worker transmission IDs.
     pub fn worker_transmission_ids(&self) -> impl '_ + Iterator<Item = TransmissionID<N>> {
-        self.workers.iter().flat_map(|worker| worker.transmission_ids())
+        self.workers().iter().flat_map(|worker| worker.transmission_ids())
     }
 
     /// Returns the worker transmissions.
     pub fn worker_transmissions(&self) -> impl '_ + Iterator<Item = (TransmissionID<N>, Transmission<N>)> {
-        self.workers.iter().flat_map(|worker| worker.transmissions())
+        self.workers().iter().flat_map(|worker| worker.transmissions())
     }
 
     /// Returns the worker solutions.
     pub fn worker_solutions(&self) -> impl '_ + Iterator<Item = (SolutionID<N>, Data<Solution<N>>)> {
-        self.workers.iter().flat_map(|worker| worker.solutions())
+        self.workers().iter().flat_map(|worker| worker.solutions())
     }
 
     /// Returns the worker transactions.
     pub fn worker_transactions(&self) -> impl '_ + Iterator<Item = (N::TransactionID, Data<Transaction<N>>)> {
-        self.workers.iter().flat_map(|worker| worker.transactions())
+        self.workers().iter().flat_map(|worker| worker.transactions())
     }
 }
 
 impl<N: Network> Primary<N> {
     /// Clears the worker solutions.
     pub fn clear_worker_solutions(&self) {
-        self.workers.iter().for_each(Worker::clear_solutions);
+        self.workers().iter().for_each(Worker::clear_solutions);
     }
 }
 
@@ -894,7 +896,7 @@ impl<N: Network> Primary<N> {
             let mut proposal_cost = 0u64;
             for transmission_id in batch_header.transmission_ids() {
                 let worker_id = assign_to_worker(*transmission_id, self.num_workers())?;
-                let Some(worker) = self.workers.get(worker_id as usize) else {
+                let Some(worker) = self.workers().get(worker_id as usize) else {
                     debug!("Unable to find worker {worker_id}");
                     return Ok(());
                 };
@@ -1346,7 +1348,7 @@ impl<N: Network> Primary<N> {
                     continue;
                 }
                 // Broadcast the worker ping(s).
-                for worker in self_.workers.iter() {
+                for worker in self_.workers() {
                     worker.broadcast_ping();
                 }
             }
@@ -1517,7 +1519,7 @@ impl<N: Network> Primary<N> {
                 let self_ = self_.clone();
                 tokio::spawn(async move {
                     // Retrieve the worker.
-                    let worker = &self_.workers[worker_id as usize];
+                    let worker = &self_.workers()[worker_id as usize];
                     // Process the unconfirmed solution.
                     let result = worker.process_unconfirmed_solution(solution_id, solution).await;
                     // Send the result to the callback.
@@ -1544,7 +1546,7 @@ impl<N: Network> Primary<N> {
                 let self_ = self_.clone();
                 tokio::spawn(async move {
                     // Retrieve the worker.
-                    let worker = &self_.workers[worker_id as usize];
+                    let worker = &self_.workers().get(worker_id as usize).expect("Invalid worker ID");
                     // Process the unconfirmed transaction.
                     let result = worker.process_unconfirmed_transaction(transaction_id, transaction).await;
                     // Send the result to the callback.
@@ -1712,7 +1714,7 @@ impl<N: Network> Primary<N> {
         transmissions: impl Iterator<Item = (TransmissionID<N>, Transmission<N>)>,
     ) -> Result<()> {
         // Insert the transmissions into the workers.
-        assign_to_workers(&self.workers, transmissions, |worker, transmission_id, transmission| {
+        assign_to_workers(self.workers(), transmissions, |worker, transmission_id, transmission| {
             worker.process_transmission_from_peer(peer_ip, transmission_id, transmission);
         })
     }
@@ -1723,7 +1725,7 @@ impl<N: Network> Primary<N> {
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<()> {
         // Re-insert the transmissions into the workers.
-        assign_to_workers(&self.workers, transmissions.into_iter(), |worker, transmission_id, transmission| {
+        assign_to_workers(self.workers(), transmissions.into_iter(), |worker, transmission_id, transmission| {
             worker.reinsert(transmission_id, transmission);
         })
     }
@@ -1892,7 +1894,9 @@ impl<N: Network> Primary<N> {
                     bail!("Unable to assign transmission ID '{transmission_id}' to a worker")
                 };
                 // Retrieve the worker.
-                let Some(worker) = workers.get(worker_id as usize) else { bail!("Unable to find worker {worker_id}") };
+                let Some(worker) = workers.get().expect("No workers set").get(worker_id as usize) else {
+                    bail!("Unable to find worker {worker_id}")
+                };
                 // Push the callback onto the list.
                 fetch_transmissions.push(worker.get_or_fetch_transmission(peer_ip, *transmission_id));
             }
@@ -1999,7 +2003,7 @@ impl<N: Network> Primary<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the primary...");
         // Shut down the workers.
-        self.workers.iter().for_each(|worker| worker.shut_down());
+        self.workers().iter().for_each(|worker| worker.shut_down());
         // Abort the tasks.
         self.handles.lock().iter().for_each(|handle| handle.abort());
         // Save the current proposal cache to disk.
@@ -2068,19 +2072,20 @@ mod tests {
         // Initialize the primary.
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone()));
-        let mut primary =
+        let primary =
             Primary::new(account, storage, ledger, block_sync, None, &[], false, NodeDataDir::new_test(None), None)
                 .unwrap();
 
         // Construct a worker instance.
-        primary.workers = Arc::from([Worker::new(
+        let worker = Worker::new(
             0, // id
             Arc::new(primary.gateway.clone()),
             primary.storage.clone(),
             primary.ledger.clone(),
             primary.proposed_batch.clone(),
         )
-        .unwrap()]);
+        .unwrap();
+        let _ = primary.workers.set(vec![worker]);
         for a in accounts.iter().skip(account_index) {
             primary.gateway.insert_connected_peer(a.0, a.0, a.1.address());
         }
@@ -2308,8 +2313,8 @@ mod tests {
         let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
 
         // Store it on one of the workers.
-        primary.workers[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
-        primary.workers[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
+        primary.workers()[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
+        primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
@@ -2346,8 +2351,8 @@ mod tests {
         let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
 
         // Store it on one of the workers.
-        primary.workers[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
-        primary.workers[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
+        primary.workers()[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
+        primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
@@ -2379,11 +2384,11 @@ mod tests {
         let transaction_checksum = transaction.to_checksum::<CurrentNetwork>().unwrap();
 
         // Store it on one of the workers.
-        primary.workers[0].process_unconfirmed_solution(solution_commitment, solution).await.unwrap();
-        primary.workers[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
+        primary.workers()[0].process_unconfirmed_solution(solution_commitment, solution).await.unwrap();
+        primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Check that the worker has 2 transmissions.
-        assert_eq!(primary.workers[0].num_transmissions(), 2);
+        assert_eq!(primary.workers()[0].num_transmissions(), 2);
 
         // Create certificates for the current round and add the transmissions to the worker before inserting the certificate to storage.
         for (_, account) in accounts.iter() {
@@ -2397,7 +2402,7 @@ mod tests {
 
             // Add the transmissions to the worker.
             for (transmission_id, transmission) in transmissions.iter() {
-                primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+                primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
             }
 
             // Insert the certificate to storage.
@@ -2412,7 +2417,7 @@ mod tests {
         assert!(primary.storage.increment_to_next_round(round).is_ok());
 
         // Check that the worker has `num_transmissions_in_previous_round + 2` transmissions.
-        assert_eq!(primary.workers[0].num_transmissions(), num_transmissions_in_previous_round + 2);
+        assert_eq!(primary.workers()[0].num_transmissions(), num_transmissions_in_previous_round + 2);
 
         // Propose the batch.
         assert!(primary.propose_batch().await.is_ok());
@@ -2446,12 +2451,12 @@ mod tests {
 
         // Generate a solution and transactions.
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
-        primary.workers[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
+        primary.workers()[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
 
         for _i in 0..5 {
             let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
             // Store it on one of the workers.
-            primary.workers[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
+            primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
         }
 
         // Try to propose a batch again. This time, it should succeed.
@@ -2484,7 +2489,7 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2523,7 +2528,7 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2563,7 +2568,7 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2600,7 +2605,7 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2645,7 +2650,7 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2701,7 +2706,7 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2747,8 +2752,8 @@ mod tests {
 
         // Make sure the primary is aware of the transmissions in the proposal.
         for (transmission_id, transmission) in proposal.transmissions() {
-            primary_v4.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
-            primary_v5.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+            primary_v4.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+            primary_v5.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
         }
 
         // The author must be known to resolver to pass propose checks.
@@ -2793,8 +2798,8 @@ mod tests {
         let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
 
         // Store it on one of the workers.
-        primary.workers[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
-        primary.workers[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
+        primary.workers()[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
+        primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Set the proposal lock to a round ahead of the storage.
         let old_proposal_lock_round = *primary.propose_lock.lock().await;
@@ -3010,11 +3015,11 @@ mod tests {
         let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
 
         // Store it on one of the workers.
-        primary.workers[0].process_unconfirmed_solution(solution_commitment, solution).await.unwrap();
-        primary.workers[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
+        primary.workers()[0].process_unconfirmed_solution(solution_commitment, solution).await.unwrap();
+        primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Check that the worker has 2 transmissions.
-        assert_eq!(primary.workers[0].num_transmissions(), 2);
+        assert_eq!(primary.workers()[0].num_transmissions(), 2);
 
         // Create certificates for the current round.
         let account = accounts[0].1.clone();
@@ -3040,7 +3045,7 @@ mod tests {
 
         // Add the non-aborted transmissions to the worker.
         for (transmission_id, transmission) in transmissions_without_aborted.iter() {
-            primary.workers[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
         }
 
         // Check that inserting the transmission with missing transmissions fails.
