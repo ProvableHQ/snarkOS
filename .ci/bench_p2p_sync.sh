@@ -27,6 +27,9 @@ poll_interval=1 # Check block heights every second
 # shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
+# Create log directory
+init_log_dir
+
 # Running sums for variance: use sum and sumsq for unbiased sample variance
 sum_speed=0
 sumsq_speed=0
@@ -84,10 +87,6 @@ echo "Using network: $network_name (ID: $network_id)"
 snapshot_info=$(<info.txt)
 echo "Snapshot_info: ${snapshot_info}"
 
-# Create log directory
-log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
-
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
 
@@ -133,12 +132,12 @@ for client_index in $(seq 1 "$num_clients"); do
 done
 
 # Block until nodes are running and connected to each other.
-wait_for_nodes $((num_clients+1)) 0
+wait_for_nodes $((num_clients+1)) 0 "$network_name"
 
 # It takes about 30s for nodes to connect. Do not measure this time.
 SECONDS=0
 for node_index in $(seq 0 "$num_clients"); do
-  if ! (wait_for_peers "$node_index" $num_clients); then
+  if ! (wait_for_peers "$node_index" $num_clients "$network_name"); then
     exit 1
   fi
 done
