@@ -20,6 +20,7 @@ use std::{
     io::Read,
     path::Path,
     process,
+    str,
 };
 use toml::Value;
 use walkdir::WalkDir;
@@ -136,6 +137,20 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
 
 fn check_file_licenses<P: AsRef<Path>>(path: P) {
     let path = path.as_ref();
+
+    // Perform the license year check if on Linux.
+    if cfg!(target_os = "linux") {
+        // Get the current year from the OS
+        let os_year = process::Command::new("date")
+            .arg("+%Y") // ask only for the year
+            .output()
+            .expect("Failed to execute 'date' command");
+        let current_year = str::from_utf8(&os_year.stdout).expect("Date output was not valid UTF-8").trim();
+
+        // Check if the end of the year range in the license matches the OS year.
+        let license_year = str::from_utf8(&EXPECTED_LICENSE_TEXT[22..][..4]).unwrap();
+        assert_eq!(license_year, current_year, "The license year doesn't match the current OS year");
+    }
 
     let mut iter = WalkDir::new(path).into_iter();
     while let Some(entry) = iter.next() {
