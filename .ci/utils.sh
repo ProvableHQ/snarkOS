@@ -43,7 +43,7 @@ function check_node_stopped() {
   return 1
 }
 
-# Set up a logging directory that nodes and "ci-runner: logs are storeed in
+# Set up a logging directory that node and ci-runner logs are stored in
 function init_log_dir() {
   mkdir -p "$log_dir"
   chmod 755 "$log_dir"
