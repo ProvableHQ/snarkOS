@@ -29,7 +29,7 @@ use walkdir::WalkDir;
 const EXPECTED_LICENSE_TEXT: &[u8] = include_bytes!(".resources/license_header");
 
 // The following directories will be excluded from the license scan.
-const DIRS_TO_SKIP: [&str; 8] = [".cargo", ".circleci", ".git", ".github", ".resources", "examples", "js", "target"];
+const DIRS_TO_SKIP: [&str; 3] = ["examples", "js", "target"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ImportOfInterest {
@@ -157,10 +157,15 @@ fn check_file_licenses<P: AsRef<Path>>(path: P) {
         let entry = entry.unwrap();
         let entry_type = entry.file_type();
 
-        // Skip the specified directories.
+        // Skip the root-level dot folders (e.g. .git, .github, .cargo, .ci).
+        if entry_type.is_dir() && entry.depth() == 1 && entry.file_name().to_str().is_some_and(|n| n.starts_with('.')) {
+            iter.skip_current_dir();
+            continue;
+        }
+
+        // Skip the specified directories (any depth).
         if entry_type.is_dir() && DIRS_TO_SKIP.contains(&entry.file_name().to_str().unwrap_or("")) {
             iter.skip_current_dir();
-
             continue;
         }
 
