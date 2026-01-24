@@ -284,13 +284,13 @@ impl<N: Network> Storage<N> {
         self.batch_ids.read().contains_key(&batch_id)
     }
 
-    /// Returns `true` if the storage contains the specified `transmission ID`.
+    /// Returns `true` if the storage contains the specified transmission, or it was recorded as aborted.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_transmission(transmission_id.into())
     }
 
     /// Returns the transmission for the given `transmission ID`.
-    /// If the transmission ID does not exist in storage, `None` is returned.
+    /// If the transmission ID does not exist in storage or was aborted, `None` is returned.
     pub fn get_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> Option<Transmission<N>> {
         self.transmissions.get_transmission(transmission_id.into())
     }
@@ -469,7 +469,7 @@ impl<N: Network> Storage<N> {
         // Check the timestamp for liveness.
         check_timestamp_for_liveness(batch_header.timestamp())?;
 
-        // Retrieve the missing transmissions in storage from the given transmissions.
+        // Determine which transmissions in this batch are missing from storage.
         let missing_transmissions = self
             .transmissions
             .find_missing_transmissions(batch_header, transmissions, aborted_transmissions)

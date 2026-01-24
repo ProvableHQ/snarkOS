@@ -704,6 +704,7 @@ impl<N: Network> BFT<N> {
                         continue;
                     }
                     // Retrieve the transmission.
+                    // Note: If this fails, we have to fetch the block/certificate again. As there is no logic here to sync the transmission.
                     let transmission = self.storage().get_transmission(*transmission_id).with_context(|| {
                         format!(
                             "BFT failed to retrieve transmission '{}.{}' from round {}",
