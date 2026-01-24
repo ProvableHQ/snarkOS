@@ -105,7 +105,7 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
         &self,
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
+    ) -> Result<Block<N>, CheckBlockError<N>> {
         self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
     }
 
@@ -209,13 +209,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
-        self.ledger.get_solution(solution_id)
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
+        self.ledger.try_get_solution(solution_id)
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
-        self.ledger.get_unconfirmed_transaction(&transaction_id)
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
+        self.ledger.try_get_unconfirmed_transaction(&transaction_id)
     }
 
     /// Returns the batch certificate for the given batch certificate ID.
