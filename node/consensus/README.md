@@ -4,10 +4,6 @@
 [![Authors](https://img.shields.io/badge/authors-Aleo-orange.svg)](https://aleo.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE.md)
 
-<<<<<<< HEAD
-The crate builds on top of the `snarkos-node-bft`, which implements AleoBFT.
-It manages a ratelimiter/mempool for incoming transmissions, and manages construction of blocks from batches that have been confirmed by the BFT layer.
-=======
 This crate builds on top of `snarkos-node-bft`, which implements AleoBFT.
 It manages a rate-limiting mempool for incoming transmissions and constructs blocks from batches that have been confirmed by the BFT layer.
 
@@ -130,4 +126,3 @@ Workers also receive transmissions from peers via:
 - **Transmission Requests**: When a worker sees a transmission ID it doesn't have, it requests the full transmission from the peer.
 
 Transmissions received from peers via `process_transmission_from_peer()` are added directly to the worker's ready queue after basic validation checks.
->>>>>>> a0e95cece (checkpoint)
