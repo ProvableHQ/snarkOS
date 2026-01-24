@@ -59,20 +59,50 @@ When the node is behind and syncing blocks from peers, the `bft::Sync` module ha
 When the node is within the garbage collection range of the network tip:
 
 1. **Block Reception**: `bft::Sync` requests and receives blocks from peer nodes via `BlockSync`.
-2. **Certificate Insertion**: Each certificate from the block's subDAG is added to the BFT's DAG via the `SyncCallback::add_new_certificates()` trait method. This populates the DAG with the certificates needed for consensus.
-3. **BFT-Driven Ledger Advancement**: The BFT module handles block creation through its normal consensus path—when enough certificates are added to the DAG, the BFT commits leader certificates and creates blocks just as it does during normal operation.
-4. **Pending Blocks**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks`. This step is needed in case the node switches back to block-based fast sync.
-5. **Pending Block Cleanup**: When the ledger advances because of leader commits (see 3), pending blocks are removed from the queue.
+2. **Block Verification**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks`.
+3. **Certificate Insertion**: Each certificate from the block's subDAG is added to storage via `sync_certificate_with_block()` and sent to the BFT. This populates the DAG with the certificates needed for consensus.
+4. **BFT-Driven Ledger Advancement**: The BFT module handles block creation through its normal consensus path -- when enough certificates are added to the DAG, the BFT commits leader certificates and creates blocks just as it does during normal operation.
+5. **Pending Block Cleanup**: When the ledger advances because of leader commits (see 4), pending blocks are removed from the queue.
 
 ##### Outside GC Range (Fast Sync)
 When the node is too far behind (outside the GC range):
 
 1. **Block Reception**: `bft::Sync` requests and receives blocks from peer nodes via `BlockSync` (same as with normal sync).
-2. **No DAG Updates**: Certificates are **not** added to the BFT's DAG, since they are too old to be useful for consensus.
-3. **Pending Blocks**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks` (same as with normal sync).
-4. **Availability Threshold Check**: The Sync module checks whether each pending block's leader certificate has reached the availability threshold. This requires certificates from subsequent blocks that reference the leader certificate.
+2. **Block Verification**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks` (same as with normal sync).
+3. **No DAG Updates**: Certificates are **not** added to the BFT's DAG, since they are too old to be useful for consensus.
+4. **Availability Threshold Check**: The Sync module checks whether each pending block's leader certificate has reached the availability threshold via `is_block_availability_threshold_reached()`. This uses certificates from subsequent pending blocks that reference the leader certificate.
 5. **Ledger Advancement**: Once the availability threshold is confirmed, the Sync module directly advances the ledger by calling `advance_to_next_block()` for each confirmed block, and updates storage height and round.
-6. **Transition to Normal Sync**: Once the node catches up to within the GC range, it runs the bootup synchronization routine and switches back to normal BFT-driven sync.
+6. **Transition to Normal Sync**: Once the node catches up to within the GC range, `sync_storage_with_ledger_at_bootup()` is called to populate the BFT DAG with recent certificates, and the node switches back to normal BFT-driven sync.
+
+### Startup Initialization
+
+When a node starts, the sync module reconstructs the BFT DAG for the most recent rounds from the ledger's disk state. This is handled by `Sync::initialize()`, which calls `sync_storage_with_ledger_at_bootup()`:
+
+1. **Determine the GC Height**: The sync module calculates the earliest block height that corresponds to rounds not yet garbage collected. Since at most one block is created every two rounds, this is computed as:
+   ```
+   gc_height = latest_block_height - (max_gc_rounds / 2)
+   ```
+
+2. **Load Blocks from Ledger**: All blocks from `gc_height` to the latest block are retrieved from the ledger (RocksDB).
+
+3. **Sync Storage State**: The in-memory storage is synchronized with the latest block:
+   - `sync_height_with_block()` updates the current height
+   - `sync_round_with_block()` updates the current round
+   - `garbage_collect_certificates()` removes any stale certificates
+
+4. **Reconstruct Certificate Storage**: For each block in the range, if it has a quorum authority (subDAG):
+   - The unconfirmed transactions are reconstructed from the block's transactions
+   - Each certificate from the subDAG is inserted into storage via `sync_certificate_with_block()`
+   - This populates the in-memory certificate maps and persists transmissions that are missing from disk
+
+5. **Populate the BFT DAG**: All certificates from the loaded blocks are sent to the BFT module via `tx_sync_bft_dag_at_bootup`. The BFT's `sync_bft_dag_at_bootup()` handler commits each certificate to the DAG, marking them as already committed so the BFT won't try to re-commit them.
+
+6. **Set Sync Height**: Finally, `BlockSync::set_sync_height()` is called to inform the block sync module of the current synchronized height.
+
+After initialization completes:
+- The BFT DAG contains all certificates from recent blocks (within GC range)
+- The storage contains the corresponding transmissions
+- The node is ready to participate in consensus or continue syncing from peers
 
 ## Workers
 
