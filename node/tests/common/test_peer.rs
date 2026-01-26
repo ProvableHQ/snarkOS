@@ -19,9 +19,12 @@ use snarkos_node_router::{
     expect_message,
     messages::{ChallengeRequest, ChallengeResponse, Message, MessageCodec, MessageTrait},
 };
+use snarkos_node_tcp::ConnectError;
 use snarkvm::{
-    ledger::narwhal::Data,
-    prelude::{Address, Field, FromBytes, MainnetV0 as CurrentNetwork, Network, TestRng, block::Block},
+    console::network::{MainnetV0 as CurrentNetwork, Network},
+    ledger::{block::Block, narwhal::Data},
+    prelude::{Address, Field, FromBytes, TestRng},
+    utilities::into_io_error,
 };
 
 use std::{
@@ -116,7 +119,13 @@ impl TestPeer {
 }
 
 impl Handshake for TestPeer {
-    async fn perform_handshake(&self, mut conn: Connection) -> io::Result<Connection> {
+    async fn perform_handshake(&self, conn: Connection) -> io::Result<Connection> {
+        self.perform_handshake_inner(conn).await.map_err(into_io_error)
+    }
+}
+
+impl TestPeer {
+    async fn perform_handshake_inner(&self, mut conn: Connection) -> Result<Connection, ConnectError> {
         let rng = &mut TestRng::default();
 
         let local_ip = self.node().listening_addr().expect("listening address should be present");

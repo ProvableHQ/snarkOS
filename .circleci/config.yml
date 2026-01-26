@@ -420,6 +420,10 @@ commands:
       - run:
           name: "Install snarkos"
           no_output_timeout: 20m
+          environment:
+            CONSENSUS_VERSION_HEIGHTS: "0,100"
+            EXPECTED_MAX_CONSENSUS_VERSION: "10"
+            WAIT_BETWEEN_UPGRADES: "60"
           command: |
             cargo install --locked --path . --features test_network
       - run:

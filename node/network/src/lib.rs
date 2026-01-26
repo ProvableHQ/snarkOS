@@ -29,7 +29,7 @@ pub use resolver::*;
 
 use snarkvm::prelude::Network;
 
-use std::{net::SocketAddr, str::FromStr};
+use std::{env::VarError, net::SocketAddr, str::FromStr};
 use tracing::*;
 
 // Include the generated build information.
@@ -44,7 +44,12 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
         // Development testing contains optional bootstrap peers loaded from the environment.
         match std::env::var("TEST_BOOTSTRAP_PEERS") {
             Ok(peers) => peers.split(',').map(|peer| SocketAddr::from_str(peer).unwrap()).collect(),
+            Err(VarError::NotPresent) => {
+                // Return an empty list if the environment variable is not present.
+                vec![]
+            }
             Err(err) => {
+                // Log other errors, e.g., invalid encoding.
                 warn!("Failed to load bootstrap peers from environment: {err}");
                 vec![]
             }

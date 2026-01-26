@@ -25,6 +25,7 @@ locktick = [
   "snarkos-node-bft-storage-service/locktick",
   "snarkos-node-sync/locktick",
   "snarkos-node-tcp/locktick",
+  "snarkos-node-metrics/locktick",
   "snarkos-utilities/locktick",
   "snarkvm/locktick"
 ]

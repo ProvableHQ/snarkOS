@@ -24,6 +24,7 @@ use tokio::{
 use tracing::*;
 
 use crate::{
+    ConnectError,
     Connection,
     P2P,
     protocols::{ProtocolHandler, ReturnableConnection},
@@ -63,17 +64,17 @@ where
                     debug!(parent: node.tcp().span(), "shaking hands with {} as the {:?}", addr, !conn.side());
                     let result = timeout(Duration::from_millis(Self::TIMEOUT_MS), node.perform_handshake(conn)).await;
 
-                    let ret = match result {
+                    let ret: io::Result<_> = match result {
                         Ok(Ok(conn)) => {
-                            debug!(parent: node.tcp().span(), "successfully handshaken with {}", addr);
+                            debug!(parent: node.tcp().span(), "successfully handshaken with {addr}");
                             Ok(conn)
                         }
-                        Ok(Err(e)) => {
-                            debug!(parent: node.tcp().span(), "handshake with {addr} failed: {e}");
-                            Err(e)
+                        Ok(Err(err)) => {
+                            debug!(parent: node.tcp().span(), "handshake with {addr} failed: {err}");
+                            Err(err.into())
                         }
                         Err(_) => {
-                            debug!(parent: node.tcp().span(), "handshake with {} timed out", addr);
+                            debug!(parent: node.tcp().span(), "handshake with {addr} timed out");
                             Err(io::ErrorKind::TimedOut.into())
                         }
                     };
@@ -95,7 +96,7 @@ where
 
     /// Performs the handshake; temporarily assumes control of the [`Connection`] and returns it if the handshake is
     /// successful.
-    async fn perform_handshake(&self, conn: Connection) -> io::Result<Connection>;
+    async fn perform_handshake(&self, conn: Connection) -> Result<Connection, ConnectError>;
 
     /// Borrows the full connection stream to be used in the implementation of [`Handshake::perform_handshake`].
     fn borrow_stream<'a>(&self, conn: &'a mut Connection) -> &'a mut TcpStream {

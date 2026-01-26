@@ -116,7 +116,11 @@ function check_logs() {
   local log_dir=$1
   local total_validators=$2
   local total_clients=$3
-  
+  # The maximum number of warnings allow in each node's log file.
+  # Nodes may create some warnings at startup because they cannot connect to each other yet.
+  local max_warnings=$4
+
+ 
   local all_reached=true
   local highest_height=0
 
@@ -130,6 +134,12 @@ function check_logs() {
       log "❌ Test failed! Validator #${validator_index} logs contain errors."
       # Print the errors to the console.
       grep "ERROR" "$log_dir/validator-${validator_index}.log"
+      return 1
+    fi
+
+    num_warnings=$(grep -c "WARN" "$log_dir/validator-${validator_index}.log")
+    if (( num_warnings > max_warnings )); then
+      echo "❌ Test failed! Validator #${validator_index} logs contain more than ${max_warnings} warnings."
       return 1
     fi
   done
@@ -146,7 +156,12 @@ function check_logs() {
       grep "ERROR" "$log_dir/client-${client_index}.log"
       return 1
     fi
- 
+
+    num_warnings=$(grep -c "WARN" "$log_dir/client-${client_index}.log")
+    if (( num_warnings > max_warnings )); then
+      echo "❌ Test failed! Client #${client_index} logs contain more than ${max_warnings} warnings."
+      return 1
+    fi
   done
 
   return 0

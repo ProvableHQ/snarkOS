@@ -41,7 +41,7 @@ async fn test_disconnect_without_handshake() {
     node1.tcp().enable_listener().await.unwrap();
 
     // Connect node0 to node1.
-    node0.connect(node1.local_ip());
+    let _ = node0.connect(node1.local_ip());
     // Await both nodes being connected.
     let node0_ = node0.clone();
     let node1_ = node1.clone();
@@ -98,7 +98,7 @@ async fn test_disconnect_with_handshake() {
     node1.tcp().enable_listener().await.unwrap();
 
     // Connect node0 to node1.
-    node0.connect(node1.local_ip());
+    node0.connect(node1.local_ip()).unwrap();
     // Await for the nodes to be connected.
     let node0_ = node0.clone();
     let node1_ = node1.clone();

@@ -40,7 +40,7 @@ macro_rules! test_reject_unsolicited_peer_response {
                     let peer_addr = peer.node().listening_addr().unwrap();
 
                     // Connect the node to the test peer.
-                    node.router().connect(peer_addr).unwrap().await.unwrap();
+                    node.router().connect(peer_addr).unwrap().await.unwrap().unwrap();
 
                     // Check the peer counts.
                     let node_clone = node.clone();

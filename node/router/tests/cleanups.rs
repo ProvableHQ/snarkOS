@@ -68,7 +68,7 @@ async fn test_connection_cleanups() {
     // Connect and disconnect in a loop.
     for i in 0..NUM_CONNECTIONS {
         // Connect one of the nodes to the other one.
-        nodes[1].connect(nodes[0].local_ip());
+        let _ = nodes[1].connect(nodes[0].local_ip());
 
         // Wait until the connection is complete.
         let node0 = nodes[0].clone();
