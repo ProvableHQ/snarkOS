@@ -15,14 +15,16 @@ function die() {
   exit 1
 }
 
-# Check if the a command this script depends on exist (I do that for all bash scripts I write that depends on commands)
+# Check if the a command this script depends on exist
 function need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
-# Print the command before executing - helps with debugging if something goes wrong:
+# Print the command before executing
 function run() {
-    echo "  + $*"
+    # We use a subshell ( ... ) to temporarily set IFS to space for the echo command only.
+    # This ensures "  + tc qdisc..." prints on one line despite the global IFS setting.
+    ( IFS=' '; echo "  + $*" )
     "$@"
 }
 
@@ -121,9 +123,9 @@ function apply_filter() {
 
 function apply_netem() {
     local delay="$1"
-    local jitter="$2"
-    local dist="$3"
-    local loss="$4"
+    local jitter="${2:-}"
+    local dist="${3:-}"
+    local loss="${4:-}"
 
     # Build the command as an array (no eval), and split jitter safely (may be "800ms 25%")
     local -a cmd=(tc qdisc add dev "$INTERFACE" parent "$PARENT" handle "$HANDLE" netem delay "$delay")
@@ -154,8 +156,7 @@ function apply_netem() {
     fi
 
     echo "Executing Kernel Command:"
-    printf '  %q' "${cmd[@]}"
-    echo
+    # We delegate printing entirely to 'run' to avoid formatting issues
     run "${cmd[@]}"
 }
 
@@ -241,15 +242,15 @@ case "$COMMAND" in
         ;;
 
     custom)
-        if [ $# -lt 4 ]; then
-            die "Missing arguments for custom mode. See usage: sudo ./delay-network.sh custom PORTS DELAY JITTER [DIST] [LOSS]"
+        if [ $# -lt 3 ]; then
+            die "Missing arguments for custom mode. Example: sudo ./delay-network.sh custom PORTS DELAY [JITTER] [DIST] [LOSS]"
         fi
         [[ -n "$PORTS" ]] || die "Missing PORTS for 'custom'. Example: sudo ./delay-network.sh custom 8080 100ms \"20ms 25%\" normal"
 
         reset_tc
         setup_root
         # Args: delay jitter distribution loss
-        apply_netem "$3" "$4" "$5" "$6"
+        apply_netem "$3" "${4:-}" "${5:-}" "${6:-}"
         apply_filter "$PORTS"
         ;;
 
