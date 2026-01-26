@@ -900,7 +900,9 @@ impl<N: Network> Sync<N> {
                 return Ok(false);
             }
             // If the ledger already advanced, consider it a success.
-            Err(CheckBlockError::BlockAlreadyExists { .. }) | Err(CheckBlockError::InvalidHeight { .. }) => {
+            Err(CheckBlockError::BlockAlreadyExists { .. })
+            | Err(CheckBlockError::InvalidHeight { .. })
+            | Err(CheckBlockError::InvalidRound { .. }) => {
                 debug!(
                     "Tried to sync storage with block at height {new_block_height}, but it was already in the ledger."
                 );
@@ -985,7 +987,9 @@ impl<N: Network> Sync<N> {
 
             let block = match ledger_update.check_block_content(pending_block) {
                 Ok(block) => block,
-                Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                Err(CheckBlockError::InvalidHeight { .. })
+                | Err(CheckBlockError::BlockAlreadyExists { .. })
+                | Err(CheckBlockError::InvalidRound { .. }) => {
                     // If the block was outdated, stop here and request a retry.
                     // The outdated pending block has already been removed (due to the `drain` call above)
                     debug!("Pending block at height {height} became obsolete. Will retry with updated prefix.");

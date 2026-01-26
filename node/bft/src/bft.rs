@@ -121,7 +121,6 @@ impl<N: Network> BFT<N> {
         info!("Starting the BFT instance...");
         // Set up callbacks.
         let primary_callback = Some(Arc::new(self.clone()) as Arc<dyn PrimaryCallback<N>>);
-
         let sync_callback = Some(Arc::new(self.clone()) as Arc<dyn SyncCallback<N>>);
 
         // Next, run the primary instance.

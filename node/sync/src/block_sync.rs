@@ -599,7 +599,9 @@ impl<N: Network> BlockSync<N> {
                 // Try to check the next block and advance to it.
                 let block = match ledger_update.check_next_block(block) {
                     Ok(block) => block,
-                    Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                    Err(CheckBlockError::InvalidHeight { .. })
+                    | Err(CheckBlockError::BlockAlreadyExists { .. })
+                    | Err(CheckBlockError::InvalidRound { .. }) => {
                         debug!("Skipping a block at height {next_height}. The ledger already advanced",);
                         return Ok((false, false));
                     }

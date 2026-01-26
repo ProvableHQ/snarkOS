@@ -567,18 +567,27 @@ impl<N: Network> Consensus<N> {
         // Create the candidate next block.
         let ledger_update = self.ledger.begin_ledger_update()?;
 
-        let block = ledger_update.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
-        let block_height = block.height();
-
-        // Check that the block is well-formed.
-        let block = match ledger_update.check_next_block(block) {
+        let block = match ledger_update
+            .prepare_advance_to_next_quorum_block(subdag, transmissions)
+            .and_then(|block| ledger_update.check_next_block(block))
+        {
             Ok(block) => block,
-            Err(CheckBlockError::InvalidHeight { .. }) | Err(CheckBlockError::BlockAlreadyExists { .. }) => {
-                debug!("Cannot advance to block at height {block_height}. The ledger already advanced",);
+            Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                debug!("The given block hash already exists in the ledger");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidHeight { .. }) => {
+                debug!("The ledger advanced while we were constructing the next block");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidRound { new, previous }) => {
+                debug!("The subDAG round is too low. Expected >{previous}, got {new}");
                 return Ok(false);
             }
             Err(err) => return Err(err.into_anyhow()),
         };
+
+        let block_height = block.height();
 
         // Advance to the next block.
         ledger_update.advance_to_next_block(&block)?;

@@ -407,6 +407,3 @@ ignored = [
   "snarkos-node-router", # Needed for cuda and locktick features
   "snarkos-node-metrics", # Needed for locktick feature
 ]
-
-[patch.crates-io]
-locktick = { git="https://github.com/kaimast/locktick.git", branch="feat/lazy-lock" }
