@@ -36,25 +36,30 @@ pub struct Clean {
     #[clap(long)]
     pub dev: Option<u16>,
 
-    /// Specify the path to a directory containing the ledger. Overrides the default path (also for
-    /// dev).
-    #[clap(long = "path")]
-    pub path: Option<PathBuf>,
+    /// Specify the path to a directory containing the ledger. Overrides the default path (also for dev).
+    #[clap(long, alias = "path")]
+    pub ledger_storage: Option<PathBuf>,
 
-    /// Sets a custom path for the node configuration.
+    /// Keep the node data directory (disabled by default).
     #[clap(long)]
-    pub node_data_path: Option<PathBuf>,
+    pub keep_node_data: bool,
+
+    /// Sets a custom path for the node configuration. Overrides the default path (also for dev).
+    #[clap(long, alias = "node-data-path", conflicts_with = "keep_node_data")]
+    pub node_data_storage: Option<PathBuf>,
 }
 
 impl Clean {
     /// Cleans the snarkOS node storage.
     pub fn parse(self) -> Result<String> {
         // Remove the specified node configuration from storage.
-        let node_data_dir = parse_node_data_dir(&self.node_data_path, self.network, self.dev)?;
-        println!("{}", Self::remove_node_data(&node_data_dir)?);
+        if !self.keep_node_data {
+            let node_data_dir = parse_node_data_dir(&self.node_data_storage, self.network, self.dev)?;
+            println!("{}", Self::remove_node_data(&node_data_dir)?);
+        }
 
         // Remove the specified ledger from storage.
-        let storage_mode = match self.path {
+        let storage_mode = match self.ledger_storage {
             Some(path) => StorageMode::Custom(path),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),

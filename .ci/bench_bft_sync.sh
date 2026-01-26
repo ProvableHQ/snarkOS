@@ -35,8 +35,7 @@ snapshot_info=$(<info.txt)
 echo "Snapshot_info: ${snapshot_info}"
 
 # Create log directory
-log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
+init_log_dir
 
 # Define a trap handler that cleans up all processes on exit.
 # shellcheck disable=SC2329
@@ -88,7 +87,7 @@ for node_index in $(seq 1 "$num_nodes"); do
 done
 
 # Block until nodes are running and connected to each other.
-wait_for_nodes $((num_nodes+1)) 0
+wait_for_nodes $((num_nodes+1)) 0 "$network_name"
 
 SECONDS=0
 

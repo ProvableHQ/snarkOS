@@ -20,6 +20,7 @@ use std::{
     io::Read,
     path::Path,
     process,
+    str,
 };
 use toml::Value;
 use walkdir::WalkDir;
@@ -28,7 +29,7 @@ use walkdir::WalkDir;
 const EXPECTED_LICENSE_TEXT: &[u8] = include_bytes!(".resources/license_header");
 
 // The following directories will be excluded from the license scan.
-const DIRS_TO_SKIP: [&str; 8] = [".cargo", ".circleci", ".git", ".github", ".resources", "examples", "js", "target"];
+const DIRS_TO_SKIP: [&str; 3] = ["examples", "js", "target"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ImportOfInterest {
@@ -137,15 +138,34 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
 fn check_file_licenses<P: AsRef<Path>>(path: P) {
     let path = path.as_ref();
 
+    // Perform the license year check if on Linux.
+    if cfg!(target_os = "linux") {
+        // Get the current year from the OS
+        let os_year = process::Command::new("date")
+            .arg("+%Y") // ask only for the year
+            .output()
+            .expect("Failed to execute 'date' command");
+        let current_year = str::from_utf8(&os_year.stdout).expect("Date output was not valid UTF-8").trim();
+
+        // Check if the end of the year range in the license matches the OS year.
+        let license_year = str::from_utf8(&EXPECTED_LICENSE_TEXT[22..][..4]).unwrap();
+        assert_eq!(license_year, current_year, "The license year doesn't match the current OS year");
+    }
+
     let mut iter = WalkDir::new(path).into_iter();
     while let Some(entry) = iter.next() {
         let entry = entry.unwrap();
         let entry_type = entry.file_type();
 
-        // Skip the specified directories.
+        // Skip the root-level dot folders (e.g. .git, .github, .cargo, .ci).
+        if entry_type.is_dir() && entry.depth() == 1 && entry.file_name().to_str().is_some_and(|n| n.starts_with('.')) {
+            iter.skip_current_dir();
+            continue;
+        }
+
+        // Skip the specified directories (any depth).
         if entry_type.is_dir() && DIRS_TO_SKIP.contains(&entry.file_name().to_str().unwrap_or("")) {
             iter.skip_current_dir();
-
             continue;
         }
 
