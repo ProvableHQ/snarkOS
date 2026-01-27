@@ -140,7 +140,17 @@ impl Execute {
         let function = Identifier::from_str(&self.function).with_context(|| "Failed to parse function ID")?;
 
         // Retrieve the inputs.
-        let inputs = self.inputs.iter().map(|input| Value::from_str(input)).collect::<Result<Vec<Value<N>>>>()?;
+        let inputs = self.inputs.iter().map(|input| {
+            // First try to parse the input as a record, otherwise parse it as a plaintext.
+            // TODO: this logic also needs to support DynamicRecords.
+            match Developer::parse_record(&private_key, input) {
+                Ok(record) => Ok(Value::Record(record)),
+                Err(err) => {
+                    println!("Error parsing input as record: {err}");
+                    Value::from_str(input)
+                }
+            }
+        }).collect::<Result<Vec<Value<N>>>>()?;
 
         let locator = Locator::<N>::from_str(&format!("{program_id}/{function}"))?;
         println!("📦 Creating execution transaction for '{}'...\n", &locator.to_string().bold());

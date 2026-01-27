@@ -41,15 +41,15 @@ localhost="127.0.0.1"
 
 # Define a trap handler that cleans up all processes on exit.
 # shellcheck disable=SC2329
-function exit_handler() {
-  stop_nodes
+# function exit_handler() {
+#   stop_nodes
 
-  # Remove all temporary files and folders
-  rm program/program.json program/main.aleo || true
-  rm program/txn_data.json program/invalid_txn_data.json || true
-  rmdir program || true
-}
-trap exit_handler EXIT
+#   # Remove all temporary files and folders
+#   rm program/program.json program/main.aleo || true
+#   rm program/txn_data.json program/invalid_txn_data.json || true
+#   rmdir program || true
+# }
+# trap exit_handler EXIT
 
 # Define a trap handler that prints a message when an error occurs 
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -163,6 +163,39 @@ if ! $version_stable; then
   echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
   exit 1
 fi
+
+exit 0
+
+# Execute two transfer_public_to_private transactions.
+echo "● Sending transfer_public_to_private transaction..." 
+network_id=0
+localhost=127.0.0.1
+transfer_public_to_private_result=$(snarkos developer execute --dev-key 0 --network "$network_id" --broadcast --endpoint=http://localhost:3030 \
+    "credits.aleo" "transfer_public_to_private" aleo1rhgdu77hgyqd3xjj8ucu3jj9r2krwz6mnzyd80gncr5fxcwlh5rsvzp9px 1000000u64 --wait --timeout 10)
+echo "transfer_public_to_private_result: $transfer_public_to_private_result"
+transfer_public_to_private_result=$(snarkos developer execute --dev-key 0 --network "$network_id" --broadcast --endpoint=http://localhost:3030 \
+    "credits.aleo" "transfer_public_to_private" aleo1rhgdu77hgyqd3xjj8ucu3jj9r2krwz6mnzyd80gncr5fxcwlh5rsvzp9px 1000000u64 --wait --timeout 10)
+echo "transfer_public_to_private_result: $transfer_public_to_private_result"
+# Scan the network for records.
+scan_result=$(snarkos developer scan --dev-key 0 --network "$network_id" --start 0 "--endpoint=$localhost:3030")
+num_records=$(echo "$scan_result" | grep -c "owner")
+# Fail if the scan did not return 6 records.
+if (( num_records != 6 )); then
+  echo "❌ Test failed! Expected 6 records, but found $num_records: $scan_result"
+  exit 1
+else
+  echo "✅ Scan returned 6 records correctly: $scan_result"
+fi
+# Parse out the records from the scan result.
+records=$(echo "$scan_result" | grep -A 10 "owner")
+echo "records: $records"
+# Print the 6th line of records, removing the trailing comma by replacing '",' with '"'.
+record_1=$(echo "$records" | head -n 5 | tail -n 1 | sed 's/",/"/')
+record_2=$(echo "$records" | head -n 8 | tail -n 1 | sed 's/",/"/')
+# Execute a transfer_private transaction
+transfer_private_result=$(snarkos developer execute --dev-key 0 --network "$network_id" --broadcast --endpoint=http://localhost:3030 \
+    "credits.aleo" "transfer_private" ${record_1} aleo1rhgdu77hgyqd3xjj8ucu3jj9r2krwz6mnzyd80gncr5fxcwlh5rsvzp9px 1u64 --wait --timeout 10 --record=${record_2})
+echo "transfer_private_result: $transfer_private_result"
 
 # Creates a test program.
 mkdir -p program

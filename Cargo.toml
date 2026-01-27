@@ -51,6 +51,7 @@ git = "https://github.com/ProvableHQ/snarkVM.git"
 rev = "4e3855d69"
 #version = "=4.4.0"
 default-features = false
+features = ["dev-print"]
 
 [workspace.dependencies.anyhow]
 version = "1.0"
