@@ -647,6 +647,7 @@ impl<N: Network> Gateway<N> {
                         | Err(err @ InsertBlockResponseError::NoConsensusVersion)
                         | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
                             error!("Peer '{peer_ip}' sent an invalid block response - {err}");
+                            self.ip_ban_peer(peer_ip, Some(&err.to_string()));
                             Err(err.into())
                         }
                         Err(err) => {

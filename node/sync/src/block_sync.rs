@@ -474,36 +474,47 @@ impl<N: Network> BlockSync<N> {
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
     ) -> Result<(), InsertBlockResponseError> {
-        let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
-            return Err(InsertBlockResponseError::EmptyBlockResponse);
+        // Attempt to insert the block responses, and break if we encounter an error.
+        let result = 'outer: {
+            let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
+                break 'outer Err(InsertBlockResponseError::EmptyBlockResponse);
+            };
+
+            let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
+
+            // Perform consensus version check, if possible.
+            // This check is only enabled after nodes have reached V12.
+            if expected_consensus_version >= ConsensusVersion::V12 {
+                if let Some(peer_version) = latest_consensus_version {
+                    if peer_version != expected_consensus_version {
+                        break 'outer Err(InsertBlockResponseError::ConsensusVersionMismatch {
+                            peer_version,
+                            expected_version: expected_consensus_version,
+                            last_height,
+                        });
+                    }
+                } else {
+                    break 'outer Err(InsertBlockResponseError::NoConsensusVersion);
+                }
+            }
+
+            // Insert the candidate blocks into the sync pool.
+            for block in blocks {
+                if let Err(error) = self.insert_block_response(peer_ip, block) {
+                    break 'outer Err(error.into());
+                }
+            }
+
+            Ok(())
         };
 
-        let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
-
-        // Perform consensus version check, if possible.
-        // This check is only enabled after nodes have reached V12.
-        if expected_consensus_version >= ConsensusVersion::V12 {
-            if let Some(peer_version) = latest_consensus_version {
-                if peer_version != expected_consensus_version {
-                    return Err(InsertBlockResponseError::ConsensusVersionMismatch {
-                        peer_version,
-                        expected_version: expected_consensus_version,
-                        last_height,
-                    });
-                }
-            } else {
-                return Err(InsertBlockResponseError::NoConsensusVersion);
-            }
+        // On failure, remove all block requests to the peer.
+        if result.is_err() {
+            self.remove_block_requests_to_peer(&peer_ip);
         }
 
-        // Insert the candidate blocks into the sync pool.
-        for block in blocks {
-            if let Err(error) = self.insert_block_response(peer_ip, block) {
-                self.remove_block_requests_to_peer(&peer_ip);
-                return Err(error.into());
-            }
-        }
-        Ok(())
+        // Return the result.
+        result
     }
 
     /// Returns the next block for the given `next_height` if the request is complete,
