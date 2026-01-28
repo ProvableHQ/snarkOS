@@ -30,6 +30,7 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
+use snarkos_node_sync::InsertBlockResponseError;
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
@@ -133,6 +134,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
             warn!("Failed to process inbound message from '{peer_addr}' - {error}");
+
+            //TODO(kaimast): set disconnect reason based on error
             if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
                 warn!("Disconnecting from '{peer_ip}' for protocol violation");
                 self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
@@ -219,6 +222,16 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
             warn!("Failed to insert block response from '{peer_ip}' - {err}");
+
+            // If the error indicates the peer missed an upgrade and forked, ban it.
+            if matches!(
+                err,
+                InsertBlockResponseError::ConsensusVersionMismatch { .. }
+                    | InsertBlockResponseError::NoConsensusVersion
+            ) {
+                self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
+            }
+
             false
         } else {
             true
