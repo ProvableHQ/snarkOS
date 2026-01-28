@@ -605,8 +605,8 @@ impl<N: Network> Primary<N> {
                             }
                         })?;
 
-                        // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
-                        // ConsensusVersion V8 Migration logic -
+                        // TODO (raychu86): Remove this logic after the next migration height is reached.
+                        // ConsensusVersion Migration logic -
                         // Do not include deployments in a batch proposal.
                         let current_block_height = self.ledger.latest_block_height();
                         let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
@@ -621,6 +621,25 @@ impl<N: Network> Primary<N> {
                                 fmt_id(transaction_id)
                             );
                             continue;
+                        }
+                        // Enforce maximum transaction size.
+                        if consensus_version <= ConsensusVersion::V14 {
+                            // Retrieve the maximum transaction size from the consensus configuration.
+                            // We subtract 1 from the current block height to ensure the boundary block also uses the previous configuration.
+                            if let Some(max_tx_size) = consensus_config_value!(
+                                N,
+                                TRANSACTION_SPEND_LIMIT,
+                                current_block_height.saturating_sub(1)
+                            ) {
+                                // Ensure the transaction does not exceed the maximum size.
+                                if transaction.to_bytes_le()?.len() > max_tx_size as usize {
+                                    trace!(
+                                        "Proposing - Skipping transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
+                                        fmt_id(transaction_id),
+                                    );
+                                    continue;
+                                }
+                            }
                         }
 
                         // Compute the transaction spent cost (in microcredits).
@@ -914,8 +933,8 @@ impl<N: Network> Primary<N> {
                         }
                     })?;
 
-                    // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
-                    // ConsensusVersion V8 Migration logic -
+                    // TODO (raychu86): Remove this logic after the next migration height is reached.
+                    // ConsensusVersion Migration logic -
                     // Do not include deployments in a batch proposal.
                     let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
                     let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
@@ -927,6 +946,23 @@ impl<N: Network> Primary<N> {
                         bail!(
                             "Invalid batch proposal - Batch proposals are not allowed to include deployments until Consensus V8 (block {consensus_version_v8_height})",
                         )
+                    }
+                    // Enforce maximum transaction size.
+                    if consensus_version <= ConsensusVersion::V14 {
+                        // Retrieve the maximum transaction size from the consensus configuration.
+                        // We subtract 1 from the current block height to ensure the boundary block also uses the previous configuration.
+                        if let Some(max_tx_size) =
+                            consensus_config_value!(N, TRANSACTION_SPEND_LIMIT, block_height.saturating_sub(1))
+                        {
+                            // Ensure the transaction does not exceed the maximum size.
+                            if transaction.to_bytes_le()?.len() > max_tx_size as usize {
+                                trace!(
+                                    "Proposing - Skipping transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
+                                    fmt_id(transaction_id),
+                                );
+                                continue;
+                            }
+                        }
                     }
 
                     // Compute the transaction spent cost (in microcredits).
