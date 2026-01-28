@@ -217,7 +217,7 @@ impl<N: Network> Gateway<N> {
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()));
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
@@ -297,10 +297,9 @@ impl<N: Network> Gateway<N> {
 impl<N: Network> Gateway<N> {
     /// The current maximum committee size.
     fn max_committee_size(&self) -> usize {
-        self.ledger.current_committee().map_or_else(
-            |_e| Committee::<N>::max_committee_size().unwrap() as usize,
-            |committee| committee.num_members(),
-        )
+        self.ledger
+            .current_committee()
+            .map_or_else(|_e| Committee::<N>::max_committee_size() as usize, |committee| committee.num_members())
     }
 
     /// The maximum number of events to cache.
@@ -1085,7 +1084,7 @@ impl<N: Network> Gateway<N> {
         // Attempt to connect to untrusted validators we're not connected to yet.
         // The trusted ones are already handled by `handle_trusted_validators`.
         let trusted_validators = self.trusted_peers();
-        if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES().unwrap() as usize {
+        if self.number_of_connected_peers() < N::LATEST_MAX_CERTIFICATES() as usize {
             let (addrs, handles): (Vec<_>, Vec<_>) = self
                 .get_candidate_peers()
                 .iter()
@@ -1277,7 +1276,7 @@ impl<N: Network> Reading for Gateway<N> {
     /// The greater it is, the more inbound messages the node can enqueue, but a too large value can make the node more susceptible to DoS attacks.
     fn message_queue_depth(&self) -> usize {
         2 * BatchHeader::<N>::MAX_GC_ROUNDS
-            * N::LATEST_MAX_CERTIFICATES().unwrap() as usize
+            * N::LATEST_MAX_CERTIFICATES() as usize
             * BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH
     }
 }
@@ -1298,7 +1297,7 @@ impl<N: Network> Writing for Gateway<N> {
     /// (like slow serialization) or network.
     fn message_queue_depth(&self) -> usize {
         2 * BatchHeader::<N>::MAX_GC_ROUNDS
-            * N::LATEST_MAX_CERTIFICATES().unwrap() as usize
+            * N::LATEST_MAX_CERTIFICATES() as usize
             * BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH
     }
 }
@@ -1841,7 +1840,7 @@ mod prop_tests {
         assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size());
         assert_eq!(gateway.account().address(), account.address());
     }
 
@@ -1871,7 +1870,7 @@ mod prop_tests {
         }
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size());
         assert_eq!(gateway.account().address(), account.address());
     }
 

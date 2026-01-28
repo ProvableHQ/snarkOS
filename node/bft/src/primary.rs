@@ -599,9 +599,9 @@ impl<N: Network> Primary<N> {
                         let transaction = spawn_blocking!({
                             match transaction {
                                 Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => {
-                                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                                }
+                                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(
+                                    &mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64),
+                                )?),
                             }
                         })?;
 
@@ -909,7 +909,7 @@ impl<N: Network> Primary<N> {
                         match transaction {
                             Data::Object(transaction) => Ok(transaction),
                             Data::Buffer(bytes) => {
-                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
+                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?)
                             }
                         }
                     })?;

@@ -205,7 +205,7 @@ impl<N: Network> Message<N> {
         let id = u16::from_le_bytes(id_bytes);
 
         // SPECIAL CASE: check the transaction message isn't too large.
-        if id == 12 && len > N::MAX_TRANSACTION_SIZE {
+        if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
         }
 
