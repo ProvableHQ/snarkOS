@@ -298,8 +298,13 @@ mod tests {
     /// Ensure that *message versions* are unique and incrementing by 1.
     fn consensus_constants_increasing_heights<N: Network>() {
         let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
-        for (_, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
-            assert_eq!(*message_version, previous_message_version + 1);
+        for (consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+            if consensus_version == &ConsensusVersion::V13 {
+                // Message version did not increment for ConsensusVersion::V13.
+                assert_eq!(*message_version, previous_message_version);
+            } else {
+                assert_eq!(*message_version, previous_message_version + 1);
+            }
             previous_message_version = *message_version;
         }
     }
