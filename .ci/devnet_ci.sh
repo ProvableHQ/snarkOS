@@ -56,11 +56,11 @@ common_flags=(
 )
 
 # Start all validator nodes in the background
-for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+for validator_index in $(seq 0 $((total_validators-1))); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"
 
   log_file="$log_dir/validator-$validator_index.log"
-  if [ $validator_index -eq 0 ]; then
+  if (( validator_index == 0 )); then
     snarkos start "${common_flags[@]}" "--dev=$validator_index" \
       --validator "--logfile=$log_file" --metrics --no-dev-txs &
   else
@@ -75,7 +75,7 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
 done
 
 # Start all client nodes in the background.
-for ((client_index = 0; client_index < total_clients; client_index++)); do
+for client_index in $(seq 0 $((total_clients-1))); do
   # compute the absolute index for this node.
   node_index=$((client_index + total_validators))
 
@@ -97,9 +97,9 @@ wait_for_nodes "$total_validators" "$total_clients"
 
 # Wait for all clients to be connected to another client or a validator.
 # TODO(kaimast): also check that validators are connected to each other.
-log "ℹ️ Waiting for all nodes to have at least one peer..."
+log "ℹ️ Waiting for all clients to have at least one peer..."
 SECONDS=0
-for node_index in $(seq 0 $((total_clients))); do
+for node_index in $(seq 0 $((total_clients-1))); do
   client_index=$node_index+total_validators
   if ! (wait_for_peers "$client_index" 1 "$network_name"); then
     exit 1
@@ -107,24 +107,8 @@ for node_index in $(seq 0 $((total_clients))); do
 done
 log "✅ All nodes have at least one peer"
 
-
-
 # Check consensus versions periodically with a timeout
-log "ℹ️ Waiting for consensus version to stabilize..."
-SECONDS=0
-version_stable=false
-while (( total_wait < 300 )); do  # 5 minutes max
-  if consensus_version_stable; then
-    version_stable=true
-    break
-  fi
-
-  # Continue waiting
-  sleep 30
-  log "Waited $SECONDS seconds so far..."
-done
-
-if ! wait_for_stable_consensus_version; then
+if ! wait_for_stable_consensus_version 0 "$network_name"; then
   echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
   exit 1
 fi
@@ -355,9 +339,9 @@ fi
 log "ℹ️Testing network progress"
 
 # Check heights periodically with a timeout
-total_wait=0
-while (( total_wait < 600 )); do  # 10 minutes max
-  if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$total_wait"; then
+SECONDS=0
+while (( SECONDS < 600 )); do  # 10 minutes max
+  if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$SECONDS"; then
     log "🎉 Test passed! All nodes reached minimum height."
 
     if check_logs "$log_dir" "$total_validators" "$total_clients"; then
@@ -369,11 +353,10 @@ while (( total_wait < 600 )); do  # 10 minutes max
   
   # Continue waiting
   sleep 30
-  total_wait=$((total_wait + 30))
-  log "Waited $total_wait seconds so far..."
+  log "Waited $SECONDS seconds so far..."
 done
 
-log "❌ Test failed! Not all nodes reached minimum height within 15 minutes."
+log "❌ Test failed! Not all nodes reached minimum height within 10 minutes."
 log_validator_logs "$log_dir" "$total_validators" "$total_clients"
 log_client_logs "$log_dir" "$total_validators" "$total_clients"
 
