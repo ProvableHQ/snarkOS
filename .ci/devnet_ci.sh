@@ -51,7 +51,7 @@ function exit_handler() {
 }
 trap exit_handler EXIT
 
-# Define a trap handler that prints a message when an error occurs 
+# Define a trap handler that prints a message when an error occurs
 trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Flags used by all nodes.
@@ -130,7 +130,7 @@ function consensus_version_stable() {
       echo "✅ Consensus version updated to $consensus_version"
     # If the consensus version is the same whereas the block height is different and at least 10, we can assume that the consensus version is stable
     else
-      if (( (height != last_seen_height) && (height >= 10) )); then
+      if (( (height != last_seen_height) && (height >= 50) )); then
         echo "✅ Consensus version is stable at $consensus_version with height $height"
         return 0
       fi
@@ -147,7 +147,7 @@ function consensus_version_stable() {
 echo "ℹ️ Waiting for consensus version to stabilize..."
 total_wait=0
 version_stable=false
-while (( total_wait < 300 )); do  # 5 minutes max
+while (( total_wait < 600 )); do  # 5 minutes max
   if consensus_version_stable; then
     version_stable=true
     break
@@ -191,7 +191,7 @@ echo "{
 
 # Deploy the test program and wait for the deployment to be processed.
 echo "● Testing program deployment..."
-_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 20 "$program_name")
+_deploy_result=$(cd program && snarkos developer deploy --dev-key 0 --network "$network_id" --endpoint=localhost:3030 --broadcast --wait --timeout 60 "$program_name")
 
 # Ensure we are able to fetch the program from the node.
 status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3030/v2/$network_name/program/${program_name}/0")
@@ -304,7 +304,7 @@ json_error=$(curl -s -X POST \
   "http://$localhost:3030/v2/$network_name/transaction/broadcast")
 
 # Ensure the top-level error message is "Invalid transaction"
-if ! jq -e '.message | test("Invalid transaction")' <<< "$json_error" > /dev/null ; then 
+if ! jq -e '.message | test("Invalid transaction")' <<< "$json_error" > /dev/null ; then
   echo "❌ Test failed! Invalid JSON returned: \"$json_error\""
   exit 1
 fi
@@ -401,7 +401,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
       exit 1
     fi
   fi
-  
+
   # Continue waiting
   sleep 30
   total_wait=$((total_wait + 30))
