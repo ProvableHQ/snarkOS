@@ -34,7 +34,7 @@ EXPECTED_MAX_CONSENSUS_VERSION="${EXPECTED_MAX_CONSENSUS_VERSION:-}"
 WAIT_BETWEEN_UPGRADES="${WAIT_BETWEEN_UPGRADES:-60}"
 
 # Load shared helpers (is_integer, get_network_name, wait_for_nodes, stop_nodes, ...)
-# shellcheck disable=SC1091
+# shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
 # Set up logging directory
@@ -44,133 +44,10 @@ init_log_dir
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/.ci/target}"
 log "Using CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
 
-##################################################
-# Download + build latest stable snarkOS release
-##################################################
-
-# Release binary will be installed here via `cargo install --root`.
-SNARKOS_RELEASE_DIR="${SNARKOS_RELEASE_DIR:-$PWD/.ci/release-snarkos}"
-SNARKOS_RELEASE_BIN="${SNARKOS_RELEASE_BIN:-$SNARKOS_RELEASE_DIR/bin/snarkos}"
-SNARKOS_RELEASE_VERSION_FILE="${SNARKOS_RELEASE_VERSION_FILE:-$SNARKOS_RELEASE_DIR/VERSION}"
-
-download_and_build_latest_snarkos() {
-  require_cmd curl
-  require_cmd tar
-  require_cmd cargo
-
-  local force_build="${1:-0}"
-
-  mkdir -p "${SNARKOS_RELEASE_DIR}"
-
-  local repo="ProvableHQ/snarkOS"
-  local latest_url latest_tag tar_url
-  local tmpdir srcdir
-  local existing_tag=""
-
-  log "Resolving latest snarkOS release tag via redirect…"
-  latest_url="$(
-    curl -fsSL -o /dev/null -w '%{url_effective}' \
-      "https://github.com/${repo}/releases/latest"
-  )" || {
-    echo "ERROR: Failed to resolve latest release URL from GitHub." >&2
-    exit 1
-  }
-
-  latest_tag="${latest_url##*/}"
-
-  if [ -z "${latest_tag}" ] || [ "${latest_tag}" = "latest" ]; then
-    echo "ERROR: Failed to determine latest tag from URL: ${latest_url}" >&2
-    exit 1
-  fi
-
-  log "Latest stable tag resolved to: ${latest_tag}"
-
-  ########################################
-  # Cached binary exists & matches version
-  #         AND force_build = 0 → return early
-  ########################################
-  if [ "$force_build" != "1" ] &&
-     [ -x "${SNARKOS_RELEASE_BIN}" ] &&
-     [ -f "${SNARKOS_RELEASE_VERSION_FILE}" ]; then
-
-    existing_tag="$(cat "${SNARKOS_RELEASE_VERSION_FILE}" || true)"
-
-    if [ "${existing_tag}" = "${latest_tag}" ]; then
-      log "Reusing cached release snarkos for tag ${existing_tag} (no rebuild)."
-      return 0
-    fi
-  fi
-
-  ########################################
-  # Cached source exists AND force_build=1
-  # → Do NOT download again, just rebuild
-  ########################################
-  local cached_src_dir=".ci/release-snarkos-src"
-  if [ "$force_build" = "1" ] && [ -d "$cached_src_dir" ]; then
-    log "Force-rebuilding release snarkos using cached source in $cached_src_dir"
-    srcdir="$cached_src_dir"
-
-    (
-      cd "$srcdir"
-      ci_cargo_install_snarkos --root "${SNARKOS_RELEASE_DIR}"
-    ) || {
-      echo "ERROR: forced rebuild failed" >&2
-      exit 1
-    }
-
-    echo "${latest_tag}" > "${SNARKOS_RELEASE_VERSION_FILE}"
-    log "Rebuild complete."
-    return 0
-  fi
-
-  ########################################
-  # Need to download the source (first run or version mismatch)
-  ########################################
-
-  tar_url="https://github.com/${repo}/archive/refs/tags/${latest_tag}.tar.gz"
-  log "Downloading release source tarball: ${tar_url}"
-
-  tmpdir="$(mktemp -d)"
-  curl -fL "${tar_url}" -o "${tmpdir}/snarkos-src.tar.gz" || {
-    echo "ERROR: Failed to download tarball from ${tar_url}" >&2
-    rm -rf "${tmpdir}"
-    exit 1
-  }
-
-  log "Extracting source tarball…"
-  rm -rf "$cached_src_dir"
-  mkdir -p "$cached_src_dir"
-  tar -xzf "${tmpdir}/snarkos-src.tar.gz" -o -C "$cached_src_dir" --strip-components=1
-
-  srcdir="$cached_src_dir"
-
-  log "Building release snarkos from fresh source at: ${srcdir}"
-
-  (
-    cd "${srcdir}"
-    ci_cargo_install_snarkos --root "${SNARKOS_RELEASE_DIR}"
-  ) || {
-    echo "ERROR: cargo install failed for release snarkos" >&2
-    rm -rf "${tmpdir}"
-    exit 1
-  }
-
-  echo "${latest_tag}" > "${SNARKOS_RELEASE_VERSION_FILE}"
-  rm -rf "${tmpdir}"
-
-  log "snarkos release (${latest_tag}) built and installed at ${SNARKOS_RELEASE_BIN}"
-}
-
-########################################
-# Consensus + height helpers
-########################################
-
 SNARKOS_CURRENT_BIN="${SNARKOS_CURRENT_BIN:-snarkos}"
 
 network_name=$(get_network_name "$network_id")
 log "Using network: $network_name (ID: $network_id)"
-
-declare -a PIDS
 
 # Handler that stops all nodes on shutdown.
 # shellcheck disable=SC2329
@@ -205,8 +82,8 @@ function start_node() {
     # NOTE: In newever versions of snarkOS, the set of peers is populated automatically through `--dev-num-validators`
     # and this code can be removed evetually. 
     trusted_validators=""
-    for ((peer_index = 0; peer_index < total_validators; peer_index++)); do
-      if [ "$peer_index" -eq "$node_index" ]; then
+    for peer_index in $(seq 0 $((total_validators-1))); do
+      if (( peer_index == node_index )); then
         continue
       else
         # append "," if this is not the first trusted validator 
@@ -219,7 +96,7 @@ function start_node() {
 
     # Validators trust the clients as peers
     flags+=( --validator "--logfile=$log_file" "--peers=$trusted_peers" "--validators=$trusted_validators" )
-    if [ "$node_index" -eq 0 ]; then
+    if (( node_index == 0 )); then
       flags+=( --metrics --no-dev-txs )
     fi
 
@@ -259,16 +136,6 @@ function stop_node() {
   fi
 }
 
-function get_latest_height() {
-  local h
-  h=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest" || echo "")
-  if is_integer "$h"; then
-    echo "$h"
-    return 0
-  fi
-  return 1
-}
-
 # Start a temporary client with $bin just to fetch /version JSON.
 function fetch_version_json_from_bin() {
   local bin="$1"
@@ -279,6 +146,7 @@ function fetch_version_json_from_bin() {
   require_cmd curl
 
   log "Starting temporary ${label} snarkOS node to fetch version info…"
+  "$bin" clean --dev 0
   "$bin" start --validator "--network=$network_id" --dev 0 --nodisplay --logfile="$version_log" &
   local pid=$!
 
@@ -457,29 +325,25 @@ function derive_consensus_env_from_version() {
 function wait_for_highest_consensus_version() {
   local timeout="${1:-900}"   # default 15 min
   local interval="${2:-10}"
-  local elapsed=0
 
+  SECONDS=0
   if [ -n "$EXPECTED_MAX_CONSENSUS_VERSION" ]; then
     log "Waiting for consensus_version >= ${EXPECTED_MAX_CONSENSUS_VERSION}…"
     local last_height=""
-    while (( elapsed < timeout )); do
-      cv=$(get_consensus_version "$network_name")
-      h=$(get_block_height 0 "$network_name")
+    while (( SECONDS < timeout )); do
+      cv=$(get_consensus_version 0 "$network_name" || echo 0)
+      h=$(get_block_height 0 "$network_name" || echo 0)
 
-      if is_integer "$cv" && is_integer "$h"; then
-        log "consensus_version=$cv height=$h"
-        if (( cv >= EXPECTED_MAX_CONSENSUS_VERSION )); then
-          if [ -n "$last_height" ] && (( h > last_height )); then
-            log "✅ Highest consensus version ${cv} reached and chain progressing."
-            return 0
-          fi
+      log "consensus_version=$cv height=$h"
+      if (( cv >= EXPECTED_MAX_CONSENSUS_VERSION )); then
+        if [ -n "$last_height" ] && (( h > last_height )); then
+          log "✅ Highest consensus version ${cv} reached and chain progressing."
+          return 0
         fi
-        last_height="$h"
-      else
-        log "WARN: invalid consensus or height: cv='$cv' h='$h'"
       fi
+      last_height="$h"
+
       sleep "$interval"
-      elapsed=$((elapsed + interval))
     done
     echo "❌ Timed out waiting for consensus_version >= ${EXPECTED_MAX_CONSENSUS_VERSION}" >&2
     return 1
@@ -487,28 +351,26 @@ function wait_for_highest_consensus_version() {
     log "EXPECTED_MAX_CONSENSUS_VERSION not set – waiting for stable consensus_version…"
     local last_cv=""
     local last_h=""
-    while (( elapsed < timeout )) ; do
-      read -r cv h <<< "$(get_consensus_and_height)"
-      if is_integer "$cv" && is_integer "$h"; then
-        log "consensus_version=$cv height=$h"
-        if [ -z "$last_cv" ]; then
-          last_cv="$cv"; last_h="$h"
-        else
-          if (( cv == last_cv )) && (( h >= last_h + 10 )); then
-            log "✅ Consensus version $cv appears stable with height from $last_h to $h."
-            return 0
-          fi
-          if (( cv != last_cv )); then
-            log "ℹ️ Consensus version changed from $last_cv to $cv at height $h"
-          fi
-          last_cv="$cv"
-          last_h="$h"
-        fi
+    while (( SECONDS < timeout )) ; do
+      cv=$(get_consensus_version 0 "$network_name" || echo 0)
+      h=$(get_block_height 0 "$network_name" || echo 0)
+
+      log "consensus_version=$cv height=$h"
+      if [ -z "$last_cv" ]; then
+        last_cv="$cv"; last_h="$h"
       else
-        log "WARN: invalid consensus or height: cv='$cv' h='$h'"
+        if (( cv == last_cv )) && (( h >= last_h + 10 )); then
+          log "✅ Consensus version $cv appears stable with height from $last_h to $h."
+          return 0
+        fi
+        if (( cv != last_cv )); then
+          log "ℹ️ Consensus version changed from $last_cv to $cv at height $h"
+        fi
+        last_cv="$cv"
+        last_h="$h"
       fi
+
       sleep "$interval"
-      elapsed=$((elapsed + interval))
     done
     echo "❌ Timed out waiting for stable consensus version" >&2
     return 1
@@ -524,10 +386,10 @@ function wait_for_height_increase_window() {
   local increased=0
   local current_height="$previous_height"
 
-  log "Waiting ${duration}s window to see height increase above $previous_height…"
+  log "Waiting ${duration}s window to see height increase above $previous_height..."
 
   while (( elapsed < duration )); do
-    if current_height="$(get_latest_height)"; then
+    if current_height="$(get_block_height 0 "$network_name")"; then
       log "Current height=${current_height}"
       if (( current_height > previous_height )); then
         increased=$(( current_height - previous_height ))
@@ -568,19 +430,19 @@ derive_consensus_env_from_version
 #   - snarkos (PR)         => rebuilt with PR heights
 
 log "Cleaning dev stores with release binary..."
-for ((node_index = 0; node_index < total_validators + total_clients; node_index++)); do
+for node_index in $(seq 0 $((total_validators+total_clients-1))); do
   "$SNARKOS_RELEASE_BIN" clean "--dev=$node_index" "--network=$network_id"
 done
 
 log "Starting $total_validators validator nodes with release binary..."
-for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+for validator_index in $(seq 0 $((total_validators-1))); do
   log_file="$log_dir/validator-$validator_index.log"
   start_node "$SNARKOS_RELEASE_BIN" "$validator_index" "validator" "$log_file"
   sleep 1
 done
 
 log "Starting $total_clients client nodes with release binary..."
-for ((client_index = 0; client_index < total_clients; client_index++)); do
+for client_index in $(seq 0 $((total_clients-1))); do
   node_index=$((client_index + total_validators))
   log_file="$log_dir/client-$client_index.log"
   start_node "$SNARKOS_RELEASE_BIN" "$node_index" "client" "$log_file"
@@ -592,9 +454,7 @@ done
 wait_for_nodes "$total_validators" "$total_clients"
 wait_for_highest_consensus_version 900 10
 
-total_nodes=$((total_validators + total_clients))
-
-for ((node_index = 0; node_index < total_nodes; node_index++)); do
+for node_index in $(seq 0 $((total_validators+total_clients-1))); do
   if (( node_index < total_validators )); then
     role="validator"
     idx_label="$node_index"
@@ -609,7 +469,7 @@ for ((node_index = 0; node_index < total_nodes; node_index++)); do
   log "Upgrading ${role} ${idx_label} (node index ${node_index})"
   log "=============================="
 
-  baseline_height="$(get_latest_height || echo 0)"
+  baseline_height=$(get_block_height 0 "$network_name" || echo 0)
 
   stop_node "$node_index"
   start_node "$SNARKOS_CURRENT_BIN" "$node_index" "$role" "$log_file"

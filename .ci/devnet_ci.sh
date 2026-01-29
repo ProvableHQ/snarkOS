@@ -207,7 +207,7 @@ fi
 # Use the old flags here `--query` and `--broadcast=URL` to test they still work.
 # Also, use the v1 API to test it still works.
 log "● Testing program execution with V1 API..."
-execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --query=http://$localhost:3030/v1 \
+execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" "--query=http://$localhost:3030/v1" \
     "--broadcast=http://$localhost:3030/v1/$network_name/transaction/broadcast" "$program_name" main 1u32 1u32 --wait --timeout 10)
 
 # Fail if the execution transaction does not exist.
@@ -351,9 +351,9 @@ fi
 log "ℹ️Testing network progress"
 
 # Check heights periodically with a timeout
-total_wait=0
-while (( total_wait < 600 )); do  # 10 minutes max
-  if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$total_wait"; then
+SECONDS=0
+while (( SECONDS < 600 )); do  # 10 minutes max
+  if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$SECONDS"; then
     log "🎉 Test passed! All nodes reached minimum height."
 
     if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
@@ -365,11 +365,10 @@ while (( total_wait < 600 )); do  # 10 minutes max
   
   # Continue waiting
   sleep 30
-  total_wait=$((total_wait + 30))
-  log "Waited $total_wait seconds so far..."
+  log "Waited $SECONDS seconds so far..."
 done
 
-log "❌ Test failed! Not all nodes reached minimum height within 15 minutes."
+log "❌ Test failed! Not all nodes reached minimum height within 10 minutes."
 log_validator_logs "$log_dir" "$total_validators" "$total_clients"
 log_client_logs "$log_dir" "$total_validators" "$total_clients"
 
