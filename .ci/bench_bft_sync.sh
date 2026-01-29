@@ -66,7 +66,7 @@ PIDS[0]=$!
 # Stores the list of all validators.
 validators="127.0.0.1:5000"
 
-# Spawn the clients that will sync the ledger
+# Spawn the validator that will sync the ledger
 for node_index in $(seq 1 "$num_nodes"); do
   name="validator-$node_index"
 
@@ -125,6 +125,6 @@ while (( SECONDS < max_wait )); do
 done
 
 log "❌ Benchmark failed! Validators did not sync within 30 minutes."
-print_client_logs "$log_dir" "$num_validators" "$num_nodes"
+print_validator_logs "$log_dir" "$num_validators" "$num_nodes"
 
 exit 1
