@@ -605,23 +605,9 @@ impl<N: Network> Primary<N> {
                             }
                         })?;
 
-                        // TODO (raychu86): Remove this logic after the next migration height is reached.
-                        // ConsensusVersion Migration logic -
-                        // Do not include deployments in a batch proposal.
+                        // Fetch the current block height and consensus version.
                         let current_block_height = self.ledger.latest_block_height();
-                        let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
-                        let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
                         let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
-                        if current_block_height > consensus_version_v7_height
-                            && current_block_height <= consensus_version_v8_height
-                            && transaction.is_deploy()
-                        {
-                            trace!(
-                                "Proposing - Skipping transaction '{}' - Deployment transactions are not allowed until Consensus V8 (block {consensus_version_v8_height})",
-                                fmt_id(transaction_id)
-                            );
-                            continue;
-                        }
 
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
@@ -916,20 +902,9 @@ impl<N: Network> Primary<N> {
                         }
                     })?;
 
-                    // TODO (raychu86): Remove this logic after the next migration height is reached.
-                    // ConsensusVersion Migration logic -
-                    // Do not include deployments in a batch proposal.
-                    let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
-                    let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+                    // Fetch the current consensus version.
                     let consensus_version = N::CONSENSUS_VERSION(block_height)?;
-                    if block_height > consensus_version_v7_height
-                        && block_height <= consensus_version_v8_height
-                        && transaction.is_deploy()
-                    {
-                        bail!(
-                            "Invalid batch proposal - Batch proposals are not allowed to include deployments until Consensus V8 (block {consensus_version_v8_height})",
-                        )
-                    }
+                    // TODO (raychu86): Remove this logic after the next migration height is reached.
                     // Enforce maximum transaction size.
                     if consensus_version < ConsensusVersion::V14 {
                         // Retrieve the maximum transaction size for the consensus version.
