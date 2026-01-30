@@ -175,7 +175,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Set up everything else after CDN sync is done.
         if let Some(cdn_sync) = cdn_sync {
-            if let Err(error) = cdn_sync.wait().await {
+            if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
                 crate::log_clean_error(&storage_mode);
                 node.shut_down().await;
                 return Err(error);
