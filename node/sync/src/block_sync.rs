@@ -399,8 +399,9 @@ impl<N: Network> BlockSync<N> {
         // Insert the chunk of block requests.
         for (height, (hash, previous_hash, _)) in requests.iter() {
             // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
-            if let Err(error) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
-                warn!("Block sync failed - {error}");
+            if let Err(err) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
+                let err = err.context(format!("Failed to insert block request for height {height}"));
+                warn!("{}", flatten_error(&err));
                 return false;
             }
         }
@@ -576,20 +577,22 @@ impl<N: Network> BlockSync<N> {
                     Ok(_) => match ledger.advance_to_next_block(&block) {
                         Ok(_) => true,
                         Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                            let err = err.context(format!(
+                                "Failed to advance to next block (height: {}, hash: '{}')",
                                 block.height(),
                                 block.hash()
-                            );
+                            ));
+                            warn!("{}", flatten_error(&err));
                             false
                         }
                     },
                     Err(err) => {
-                        warn!(
-                            "The next block (height: {}, hash: '{}') is invalid - {err}",
+                        let err = err.context(format!(
+                            "The next block (height: {}, hash: '{}') is invalid",
                             block.height(),
                             block.hash()
-                        );
+                        ));
+                        warn!("{}", flatten_error(&err));
                         false
                     }
                 }
