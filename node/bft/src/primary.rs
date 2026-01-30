@@ -622,25 +622,6 @@ impl<N: Network> Primary<N> {
                             );
                             continue;
                         }
-                        // Enforce maximum transaction size.
-                        if consensus_version <= ConsensusVersion::V14 {
-                            // Retrieve the maximum transaction size from the consensus configuration.
-                            // We subtract 1 from the current block height to ensure the boundary block also uses the previous configuration.
-                            if let Some(max_tx_size) = consensus_config_value!(
-                                N,
-                                TRANSACTION_SPEND_LIMIT,
-                                current_block_height.saturating_sub(1)
-                            ) {
-                                // Ensure the transaction does not exceed the maximum size.
-                                if transaction.to_bytes_le()?.len() > max_tx_size as usize {
-                                    trace!(
-                                        "Proposing - Skipping transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
-                                        fmt_id(transaction_id),
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
 
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
@@ -928,6 +909,8 @@ impl<N: Network> Primary<N> {
                         match transaction {
                             Data::Object(transaction) => Ok(transaction),
                             Data::Buffer(bytes) => {
+                                // Note: If `LATEST_MAX_TRANSACTION_SIZE` ever decreases, then we need to allow the previous larger
+                                // size to be deserialized here, until the nodes are properly past the migration height.
                                 Ok(Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?)
                             }
                         }
@@ -948,16 +931,13 @@ impl<N: Network> Primary<N> {
                         )
                     }
                     // Enforce maximum transaction size.
-                    if consensus_version <= ConsensusVersion::V14 {
-                        // Retrieve the maximum transaction size from the consensus configuration.
-                        // We subtract 1 from the current block height to ensure the boundary block also uses the previous configuration.
-                        if let Some(max_tx_size) =
-                            consensus_config_value!(N, TRANSACTION_SPEND_LIMIT, block_height.saturating_sub(1))
-                        {
+                    if consensus_version < ConsensusVersion::V14 {
+                        // Retrieve the maximum transaction size for the consensus version.
+                        if let Some(max_tx_size) = consensus_config_value!(N, MAX_TRANSACTION_SIZE, block_height) {
                             // Ensure the transaction does not exceed the maximum size.
-                            if transaction.to_bytes_le()?.len() > max_tx_size as usize {
+                            if transaction.to_bytes_le()?.len() > max_tx_size {
                                 trace!(
-                                    "Proposing - Skipping transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
+                                    "Invalid batch proposal - Batch proposal transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
                                     fmt_id(transaction_id),
                                 );
                                 continue;
