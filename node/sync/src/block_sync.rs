@@ -385,8 +385,8 @@ impl<N: Network> BlockSync<N> {
         // Insert the chunk of block requests.
         for (height, (hash, previous_hash, _)) in requests.iter() {
             // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
-            if let Err(error) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
-                warn!("Block sync failed - {error}");
+            if let Err(err) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
+                warn!("Block sync failed - {}", err.chain().map(|e| e.to_string()).collect::<Vec<_>>().join(" - "));
                 return false;
             }
         }
@@ -561,18 +561,20 @@ impl<N: Network> BlockSync<N> {
                         Ok(_) => true,
                         Err(err) => {
                             warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                                "Failed to advance to next block (height: {}, hash: '{}') - {}",
                                 block.height(),
-                                block.hash()
+                                block.hash(),
+                                err.chain().map(|e| e.to_string()).collect::<Vec<_>>().join(" - ")
                             );
                             false
                         }
                     },
                     Err(err) => {
                         warn!(
-                            "The next block (height: {}, hash: '{}') is invalid - {err}",
+                            "The next block (height: {}, hash: '{}') is invalid - {}",
                             block.height(),
-                            block.hash()
+                            block.hash(),
+                            err.chain().map(|e| e.to_string()).collect::<Vec<_>>().join(" - ")
                         );
                         false
                     }
