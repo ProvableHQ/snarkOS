@@ -66,7 +66,7 @@ PIDS[0]=$!
 # Stores the list of all validators.
 validators="127.0.0.1:5000"
 
-# Spawn the validator that will sync the ledger
+# Spawn the validators that will sync the ledger
 for node_index in $(seq 1 "$num_nodes"); do
   name="validator-$node_index"
 

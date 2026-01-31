@@ -17,7 +17,7 @@ min_height=$4
 max_warnings=$5
 
 # The verobsity of snarkos nodes.
-NODE_VERBOSITY=0
+NODE_VERBOSITY=3
 
 # Default values if not provided
 : "${total_validators:=4}"
@@ -102,22 +102,26 @@ done
 wait_for_nodes "$total_validators" "$total_clients" "$network_name"
 
 # Wait for validators to be fully connected.
-log "ℹ️ Waiting for all nodes to have at least one peer..."
+log "ℹ️ Waiting for validators to be fully connected..." 
 SECONDS=0
 for validator_index in $(seq 0 $((total_validators-1))); do
   if ! (wait_for_bft_connections "$validator_index" $((total_validators-1)) "$network_name"); then
     exit 1
   fi
 done
+log "✅ All validators are fully connected"
 
-# Wait for all clients to be connected to another client or a validator.
-for client_index in $(seq 0 $((total_clients-1))); do
-  node_index=$((client_index + total_validators))
-  if ! (wait_for_peers "$node_index" 1 "$network_name"); then
-    exit 1
-  fi
-done
-log "✅ All nodes have at least one peer"
+if (( total_clients > 0 )); then
+  log "ℹ️ Waiting for clients to have at least one peer..."
+  # Wait for all clients to be connected to another client or a validator.
+  for client_index in $(seq 0 $((total_clients-1))); do
+    node_index=$((client_index + total_validators))
+    if ! (wait_for_peers "$node_index" 1 "$network_name"); then
+      exit 1
+    fi
+  done
+  log "✅ All clients have at least one peer"
+fi
 
 last_seen_consensus_version=0
 last_seen_height=0
