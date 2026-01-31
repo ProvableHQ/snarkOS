@@ -385,6 +385,13 @@ commands:
             WAIT_BETWEEN_UPGRADES: "60"
           command: |
             ./.ci/upgrade_nodes_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+      - run:
+          name: "Run partial upgrade test"
+          timeout: 30m  # Allow 30 minutes total
+          environment:
+            WAIT_BETWEEN_UPGRADES: "60"
+          command: |
+            ./.ci/partial_upgrade_test.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
       - save_cache:
           key: v1-snarkos-release-
           paths:
