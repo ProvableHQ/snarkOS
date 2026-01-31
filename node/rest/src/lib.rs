@@ -200,7 +200,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/find/transactionID/{transition_id}", get(Self::find_transaction_id_from_transition_id))
             .route("/find/transitionID/{input_or_output_id}", get(Self::find_transition_id))
 
-            // GET ../peers/.. (with /connections/p2p/.. aliases)
+            // GET ../connections/p2p/.. (with ../peers/.. aliases)
             .route("/peers/count", get(Self::get_peers_count))
             .route("/peers/all", get(Self::get_peers_all))
             .route("/peers/all/metrics", get(Self::get_peers_all_metrics))
