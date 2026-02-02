@@ -415,15 +415,21 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                 let inputs = [Value::from(Literal::Address(self_.address())), Value::from(Literal::U64(U64::new(1)))];
                 // Execute the transaction.
                 let self__ = self_.clone();
-                let transaction = match spawn_blocking!(self__.ledger.vm().execute(
-                    self__.private_key(),
-                    locator,
-                    inputs.into_iter(),
-                    None,
-                    10_000,
-                    None,
-                    &mut rand::thread_rng(),
-                )) {
+                let transaction = match spawn_blocking!(
+                    self__
+                        .ledger
+                        .vm()
+                        .execute(
+                            self__.private_key(),
+                            locator,
+                            inputs.into_iter(),
+                            None,
+                            10_000,
+                            None,
+                            &mut rand::thread_rng(),
+                        )
+                        .map_err(|err| err.into())
+                ) {
                     Ok(transaction) => transaction,
                     Err(error) => {
                         error!("Transaction pool encountered an execution error - {error}");

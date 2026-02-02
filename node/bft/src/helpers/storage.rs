@@ -119,7 +119,7 @@ impl<N: Network> Storage<N> {
         // Retrieve the round at which that committee was created, or 1 if it is the genesis committee.
         let current_round = committee.starting_round().max(1);
         // Set the unprocessed certificates cache size.
-        let unprocessed_cache_size = NonZeroUsize::new((N::LATEST_MAX_CERTIFICATES().unwrap() * 2) as usize).unwrap();
+        let unprocessed_cache_size = NonZeroUsize::new((N::LATEST_MAX_CERTIFICATES() * 2) as usize).unwrap();
 
         // Create the storage.
         let storage = Self(Arc::new(StorageInner {

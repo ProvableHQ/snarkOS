@@ -108,7 +108,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 7] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 9] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -116,6 +116,8 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V10, 21),
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
+        (ConsensusVersion::V13, 24),
+        (ConsensusVersion::V14, 25),
     ];
 
     /// Returns the latest message version.
@@ -205,7 +207,7 @@ impl<N: Network> Message<N> {
         let id = u16::from_le_bytes(id_bytes);
 
         // SPECIAL CASE: check the transaction message isn't too large.
-        if id == 12 && len > N::MAX_TRANSACTION_SIZE {
+        if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
         }
 

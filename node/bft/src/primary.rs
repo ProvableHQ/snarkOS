@@ -599,29 +599,15 @@ impl<N: Network> Primary<N> {
                         let transaction = spawn_blocking!({
                             match transaction {
                                 Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => {
-                                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
-                                }
+                                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(
+                                    &mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64),
+                                )?),
                             }
                         })?;
 
-                        // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
-                        // ConsensusVersion V8 Migration logic -
-                        // Do not include deployments in a batch proposal.
+                        // Fetch the current block height and consensus version.
                         let current_block_height = self.ledger.latest_block_height();
-                        let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
-                        let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
                         let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
-                        if current_block_height > consensus_version_v7_height
-                            && current_block_height <= consensus_version_v8_height
-                            && transaction.is_deploy()
-                        {
-                            trace!(
-                                "Proposing - Skipping transaction '{}' - Deployment transactions are not allowed until Consensus V8 (block {consensus_version_v8_height})",
-                                fmt_id(transaction_id)
-                            );
-                            continue;
-                        }
 
                         // Compute the transaction spent cost (in microcredits).
                         // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
@@ -909,24 +895,29 @@ impl<N: Network> Primary<N> {
                         match transaction {
                             Data::Object(transaction) => Ok(transaction),
                             Data::Buffer(bytes) => {
-                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?)
+                                // Note: If `LATEST_MAX_TRANSACTION_SIZE` ever decreases, then we need to allow the previous larger
+                                // size to be deserialized here, until the nodes are properly past the migration height.
+                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?)
                             }
                         }
                     })?;
 
-                    // TODO (raychu86): Record Commitment - Remove this logic after the next migration height is reached.
-                    // ConsensusVersion V8 Migration logic -
-                    // Do not include deployments in a batch proposal.
-                    let consensus_version_v7_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V7)?;
-                    let consensus_version_v8_height = N::CONSENSUS_HEIGHT(ConsensusVersion::V8)?;
+                    // Fetch the current consensus version.
                     let consensus_version = N::CONSENSUS_VERSION(block_height)?;
-                    if block_height > consensus_version_v7_height
-                        && block_height <= consensus_version_v8_height
-                        && transaction.is_deploy()
-                    {
-                        bail!(
-                            "Invalid batch proposal - Batch proposals are not allowed to include deployments until Consensus V8 (block {consensus_version_v8_height})",
-                        )
+                    // TODO (raychu86): Remove this logic after the next migration height is reached.
+                    // Enforce maximum transaction size.
+                    if consensus_version < ConsensusVersion::V14 {
+                        // Retrieve the maximum transaction size for the consensus version.
+                        if let Some(max_tx_size) = consensus_config_value!(N, MAX_TRANSACTION_SIZE, block_height) {
+                            // Ensure the transaction does not exceed the maximum size.
+                            if transaction.to_bytes_le()?.len() > max_tx_size {
+                                trace!(
+                                    "Invalid batch proposal - Batch proposal transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
+                                    fmt_id(transaction_id),
+                                );
+                                continue;
+                            }
+                        }
                     }
 
                     // Compute the transaction spent cost (in microcredits).

@@ -61,14 +61,11 @@ impl<N: Network> FromBytes for UnconfirmedTransaction<N> {
 pub mod prop_tests {
     use crate::{Transaction, UnconfirmedTransaction};
     use snarkvm::{
-        ledger::{
-            narwhal::Data,
-            test_helpers::{sample_fee_public_transaction, sample_large_execution_transaction},
-        },
-        prelude::{FromBytes, TestRng, ToBytes},
+        ledger::{narwhal::Data, test_helpers::sample_fee_public_transaction},
+        prelude::{Field, FromBytes, Network, TestRng, ToBytes, Uniform},
     };
 
-    use bytes::{Buf, BufMut, BytesMut};
+    use bytes::{Buf, BufMut, Bytes, BytesMut};
     use proptest::prelude::{BoxedStrategy, Strategy, any};
     use test_strategy::proptest;
 
@@ -83,15 +80,6 @@ pub mod prop_tests {
             .boxed()
     }
 
-    pub fn any_large_transaction() -> BoxedStrategy<Transaction<CurrentNetwork>> {
-        any::<u64>()
-            .prop_map(|seed| {
-                let mut rng = TestRng::fixed(seed);
-                sample_large_execution_transaction(&mut rng)
-            })
-            .boxed()
-    }
-
     pub fn any_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
         any_transaction()
             .prop_map(|tx| UnconfirmedTransaction { transaction_id: tx.id(), transaction: Data::Object(tx) })
@@ -99,8 +87,17 @@ pub mod prop_tests {
     }
 
     pub fn any_large_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
-        any_large_transaction()
-            .prop_map(|tx| UnconfirmedTransaction { transaction_id: tx.id(), transaction: Data::Object(tx) })
+        any::<u64>()
+            .prop_map(|seed| {
+                let mut rng = TestRng::fixed(seed);
+                let tx_id_field = Field::<CurrentNetwork>::rand(&mut rng);
+                let bytes: Vec<u8> =
+                    (0..CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE()).map(|_| u8::rand(&mut rng)).collect();
+                UnconfirmedTransaction {
+                    transaction_id: tx_id_field.into(),
+                    transaction: Data::Buffer(Bytes::from(bytes)),
+                }
+            })
             .boxed()
     }
 
