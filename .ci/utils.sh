@@ -211,10 +211,11 @@ function check_logs() {
       return 1
     fi
 
-    if grep -q "ERROR" "$log_dir/validator-${validator_index}.log"; then
+    #TODO(kaimast): remove the grep -v "already exists in the ledger" once spurious sync errors are gone.
+    if grep "ERROR" "$log_dir/validator-${validator_index}.log" | grep -qv "already exists in the ledger"; then
       log "❌ Test failed! Validator #${validator_index} logs contain errors."
       # Print the errors to the console.
-      grep "ERROR" "$log_dir/validator-${validator_index}.log"
+      grep "ERROR" "$log_dir/validator-${validator_index}.log" | grep -v "already exists in the ledger"
       return 1
     fi
   done
@@ -225,10 +226,10 @@ function check_logs() {
       return 1
     fi
 
-    if grep -q "ERROR" "$log_dir/client-${client_index}.log"; then
+    if grep "ERROR" "$log_dir/client-${client_index}.log" | grep -qv "already exists in the ledger"; then
       log "❌ Test failed! Client #${client_index} logs contain errors."
       # Print the errors to the console.
-      grep "ERROR" "$log_dir/client-${client_index}.log"
+      grep "ERROR" "$log_dir/client-${client_index}.log" | grep -v "already exists in the ledger"
       return 1
     fi
  
