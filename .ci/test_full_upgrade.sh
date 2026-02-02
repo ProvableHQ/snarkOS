@@ -6,7 +6,7 @@
 # 1. Download latest snarkOS release source from GitHub.
 # 2. Build it via `cargo install --locked --path . --features test_network`
 #    into a separate prefix (SNARKOS_RELEASE_DIR).
-# 3. Probe latest_consensus_version for latest release and PR binaries.
+# 3. Probe latest_consensus_version for latest release and PR binaries by spawning temporary devnets and waiting for consensus to stabilize.
 # 4. Compute CONSENSUS_VERSION_HEIGHTS for latest release and PR.
 # 5. Start the devnet with latest release binaries and pass CONSENSUS_VERSION_HEIGHTS to nodes.
 # 6. Restart nodes one-by-one with the PR binary.
@@ -27,8 +27,6 @@ network_id=$3
 # Node verbosity
 NODE_VERBOSITY=1
 
-# Expected highest consensus version (may be overridden after probing)
-EXPECTED_MAX_CONSENSUS_VERSION="${EXPECTED_MAX_CONSENSUS_VERSION:-}"
 
 # How long to wait between upgrades (seconds); used for block-height window
 WAIT_BETWEEN_UPGRADES="${WAIT_BETWEEN_UPGRADES:-60}"
@@ -108,9 +106,17 @@ function start_node() {
     flags+=( --client "--logfile=$log_file" )
   fi
 
-  "$bin" start "${flags[@]}" &
+  # Set the appropriate CONSENSUS_VERSION_HEIGHTS based on binary type
+  local heights_env
+  if [ "$bin" = "$SNARKOS_RELEASE_BIN" ]; then
+    heights_env="$CONSENSUS_VERSION_HEIGHTS_RELEASE"
+  else
+    heights_env="$CONSENSUS_VERSION_HEIGHTS_CURRENT"
+  fi
+
+  CONSENSUS_VERSION_HEIGHTS="$heights_env" "$bin" start "${flags[@]}" &
   PIDS[node_index]=$!
-  log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin")"
+  log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin") with heights=$heights_env"
 }
 
 function stop_node() {
@@ -136,54 +142,7 @@ function stop_node() {
   fi
 }
 
-# Start a temporary client with $bin just to fetch /version JSON.
-function fetch_version_json_from_bin() {
-  local bin="$1"
-  local label="$2"   # for logs
-  local version_log="$log_dir/version-${label}.log"
-
-  require_cmd jq
-  require_cmd curl
-
-  log "Starting temporary ${label} snarkOS node to fetch version info…"
-  "$bin" clean --dev 0
-  "$bin" start --validator "--network=$network_id" --dev 0 --nodisplay --logfile="$version_log" &
-  local pid=$!
-
-  local json=""
-  local attempts=0
-  local max_attempts=30
-
-  # Wait for HTTP API to come up
-  while (( attempts < max_attempts )); do
-    json="$(curl -s "http://localhost:3030/v2/$network_name/version" || true)"
-    if [ -n "$json" ] && echo "$json" | jq -e '.version? // empty' >/dev/null 2>&1; then
-      log "Fetched version info from ${label} snarkos."
-      break
-    fi
-    sleep 1
-    attempts=$((attempts + 1))
-  done
-
-  # Stop temp node
-  if kill -0 "$pid" >/dev/null 2>&1; then
-    kill "$pid" || true
-    local waited=0
-    while kill -0 "$pid" >/dev/null 2>&1 && (( waited < 10 )); do
-      sleep 1
-      waited=$((waited + 1))
-    done
-    kill -9 "$pid" >/dev/null 2>&1 || true
-  fi
-
-  if [ -z "$json" ]; then
-    log "WARN: Could not obtain version info from ${label} snarkos."
-    return 1
-  fi
-
-  echo "$json"
-  return 0
-}
+# probe_stable_consensus_version is now in utils.sh
 
 # Build heights string: for L, we want exactly L entries: 0,5,10,...,5*(L-1)
 function build_consensus_heights() {
@@ -257,42 +216,31 @@ function ci_cargo_install_snarkos() {
     cargo install --locked --path . --features test_network "$@"
 }
 
-# Probe release + PR binaries, compute heights, and rebuild both with those heights.
+# Probe release + PR binaries to get stable consensus versions, then compute heights.
 function derive_consensus_env_from_version() {
-  require_cmd jq
-
-  local json_release=""
-  local json_current=""
   local lcv_release=""
   local lcv_current=""
+  local probe_result=""
 
-  # 1) Release binary: try to get latest_consensus_version; default to 12 if missing.
-  if json_release="$(fetch_version_json_from_bin "$SNARKOS_RELEASE_BIN" "release")"; then
-    log "Release version JSON: $json_release"
-    lcv_release="$(printf '%s\n' "$json_release" \
-      | jq -r '.latest_consensus_version // empty' 2>/dev/null || true)"
-    if ! is_integer "$lcv_release"; then
-      log "Release JSON has no valid latest_consensus_version, defaulting to 12"
-      lcv_release="12"
-    fi
-  else
-    log "WARN: Could not fetch version JSON from release binary, defaulting latest_consensus_version to 12"
-    lcv_release="12"
+  # 1) Probe current binary first (so we know the target consensus version)
+  log "Probing stable consensus version from current binary..."
+  probe_result=$(probe_stable_consensus_version "$SNARKOS_CURRENT_BIN")
+  lcv_current=$(echo "$probe_result" | awk '{print $1}')
+  if ! is_integer "$lcv_current"; then
+    log "ERROR: Could not determine consensus version from current binary"
+    exit 1
   fi
+  log "Current binary stable consensus version: $lcv_current"
 
-  # 2) PR binary: try to get latest_consensus_version; fall back to release value.
-  if json_current="$(fetch_version_json_from_bin "$SNARKOS_CURRENT_BIN" "current")"; then
-    log "Current (PR) version JSON: $json_current"
-    lcv_current="$(printf '%s\n' "$json_current" \
-      | jq -r '.latest_consensus_version // empty' 2>/dev/null || true)"
-    if ! is_integer "$lcv_current"; then
-      log "Current JSON has no valid latest_consensus_version, falling back to release value $lcv_release"
-      lcv_current="$lcv_release"
-    fi
-  else
-    log "WARN: Could not fetch version JSON from current binary, falling back to release value $lcv_release"
-    lcv_current="$lcv_release"
+  # 2) Probe release binary
+  log "Probing stable consensus version from release binary..."
+  probe_result=$(probe_stable_consensus_version "$SNARKOS_RELEASE_BIN")
+  lcv_release=$(echo "$probe_result" | awk '{print $1}')
+  if ! is_integer "$lcv_release"; then
+    log "ERROR: Could not determine consensus version from release binary"
+    exit 1
   fi
+  log "Release binary stable consensus version: $lcv_release"
 
   log "Computed latest_consensus_version (release) = $lcv_release"
   log "Computed latest_consensus_version (current) = $lcv_current"
@@ -314,69 +262,16 @@ function derive_consensus_env_from_version() {
   log "Release CONSENSUS_VERSION_HEIGHTS=${heights_release}"
   log "Current CONSENSUS_VERSION_HEIGHTS=${heights_current}"
 
-  # 4) Use PR latest version as EXPECTED_MAX_CONSENSUS_VERSION for the test.
-  export CONSENSUS_VERSION_HEIGHTS="$heights_current"
+  # Export separate heights for each binary type
+  export CONSENSUS_VERSION_HEIGHTS_RELEASE="$heights_release"
+  export CONSENSUS_VERSION_HEIGHTS_CURRENT="$heights_current"
   export EXPECTED_MAX_CONSENSUS_VERSION="$lcv_current"
 
   log "Derived EXPECTED_MAX_CONSENSUS_VERSION=${EXPECTED_MAX_CONSENSUS_VERSION}"
-  log "Exported CONSENSUS_VERSION_HEIGHTS=${CONSENSUS_VERSION_HEIGHTS}"
+  log "Exported CONSENSUS_VERSION_HEIGHTS_RELEASE=${CONSENSUS_VERSION_HEIGHTS_RELEASE}"
+  log "Exported CONSENSUS_VERSION_HEIGHTS_CURRENT=${CONSENSUS_VERSION_HEIGHTS_CURRENT}"
 }
-
-function wait_for_highest_consensus_version() {
-  local timeout="${1:-900}"   # default 15 min
-  local interval="${2:-10}"
-
-  SECONDS=0
-  if [ -n "$EXPECTED_MAX_CONSENSUS_VERSION" ]; then
-    log "Waiting for consensus_version >= ${EXPECTED_MAX_CONSENSUS_VERSION}…"
-    local last_height=""
-    while (( SECONDS < timeout )); do
-      cv=$(get_consensus_version 0 "$network_name" || echo 0)
-      h=$(get_block_height 0 "$network_name" || echo 0)
-
-      log "consensus_version=$cv height=$h"
-      if (( cv >= EXPECTED_MAX_CONSENSUS_VERSION )); then
-        if [ -n "$last_height" ] && (( h > last_height )); then
-          log "✅ Highest consensus version ${cv} reached and chain progressing."
-          return 0
-        fi
-      fi
-      last_height="$h"
-
-      sleep "$interval"
-    done
-    echo "❌ Timed out waiting for consensus_version >= ${EXPECTED_MAX_CONSENSUS_VERSION}" >&2
-    return 1
-  else
-    log "EXPECTED_MAX_CONSENSUS_VERSION not set – waiting for stable consensus_version…"
-    local last_cv=""
-    local last_h=""
-    while (( SECONDS < timeout )) ; do
-      cv=$(get_consensus_version 0 "$network_name" || echo 0)
-      h=$(get_block_height 0 "$network_name" || echo 0)
-
-      log "consensus_version=$cv height=$h"
-      if [ -z "$last_cv" ]; then
-        last_cv="$cv"; last_h="$h"
-      else
-        if (( cv == last_cv )) && (( h >= last_h + 10 )); then
-          log "✅ Consensus version $cv appears stable with height from $last_h to $h."
-          return 0
-        fi
-        if (( cv != last_cv )); then
-          log "ℹ️ Consensus version changed from $last_cv to $cv at height $h"
-        fi
-        last_cv="$cv"
-        last_h="$h"
-      fi
-
-      sleep "$interval"
-    done
-    echo "❌ Timed out waiting for stable consensus version" >&2
-    return 1
-  fi
-}
-
+ 
 function wait_for_height_increase_window() {
   local previous_height="$1"
   local duration="${2:-60}"
@@ -452,7 +347,7 @@ for client_index in $(seq 0 $((total_clients-1))); do
 done
 
 wait_for_nodes "$total_validators" "$total_clients"
-wait_for_highest_consensus_version 900 10
+wait_for_stable_consensus_version 0 "$network_name"
 
 for node_index in $(seq 0 $((total_validators+total_clients-1))); do
   if (( node_index < total_validators )); then
