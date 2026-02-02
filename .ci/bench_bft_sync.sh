@@ -25,17 +25,17 @@ poll_interval=1 # Check block heights every second
 #shellcheck source=SCRIPTDIR/utils.sh
 . .ci/utils.sh
 
-branch_name=$(git rev-parse --abbrev-ref HEAD)
-echo "On branch: ${branch_name}"
-
-network_name=$(get_network_name $network_id)
-echo "Using network: $network_name (ID: $network_id)"
-
-snapshot_info=$(<info.txt)
-echo "Snapshot_info: ${snapshot_info}"
-
 # Create log directory
 init_log_dir
+
+branch_name=$(git rev-parse --abbrev-ref HEAD)
+log "On branch: ${branch_name}"
+
+network_name=$(get_network_name $network_id)
+log "Using network: $network_name (ID: $network_id)"
+
+snapshot_info=$(<info.txt)
+log "Snapshot_info: ${snapshot_info}"
 
 # Define a trap handler that cleans up all processes on exit.
 # shellcheck disable=SC2329
@@ -45,7 +45,7 @@ function exit_handler() {
 trap exit_handler EXIT
 
 # Define a trap handler that prints a message when an error occurs 
-trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
+trap 'log "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Shared flags betwen all nodes
 common_flags=(
@@ -66,7 +66,7 @@ PIDS[0]=$!
 # Stores the list of all validators.
 validators="127.0.0.1:5000"
 
-# Spawn the clients that will sync the ledger
+# Spawn the validators that will sync the ledger
 for node_index in $(seq 1 "$num_nodes"); do
   name="validator-$node_index"
 
@@ -91,15 +91,15 @@ wait_for_nodes $((num_nodes+1)) 0 "$network_name"
 
 SECONDS=0
 
-# TODO add API call for number of connected validators.
-#for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
-#  if ! (wait_for_peers "$node_index" $num_nodes); then
-#    exit 1
-#  fi
-#done
+# Wait for all validators to be connected to each other via the gateway.
+for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
+  if ! (wait_for_bft_connections "$node_index" $num_nodes "$network_name"); then
+    exit 1
+  fi
+done
 
 connect_time=$SECONDS
-echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
+log "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
 
 # Check heights periodically with a timeout
 SECONDS=0
@@ -112,7 +112,7 @@ while (( SECONDS < max_wait )); do
     total_wait=$SECONDS
     throughput=$(compute_throughput "$min_height" "$total_wait")
 
-    echo "🎉 BFT sync benchmark done! Waited $total_wait seconds for $min_height blocks. Throughput was $throughput blocks/s."
+    log "🎉 BFT sync benchmark done! Waited $total_wait seconds for $min_height blocks. Throughput was $throughput blocks/s."
 
     # Append data to results file.
     printf "{ \"name\": \"bft-sync\", \"unit\": \"blocks/s\", \"value\": %.3f, \"extra\": \"total_wait=%is, target_height=%i, connect_time=%i, branch=%s, %s\" },\n" \
@@ -124,7 +124,7 @@ while (( SECONDS < max_wait )); do
   sleep $poll_interval
 done
 
-echo "❌ Benchmark failed! Validators did not sync within 30 minutes."
-print_client_logs "$log_dir" "$num_validators" "$num_nodes"
+log "❌ Benchmark failed! Validators did not sync within 30 minutes."
+print_validator_logs "$log_dir" "$num_validators" "$num_nodes"
 
 exit 1
