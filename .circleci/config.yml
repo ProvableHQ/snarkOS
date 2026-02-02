@@ -379,19 +379,19 @@ commands:
             CARGO_PROFILE_RELEASE_DEBUG=0 \
               cargo install --locked --path . --features test_network
       - run:
-          name: "Run upgrade nodes test"
+          name: "Run full upgrade test"
           timeout: 30m  # Allow 30 minutes total
           environment:
             WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/upgrade_nodes_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/test_full_upgrade.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - run:
           name: "Run partial upgrade test"
           timeout: 30m  # Allow 30 minutes total
           environment:
             WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/partial_upgrade_test.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
+            ./.ci/test_partial_upgrade.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
       - save_cache:
           key: v1-snarkos-release-
           paths:
