@@ -72,7 +72,7 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console", "ledger" ]
+features = [ "console", "ledger", "utilities" ]
 
 [dependencies.http]
 workspace = true
