@@ -437,12 +437,12 @@ commands:
           name: "Run DB backup test"
           timeout: 10m  # Allow 10 minutes total
           command: |
-            ./.ci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+            ./.ci/test_db_backup.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
       - run:
           name: "Run block advancement test"
           timeout: 20m  # Allow 20 minutes total
           command: |
-            ./.ci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/test_devnet.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
