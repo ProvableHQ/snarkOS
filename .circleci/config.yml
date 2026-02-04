@@ -72,6 +72,19 @@ commands:
             - target
           key: cargo-cache-{{ arch }}-{{ checksum "rust-version" }}-{{ checksum "Cargo.lock" }}
 
+  install_snarkos:
+    description: "Install snarkOS"
+    steps:
+      - run:
+          name: Install snarkOS
+          command: |
+            export CARGO_TARGET_DIR="$PWD/.ci/target"
+            CARGO_PROFILE_RELEASE_LTO=off \
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
+            CARGO_PROFILE_RELEASE_DEBUG=0 \
+            cargo install --locked --path . --features test_network
+
   setup_environment:
     description: "Setup testing environment"
     parameters:
@@ -107,7 +120,7 @@ commands:
           name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -368,16 +381,7 @@ commands:
             - v1-snarkos-release-
       - setup_environment:
           cache_key: << parameters.cache_key >>
-      - run:
-          name: "Install snarkos"
-          no_output_timeout: 20m
-          command: |
-            export CARGO_TARGET_DIR="$PWD/.ci/target"
-            CARGO_PROFILE_RELEASE_LTO=off \
-            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
-            CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
-            CARGO_PROFILE_RELEASE_DEBUG=0 \
-              cargo install --locked --path . --features test_network
+      - install_snarkos
       - run:
           name: "Run full upgrade test"
           timeout: 30m  # Allow 30 minutes total
@@ -398,51 +402,6 @@ commands:
             - .ci/release-snarkos
             - .ci/release-snarkos-src
             - .ci/target
-      - clear_environment:
-          cache_key: << parameters.cache_key >>
-
-  run_devnet:
-    description: "Run devnet for integration testing"
-    parameters:
-      workspace_member:
-        type: string
-      cache_key:
-        type: string
-      validators:
-        type: integer
-        default: 4
-      clients:
-        type: integer
-        default: 2
-      network_id:
-        type: integer
-        default: 0
-      min_height:
-        type: integer
-        default: 45
-    steps:
-      - checkout
-      - setup_environment:
-          cache_key: << parameters.cache_key >>
-      - run:
-          name: "Install snarkos"
-          no_output_timeout: 20m
-          environment:
-            CONSENSUS_VERSION_HEIGHTS: "0,100"
-            EXPECTED_MAX_CONSENSUS_VERSION: "10"
-            WAIT_BETWEEN_UPGRADES: "60"
-          command: |
-            cargo install --locked --path . --features test_network
-      - run:
-          name: "Run DB backup test"
-          timeout: 10m  # Allow 10 minutes total
-          command: |
-            ./.ci/test_db_backup.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
-      - run:
-          name: "Run block advancement test"
-          timeout: 20m  # Allow 20 minutes total
-          command: |
-            ./.ci/test_devnet.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
@@ -592,9 +551,41 @@ jobs:
     executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
-      - run_devnet:
-          workspace_member: .
-          cache_key: v4.2.0-rust-1.88.0-devnet-test-cache
+     - checkout
+     - setup_environment:
+         cache_key: v4.2.0-rust-1.88.0-devnet-test-cache 
+     - install_snarkos
+     - run:
+          name: "Run DB backup test"
+          timeout: 10m  # Allow 10 minutes total
+          command: |
+            ./.ci/test_db_backup.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+     - run:
+          name: "Run block advancement test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./.ci/test_devnet.sh
+
+  chaotic-devnet-test:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+     - checkout
+     - setup_environment:
+        cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
+     - install_snarkos
+     - run:
+          name: "Run Reset Minority Devnet Test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_reset_minority.sh 7 0 10 100
+     - run:
+          name: "Run Reset Majority Devnet Test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_reset_minority.sh 7 0 10 100
+     - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
 
   upgrade-test:
     executor: rust-docker
@@ -754,6 +745,19 @@ workflows:
   devnet-workflow:
     jobs:
       - devnet-test
+
+  chaotic-devnet-workflow:
+    jobs:
+      - chaotic-devnet-test:
+          filters:
+            branches:
+              only:
+                - ci/updated_network_delay_test 
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
 
   upgrade-workflow:
     jobs:

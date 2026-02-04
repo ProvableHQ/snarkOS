@@ -96,7 +96,8 @@ for client_index in $(seq 0 $((total_clients-1))); do
 done
 
 # Ensure all nodes are up and running.
-wait_for_nodes "$total_validators" "$total_clients" "$network_name"
+# Wait up to two minutes, as this can take long in CI.
+wait_for_nodes "$total_validators" "$total_clients" "$network_name" 180
 
 # Wait for validators to be fully connected.
 log "ℹ️ Waiting for validators to be fully connected..." 

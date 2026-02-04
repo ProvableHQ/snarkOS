@@ -113,11 +113,11 @@ function apply_filter() {
     for port in $(seq "$start_port" "$end_port"); do
         # Filter for IPv4
         run tc filter add dev "$INTERFACE" protocol ip parent 1:0 prio 1 u32 \
-            match ip dport "$port" 0xffff flowid "$PARENT"
+            match ip dport "$port" 0xffff flowid "$PARENT" > /dev/null
 
         # Filter for IPv6
         run tc filter add dev "$INTERFACE" protocol ipv6 parent 1:0 prio 2 u32 \
-            match ip6 dport "$port" 0xffff flowid "$PARENT"
+            match ip6 dport "$port" 0xffff flowid "$PARENT" > /dev/null
     done
 }
 
