@@ -19,17 +19,12 @@
 
 use snarkos_utilities::{SignalHandler, Stoppable};
 
-use snarkvm::prelude::{
-    Deserialize,
-    DeserializeOwned,
-    Ledger,
-    Network,
-    Serialize,
-    block::Block,
-    store::ConsensusStorage,
+use snarkvm::{
+    prelude::{Deserialize, DeserializeOwned, Ledger, Network, Serialize, block::Block, store::ConsensusStorage},
+    utilities::flatten_error,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use colored::Colorize;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -83,9 +78,6 @@ pub struct CdnBlockSync {
 
 impl CdnBlockSync {
     /// Spawn a background task that loads blocks from a CDN into the ledger.
-    ///
-    /// On success, this function returns the completed block height.
-    /// On failure, this function returns the last successful block height (if any), along with the error.
     pub fn new<N: Network, C: ConsensusStorage<N>>(
         base_url: http::Uri,
         ledger: Ledger<N, C>,
@@ -108,6 +100,9 @@ impl CdnBlockSync {
     }
 
     /// Wait for CDN sync to finish. Can only be called once.
+    ///
+    /// On success, this function returns the completed block height.
+    /// On failure, this function returns the last successful block height (if any), along with the error.
     pub async fn wait(&self) -> Result<SyncResult> {
         let Some(hdl) = self.task.lock().take() else {
             bail!("CDN task was already awaited");
@@ -128,35 +123,41 @@ impl CdnBlockSync {
         // Load the blocks from the CDN into the ledger.
         let ledger_clone = ledger.clone();
         let result = load_blocks(&base_url, start_height, None, stoppable, move |block: Block<N>| {
-            ledger_clone.advance_to_next_block(&block)
+            ledger_clone
+                .advance_to_next_block(&block)
+                .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))
         })
         .await;
 
         // TODO (howardwu): Find a way to resolve integrity failures.
         // If the sync failed, check the integrity of the ledger.
-        if let Err((completed_height, error)) = &result {
-            warn!("{error}");
+        match result {
+            Ok(completed_height) => Ok(completed_height),
+            Err((completed_height, error)) => {
+                warn!("{}", flatten_error(error.context("Failed to sync block(s) from the CDN")));
 
-            // If the sync made any progress, then check the integrity of the ledger.
-            if *completed_height != start_height {
-                debug!("Synced the ledger up to block {completed_height}");
+                // If the sync made any progress, then check the integrity of the ledger.
+                if completed_height != start_height {
+                    debug!("Synced the ledger up to block {completed_height}");
 
-                // Retrieve the latest height, according to the ledger.
-                let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
-                // Check the integrity of the latest height.
-                if &node_height != completed_height {
-                    return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
+                    // Retrieve the latest height, according to the ledger.
+                    let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
+                    // Check the integrity of the latest height.
+                    if node_height != completed_height {
+                        return Err((
+                            completed_height,
+                            anyhow!("The ledger height does not match the last sync height"),
+                        ));
+                    }
+
+                    // Fetch the latest block from the ledger.
+                    if let Err(err) = ledger.get_block(node_height) {
+                        return Err((completed_height, err));
+                    }
                 }
 
-                // Fetch the latest block from the ledger.
-                if let Err(err) = ledger.get_block(node_height) {
-                    return Err((*completed_height, err));
-                }
+                Ok(completed_height)
             }
-
-            Ok(*completed_height)
-        } else {
-            result
         }
     }
 

@@ -26,7 +26,7 @@ use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     prelude::block::Block,
-    utilities::ensure_equals,
+    utilities::flatten_error,
 };
 
 use anyhow::{Result, bail, ensure};
@@ -115,6 +115,20 @@ pub struct BlockRequestInfo {
 pub struct BlockRequestsSummary {
     outstanding: String,
     completed: String,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum InsertBlockResponseError {
+    #[error("Empty block response")]
+    EmptyBlockResponse,
+    #[error("The peer did not send a consensus version")]
+    NoConsensusVersion,
+    #[error(
+        "The peer's consensus version for height {last_height} does not match ours: expected {expected_version}, got {peer_version}"
+    )]
+    ConsensusVersionMismatch { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
+    #[error("{}", flatten_error(.0))]
+    Other(#[from] anyhow::Error),
 }
 
 impl<N: Network> OutstandingRequest<N> {
@@ -385,8 +399,9 @@ impl<N: Network> BlockSync<N> {
         // Insert the chunk of block requests.
         for (height, (hash, previous_hash, _)) in requests.iter() {
             // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
-            if let Err(error) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
-                warn!("Block sync failed - {error}");
+            if let Err(err) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
+                let err = err.context(format!("Failed to insert block request for height {height}"));
+                warn!("{}", flatten_error(&err));
                 return false;
             }
         }
@@ -458,35 +473,48 @@ impl<N: Network> BlockSync<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<()> {
-        let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
-            bail!("Empty block response");
+    ) -> Result<(), InsertBlockResponseError> {
+        // Attempt to insert the block responses, and break if we encounter an error.
+        let result = 'outer: {
+            let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
+                break 'outer Err(InsertBlockResponseError::EmptyBlockResponse);
+            };
+
+            let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
+
+            // Perform consensus version check, if possible.
+            // This check is only enabled after nodes have reached V12.
+            if expected_consensus_version >= ConsensusVersion::V12 {
+                if let Some(peer_version) = latest_consensus_version {
+                    if peer_version != expected_consensus_version {
+                        break 'outer Err(InsertBlockResponseError::ConsensusVersionMismatch {
+                            peer_version,
+                            expected_version: expected_consensus_version,
+                            last_height,
+                        });
+                    }
+                } else {
+                    break 'outer Err(InsertBlockResponseError::NoConsensusVersion);
+                }
+            }
+
+            // Insert the candidate blocks into the sync pool.
+            for block in blocks {
+                if let Err(error) = self.insert_block_response(peer_ip, block) {
+                    break 'outer Err(error.into());
+                }
+            }
+
+            Ok(())
         };
 
-        let expected_consensus_version = N::CONSENSUS_VERSION(last_height)?;
-
-        // Perform consensus version check, if possible.
-        // This check is only enabled after nodes have reached V12.
-        if expected_consensus_version >= ConsensusVersion::V12 {
-            if let Some(latest_consensus_version) = latest_consensus_version {
-                ensure_equals!(
-                    expected_consensus_version,
-                    latest_consensus_version,
-                    "the peer's consensus version for height {last_height} does not match ours"
-                );
-            } else {
-                bail!("The peer did not send a consensus version");
-            }
+        // On failure, remove all block requests to the peer.
+        if result.is_err() {
+            self.remove_block_requests_to_peer(&peer_ip);
         }
 
-        // Insert the candidate blocks into the sync pool.
-        for block in blocks {
-            if let Err(error) = self.insert_block_response(peer_ip, block) {
-                self.remove_block_requests_to_peer(&peer_ip);
-                bail!("{error}");
-            }
-        }
-        Ok(())
+        // Return the result.
+        result
     }
 
     /// Returns the next block for the given `next_height` if the request is complete,
@@ -560,20 +588,22 @@ impl<N: Network> BlockSync<N> {
                     Ok(_) => match ledger.advance_to_next_block(&block) {
                         Ok(_) => true,
                         Err(err) => {
-                            warn!(
-                                "Failed to advance to next block (height: {}, hash: '{}'): {err}",
+                            let err = err.context(format!(
+                                "Failed to advance to next block (height: {}, hash: '{}')",
                                 block.height(),
                                 block.hash()
-                            );
+                            ));
+                            warn!("{}", flatten_error(&err));
                             false
                         }
                     },
                     Err(err) => {
-                        warn!(
-                            "The next block (height: {}, hash: '{}') is invalid - {err}",
+                        let err = err.context(format!(
+                            "The next block (height: {}, hash: '{}') is invalid",
                             block.height(),
                             block.hash()
-                        );
+                        ));
+                        warn!("{}", flatten_error(&err));
                         false
                     }
                 }

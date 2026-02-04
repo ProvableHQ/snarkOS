@@ -51,7 +51,7 @@ use snarkos_node_network::{
     get_repo_commit_hash,
     log_repo_sha_comparison,
 };
-use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{InsertBlockResponseError, MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
     ConnectError,
@@ -641,13 +641,24 @@ impl<N: Network> Gateway<N> {
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
                     // Send the blocks to the sync module.
-                    if let Err(err) =
-                        sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await
-                    {
-                        warn!("Unable to process block response from '{peer_ip}' - {err}");
+                    match sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await {
+                        Ok(_) => Ok(true),
+                        Err(err @ InsertBlockResponseError::EmptyBlockResponse)
+                        | Err(err @ InsertBlockResponseError::NoConsensusVersion)
+                        | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
+                            error!("Peer '{peer_ip}' sent an invalid block response - {err}");
+                            self.ip_ban_peer(peer_ip, Some(&err.to_string()));
+                            Err(err.into())
+                        }
+                        Err(err) => {
+                            warn!("Unable to process block response from '{peer_ip}' - {err}");
+                            Err(err.into())
+                        }
                     }
+                } else {
+                    debug!("Ignoring block response from '{peer_ip}' - no sync sender");
+                    Ok(true)
                 }
-                Ok(true)
             }
             Event::CertificateRequest(certificate_request) => {
                 // Send the certificate request to the sync module.
