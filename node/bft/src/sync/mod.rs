@@ -103,6 +103,8 @@ pub struct Sync<N: Network> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
     response_lock: Arc<TMutex<()>>,
+    /// The sync lock. Ensures that only one task syncs the ledger at a time.
+    sync_lock: Arc<TMutex<()>>,
     /// The latest block responses.
     ///
     /// This is used in [`Sync::sync_storage_with_block()`] to accumulate blocks
@@ -135,6 +137,7 @@ impl<N: Network> Sync<N> {
             sync_callback: Default::default(),
             handles: Default::default(),
             response_lock: Default::default(),
+            sync_lock: Default::default(),
             pending_blocks: Default::default(),
         }
     }
@@ -150,7 +153,6 @@ impl<N: Network> Sync<N> {
 
         // Sync the storage with the ledger.
         self.sync_storage_with_ledger_at_bootup()
-            .await
             .with_context(|| "Syncing storage with the ledger at bootup failed")?;
 
         debug!("Finished initial block synchronization at startup");
@@ -423,7 +425,7 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// This functions inserts the certificates from the most recent blocks into the BFT DAG.
     /// It is called when starting the validator and after finishing a sync without BFT.
-    async fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
+    fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
         let mut pending_blocks = self.pending_blocks.lock();
         let latest_ledger_block = self.ledger.latest_block();
 
@@ -452,7 +454,6 @@ impl<N: Network> Sync<N> {
         let ledger_blocks = self.ledger.get_blocks(gc_height..(latest_ledger_block.height() + 1))?;
 
         let blocks = ledger_blocks.iter().chain(pending_blocks.iter().map(|block| block.deref()));
-        debug!("Syncing storage with the ledger from block {} to {}...", gc_height, latest_block.height());
 
         /* Sync storage */
 
@@ -691,9 +692,7 @@ impl<N: Network> Sync<N> {
             let within_gc = (current_height + 1) > max_gc_height;
             if within_gc {
                 info!("Finished catching up with the network. Switching back to BFT sync.");
-                self.sync_storage_with_ledger_at_bootup()
-                    .await
-                    .with_context(|| "BFT sync (with bootup routine) failed")?;
+                self.sync_storage_with_ledger_at_bootup().with_context(|| "BFT sync (with bootup routine) failed")?;
             }
 
             cleanup(start_height, current_height, None)
@@ -810,6 +809,9 @@ impl<N: Network> Sync<N> {
     /// This function assumes that blocks are passed in order, i.e.,
     /// that the given block is a direct successor of the block that was last passed to this function.
     async fn sync_storage_with_block(&self, new_block: Block<N>, within_gc_range: bool) -> Result<()> {
+        // Acquire the sync lock.
+        let _lock = self.sync_lock.lock().await;
+
         let new_block_height = new_block.height();
 
         // If this block has already been processed, return early.
@@ -1132,6 +1134,8 @@ impl<N: Network> Sync<N> {
         self.sync_callback.clear();
         // Acquire the response lock.
         let _lock = self.response_lock.lock().await;
+        // Acquire the sync lock.
+        let _lock = self.sync_lock.lock().await;
         // Abort the tasks.
         self.handles.lock().iter().for_each(|handle| handle.abort());
     }
@@ -1501,7 +1505,7 @@ mod tests {
         }
 
         // -- Switch to BFT --
-        sync.sync_storage_with_ledger_at_bootup().await.unwrap();
+        sync.sync_storage_with_ledger_at_bootup().unwrap();
 
         // Ensure blocks did not commit yet.
         assert_eq!(syncing_ledger.latest_block_height(), 0);
