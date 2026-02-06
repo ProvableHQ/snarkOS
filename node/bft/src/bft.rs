@@ -240,7 +240,7 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
         }
 
         // Log whether the round is going to update.
-        if current_round % 2 == 0 {
+        if current_round.is_multiple_of(2) {
             // Determine if there is a leader certificate.
             if let Some(leader_certificate) = self.leader_certificate.read().as_ref() {
                 // Ensure the state of the leader certificate is consistent with the BFT being ready.
@@ -308,8 +308,11 @@ impl<N: Network> SyncCallback<N> for BFT<N> {
     }
 
     // Notification about a new certificate detected by the `Sync` instance after fetching a new block.
-    fn add_certificate(&self, certificate: BatchCertificate<N>) {
-        self.dag.write().insert(certificate);
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()> {
+        // FIXME hack
+        self.update_dag(certificate).await
+
+        //self.dag.write().insert(certificate);
     }
 
     fn commit_certificate(&self, certificate: &BatchCertificate<N>) {

@@ -69,7 +69,7 @@ use tokio::{sync::oneshot, task::JoinHandle};
 pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
     fn sync_bft_dag_at_bootup(&self, certificates: &[BatchCertificate<N>]);
 
-    fn add_certificate(&self, certificate: BatchCertificate<N>);
+    async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
     fn commit_certificate(&self, certificate: &BatchCertificate<N>);
 }
 
@@ -153,6 +153,7 @@ impl<N: Network> Sync<N> {
 
         // Sync the storage with the ledger.
         self.sync_storage_with_ledger_at_bootup()
+            .await
             .with_context(|| "Syncing storage with the ledger at bootup failed")?;
 
         debug!("Finished initial block synchronization at startup");
@@ -425,36 +426,45 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// This functions inserts the certificates from the most recent blocks into the BFT DAG.
     /// It is called when starting the validator and after finishing a sync without BFT.
-    fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
-        let mut pending_blocks = self.pending_blocks.lock();
-        let latest_ledger_block = self.ledger.latest_block();
+    async fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
+        let (latest_block, max_height, ledger_blocks, pending_blocks) = {
+            let mut pending_blocks = self.pending_blocks.lock();
+            let latest_ledger_block = self.ledger.latest_block();
 
-        // Remove any obsolete pending blocks.
-        while let Some(block) = pending_blocks.front()
-            && block.height() <= latest_ledger_block.height()
-        {
-            pending_blocks.pop_front();
-        }
+            // Remove any obsolete pending blocks.
+            while let Some(block) = pending_blocks.front()
+                && block.height() <= latest_ledger_block.height()
+            {
+                pending_blocks.pop_front();
+            }
 
-        let latest_block: &Block<N> = pending_blocks.back().map(|block| block.deref()).unwrap_or(&latest_ledger_block);
-        let max_height = latest_block.height();
+            let latest_block: Block<N> =
+                pending_blocks.back().map(|block| block.deref().clone()).unwrap_or(latest_ledger_block.clone());
+            let max_height = latest_block.height();
 
-        // Determine the maximum number of blocks corresponding to rounds
-        // that would not have been garbage collected, i.e. that would be kept in storage.
-        // Since at most one block is created every two rounds,
-        // this is half of the maximum number of rounds kept in storage.
-        let max_gc_blocks = u32::try_from(self.storage.max_gc_rounds())?.saturating_div(2);
+            // Determine the maximum number of blocks corresponding to rounds
+            // that would not have been garbage collected, i.e. that would be kept in storage.
+            // Since at most one block is created every two rounds,
+            // this is half of the maximum number of rounds kept in storage.
+            let max_gc_blocks = u32::try_from(self.storage.max_gc_rounds())?.saturating_div(2);
 
-        // Determine the earliest height of blocks corresponding to rounds kept in storage,
-        // conservatively set to the block height minus the maximum number of blocks calculated above.
-        // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
-        let gc_height = max_height.saturating_sub(max_gc_blocks);
+            // Determine the earliest height of blocks corresponding to rounds kept in storage,
+            // conservatively set to the block height minus the maximum number of blocks calculated above.
+            // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
+            let gc_height = max_height.saturating_sub(max_gc_blocks);
 
-        // Retrieve the DAGs of all blocks..
-        let ledger_blocks = self.ledger.get_blocks(gc_height..(latest_ledger_block.height() + 1))?;
+            // Retrieve the DAGs of all blocks..
+            let ledger_blocks = self.ledger.get_blocks(gc_height..(latest_ledger_block.height() + 1))?;
 
-        let blocks = ledger_blocks.iter().chain(pending_blocks.iter().map(|block| block.deref()));
+            let pending_blocks_cpy: Vec<Block<N>> = pending_blocks.iter().cloned().map(|b| b.deref().clone()).collect();
 
+            // FIXME
+            // Drop lock so we can use async (BROKEN)
+
+            (latest_block, max_height, ledger_blocks, pending_blocks_cpy)
+        };
+
+        let blocks = ledger_blocks.iter().chain(pending_blocks.iter());
         /* Sync storage */
 
         // Sync the height with the block.
@@ -497,14 +507,13 @@ impl<N: Network> Sync<N> {
                 #[cfg(feature = "telemetry")]
                 self.gateway.validator_telemetry().insert_subdag(subdag);
             }
-
             if let Some(cb) = self.sync_callback.get() {
                 // Insert and commit ledger block certificates.
                 for block in ledger_blocks.iter() {
                     if let Authority::Quorum(subdag) = block.authority() {
                         for round in subdag.values() {
                             for certificate in round {
-                                cb.add_certificate(certificate.clone());
+                                cb.add_new_certificate(certificate.clone()).await?;
                                 cb.commit_certificate(certificate);
                             }
                         }
@@ -515,7 +524,7 @@ impl<N: Network> Sync<N> {
                     if let Authority::Quorum(subdag) = block.authority() {
                         for round in subdag.values() {
                             for certificate in round {
-                                cb.add_certificate(certificate.clone());
+                                cb.add_new_certificate(certificate.clone()).await?;
                             }
                         }
                     }
@@ -692,7 +701,9 @@ impl<N: Network> Sync<N> {
             let within_gc = (current_height + 1) > max_gc_height;
             if within_gc {
                 info!("Finished catching up with the network. Switching back to BFT sync.");
-                self.sync_storage_with_ledger_at_bootup().with_context(|| "BFT sync (with bootup routine) failed")?;
+                self.sync_storage_with_ledger_at_bootup()
+                    .await
+                    .with_context(|| "BFT sync (with bootup routine) failed")?;
             }
 
             cleanup(start_height, current_height, None)
@@ -731,7 +742,7 @@ impl<N: Network> Sync<N> {
         if let Some(cb) = self.sync_callback.get() {
             for round in subdag.values() {
                 for certificate in round {
-                    cb.add_certificate(certificate.clone());
+                    cb.add_new_certificate(certificate.clone()).await?;
                 }
             }
         }
@@ -1505,7 +1516,7 @@ mod tests {
         }
 
         // -- Switch to BFT --
-        sync.sync_storage_with_ledger_at_bootup().unwrap();
+        sync.sync_storage_with_ledger_at_bootup().await.unwrap();
 
         // Ensure blocks did not commit yet.
         assert_eq!(syncing_ledger.latest_block_height(), 0);
