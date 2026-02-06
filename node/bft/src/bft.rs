@@ -512,7 +512,7 @@ impl<N: Network> BFT<N> {
 }
 
 impl<N: Network> BFT<N> {
-    /// Callers of this function are required to hold the write lock to the `LedgerService`, by calling [`Self::pause_for_block_sync`].
+    /// Callers of this function are required to hold the write lock to the `LedgerService`.
     async fn update_dag(&self, certificate: BatchCertificate<N>) -> Result<()> {
         // ### First, insert the certificate into the DAG. ###
         // Retrieve the round of the new certificate to add to the DAG.
