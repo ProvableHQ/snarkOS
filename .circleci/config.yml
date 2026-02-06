@@ -578,12 +578,18 @@ jobs:
           name: "Run Reset Minority Devnet Test"
           timeout: 20m  # Allow 20 minutes total
           command: |
-            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_reset_minority.sh 7 0 10 100
+            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_reset_minority.sh 7 0 20 100 3
      - run:
           name: "Run Reset Majority Devnet Test"
           timeout: 20m  # Allow 20 minutes total
           command: |
-            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_reset_minority.sh 7 0 10 100
+            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_reset_minority.sh 7 0 20 100 3
+     - run:
+          name: "Run Restart All Devnet Test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./scripts/chaotic-network-runner.sh 5000-5100 ./.ci/test_restart_all.sh 7 0 20 100 3
+ 
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
 

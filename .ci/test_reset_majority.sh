@@ -17,16 +17,16 @@ init_log_dir
 # Network parameters
 total_validators=$1
 network_id=$2
-restart_interval=$3
+reset_interval=$3
 final_height=$4
-num_restarts=$5
+num_resets=$5
 
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
-: "${restart_interval:=10}"
+: "${reset_interval:=10}"
 : "${final_height:=20}"
-: "${num_restarts:=3}"
+: "${num_resets:=3}"
 
 max_faulty=$(( (total_validators - 1) / 3 ))
 # AleoBFT needs at least N-f for a quorum, not 2*f+1.
@@ -62,10 +62,10 @@ wait_for_nodes "$total_validators" 0 "$network_name"
 # Wait longer if there are more blocks to reach.
 max_wait=$((final_height * 5 ))
 
-for iter in $(seq 1 "$num_restarts"); do
-  restart_height=$(( iter * restart_interval ));
+for iter in $(seq 1 "$num_resets"); do
+  reset_height=$(( iter * reset_interval ));
 
-  if check_heights 0 "$total_validators" "$restart_height" "$network_name"; then
+  if check_heights 0 "$total_validators" "$reset_height" "$network_name"; then
     log "All nodes reached restart height."
 
     # Gracefully shut down a majority of the validators
