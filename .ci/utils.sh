@@ -463,6 +463,30 @@ function print_validator_logs() {
   done
 }
 
+function wait_for_heights() {
+  local start_index=$1
+  local end_index=$2
+  local min_height=$3
+  local network_name=$4
+  local max_wait=$5
+  local poll_interval=$6
+
+  # Defaultv values
+  : "${max_wait:=300}"
+  : "${poll_interval:=5}"
+
+  SECONDS=0 
+  while (( SECONDS < max_wait )); do
+    if check_heights "$start_index" "$end_index" "$min_height" "$network_name" "$elapsed"; then
+      return 0
+    fi
+
+    # Continue waiting
+    sleep 5
+  done
+  return 1
+}
+
 function print_client_logs() {
   local log_dir=$1
   local total_validators=$2

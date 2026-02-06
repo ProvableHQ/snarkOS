@@ -62,46 +62,31 @@ max_wait=$((final_height * 5 ))
 for iter in $(seq 1 "$num_restarts"); do
   restart_height=$(( iter * restart_interval ));
 
-  while (( SECONDS < max_wait )); do
-    if check_heights 0 "$total_validators" "$restart_height" "$network_name"; then
-      log "All nodes reached restart height $restart_height. Restarting all validators (iteration $iter/$num_restarts)..."
+  # Wait until all nodes reach the restart height.
+  wait_for_heights 0 "$total_validators" "$restart_height" "$network_name"
+  log "All nodes reached restart height $restart_height. Restarting all validators (iteration $iter/$num_restarts)..."
 
-      # Gracefully shut down all validators
-      stop_nodes
+  # Gracefully shut down all validators
+  stop_nodes
 
-      # Wait briefly before restarting
-      sleep 5
+  # Wait briefly before restarting
+  sleep 5
 
-      # Restart all validators without cleaning their ledger
-      for validator_index in $(seq 0 $((total_validators-1))); do
-        snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log" &
-        PIDS[validator_index]=$!
-        log "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
-        # Add 1-second delay between starting nodes to avoid hitting rate limits
-        sleep 1
-      done
-
-      wait_for_nodes "$total_validators" 0 "$network_name"
-      break
-    fi
-
-    sleep 3
-    log "Waiting for restart height $restart_height..."
+  # Restart all validators without cleaning their ledger
+  for validator_index in $(seq 0 $((total_validators-1))); do
+    snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log" &
+    PIDS[validator_index]=$!
+    log "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
+    # Add 1-second delay between starting nodes to avoid hitting rate limits
+    sleep 1
   done
 done
 
 # Wait for final height
-while (( SECONDS < max_wait )); do 
-  if check_heights 0 "$total_validators" "$final_height" "$network_name"; then
-    log "SUCCESS!"
-    exit 0
-  fi
-
-  # Continue waiting
-  sleep 3
-  log "Waited $SECONDS seconds so far..."
-done
-
-# The main loop has expired by now
-log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
-exit 1
+if wait_for_heights 0 "$total_validators" "$final_height" "$network_name"; then
+ log "SUCCESS!"
+  exit 0
+else
+  log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
+  exit 1
+fi
