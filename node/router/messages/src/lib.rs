@@ -117,9 +117,9 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
         // For ConsensusVersion::V13, we forgot to run CI and increment the
-        // message version before the canary release, so we keep it the same.
-        // We can bump it again on Canary for V14.
-        (ConsensusVersion::V13, 23),
+        // message version before the canary release, so we keep it the same for
+        // Canary.  We can bump it again on Canary for V14.
+        (ConsensusVersion::V13, 24),
     ];
 
     /// Returns the latest message version.
@@ -298,13 +298,8 @@ mod tests {
     /// Ensure that *message versions* are unique and incrementing by 1.
     fn consensus_constants_increasing_heights<N: Network>() {
         let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
-        for (consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
-            if consensus_version == &ConsensusVersion::V13 {
-                // Message version did not increment for ConsensusVersion::V13.
-                assert_eq!(*message_version, previous_message_version);
-            } else {
-                assert_eq!(*message_version, previous_message_version + 1);
-            }
+        for (_consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+            assert_eq!(*message_version, previous_message_version + 1);
             previous_message_version = *message_version;
         }
     }
