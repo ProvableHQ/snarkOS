@@ -57,7 +57,7 @@ for validator_index in $(seq 0 $((total_validators-1))); do
   sleep 1
 done
 
-wait_for_nodes "$total_validators" 0 "$network_name"
+wait_for_nodes "$total_validators" 0 "$network_name" 180
 
 # Wait longer if there are more blocks to reach.
 max_wait=$((final_height * 5 ))
@@ -67,7 +67,10 @@ for iter in $(seq 1 "$num_resets"); do
   reset_height=$(( iter * reset_interval ));
 
   # Wait until all nodes reach the reset height.
-  wait_for_heights 0 "$total_validators" "$reset_height" "$network_name" $((reset_interval * 5))
+  if ! wait_for_heights 0 "$total_validators" "$reset_height" "$network_name" $((reset_interval * 5)); then
+    log "❌ Test failed! Not all nodes reached reset height of $reset_height within $((reset_interval * 5)) seconds."
+    exit 1
+  fi
   log "All nodes reached reset height."
 
   # Gracefully shut down a minority of the validators
