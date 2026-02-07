@@ -22,6 +22,10 @@ executors:
   rust-docker:
      docker:
       - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+  # The default VM used for devnet tests
+  ubuntu-vm:
+      machine:
+        image: ubuntu-2404:current
 
 commands:
   check_windows:
@@ -567,12 +571,19 @@ jobs:
             ./.ci/test_devnet.sh
 
   chaotic-devnet-test:
-    executor: rust-docker
+    executor: ubuntu-vm
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
      - checkout
      - setup_environment:
         cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
+     - run:
+        name: "Install rust"
+        timeout: 5m
+        command: |
+          # use 1.88 toolchain as we are in the docker images
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+          source $HOME/.cargo/env
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
