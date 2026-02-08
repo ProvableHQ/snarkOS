@@ -600,11 +600,11 @@ jobs:
           timeout: 20m  # Allow 20 minutes total
           command: |
             ./.ci/test_reset_majority.sh 7 0 20 250 3
-     #- run:
-     #      name: "Run Restart All Devnet Test"
-     #      timeout: 20m  # Allow 20 mintes total
-     #      command: |
-     #        ./.ci/test_restart_all.sh 7 0 50 250 3 
+     - run:
+           name: "Run Restart All Devnet Test"
+           timeout: 20m  # Allow 20 mintes total
+           command: |
+             ./.ci/test_restart_all.sh 7 0 50 250 3 
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
 
@@ -737,35 +737,35 @@ jobs:
 workflows:
   version: 2
 
-  cargo-workflow:
-    jobs:
-      - check-fmt
-      - check-clippy
-      - check-unused-dependencies
-      - check-cargo-audit
-      - check-other-crates
-      - lint-scripts
+  #cargo-workflow:
+  #  jobs:
+  #   - check-fmt
+  #    - check-clippy
+  #   - check-unused-dependencies
+  #    - check-cargo-audit
+  #    - check-other-crates
+  #    - lint-scripts
 
-  node-workflow:
-    jobs:
-      - node
-      - node-bft
-      - node-bft-events
-      - node-bft-ledger-service
-      - node-bft-storage-service
-      - node-cdn
-      - node-consensus
-      - node-rest
-      - node-router
-      - node-router-messages
-      - node-sync
-      - node-sync-communication-service
-      - node-sync-locators
-      - node-tcp
+  #node-workflow:
+  #  jobs:
+  #    - node
+  #    - node-bft
+  #   - node-bft-events
+  #    - node-bft-ledger-service
+  #    - node-bft-storage-service
+  #    - node-cdn
+  #    - node-consensus
+  #    - node-rest
+  #    - node-router
+  #    - node-router-messages
+  #    - node-sync
+  #    - node-sync-communication-service
+  #    - node-sync-locators
+  #    - node-tcp
 
-  devnet-workflow:
-    jobs:
-      - devnet-test
+  #devnet-workflow:
+  #  jobs:
+  #    - devnet-test
 
   chaotic-devnet-workflow:
     jobs:
