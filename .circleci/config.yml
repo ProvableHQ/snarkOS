@@ -774,6 +774,7 @@ workflows:
             branches:
               only:
                 - ci/updated_network_delay_test 
+                - fix/sync-race-conditions-broken
                 - canary
                 - testnet
                 - mainnet
