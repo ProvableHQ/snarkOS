@@ -32,7 +32,13 @@ max_faulty=$(( (total_validators - 1) / 3 ))
 # AleoBFT needs at least N-f for a quorum, not 2*f+1.
 majority=$((total_validators - max_faulty))
 network_name=$(get_network_name "$network_id")
+
+# Keep verbosity low as we are running many nodes.
 verbosity=0
+
+# The time that is used to determine the total timeout for the test.
+# This is higher than the one for the minority test to account for the higher number of nodes that are reset.
+max_wait_per_block=20
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
@@ -60,14 +66,14 @@ done
 wait_for_nodes "$total_validators" 0 "$network_name" 180
 
 # Wait longer if there are more blocks to reach.
-max_wait=$((final_height * 5 ))
+max_wait=$((final_height * max_wait_per_block))
 
 for iter in $(seq 1 "$num_resets"); do
   reset_height=$(( iter * reset_interval ));
 
   # Block until the reset height is reached.
-  if ! wait_for_heights 0 "$total_validators" "$reset_height" "$network_name" $((reset_interval * 5)); then
-    log "❌ Test failed! Not all nodes reached reset height of $reset_height within $((reset_interval * 5)) seconds."
+  if ! wait_for_heights 0 "$total_validators" "$reset_height" "$network_name" $((reset_interval * max_wait_per_block)); then
+    log "❌ Test failed! Not all nodes reached reset height of $reset_height within $((reset_interval * max_wait_per_block)) seconds."
     exit 1
   fi
   log "All nodes reached the next reset height."

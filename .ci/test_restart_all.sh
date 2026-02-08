@@ -21,14 +21,19 @@ restart_interval=$3
 final_height=$4
 num_restarts=$5
 
-# Default values if not provided
+# Default values if not provided.
 : "${total_validators:=7}"
 : "${network_id:=0}"
 : "${restart_interval:=10}"
 : "${final_height:=100}"
 : "${num_restarts:=3}"
 
+# The time that is used to determine the total timeout for the test.
+max_wait_per_block=10
+
 network_name=$(get_network_name "$network_id")
+
+# Keep verbosity low as we are running many nodes.
 verbosity=0
 
 # Define a trap handler that cleans up all processes on exit.
@@ -57,14 +62,14 @@ done
 wait_for_nodes "$total_validators" 0 "$network_name" 180
 
 # Wait longer if there are more blocks to reach.
-max_wait=$((final_height * 5 ))
+max_wait=$((final_height * max_wait_per_block))
 
 for iter in $(seq 1 "$num_restarts"); do
-  restart_height=$(( iter * restart_interval ));
+  restart_height=$(( iter * restart_interval ))
 
   # Wait until all nodes reach the restart height.
-  if ! wait_for_heights 0 "$total_validators" "$restart_height" "$network_name" $((restart_interval * 5)); then
-    log "❌ Test failed! Not all nodes reached restart height of $restart_height within $((restart_interval * 5)) seconds."
+  if ! wait_for_heights 0 "$total_validators" "$restart_height" "$network_name" $((restart_interval * max_wait_per_block)); then
+    log "❌ Test failed! Not all nodes reached restart height of $restart_height within $((restart_interval * max_wait_per_block)) seconds."
     exit 1
   fi
   log "All nodes reached restart height $restart_height. Restarting all validators (iteration $iter/$num_restarts)..."

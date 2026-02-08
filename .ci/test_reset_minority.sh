@@ -32,6 +32,8 @@ minority=$(( (total_validators - 1) / 3 ))
 network_name=$(get_network_name "$network_id")
 verbosity=0
 
+# The time that is used to determine the total timeout for the test
+max_wait_per_block=10
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
@@ -60,15 +62,15 @@ done
 wait_for_nodes "$total_validators" 0 "$network_name" 180
 
 # Wait longer if there are more blocks to reach.
-max_wait=$((final_height * 5 ))
+max_wait=$((final_height * max_wait_per_block));
 
 SECONDS=0
 for iter in $(seq 1 "$num_resets"); do
   reset_height=$(( iter * reset_interval ));
 
   # Wait until all nodes reach the reset height.
-  if ! wait_for_heights 0 "$total_validators" "$reset_height" "$network_name" $((reset_interval * 5)); then
-    log "❌ Test failed! Not all nodes reached reset height of $reset_height within $((reset_interval * 5)) seconds."
+  if ! wait_for_heights 0 "$total_validators" "$reset_height" "$network_name" $((reset_interval * max_wait_per_block)); then
+    log "❌ Test failed! Not all nodes reached reset height of $reset_height within $((reset_interval * max_wait_per_block)) seconds."
     exit 1
   fi
   log "All nodes reached reset height."
