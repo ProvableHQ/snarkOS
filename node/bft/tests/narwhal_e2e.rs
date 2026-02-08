@@ -24,7 +24,7 @@ use std::time::Duration;
 use deadline::deadline;
 use tokio::time::sleep;
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[ignore = "long-running e2e test"]
 async fn test_state_coherence() {
     const N: u16 = 4;
@@ -36,8 +36,6 @@ async fn test_state_coherence() {
             bft: false,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: Some(0),
             log_connections: true,
         })
     })
@@ -52,7 +50,7 @@ async fn test_state_coherence() {
     std::future::pending::<()>().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_quorum_threshold() {
     // Start N nodes but don't connect them.
     const N: u16 = 4;
@@ -64,8 +62,6 @@ async fn test_quorum_threshold() {
             bft: false,
             connect_all: false,
             fire_transmissions: None,
-            // Set this to Some(0..=4) to see the logs.
-            log_level: None,
             log_connections: true,
         })
     })
@@ -110,7 +106,7 @@ async fn test_quorum_threshold() {
     deadline!(Duration::from_secs(20), move || { net.is_round_reached(TARGET_ROUND) });
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_quorum_break() {
     // Start N nodes, connect them and start the cannons for each.
     const N: u16 = 4;
@@ -121,8 +117,6 @@ async fn test_quorum_break() {
             bft: false,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: None,
             log_connections: true,
         })
     })
@@ -144,7 +138,7 @@ async fn test_quorum_break() {
     assert!(network.is_halted().await);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_storage_coherence() {
     // Start N nodes, connect them and start the cannons for each.
     const N: u16 = 4;
@@ -155,8 +149,6 @@ async fn test_storage_coherence() {
             bft: false,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: None,
             log_connections: true,
         })
     })
