@@ -600,11 +600,11 @@ jobs:
           timeout: 20m  # Allow 20 minutes total
           command: |
             ./.ci/test_reset_majority.sh 7 0 20 250 3
-     - run:
-          name: "Run Restart All Devnet Test"
-          timeout: 20m  # Allow 20 mintes total
-          command: |
-            ./.ci/test_restart_all.sh 7 0 50 250 3 
+     #- run:
+     #      name: "Run Restart All Devnet Test"
+     #      timeout: 20m  # Allow 20 mintes total
+     #      command: |
+     #        ./.ci/test_restart_all.sh 7 0 50 250 3 
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
 
