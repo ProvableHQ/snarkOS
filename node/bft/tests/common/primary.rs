@@ -16,7 +16,7 @@
 use crate::common::{
     CurrentNetwork,
     TranslucentLedgerService,
-    utils::{fire_unconfirmed_solutions, fire_unconfirmed_transactions, initialize_logger},
+    utils::{fire_unconfirmed_solutions, fire_unconfirmed_transactions},
 };
 
 use snarkos_account::Account;
@@ -78,8 +78,6 @@ pub struct TestNetworkConfig {
     pub connect_all: bool,
     /// If `Some(i)` is set, the cannons will fire every `i` milliseconds.
     pub fire_transmissions: Option<u64>,
-    /// The log level to use for the test.
-    pub log_level: Option<u8>,
     /// If this is set to `true`, the number of connections is logged every 5 seconds.
     pub log_connections: bool,
 }
@@ -139,10 +137,6 @@ impl TestNetwork {
     // Creates a new test network with the given configuration.
     pub fn new(config: TestNetworkConfig) -> Self {
         let mut rng = TestRng::default();
-
-        if let Some(log_level) = config.log_level {
-            initialize_logger(log_level);
-        }
 
         let (accounts, committee) = new_test_committee(config.num_nodes, &mut rng);
         let bonded_balances: IndexMap<_, _> = committee
