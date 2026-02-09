@@ -102,7 +102,8 @@ function stop_some_nodes() {
     # Check if PID exists (is not empty) and is currently running
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
       echo "Killing PIDS[$i] -> $pid"
-      kill -9 "$pid" 2>/dev/null || true
+      # Use SIGTERM to gracefully shut down the node.
+      kill "$pid" 2>/dev/null || true
       # Add to list of PIDs to wait for specifically
       killed_pids+=("$pid")
     else
@@ -110,10 +111,27 @@ function stop_some_nodes() {
     fi
   done
 
-  # Wait only for the processes we just killed to ensure they are gone
-  if [ ${#killed_pids[@]} -gt 0 ]; then
-    wait "${killed_pids[@]}" 2>/dev/null || true
-  fi
+  # Wait up to 60 seconds for all selected nodes to shut down.
+  elapsed=0
+  while (( elapsed < 60 )); do
+    still_running=false
+    for pid in "${killed_pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=true
+        break
+      fi
+    done
+
+    if ! $still_running; then
+      return 0 
+    else 
+      sleep 1
+      elapsed=$((elapsed + 1))
+    fi
+  done
+
+  log "❌ Not all nodes shut down within 60 seconds."
+  return 1
 }
 
 # Succeeds if the given string is an integer.
