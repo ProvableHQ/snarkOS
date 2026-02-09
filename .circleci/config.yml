@@ -788,7 +788,7 @@ workflows:
           filters:
             branches:
               only:
-                - ci/updated_network_delay_test 
+                - fix/atomic_prepare_next_block
                 - canary
                 - testnet
                 - mainnet
