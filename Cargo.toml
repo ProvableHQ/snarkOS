@@ -47,8 +47,9 @@ default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "77aa4f7"
+git = "https://github.com/ljedrz/snarkVM.git"
+branch = "feat/finalize_history"
+# rev = "77aa4f7"
 #version = "=4.4.0"
 default-features = false
 
