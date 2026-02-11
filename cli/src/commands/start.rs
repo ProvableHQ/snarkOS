@@ -345,15 +345,11 @@ impl Start {
 
     /// Returns the CDN to prefetch initial blocks from, from the given configurations.
     fn parse_cdn<N: Network>(&self) -> Result<Option<http::Uri>> {
-        // Determine if the node type is not declared.
-        let is_no_node_type = !(self.validator || self.prover || self.client);
-
         // Disable CDN if:
         //  1. The node is in development mode.
         //  2. The user has explicitly disabled CDN.
         //  3. The node is a prover (no need to sync).
-        //  4. The node type is not declared (defaults to client) (no need to sync).
-        if self.dev.is_some() || self.nocdn || self.prover || is_no_node_type {
+        if self.dev.is_some() || self.nocdn || self.prover {
             Ok(None)
         }
         // Enable the CDN otherwise.
