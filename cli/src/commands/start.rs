@@ -1236,9 +1236,9 @@ mod tests {
 
         // Default (Prod)
         let config = Start::try_parse_from(["snarkos"].iter()).unwrap();
-        assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
+        assert!(config.parse_cdn::<CurrentNetwork>()?.is_some());
         let config = Start::try_parse_from(["snarkos", "--cdn", "url"].iter()).unwrap();
-        assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
+        assert!(config.parse_cdn::<CurrentNetwork>()?.is_some());
         let config = Start::try_parse_from(["snarkos", "--nocdn"].iter()).unwrap();
         assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
 
