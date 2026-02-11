@@ -414,6 +414,15 @@ commands:
     steps:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
 
+  install_rust:
+    description: "Install Rust using rustup.rs"
+    steps:
+      - run:
+          timeout: 5m
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+            source $HOME/.cargo/env
+
 jobs:
   snarkos:
     executor: rust-docker
@@ -570,20 +579,14 @@ jobs:
           command: |
             ./.ci/test_devnet.sh
 
-  chaotic-devnet-test:
+  chaotic-minority-reset-test:
     executor: ubuntu-vm
     resource_class: << pipeline.parameters.twoxlarge >>
     steps:
      - checkout
      - setup_environment:
-        cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
-     - run:
-        name: "Install rust"
-        timeout: 5m
-        command: |
-          # use 1.88 toolchain as we are in the docker images
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
-          source $HOME/.cargo/env
+        cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+     - install_rust
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
@@ -591,22 +594,34 @@ jobs:
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
-          name: "Run Reset Minority Devnet Test"
-          timeout: 20m  # Allow 20 minutes total
+        name: "Run Reset Minority Devnet Test"
+        timeout: 20m  # Allow 20 minutes total
+        command: |
+          ./.ci/test_reset_minority.sh 7 0 50 250 3
+     - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+
+  chaotic-majority-reset-test:
+    executor: ubuntu-vm
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+     - checkout
+     - setup_environment:
+        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-reset-test-cache
+     - install_rust
+     - install_snarkos
+     - run:
+          name: "Enable emulation of network latency spikes"
+          timeout: 5m 
           command: |
-            ./.ci/test_reset_minority.sh 7 0 50 250 3
+            sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
           name: "Run Reset Majority Devnet Test"
           timeout: 20m  # Allow 20 minutes total
           command: |
             ./.ci/test_reset_majority.sh 7 0 20 250 3
-     #- run:
-     #      name: "Run Restart All Devnet Test"
-     #      timeout: 20m  # Allow 20 mintes total
-     #      command: |
-     #        ./.ci/test_restart_all.sh 7 0 50 250 3 
      - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-chaotic-devnet-test-cache 
+          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-reset-test-cache 
 
   upgrade-test:
     executor: rust-docker
@@ -769,7 +784,7 @@ workflows:
 
   chaotic-devnet-workflow:
     jobs:
-      - chaotic-devnet-test:
+      - chaotic-minority-reset-test:
           filters:
             branches:
               only:
@@ -779,6 +794,15 @@ workflows:
                 - mainnet
                 - staging
 
+      - chaotic-majority-reset-test:
+          filters:
+            branches:
+              only:
+                - ci/updated_network_delay_test 
+                - canary
+                - testnet
+                - mainnet
+                - staging
 
   upgrade-workflow:
     jobs:
