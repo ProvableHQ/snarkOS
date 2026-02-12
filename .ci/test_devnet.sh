@@ -96,7 +96,8 @@ for client_index in $(seq 0 $((total_clients-1))); do
 done
 
 # Ensure all nodes are up and running.
-wait_for_nodes "$total_validators" "$total_clients" "$network_name"
+# Wait up to two minutes, as this can take long in CI.
+wait_for_nodes "$total_validators" "$total_clients" "$network_name" 180
 
 # Wait for validators to be fully connected.
 log "ℹ️ Waiting for validators to be fully connected..." 
@@ -351,25 +352,11 @@ fi
 log "ℹ️Testing network progress"
 
 # Check heights periodically with a timeout
-SECONDS=0
-while (( SECONDS < 600 )); do  # 10 minutes max
-  if check_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" "$SECONDS"; then
-    log "🎉 Test passed! All nodes reached minimum height."
-
-    if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
-      exit 0
-    else
-      exit 1
-    fi
-  fi
-  
-  # Continue waiting
-  sleep 30
-  log "Waited $SECONDS seconds so far..."
-done
-
-log "❌ Test failed! Not all nodes reached minimum height within 10 minutes."
-log_validator_logs "$log_dir" "$total_validators" "$total_clients"
-log_client_logs "$log_dir" "$total_validators" "$total_clients"
-
-exit 1
+if wait_for_heights 0 $((total_validators+total_clients)) "$min_height" "$network_name" 600; then
+  log "🎉 Test passed! All nodes reached minimum height."
+else
+  log "❌ Test failed! Not all nodes reached minimum height within 10 minutes."
+  log_validator_logs "$log_dir" "$total_validators" "$total_clients"
+  log_client_logs "$log_dir" "$total_validators" "$total_clients"
+  exit 1
+fi

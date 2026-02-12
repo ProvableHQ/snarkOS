@@ -73,6 +73,67 @@ function get_network_name() {
   esac
 }
 
+# Generates the given number of random indices up to max_index.
+function generate_random_indices() {
+  local count=$1
+  local max_index=$2
+
+  # Check if count is greater than max_index + 1 (impossible request)
+  if (( count > max_index + 1 )); then
+    echo "Error: Cannot request more unique indices than exist." >&2
+    return 1
+  fi
+
+  # shuf -i generates a range (0 to max), -n picks N items
+  shuf -i 0-"$max_index" -n "$count"
+}
+
+# Stops select running processes from the PIDS list.
+function stop_some_nodes() {
+  local indices=("$@")
+  local killed_pids=()
+
+  echo "🚨 Stopping ${#indices[@]} selected node(s)..."
+
+  for i in "${indices[@]}"; do
+    # Get the PID from the global PIDS array using the index
+    local pid="${PIDS[$i]}"
+
+    # Check if PID exists (is not empty) and is currently running
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "Killing PIDS[$i] -> $pid"
+      # Use SIGTERM to gracefully shut down the node.
+      kill "$pid" 2>/dev/null || true
+      # Add to list of PIDs to wait for specifically
+      killed_pids+=("$pid")
+    else
+      echo "Skipping PIDS[$i] (PID: $pid) - Already dead or invalid."
+    fi
+  done
+
+  # Wait up to 60 seconds for all selected nodes to shut down.
+  elapsed=0
+  while (( elapsed < 60 )); do
+    still_running=false
+    for pid in "${killed_pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=true
+        break
+      fi
+    done
+
+    if ! $still_running; then
+      return 0 
+    else 
+      sleep 1
+      elapsed=$((elapsed + 1))
+    fi
+  done
+
+  log "❌ Not all nodes shut down within 60 seconds."
+  return 1
+}
+
 # Succeeds if the given string is an integer.
 function is_integer() {
   if [[ $1 =~ ^[0-9]+$ ]]; then
@@ -380,8 +441,9 @@ function wait_for_nodes() {
   local total_validators=$1
   local total_clients=$2
   local network_name=$3
+  # Default to 60s if not provided. 
+  local max_wait=${4:-60}
 
-  local max_wait=60
   local poll_interval=1
 
   SECONDS=0
@@ -401,7 +463,7 @@ function wait_for_nodes() {
     sleep $poll_interval
   done
 
-  log "❌ Nodes did not become ready within 60 seconds."
+  log "❌ Nodes did not become ready within $max_wait seconds."
   return 1
 }
 
@@ -417,6 +479,30 @@ function print_validator_logs() {
     echo "=== Validator $validator_index logs ==="
     tail -n 20 "$log_dir/validator-$validator_index.log"
   done
+}
+
+function wait_for_heights() {
+  local start_index=$1
+  local end_index=$2
+  local min_height=$3
+  local network_name=$4
+  local max_wait=$5
+  local poll_interval=$6
+
+  # Defaultv values
+  : "${max_wait:=300}"
+  : "${poll_interval:=5}"
+
+  SECONDS=0 
+  while (( SECONDS < max_wait )); do
+    if check_heights "$start_index" "$end_index" "$min_height" "$network_name" "$elapsed"; then
+      return 0
+    fi
+
+    # Continue waiting
+    sleep 5
+  done
+  return 1
 }
 
 function print_client_logs() {
