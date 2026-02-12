@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770922676484,
+  "lastUpdate": 1770925657991,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -8616,6 +8616,72 @@ window.BENCHMARK_DATA = {
             "value": 1.2,
             "unit": "blocks/s",
             "extra": "total_wait=208s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d724674ec82c7b32b17b8a488f81d90451439a5",
+          "message": "Merge pull request #4070 from shaaibu7/docs/add-readme-node-network\n\ndocs(node-network): add crate README",
+          "timestamp": "2026-02-12T11:19:19-08:00",
+          "tree_id": "2b914fe0f8bb973e43f3b745ce65beaaa7be0e9c",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7d724674ec82c7b32b17b8a488f81d90451439a5"
+        },
+        "date": 1770925656866,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.719906026714388,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=83.91746258735657, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 8056.145187758899,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=9.930307626724243, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1056.0857598328112,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.757514238357544, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.73,
+            "unit": "blocks/s",
+            "extra": "total_wait=144s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.187867,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=141, mean_speed=1.166312, max_speed=2.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.54,
+            "unit": "blocks/s",
+            "extra": "total_wait=162s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.19,
+            "unit": "blocks/s",
+            "extra": "total_wait=209s, target_height=250"
           }
         ]
       }
