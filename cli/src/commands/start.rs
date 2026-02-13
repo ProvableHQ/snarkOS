@@ -40,7 +40,7 @@ use snarkvm::{
         committee::{Committee, MIN_DELEGATOR_STAKE, MIN_VALIDATOR_STAKE},
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
-    prelude::{FromBytes, ToBits, ToBytes},
+    prelude::{FromBytes, Itertools, ToBits, ToBytes},
     synthesizer::VM,
     utilities::to_bytes_le,
 };
@@ -345,15 +345,16 @@ impl Start {
 
     /// Returns the CDN to prefetch initial blocks from, from the given configurations.
     fn parse_cdn<N: Network>(&self) -> Result<Option<http::Uri>> {
-        // Determine if the node type is not declared.
-        let is_no_node_type = !(self.validator || self.prover || self.client);
-
         // Disable CDN if:
         //  1. The node is in development mode.
         //  2. The user has explicitly disabled CDN.
         //  3. The node is a prover (no need to sync).
-        //  4. The node type is not declared (defaults to client) (no need to sync).
-        if self.dev.is_some() || self.nocdn || self.prover || is_no_node_type {
+        let no_cdn_reasons = [("--dev", self.dev.is_some()), ("--nocdn", self.nocdn), ("--prover", self.prover)]
+            .into_iter()
+            .filter_map(|(reason, flag_set)| flag_set.then_some(reason))
+            .join(" and ");
+        if !no_cdn_reasons.is_empty() {
+            info!("CDN disabled because the following flags are set: {no_cdn_reasons}.");
             Ok(None)
         }
         // Enable the CDN otherwise.
@@ -1240,9 +1241,9 @@ mod tests {
 
         // Default (Prod)
         let config = Start::try_parse_from(["snarkos"].iter()).unwrap();
-        assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
+        assert!(config.parse_cdn::<CurrentNetwork>()?.is_some());
         let config = Start::try_parse_from(["snarkos", "--cdn", "url"].iter()).unwrap();
-        assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
+        assert!(config.parse_cdn::<CurrentNetwork>()?.is_some());
         let config = Start::try_parse_from(["snarkos", "--nocdn"].iter()).unwrap();
         assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
 
