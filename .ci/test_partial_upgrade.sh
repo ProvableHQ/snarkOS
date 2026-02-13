@@ -229,7 +229,7 @@ for validator_index in $(seq 0 $((total_validators-1)) ); do
 done
 
 # Ensure the network is up and running.
-wait_for_nodes "$total_validators" 0
+wait_for_nodes "$total_validators" 0 "$network_name" 120
 
 # Block until the consensus version does not increase anymore.
 if ! wait_for_stable_consensus_version 0 "$network_name"; then

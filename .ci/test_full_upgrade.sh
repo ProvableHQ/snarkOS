@@ -346,7 +346,7 @@ for client_index in $(seq 0 $((total_clients-1))); do
   fi
 done
 
-wait_for_nodes "$total_validators" "$total_clients"
+wait_for_nodes "$total_validators" "$total_clients" "$network_name" 120
 wait_for_stable_consensus_version 0 "$network_name"
 
 for node_index in $(seq 0 $((total_validators+total_clients-1))); do
