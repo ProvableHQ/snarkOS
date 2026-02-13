@@ -64,7 +64,7 @@ use tokio::{sync::oneshot, task::JoinHandle};
 /// This is currently used by BFT.
 #[async_trait::async_trait]
 pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
-    async fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>) -> Result<()>;
+    async fn sync_dag_at_bootup(&self, certificates: Vec<BatchCertificate<N>>);
 
     /// Sends a new certificate.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
@@ -501,7 +501,7 @@ impl<N: Network> Sync<N> {
         // If a BFT sender was provided, send the certificates to the BFT.
         if let Some(cb) = self.sync_callback.get() {
             // Await the callback to continue.
-            cb.sync_dag_at_bootup(certificates).await.with_context(|| "Failed to update the DAG from sync")?;
+            cb.sync_dag_at_bootup(certificates).await;
         }
 
         self.block_sync.set_sync_height(block_height);
