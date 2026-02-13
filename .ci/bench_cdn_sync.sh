@@ -47,7 +47,7 @@ args=(
 
 # Spawn the client that will sync the ledger.
 # Use the same CPU cores as in the other benchmarks, so the numbers are comparable.
-$TASKSET2 stdbuf -oL -eL snarkos start --client "${args[@]}" > >(awk -v prefix="[client-0] " '{print prefix $0}') 2>&1 &
+run_with_prefix "client-0" $TASKSET2 snarkos start --client "${args[@]}"
 PIDS[0]=$!
 
 wait_for_nodes 0 1 "$network_name"

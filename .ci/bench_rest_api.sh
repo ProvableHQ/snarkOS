@@ -47,8 +47,7 @@ common_flags=(
 )
 
 # The node that has the ledger (runs on the first two cores)
-$TASKSET1 stdbuf -oL -eL snarkos start --dev 0 --client "${common_flags[@]}" --logfile="$log_dir/client-0.log" \
-  > >(awk -v prefix="[client-0] " '{print prefix $0}') 2>&1 &
+run_with_prefix "client-0" $TASKSET1 snarkos start --dev 0 --client "${common_flags[@]}" --logfile="$log_dir/client-0.log"
 PIDS[0]=$!
 
 # Block until node is running.

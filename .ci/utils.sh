@@ -41,6 +41,19 @@ function check_node_stopped() {
 }
 
 ########################################
+# Log prefixing
+########################################
+
+# Runs a command in the background with stdout/stderr prefixed by "[label] ".
+# Usage: run_with_prefix <label> <command...>
+# After calling, $! holds the PID of the backgrounded command.
+function run_with_prefix() {
+  local label="$1"
+  shift
+  stdbuf -oL -eL "$@" > >(awk -v prefix="[$label] " '{print prefix $0}') 2>&1 &
+}
+
+########################################
 # Basic utility functions
 ########################################
 
