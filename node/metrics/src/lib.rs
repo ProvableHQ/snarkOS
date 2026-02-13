@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod names;
+pub mod names;
 
 // Expose the names at the crate level for easy access.
 pub use names::*;
@@ -63,6 +63,9 @@ pub fn initialize_metrics(ip: Option<SocketAddr>) {
     for name in crate::names::HISTOGRAM_NAMES {
         register_histogram(name);
     }
+
+    // Set the build information metric
+    set_build_info();
 }
 
 pub fn update_block_metrics<N: Network>(block: &Block<N>) {
@@ -159,4 +162,24 @@ pub fn add_transmission_latency_metric<N: Network>(
     for key in keys_to_remove {
         transmissions_tracker.remove(&key);
     }
+}
+
+// Include the generated build information
+mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
+/// Sets the build information metric with version details as labels.
+/// The resulting metric will show as:
+/// snarkos_build_info{version="4.2.1",git_commit="abc123",git_branch="main",features="cuda,metrics"} 1
+pub fn set_build_info() {
+    let version = built_info::PKG_VERSION;
+    let git_commit = built_info::GIT_COMMIT_HASH.unwrap_or("unknown");
+    let git_branch = built_info::GIT_HEAD_REF.unwrap_or("unknown");
+    let features = built_info::FEATURES_LOWERCASE_STR.replace(' ', "");
+
+    ::metrics::gauge!(build::BUILD_INFO, "version" => version.to_string()).set(1.0);
+    ::metrics::gauge!(build::BUILD_INFO, "git_commit" => git_commit.to_string()).set(1.0);
+    ::metrics::gauge!(build::BUILD_INFO, "git_branch" => git_branch.to_string()).set(1.0);
+    ::metrics::gauge!(build::BUILD_INFO, "features" => features).set(1.0);
 }

@@ -4846,7 +4846,9 @@ dependencies = [
 name = "snarkos-node-metrics"
 version = "4.4.0"
 dependencies = [
+ "built",
  "locktick",
+ "metrics",
  "metrics-exporter-prometheus",
  "parking_lot",
  "rayon",

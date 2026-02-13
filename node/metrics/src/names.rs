@@ -99,3 +99,7 @@ pub mod router {
 pub mod tcp {
     pub const TCP_TASKS: &str = "snarkos_tcp_tasks_total";
 }
+
+pub mod build {
+    pub const BUILD_INFO: &str = "snarkos_build_info";
+}
