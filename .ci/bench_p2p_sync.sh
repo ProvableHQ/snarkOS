@@ -105,7 +105,7 @@ common_flags=(
 
 # The client that has the ledger
 # (runs on the first two cores)
-run_with_prefix "client-0" $TASKSET1 snarkos start "--dev=$num_validators" --client "${common_flags[@]}" \
+run_with_prefix "client-0" "$TASKSET1" snarkos start "--dev=$num_validators" --client "${common_flags[@]}" \
   "--logfile=$log_dir/client-0.log" "--storage=.ledger-$network_id-0" \
   "--node=127.0.0.1:4130" "--rest=127.0.0.1:3030"
 PIDS[0]=$!
@@ -121,7 +121,7 @@ for client_index in $(seq 1 "$num_clients"); do
   # Ensure there are no old ledger files and the node syncs from scratch
   snarkos clean "--dev=$node_index" "--network=$network_id" "--path=.ledger-$network_id-$client_index" || true
 
-  run_with_prefix "$name" $TASKSET2 snarkos start "--dev=$node_index" --client \
+  run_with_prefix "$name" "$TASKSET2" snarkos start "--dev=$node_index" --client \
     "${common_flags[@]}" "--peers=127.0.0.1:$prev_port" "--node=$node_addr" \
     "--rest=127.0.0.1:$((3030+client_index))" \
     "--logfile=$log_dir/$name.log" "--storage=.ledger-$network_id-$client_index"
