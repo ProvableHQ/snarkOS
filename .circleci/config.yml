@@ -810,6 +810,7 @@ workflows:
           filters:
             branches:
               only:
+                - ci/devnet-fixes 
                 - canary
                 - testnet
                 - mainnet
