@@ -39,9 +39,10 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
   snarkos clean --dev $validator_index --network=$network_id
 
   log_file="$log_dir/validator-$validator_index.log"
-  snarkos start --nodisplay --network $network_id --dev $validator_index --dev-num-validators $total_validators \
+  stdbuf -oL -eL snarkos start --nodisplay --network $network_id --dev $validator_index --dev-num-validators $total_validators \
     --validator --jwt-secret $jwt_secret --jwt-timestamp $jwt_ts --verbosity $log_verbosity "--logfile=$log_file" \
-    "--node-data-storage=/tmp/node_data_$validator_index" "--ledger-storage=/tmp/ledger_$validator_index" &
+    "--node-data-storage=/tmp/node_data_$validator_index" "--ledger-storage=/tmp/ledger_$validator_index" \
+    > >(awk -v prefix="[validator-$validator_index] " '{print prefix $0}') 2>&1 &
   PIDS[validator_index]=$!
   log "Started validator $validator_index with PID ${PIDS[$validator_index]}"
   # Add 1-second delay between starting nodes to avoid hitting rate limits
@@ -113,9 +114,10 @@ while (( total_wait < 600 )); do  # 10 minutes max
         # Restart using the checkpoint
         suffix="${validator_index}_$((num_checkpoints-1))"
         log_file="$log_dir/validator-$validator_index.log"
-        snarkos start --nodisplay "--network=$network_id" "--dev=$validator_index" "--dev-num-validators=$total_validators" \
+        stdbuf -oL -eL snarkos start --nodisplay "--network=$network_id" "--dev=$validator_index" "--dev-num-validators=$total_validators" \
           --validator "--jwt-secret=$jwt_secret" "--jwt-timestamp=$jwt_ts" --verbosity $log_verbosity "--logfile=$log_file" \
-          "--node-data-storage=/tmp/node_data_$validator_index" "--ledger-storage=/tmp/ledger_checkpoint_$suffix" &
+          "--node-data-storage=/tmp/node_data_$validator_index" "--ledger-storage=/tmp/ledger_checkpoint_$suffix" \
+          > >(awk -v prefix="[validator-$validator_index] " '{print prefix $0}') 2>&1 &
         PIDS[validator_index]=$!
         log "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
         # Add 1-second delay between starting nodes to avoid hitting rate limits

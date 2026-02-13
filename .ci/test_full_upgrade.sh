@@ -114,7 +114,8 @@ function start_node() {
     heights_env="$CONSENSUS_VERSION_HEIGHTS_CURRENT"
   fi
 
-  CONSENSUS_VERSION_HEIGHTS="$heights_env" "$bin" start "${flags[@]}" &
+  CONSENSUS_VERSION_HEIGHTS="$heights_env" stdbuf -oL -eL "$bin" start "${flags[@]}" \
+    > >(awk -v prefix="[$role-$node_index] " '{print prefix $0}') 2>&1 &
   PIDS[node_index]=$!
   log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin") with heights=$heights_env"
 }

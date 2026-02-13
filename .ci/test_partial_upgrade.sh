@@ -133,7 +133,7 @@ function start_node() {
     flags+=( --client "--logfile=$log_file" )
   fi
 
-  "$bin" start "${flags[@]}" &
+  stdbuf -oL -eL "$bin" start "${flags[@]}" > >(awk -v prefix="[$role-$node_index] " '{print prefix $0}') 2>&1 &
   PIDS[node_index]=$!
   log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin")"
 }

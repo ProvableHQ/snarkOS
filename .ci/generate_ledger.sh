@@ -58,11 +58,13 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
-    snarkos start "${common_flags[@]}" --dev "$validator_index" \
-      --validator --logfile "$log_file" --metrics --no-dev-txs &
+    stdbuf -oL -eL snarkos start "${common_flags[@]}" --dev "$validator_index" \
+      --validator --logfile "$log_file" --metrics --no-dev-txs \
+      > >(awk -v prefix="[validator-$validator_index] " '{print prefix $0}') 2>&1 &
   else
-    snarkos start "${common_flags[@]}" --dev "$validator_index" \
-      --validator --logfile "$log_file" &
+    stdbuf -oL -eL snarkos start "${common_flags[@]}" --dev "$validator_index" \
+      --validator --logfile "$log_file" \
+      > >(awk -v prefix="[validator-$validator_index] " '{print prefix $0}') 2>&1 &
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"

@@ -63,12 +63,13 @@ for validator_index in $(seq 0 $((total_validators-1))); do
 
   log_file="$log_dir/validator-$validator_index.log"
   if (( validator_index == 0 )); then
-    snarkos start "${common_flags[@]}" "--dev=$validator_index" \
+    stdbuf -oL -eL snarkos start "${common_flags[@]}" "--dev=$validator_index" \
       --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+validator_index))" \
-      --metrics --no-dev-txs &
+      --metrics --no-dev-txs > >(awk -v prefix="[validator-$validator_index] " '{print prefix $0}') 2>&1 &
   else
-    snarkos start "${common_flags[@]}" "--dev=$validator_index" \
-      --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+validator_index))" &
+    stdbuf -oL -eL snarkos start "${common_flags[@]}" "--dev=$validator_index" \
+      --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+validator_index))" \
+      > >(awk -v prefix="[validator-$validator_index] " '{print prefix $0}') 2>&1 &
   fi
   PIDS[validator_index]=$!
   log "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -85,8 +86,9 @@ for client_index in $(seq 0 $((total_clients-1))); do
   snarkos clean "--dev=$node_index" "--network=$network_id"
 
   log_file="$log_dir/client-$client_index.log"
-  snarkos start "${common_flags[@]}" "--dev=$node_index" \
-    --client "--logfile=$log_file" "--rest=127.0.0.1:$((3030+node_index))" &
+  stdbuf -oL -eL snarkos start "${common_flags[@]}" "--dev=$node_index" \
+    --client "--logfile=$log_file" "--rest=127.0.0.1:$((3030+node_index))" \
+    > >(awk -v prefix="[client-$client_index] " '{print prefix $0}') 2>&1 &
   PIDS[node_index]=$!
   log "Started client $client_index with PID ${PIDS[$node_index]}"
   # Add 1-second delay between starting nodes to avoid hitting rate limits
