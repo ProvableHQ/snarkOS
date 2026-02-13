@@ -40,7 +40,7 @@ use snarkvm::{
         committee::{Committee, MIN_DELEGATOR_STAKE, MIN_VALIDATOR_STAKE},
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
-    prelude::{FromBytes, ToBits, ToBytes},
+    prelude::{FromBytes, Itertools, ToBits, ToBytes},
     synthesizer::VM,
     utilities::to_bytes_le,
 };
@@ -349,7 +349,12 @@ impl Start {
         //  1. The node is in development mode.
         //  2. The user has explicitly disabled CDN.
         //  3. The node is a prover (no need to sync).
-        if self.dev.is_some() || self.nocdn || self.prover {
+        let no_cdn_reasons = [("--dev", self.dev.is_some()), ("--nocdn", self.nocdn), ("--prover", self.prover)]
+            .into_iter()
+            .filter_map(|(reason, flag_set)| flag_set.then_some(reason))
+            .join(" and ");
+        if !no_cdn_reasons.is_empty() {
+            info!("CDN disabled because the following flags are set: {no_cdn_reasons}.");
             Ok(None)
         }
         // Enable the CDN otherwise.
