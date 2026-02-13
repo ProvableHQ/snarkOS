@@ -35,6 +35,9 @@ use rayon::prelude::*;
 
 use version::VersionInfo;
 
+#[cfg(feature = "history")]
+type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
+
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
 where
@@ -905,19 +908,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok(ErasedJson::pretty(()))
     }
 
-    /// GET /{network}/block/{blockHeight}/history/{mapping}
+    /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
     #[cfg(feature = "history")]
     pub(crate) async fn get_history(
         State(rest): State<Self>,
-        Path((height, mapping)): Path<(u32, snarkvm::synthesizer::MappingName)>,
+        Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         // Retrieve the history for the given block height and variant.
-        let history = snarkvm::synthesizer::History::new(N::ID, rest.ledger.vm().finalize_store().storage_mode());
-        let result = history.load_mapping(height, mapping).map_err(|err| {
-            RestError::not_found(err.context(format!("Could not load mapping '{mapping}' from block '{height}'")))
-        })?;
+        let value = rest.ledger.vm().finalize_store().get_historical_mapping_value(program_id, mapping_name, mapping_key.clone(), height)
+            .map_err(|err| {
+                RestError::not_found(err.context(format!("Could not load mapping '{mapping_name}/{mapping_key}' for program '{program_id}' from block '{height}'")))
+            })?;
 
-        Ok((StatusCode::OK, [(CONTENT_TYPE, "application/json")], result))
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
 
     /// GET /{network}/validators/participation
