@@ -1,6 +1,6 @@
 # CI overview
 
-snarkOD makes use of [CircleCI](.circleci) and [Github Actions](.github/workflows).
+snarkOS makes use of [CircleCI](.circleci) and [Github Actions](.github/workflows).
 
 When a PR is opened from a feature branch, several CircleCI workflows are
 triggered. Tests are spread across workflows for readability in Github's UI, and
