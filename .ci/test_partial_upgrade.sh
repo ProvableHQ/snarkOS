@@ -133,7 +133,7 @@ function start_node() {
     flags+=( --client "--logfile=$log_file" )
   fi
 
-  "$bin" start "${flags[@]}" &
+  run_with_prefix "$role-$node_index" "$bin" start "${flags[@]}"
   PIDS[node_index]=$!
   log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin")"
 }

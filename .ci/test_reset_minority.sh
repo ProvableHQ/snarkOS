@@ -51,7 +51,7 @@ common_flags=(
 for validator_index in $(seq 0 $((total_validators-1))); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"
  
-  snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log" & 
+  run_with_prefix "validator-$validator_index" snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log"
   PIDS[validator_index]=$!
 
   log "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -85,7 +85,7 @@ for iter in $(seq 1 "$num_resets"); do
     # Wait until the cleanup concludes
     sleep 1
     # Restart
-    snarkos start "${common_flags[@]}" "--dev=$target_index" --validator --logfile="$log_dir/validator-$target_index.log" &
+    run_with_prefix "validator-$target_index" snarkos start "${common_flags[@]}" "--dev=$target_index" --validator --logfile="$log_dir/validator-$target_index.log"
     PIDS[target_index]=$!
     log "Restarted a fresh validator $target_index with PID ${PIDS[$target_index]}"
     # Add 1-second delay between starting nodes to avoid hitting rate limits

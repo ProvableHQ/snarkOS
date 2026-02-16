@@ -105,9 +105,9 @@ common_flags=(
 
 # The client that has the ledger
 # (runs on the first two cores)
-$TASKSET1 snarkos start "--dev=$num_validators" --client "${common_flags[@]}" \
+run_with_prefix "client-0" "$TASKSET1" snarkos start "--dev=$num_validators" --client "${common_flags[@]}" \
   "--logfile=$log_dir/client-0.log" "--storage=.ledger-$network_id-0" \
-  "--node=127.0.0.1:4130" "--rest=127.0.0.1:3030" &
+  "--node=127.0.0.1:4130" "--rest=127.0.0.1:3030"
 PIDS[0]=$!
 
 # Spawn the clients that will sync the ledger
@@ -121,10 +121,10 @@ for client_index in $(seq 1 "$num_clients"); do
   # Ensure there are no old ledger files and the node syncs from scratch
   snarkos clean "--dev=$node_index" "--network=$network_id" "--path=.ledger-$network_id-$client_index" || true
 
-  $TASKSET2 snarkos start "--dev=$node_index" --client \
+  run_with_prefix "$name" "$TASKSET2" snarkos start "--dev=$node_index" --client \
     "${common_flags[@]}" "--peers=127.0.0.1:$prev_port" "--node=$node_addr" \
     "--rest=127.0.0.1:$((3030+client_index))" \
-    "--logfile=$log_dir/$name.log" "--storage=.ledger-$network_id-$client_index" &
+    "--logfile=$log_dir/$name.log" "--storage=.ledger-$network_id-$client_index"
   PIDS[client_index]=$!
 
   # Add 1-second delay between starting nodes to avoid hitting rate limits

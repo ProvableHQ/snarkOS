@@ -59,8 +59,8 @@ common_flags=(
 )
 
 # The validator that has the ledger to by synced from.
-$TASKSET1 snarkos start --dev 0 --validator "${common_flags[@]}" \
-  --logfile="$log_dir/validator-0.log" &
+run_with_prefix "validator-0" "$TASKSET1" snarkos start --dev 0 --validator "${common_flags[@]}" \
+  --logfile="$log_dir/validator-0.log"
 PIDS[0]=$!
 
 # Stores the list of all validators.
@@ -73,9 +73,9 @@ for node_index in $(seq 1 "$num_nodes"); do
   # Ensure there are no old ledger files and the node syncs from scratch
   snarkos clean "--dev=$node_index" "--network=$network_id" || true
 
-  $TASKSET2 snarkos start "--dev=$node_index" --validator \
+  run_with_prefix "$name" "$TASKSET2" snarkos start "--dev=$node_index" --validator \
     "${common_flags[@]}" "--validators=$validators" \
-    "--logfile=$log_dir/$name.log" &
+    "--logfile=$log_dir/$name.log"
   PIDS[node_index]=$!
 
   # Add the validators BFT address to the validators list.
