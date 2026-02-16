@@ -123,6 +123,8 @@ impl CdnBlockSync {
         // Load the blocks from the CDN into the ledger.
         let ledger_clone = ledger.clone();
         let result = load_blocks(&base_url, start_height, None, stoppable, move |block: Block<N>| {
+            let rng = &mut rand::thread_rng();
+            ledger_clone.check_next_block(&block, rng)?;
             ledger_clone
                 .advance_to_next_block(&block)
                 .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))
