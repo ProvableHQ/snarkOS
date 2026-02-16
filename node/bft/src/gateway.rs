@@ -66,9 +66,9 @@ use snarkvm::{
     console::prelude::*,
     ledger::{
         committee::Committee,
-        narwhal::{BatchHeader, Data},
+        narwhal::{BatchHeader, Data, Transmission, TransmissionID},
     },
-    prelude::{Address, Field},
+    prelude::{Address, Field, Transaction},
 };
 
 use colored::Colorize;
@@ -738,6 +738,35 @@ impl<N: Network> Gateway<N> {
                 }
                 Ok(true)
             }
+            Event::UnconfirmedTransaction(event) => {
+                // Calculate the transmission checksum.
+                let checksum = event.transaction.to_checksum::<N>()?;
+                // Perform the deferred non-blocking deserialization of the transaction.
+                let transaction = match event.transaction.deserialize().await {
+                    Ok(transaction) => transaction,
+                    Err(error) => bail!("[UnconfirmedTransaction] {error}"),
+                };
+                // Construct the transmission ID.
+                let transmission_id = TransmissionID::Transaction(transaction.id(), checksum);
+                // Construct the transmission.
+                let transmission = Transmission::Transaction(Data::Object(transaction));
+
+                // Determine the worker ID.
+                let Ok(worker_id) = assign_to_worker(transmission_id, self.num_workers()) else {
+                    warn!("{CONTEXT} Unable to assign transmission ID '{}' to a worker", transmission_id);
+                    return Ok(true);
+                };
+                // Send the unconfirmed transmission to the worker.
+                if let Some(sender) = self.get_worker_sender(worker_id) {
+                    // Send the unconfirmed transmission to the worker.
+                    if let Err(error) =
+                        sender.tx_unconfirmed_transmission.send((peer_ip, transmission_id, transmission)).await
+                    {
+                        warn!("{CONTEXT} Unable to send unconfirmed transmission to worker {worker_id} - {error}");
+                    }
+                }
+                Ok(true)
+            }
             Event::ValidatorsRequest(_) => {
                 let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
                 connected_peers.shuffle(&mut rand::thread_rng());
@@ -1170,6 +1199,12 @@ impl<N: Network> Gateway<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.tcp.banned_peers().remove_old_bans(IP_BAN_TIME_IN_SECS);
+    }
+
+    /// Broadcast an unconfirmed transaction so other validators can cache it.
+    pub fn broadcast_unconfirmed_transaction(&self, transaction: Data<Transaction<N>>) {
+        let event = Event::UnconfirmedTransaction(crate::events::UnconfirmedTransaction { transaction });
+        Transport::broadcast(self, event);
     }
 
     // Update the dynamic validator whitelist.
@@ -1641,7 +1676,11 @@ impl<N: Network> Gateway<N> {
     fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
         let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
-        log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        if consensus_version >= ConsensusVersion::V12 {
+            log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
+        }
 
         let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 

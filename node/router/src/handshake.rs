@@ -376,7 +376,11 @@ impl<N: Network> Router<N> {
     ) -> Option<DisconnectReason> {
         // Retrieve the components of the challenge request.
         let &ChallengeRequest { version, listener_port: _, node_type, address, nonce: _, ref snarkos_sha } = message;
-        log_repo_sha_comparison(peer_addr, snarkos_sha, Self::OWNER);
+        let current_block_height = self.ledger.latest_block_height();
+        let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
+        if consensus_version >= ConsensusVersion::V12 {
+            log_repo_sha_comparison(peer_addr, snarkos_sha, Self::OWNER);
+        }
 
         // Ensure the message protocol version is not outdated.
         if !self.is_valid_message_version(version) {

@@ -52,10 +52,8 @@ pub struct BFTPersistentStorage<N: Network> {
     transmissions: DataMap<TransmissionID<N>, (Transmission<N>, IndexSet<Field<N>>)>,
     /// The map of `aborted transmission ID` to `certificate IDs` entries.
     aborted_transmission_ids: DataMap<TransmissionID<N>, IndexSet<Field<N>>>,
-    /// The LRU cache for `transmission ID` to `(transmission, certificate IDs)` entries that are part of the persistent storage.
-    cache_transmissions: Mutex<LruCache<TransmissionID<N>, (Transmission<N>, IndexSet<Field<N>>)>>,
-    /// The LRU cache for `aborted transmission ID` to `certificate IDs` entries that are part of the persistent storage.
-    cache_aborted_transmission_ids: Mutex<LruCache<TransmissionID<N>, IndexSet<Field<N>>>>,
+    /// The LRU cache for `transmission ID` to `transmission` entries that are part of the persistent storage.
+    cache_transmissions: Mutex<LruCache<TransmissionID<N>, Transmission<N>>>,
 }
 
 impl<N: Network> BFTPersistentStorage<N> {
@@ -74,7 +72,6 @@ impl<N: Network> BFTPersistentStorage<N> {
                 MapID::BFT(BFTMap::AbortedTransmissionIDs),
             )?,
             cache_transmissions: Mutex::new(LruCache::new(capacity)),
-            cache_aborted_transmission_ids: Mutex::new(LruCache::new(capacity)),
         })
     }
 }
@@ -102,7 +99,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
     /// If the transmission ID does not exist in storage, `None` is returned.
     fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>> {
         // Try to get the transmission from the cache first.
-        if let Some((transmission, _)) = self.cache_transmissions.lock().get_mut(&transmission_id) {
+        if let Some(transmission) = self.cache_transmissions.lock().get(&transmission_id) {
             return Some(transmission.clone());
         }
 
@@ -150,6 +147,13 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         Ok(missing_transmissions)
     }
 
+    /// Caches the given transmission in storage.
+    ///
+    /// Returns whether the transaction is already present in the cache.
+    fn cache_transmission(&self, transmission_id: TransmissionID<N>, transmission: Transmission<N>) -> bool {
+        self.cache_transmissions.lock().put(transmission_id, transmission).is_some()
+    }
+
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
     fn insert_transmissions(
         &self,
@@ -195,7 +199,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 error!("Failed to insert transmission {transmission_id} into storage - {e}");
             }
             // Insert the transmission into the cache.
-            self.cache_transmissions.lock().put(transmission_id, (transmission, certificate_ids));
+            self.cache_transmissions.lock().put(transmission_id, transmission);
         }
 
         // Next, handle the aborted transmission IDs.
@@ -219,8 +223,6 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
             if let Err(e) = self.aborted_transmission_ids.insert(aborted_transmission_id, certificate_ids.clone()) {
                 error!("Failed to insert aborted transmission ID {aborted_transmission_id} into storage - {e}");
             }
-            // Insert the certificate IDs into the cache.
-            self.cache_aborted_transmission_ids.lock().put(aborted_transmission_id, certificate_ids);
         }
     }
 
