@@ -68,6 +68,11 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
+        // Initialize the block height metric.
+        #[cfg(feature = "metrics")]
+        {
+            metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        }
         Self { ledger, latest_leader: Default::default(), stoppable }
     }
 }
