@@ -397,7 +397,10 @@ impl<N: Network> Gateway<N> {
         match self.resolve_to_aleo_addr(ip) {
             // Determine if the peer IP is an authorized validator.
             Some(address) => self.is_authorized_validator_address(address),
-            None => false,
+            None => {
+                warn!("{CONTEXT} Could not resolve the Aleo address for '{ip}'");
+                false
+            }
         }
     }
 
