@@ -47,7 +47,8 @@ common_flags=(
 )
 
 # The node that has the ledger (runs on the first two cores)
-run_with_prefix "client-0" "$TASKSET1" snarkos start --dev 0 --client "${common_flags[@]}" --logfile="$log_dir/client-0.log"
+# shellcheck disable=SC2086
+run_with_prefix "client-0" $TASKSET1 snarkos start --dev 0 --client "${common_flags[@]}" --logfile="$log_dir/client-0.log"
 PIDS[0]=$!
 
 # Block until node is running.
