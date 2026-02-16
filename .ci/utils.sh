@@ -181,10 +181,10 @@ function init_log_dir() {
 
 # Write a log message to the console and "ci-runner.log".
 function log() {
-  msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+  msg="$(date -u +"%Y-%m-%dT%H:%M:%SZ") $*"
   echo "$msg" >> "$log_dir/ci-runner.log"
   # Print to message to stderr so it is always visible.
-  >&2 echo "$msg"
+  >&2 echo "[ci-runner] $msg"
 }
 
 ###########################################
