@@ -54,6 +54,7 @@ serial = [
   "snarkvm/serial",
   "snarkos-node-bft/serial"
 ]
+test_consensus_tracking = [ "snarkos-node-bft/test_consensus_tracking", "snarkos-node-consensus/test_consensus_tracking" ] 
 test = []
 
 [dependencies.aleo-std]

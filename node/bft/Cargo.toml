@@ -46,6 +46,7 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
+test_consensus_tracking = [ ]
 serial = [
   "snarkos-node-metrics/serial",
   "snarkos-node-bft-ledger-service/serial"
@@ -97,6 +98,16 @@ workspace = true
 
 [dependencies.rayon]
 workspace = true
+
+[dependencies.serde]
+workspace = true
+features = [ "derive" ]
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.once_cell]
+version = "1.0"
 
 [dependencies.sha2]
 version = "0.10"

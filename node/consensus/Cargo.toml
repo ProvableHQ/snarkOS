@@ -29,6 +29,7 @@ locktick = [
 metrics = [ "dep:snarkos-node-metrics" ]
 telemetry = [ "snarkos-node-bft/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
+test_consensus_tracking = [ ] 
 serial = [ 
   "snarkos-node-bft-ledger-service/serial",
   "snarkos-node-metrics/serial",

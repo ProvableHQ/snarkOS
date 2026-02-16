@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature = "test_consensus_tracking")]
+use crate::helpers::{ConsensusStage, SubdagStage, record_event, start_subdag_stage};
 use crate::{
     MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
     Primary,
@@ -508,6 +510,9 @@ impl<N: Network> BFT<N> {
         // Insert the certificate into the DAG.
         self.dag.write().insert(certificate);
 
+        #[cfg(feature = "test_consensus_tracking")]
+        record_event(certificate_round, ConsensusStage::CertificateAdded);
+
         // ### Second, determine if a new leader certificate can be committed. ###
         let commit_round = certificate_round.saturating_sub(1);
 
@@ -598,6 +603,9 @@ impl<N: Network> BFT<N> {
 
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
+
+        #[cfg(feature = "test_consensus_tracking")]
+        start_subdag_stage(latest_leader_round.saturating_sub(2), latest_leader_round, SubdagStage::SubdagProcessing);
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];

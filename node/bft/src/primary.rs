@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature = "test_consensus_tracking")]
+use crate::helpers::{ConsensusStage, record_event};
 use crate::{
     Gateway,
     MAX_BATCH_DELAY_IN_MS,
@@ -703,6 +705,10 @@ impl<N: Network> Primary<N> {
                 error!("{}", flatten_error(err.context("Failed to reinsert transmissions")));
             }
         })?;
+
+        #[cfg(feature = "test_consensus_tracking")]
+        record_event(round, ConsensusStage::ProposalCreated);
+
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
         // Set the timestamp of the latest proposed batch.
@@ -769,6 +775,9 @@ impl<N: Network> Primary<N> {
                 batch_header.committee_id()
             );
         }
+
+        #[cfg(feature = "test_consensus_tracking")]
+        record_event(batch_round, ConsensusStage::ProposalSeen);
 
         // Retrieve the cached round and batch ID for this validator.
         if let Some((signed_round, signed_batch_id, signature)) =

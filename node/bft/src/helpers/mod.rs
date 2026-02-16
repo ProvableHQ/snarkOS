@@ -51,6 +51,11 @@ pub use telemetry::*;
 pub mod timestamp;
 pub use timestamp::*;
 
+#[cfg(feature = "test_consensus_tracking")]
+pub mod timing;
+#[cfg(feature = "test_consensus_tracking")]
+pub use timing::*;
+
 /// Formats an ID into a truncated identifier (for logging purposes).
 pub fn fmt_id(id: impl ToString) -> String {
     let id = id.to_string();
