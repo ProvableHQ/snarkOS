@@ -760,6 +760,10 @@ impl<N: Network> Primary<N> {
         }
 
         // Ensure that the batch proposal's committee ID matches the expected committee ID.
+        // This may happen when the network forks. A transaction referencing a
+        // state root from one side of the fork will be aborted on the other
+        // side of the fork. This leads to a different view of stake and
+        // therefore a different view of the committee ID.
         let expected_committee_id = self.ledger.get_committee_lookback_for_round(batch_round)?.id();
         if expected_committee_id != batch_header.committee_id() {
             // Proceed to disconnect the validator.
