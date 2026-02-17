@@ -24,8 +24,8 @@ num_resets=$5
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
-: "${reset_interval:=10}"
-: "${final_height:=20}"
+: "${reset_interval:=20}"
+: "${final_height:=250}"
 : "${num_resets:=3}"
 
 max_faulty=$(( (total_validators - 1) / 3 ))
@@ -37,7 +37,8 @@ network_name=$(get_network_name "$network_id")
 verbosity=0
 
 # The time that is used to determine the total timeout for the test.
-max_wait_per_block=10
+# Set this higher than the interval for the minority test, as more nodes need to sync.
+max_wait_per_block=20
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
@@ -50,6 +51,8 @@ common_flags=(
   --nodisplay --nobanner --noupdater "--network=$network_id" "--verbosity=$verbosity"
   "--dev-num-validators=$total_validators"
 )
+
+start=$(now)
 
 # Start all validator nodes in the background
 for validator_index in $(seq 0 $((total_validators-1))); do
@@ -99,8 +102,8 @@ for iter in $(seq 1 "$num_resets"); do
   done
 done
 
-if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" "$max_wait"; then
-  log "SUCCESS!"
+if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
+  log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
   exit 0
 else
   log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
