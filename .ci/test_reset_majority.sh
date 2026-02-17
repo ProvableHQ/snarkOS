@@ -54,7 +54,7 @@ common_flags=(
 
 # Start all validator nodes in the background
 for validator_index in $(seq 0 $((total_validators-1))); do
-  snarkos clean "--dev=$validator_index" "--network=$network_id"
+  snarkos clean "--dev=$validator_index" "--network=$network_id" --keep-node-data
 
   run_with_prefix "validator-$validator_index" snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log"
   PIDS[validator_index]=$!
