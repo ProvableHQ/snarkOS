@@ -666,7 +666,7 @@ impl<N: Network> BlockSync<N> {
     /// This function does **not** check
     /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: &BlockLocators<N>) -> Result<()> {
-        // Update the locators entry for the given peer IP.
+        // -- First, update the locators entry for the given peer IP. --
         // We perform this update atomically, and drop the lock as soon as we are done with the update.
         match self.locators.write().entry(peer_ip) {
             hash_map::Entry::Occupied(mut e) => {
@@ -688,7 +688,7 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Compute the common ancestor with this node.
+        // -- Second, compute the common ancestor with this node. --
         let new_local_ancestor = {
             let mut ancestor = 0;
             // Attention: Please do not optimize this loop, as it performs fork-detection. In addition,
@@ -699,7 +699,7 @@ impl<N: Network> BlockSync<N> {
                     match ledger_hash == hash {
                         true => ancestor = height,
                         false => {
-                            debug!("Detected fork with peer \"{peer_ip}\" at height {height}");
+                            warn!("Detected fork between this node and peer '{peer_ip}' at height {height}");
                             break;
                         }
                     }
@@ -708,38 +708,52 @@ impl<N: Network> BlockSync<N> {
             ancestor
         };
 
-        // Compute the common ancestor with every other peer.
+        // -- Third, compute the common ancestor with every other peer, and determine if this peer is forked from others. --
         // Do not hold write lock to `common_ancestors` here, because this can take a while with many peers.
-        let ancestor_updates: Vec<_> = self
-            .locators
-            .read()
-            .iter()
-            .filter_map(|(other_ip, other_locators)| {
-                // Skip if the other peer is the given peer.
-                if other_ip == &peer_ip {
-                    return None;
-                }
-                // Compute the common ancestor with the other peer.
-                let mut ancestor = 0;
-                for (height, hash) in other_locators.clone().into_iter() {
-                    if let Some(expected_hash) = locators.get_hash(height) {
-                        match expected_hash == hash {
-                            true => ancestor = height,
-                            false => {
-                                debug!(
-                                    "Detected fork between peers \"{other_ip}\" and \"{peer_ip}\" at height {height}"
-                                );
-                                break;
+        let ancestor_updates = {
+            let all_locators = self.locators.read();
+            let mut fork_count = 0;
+            let mut earliest_fork_height = u32::MAX;
+
+            let updates: Vec<_> = all_locators.iter()
+                .filter_map(|(other_ip, other_locators)| {
+                    // Skip if the other peer is the given peer.
+                    if other_ip == &peer_ip {
+                        return None;
+                    }
+                    // Compute the common ancestor with the other peer.
+                    let mut ancestor = 0;
+                    for (height, hash) in other_locators.clone().into_iter() {
+                        if let Some(expected_hash) = locators.get_hash(height) {
+                            match expected_hash == hash {
+                                true => ancestor = height,
+                                false => {
+                                    debug!(
+                                        "Detected fork between peers \"{other_ip}\" and \"{peer_ip}\" at height {height}"
+                                    );
+                                    fork_count += 1;
+                                    earliest_fork_height = earliest_fork_height.min(height);
+                                    break;
+                                }
                             }
                         }
                     }
-                }
 
-                Some((PeerPair(peer_ip, *other_ip), ancestor))
-            })
-            .collect();
+                    Some((PeerPair(peer_ip, *other_ip), ancestor))
+                })
+                .collect();
 
-        // Update the map of common ancestors.
+            // If most other peers differ from this one, the peer most likely forked.
+            if fork_count > all_locators.len() {
+                warn!(
+                    "Detected fork between peer '{peer_ip}' and {fork_count} other peers starting at height {earliest_fork_height}"
+                );
+            }
+
+            updates
+        };
+
+        // -- Forth, update the map of common ancestors. --
         // Scope the lock, so it is dropped before locking `sync_state`.
         {
             let mut common_ancestors = self.common_ancestors.write();
@@ -750,14 +764,14 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Update sync state, because the greatest peer height may have decreased.
+        // -- Finally, update sync state and notify the sync loop about the change. --
         if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
         } else {
             error!("Got new block locators but greatest peer height is zero.");
         }
-
-        // Notify the sync loop that something changed.
+        // Even if the greatest peer height did not change, we still received new block locators
+        // that the sync loop might need to proceed.
         self.peer_notify.notify_one();
 
         Ok(())
