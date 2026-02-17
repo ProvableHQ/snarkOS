@@ -590,12 +590,12 @@ jobs:
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
-          timeout: 5m 
+          no_output_timeout: 5m 
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
         name: "Run Reset Minority Devnet Test"
-        timeout: 20m  # Allow 20 minutes total
+        no_output_timeout: 5m 
         command: |
           ./.ci/test_reset_minority.sh 7 0 50 250 3
      - clear_environment:
@@ -612,12 +612,12 @@ jobs:
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
-          timeout: 5m 
+          no_output_timeout: 5m 
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
           name: "Run Reset Majority Devnet Test"
-          timeout: 20m  # Allow 20 minutes total
+          no_output_timeout: 5m 
           command: |
             ./.ci/test_reset_majority.sh 7 0 20 250 3
      - clear_environment:

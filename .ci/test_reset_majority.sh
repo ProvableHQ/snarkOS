@@ -37,8 +37,7 @@ network_name=$(get_network_name "$network_id")
 verbosity=0
 
 # The time that is used to determine the total timeout for the test.
-# This is higher than the one for the minority test to account for the higher number of nodes that are reset.
-max_wait_per_block=20
+max_wait_per_block=10
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
