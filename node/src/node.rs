@@ -339,7 +339,6 @@ impl<N: Network> Node<N> {
         }
 
         // Spawn a loop that will periodically create the checkpoints.
-        let node = self.clone();
         let handle = tokio::spawn(async move {
             info!("Starting the automatic ledger checkpoint routine...");
 
@@ -350,13 +349,10 @@ impl<N: Network> Node<N> {
             block_tree_path.push("block_tree");
 
             loop {
-                // A small delay that's smaller than block time.
+                // A small delay that's smaller than block time. There are technically situations when
+                // blocks can be inserted one after the other more quickly (syncing, multiple blocks in
+                // a Subdag), those are edge cases unlikely to be encountered under normal conditions.
                 tokio::time::sleep(Duration::from_millis(500)).await;
-
-                // Don't create checkpoints while syncing.
-                if !node.is_block_synced() {
-                    continue;
-                }
 
                 // Skip if we've already created a checkpoint during this run, and the
                 // number of blocks baked since then is lower than the configured threshold.
@@ -388,7 +384,7 @@ impl<N: Network> Node<N> {
                     // Copy the block tree file to the new checkpoint.
                     checkpoint_path.push("block_tree");
                     if let Err(e) = fs::copy(source_block_tree_path, checkpoint_path) {
-                        warn!("Couldn't move the block tree file to a ledger checkpoint: {e}");
+                        warn!("Couldn't copy the block tree file to a ledger checkpoint: {e}");
                     }
                 });
 
