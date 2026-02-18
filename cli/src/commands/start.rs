@@ -252,6 +252,10 @@ pub struct Start {
     #[clap(long, verbatim_doc_comment)]
     pub node_data_storage: Option<PathBuf>,
 
+    /// If specified, the node will automatically save database checkpoints.
+    #[clap(long)]
+    pub auto_db_checkpoints: Option<PathBuf>,
+
     /// Enables the node to prefetch initial blocks from a CDN
     #[clap(long, conflicts_with = "nocdn")]
     pub cdn: Option<http::Uri>,
@@ -834,9 +838,9 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
