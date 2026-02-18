@@ -4901,6 +4901,7 @@ dependencies = [
 name = "snarkos-node-rest"
 version = "4.4.0"
 dependencies = [
+ "aleo-std",
  "anyhow",
  "axum 0.8.8",
  "axum-extra",

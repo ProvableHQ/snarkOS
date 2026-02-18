@@ -23,12 +23,13 @@ use snarkvm::{
 
 use axum::{Json, extract::rejection::JsonRejection};
 
+use aleo_std::aleo_ledger_dir;
 use anyhow::{Context, anyhow};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::{collections::HashMap, fs, sync::atomic::Ordering};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
@@ -903,9 +904,26 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         backup_path: Query<BackupPath>,
     ) -> Result<ErasedJson, RestError> {
-        rest.ledger.backup_database(&backup_path.path)?;
+        // Create a checkpoint at the given location.
+        let mut backup_path = backup_path.path.clone();
+        rest.ledger.backup_database(&backup_path)?;
 
-        Ok(ErasedJson::pretty(()))
+        // Dump the block tree.
+        let ret = ErasedJson::pretty(());
+        if let Err(e) = rest.ledger.cache_block_tree() {
+            warn!("Couldn't cache the block tree for a ledger checkpoint: {e}");
+            return Ok(ret);
+        }
+
+        // Copy the block tree file to the new checkpoint.
+        let mut block_tree_path = aleo_ledger_dir(N::ID, rest.ledger.vm().block_store().storage_mode());
+        block_tree_path.push("block_tree");
+        backup_path.push("block_tree");
+        if let Err(e) = fs::copy(block_tree_path, backup_path) {
+            warn!("Couldn't copy the block tree file to a ledger checkpoint: {e}");
+        }
+
+        Ok(ret)
     }
 
     /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
