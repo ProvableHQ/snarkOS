@@ -70,7 +70,7 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     /// The block synchronization logic (used in the Router impl).
     sync: Arc<BlockSync<N>>,
     /// The spawned handles.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
 }

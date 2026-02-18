@@ -125,7 +125,7 @@ pub struct Client<N: Network, C: ConsensusStorage<N>> {
     /// The amount of executions currently being verified.
     num_verifying_executions: Arc<AtomicUsize>,
     /// The spawned handles.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
     /// The signal handling logic.
