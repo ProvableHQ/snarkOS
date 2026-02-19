@@ -908,6 +908,7 @@ impl<N: Network> BFT<N> {
             mut rx_primary_certificate,
             mut rx_sync_bft_dag_at_bootup,
             mut rx_sync_bft,
+            mut rx_sync_block_committed,
         } = bft_receiver;
 
         // Process the current round from the primary.
@@ -947,6 +948,19 @@ impl<N: Network> BFT<N> {
                 // Send the callback **after** updating the DAG.
                 // Note: We must await the DAG update before proceeding.
                 callback.send(result).ok();
+            }
+        });
+
+        // Handler for new blocks that were synced wit BFT.
+        //
+        // Note: This is just a workaround until other sync changes are merged.
+        // BFT sync logic should always use DAG commits within GC, but uses pending blocks in rare cases.
+        // This sender ensures that the DAG is still updated accordingly if that happens.
+        let self_ = self.clone();
+        self.spawn(async move {
+            while let Some((leader_certificate, callback)) = rx_sync_block_committed.recv().await {
+                self_.dag.write().commit(&leader_certificate, self_.storage().max_gc_rounds());
+                callback.send(Ok(())).ok();
             }
         });
     }
