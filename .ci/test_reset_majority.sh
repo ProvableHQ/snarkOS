@@ -82,11 +82,6 @@ for iter in $(seq 1 "$num_resets"); do
   mapfile -t target_indices < <(generate_random_indices "$majority" $(( ${#PIDS[@]} - 1 )))
   stop_some_nodes "${target_indices[@]}"
 
-  for target_index in "${target_indices[@]}"; do
-    # Remove the original ledger
-    snarkos clean "--network=$network_id" "--dev=$target_index"
-  done
-
   # wait for a non-trivial amount of time
   sleep 30
 
