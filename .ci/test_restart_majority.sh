@@ -24,8 +24,8 @@ num_resets=$5
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
-: "${reset_interval:=20}"
-: "${final_height:=250}"
+: "${reset_interval:=10}"
+: "${final_height:=20}"
 : "${num_resets:=3}"
 
 max_faulty=$(( (total_validators - 1) / 3 ))
