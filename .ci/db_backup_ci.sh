@@ -40,7 +40,8 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
 
   log_file="$log_dir/validator-$validator_index.log"
   snarkos start --nodisplay --network $network_id --dev $validator_index --dev-num-validators $total_validators \
-    --validator --jwt-secret $jwt_secret --jwt-timestamp $jwt_ts --verbosity $log_verbosity "--logfile=$log_file" &
+    --validator --jwt-secret $jwt_secret --jwt-timestamp $jwt_ts --verbosity $log_verbosity "--logfile=$log_file" \
+    "--node-data-storage=/tmp/node_data_$validator_index" "--ledger-storage=/tmp/ledger_$validator_index" &
   PIDS[validator_index]=$!
   log "Started validator $validator_index with PID ${PIDS[$validator_index]}"
   # Add 1-second delay between starting nodes to avoid hitting rate limits
@@ -95,15 +96,16 @@ while (( total_wait < 600 )); do  # 10 minutes max
       wait
 
       for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
-        # Remove the original ledger
-        if (( num_checkpoints == 1 )); then
-          snarkos clean "--network=$network_id" "--dev=$validator_index"
+        # Remove the ledger storage. The node data is not backed up yet and will be kept. 
+        if (( num_checkpoints == 1 )); then 
+          # Remove the original ledger
+          snarkos clean "--network=$network_id" "--dev=$validator_index" --keep-node-data \
+              "--ledger-storage=/tmp/ledger_$validator_index"
         else
+          # Remove the checkpoint
           suffix="${validator_index}_$((num_checkpoints-2))"
-          # only remove ledger, until node-data is backed up properly.
-          rm -rf "/tmp/checkpoint_$suffix"
-          #snarkos clean "--network=$network_id" "--dev=validator_index" \
-          #    "--node-data-storage=/tmp/node_data" "--ledger-storage=/tmp/checkpoint_$suffix"
+          snarkos clean "--network=$network_id" "--dev=$validator_index" --keep-node-data \
+              "--ledger-storage=/tmp/ledger_checkpoint_$suffix"
         fi
         # Wait until the cleanup concludes
         sleep 1
@@ -113,7 +115,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
         log_file="$log_dir/validator-$validator_index.log"
         snarkos start --nodisplay "--network=$network_id" "--dev=$validator_index" "--dev-num-validators=$total_validators" \
           --validator "--jwt-secret=$jwt_secret" "--jwt-timestamp=$jwt_ts" --verbosity $log_verbosity "--logfile=$log_file" \
-          "--node-data-storage=/tmp/node_data" "--ledger-storage=/tmp/checkpoint_$suffix" &
+          "--node-data-storage=/tmp/node_data_$validator_index" "--ledger-storage=/tmp/ledger_checkpoint_$suffix" &
         PIDS[validator_index]=$!
         log "Restarted validator $validator_index with PID ${PIDS[$validator_index]}"
         # Add 1-second delay between starting nodes to avoid hitting rate limits
