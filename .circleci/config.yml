@@ -788,7 +788,7 @@ workflows:
           filters:
             branches:
               only:
-                - ci/minority-reset-no-cache
+                - fix/sync-race-conditions 
                 - canary
                 - testnet
                 - mainnet
@@ -798,7 +798,7 @@ workflows:
           filters:
             branches:
               only:
-                - ci/chaotic-tests-keep-proposal 
+                - fix/sync-race-conditions 
                 - canary
                 - testnet
                 - mainnet
