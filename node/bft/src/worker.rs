@@ -33,7 +33,7 @@ use snarkvm::{
 };
 
 use anyhow::Context;
-use colored::Colorize;
+use colored::{ColoredString, Colorize};
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -165,6 +165,17 @@ impl<N: Network> Worker<N> {
 }
 
 impl<N: Network> Worker<N> {
+    // Helper to print the transmission ID and checksum (if any).
+    fn format_transmission_id(&self, transmission_id: TransmissionID<N>) -> ColoredString {
+        if let Some(checksum) = transmission_id.checksum() {
+            // fmt_id will suffix with `..`, so we should not use `.`  as a separator.
+            format!("{}:{}", fmt_id(transmission_id), fmt_id(checksum))
+        } else {
+            fmt_id(transmission_id)
+        }
+        .dimmed()
+    }
+
     /// Returns `true` if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         let transmission_id = transmission_id.into();
@@ -284,10 +295,9 @@ impl<N: Network> Worker<N> {
                 // If the transmission was not fetched, then attempt to fetch it again.
                 Err(e) => {
                     warn!(
-                        "Worker {} - Failed to fetch transmission '{}.{}' from '{peer_ip}' (ping) - {e}",
+                        "Worker {} - Failed to fetch transmission '{}' from '{peer_ip}' (ping) - {e}",
                         self_.id,
-                        fmt_id(transmission_id),
-                        fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                        self_.format_transmission_id(transmission_id),
                     );
                 }
             }
@@ -331,10 +341,9 @@ impl<N: Network> Worker<N> {
         // If the transmission ID and transmission type matches, then insert the transmission into the ready queue.
         if is_well_formed && self.ready.write().insert(transmission_id, transmission) {
             trace!(
-                "Worker {} - Added transmission '{}.{}' from '{peer_ip}'",
+                "Worker {} - Added transmission '{}' from '{peer_ip}'",
                 self.id,
-                fmt_id(transmission_id),
-                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                self.format_transmission_id(transmission_id),
             );
         }
     }
@@ -368,10 +377,9 @@ impl<N: Network> Worker<N> {
         // Adds the solution to the ready queue.
         if self.ready.write().insert(transmission_id, transmission) {
             trace!(
-                "Worker {} - Added unconfirmed solution '{}.{}'",
+                "Worker {} - Added unconfirmed solution '{}'",
                 self.id,
-                fmt_id(solution_id),
-                fmt_id(checksum).dimmed()
+                self.format_transmission_id(transmission_id),
             );
         }
         Ok(true)
@@ -413,10 +421,9 @@ impl<N: Network> Worker<N> {
         // Adds the transaction to the ready queue.
         if self.ready.write().insert(transmission_id, transmission) {
             trace!(
-                "Worker {}.{} - Added unconfirmed transaction '{}'",
+                "Worker {} - Added unconfirmed transaction '{}'",
                 self.id,
-                fmt_id(transaction_id),
-                fmt_id(checksum).dimmed()
+                self.format_transmission_id(transmission_id),
             );
         }
         Ok(true)
@@ -495,21 +502,20 @@ impl<N: Network> Worker<N> {
         // Insert the transmission ID into the pending queue.
         self.pending.insert(transmission_id, peer_ip, Some((callback_sender, should_send_request)));
 
-        // Helper to print the transmission ID and checksum.
-        let print_transmission_id = |transmission_id: TransmissionID<N>| {
-            format!("{}.{}", fmt_id(transmission_id), fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed())
-        };
-
         // If the number of requests is less than or equal to the the redundancy factor, send the transmission request to the peer.
         if should_send_request {
+            trace!("Requesting transmission {} from peer '{peer_ip}'", self.format_transmission_id(transmission_id));
             // Send the transmission request to the peer.
             if self.gateway.send(peer_ip, Event::TransmissionRequest(transmission_id.into())).await.is_none() {
-                bail!("Unable to fetch transmission - failed to send request")
+                bail!(
+                    "Unable to fetch transmission {} - failed to send request",
+                    self.format_transmission_id(transmission_id)
+                )
             }
         } else {
             debug!(
                 "Skipped sending request for transmission {} to '{peer_ip}' ({num_sent_requests} redundant requests)",
-                print_transmission_id(transmission_id)
+                self.format_transmission_id(transmission_id)
             );
         }
         // Wait for the transmission to be fetched.
@@ -517,9 +523,11 @@ impl<N: Network> Worker<N> {
         let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
             .await
             .with_context(|| {
-                format!("Unable to fetch transmission {} (timeout)", print_transmission_id(transmission_id),)
+                format!("Unable to fetch transmission {} (timeout)", self.format_transmission_id(transmission_id))
             })?
-            .with_context(|| format!("Unable to fetch transmission {}", print_transmission_id(transmission_id),))?;
+            .with_context(|| {
+                format!("Unable to fetch transmission {}", self.format_transmission_id(transmission_id))
+            })?;
 
         Ok((transmission_id, transmission))
     }
@@ -535,6 +543,10 @@ impl<N: Network> Worker<N> {
             // Ensure the transmission is not a fee and matches the transmission ID.
             match self.ledger.ensure_transmission_is_well_formed(transmission_id, &mut transmission) {
                 Ok(()) => {
+                    trace!(
+                        "Received valid transmission response from peer '{peer_ip}' for transmission '{}'",
+                        self.format_transmission_id(transmission_id)
+                    );
                     // Remove the transmission ID from the pending queue.
                     self.pending.remove(transmission_id, Some(transmission));
                 }
