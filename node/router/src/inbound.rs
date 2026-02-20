@@ -29,6 +29,7 @@ use crate::{
     },
 };
 use snarkos_node_tcp::protocols::Reading;
+use snarkos_utilities::{bail_concat, prefix_error};
 use snarkvm::prelude::{
     ConsensusVersion,
     Network,
@@ -36,7 +37,7 @@ use snarkvm::prelude::{
     puzzle::Solution,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use std::net::SocketAddr;
 use tokio::task::spawn_blocking;
 
@@ -136,14 +137,14 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // this on a blocking task, but on a rayon thread pool.
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn_fifo(move || {
-                    let blocks = blocks.deserialize_blocking().map_err(|error| anyhow!("[BlockResponse] {error}"));
-                    let _ = send.send(blocks);
+                    let result = blocks.deserialize_blocking();
+                    let _ = send.send(result);
                 });
-                let blocks = match recv.await {
-                    Ok(Ok(blocks)) => blocks,
-                    Ok(Err(error)) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
-                    Err(error) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
-                };
+
+                let blocks = recv
+                    .await
+                    .with_context(|| format!("Peer '{peer_ip}' sent an invalid block response"))?
+                    .with_context(|| format!("Peer '{peer_ip}' sent an invalid block response"))?;
 
                 // Ensure the block response is well-formed.
                 blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
@@ -233,7 +234,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // Perform the deferred non-blocking deserialization of the block header.
                 let header = match message.block_header.deserialize().await {
                     Ok(header) => header,
-                    Err(error) => bail!("[PuzzleResponse] {error}"),
+                    Err(error) => return Err(prefix_error("PuzzleResponse", error)),
                 };
                 // Process the puzzle response.
                 match self.puzzle_response(peer_ip, message.epoch_hash, header) {
@@ -260,7 +261,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // Perform the deferred non-blocking deserialization of the solution.
                 let solution = match message.solution.deserialize().await {
                     Ok(solution) => solution,
-                    Err(error) => bail!("[UnconfirmedSolution] {error}"),
+                    Err(error) => bail_concat!("[UnconfirmedSolution] {error}"),
                 };
                 // Check that the solution parameters match.
                 if message.solution_id != solution.id() {
@@ -291,7 +292,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // Perform the deferred non-blocking deserialization of the transaction.
                 let transaction = match message.transaction.deserialize().await {
                     Ok(transaction) => transaction,
-                    Err(error) => bail!("[UnconfirmedTransaction] {error}"),
+                    Err(error) => bail_concat!("[UnconfirmedTransaction] {error}"),
                 };
                 // Check that the transaction parameters match.
                 if message.transaction_id != transaction.id() {

@@ -21,7 +21,7 @@ use snarkvm::{
         block::{Block, Transaction},
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
-    prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
+    prelude::{Address, Field, Network, Result, bail, ensure},
     utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by, flatten_error},
 };
 
@@ -473,7 +473,7 @@ impl<N: Network> Storage<N> {
         let missing_transmissions = self
             .transmissions
             .find_missing_transmissions(batch_header, transmissions, aborted_transmissions)
-            .map_err(|e| anyhow!("{e} for round {round} {gc_log}"))?;
+            .with_context(|| format!("Failed to find missing transmission(s) for round {round} {gc_log}"))?;
 
         // Compute the previous round.
         let previous_round = round.saturating_sub(1);

@@ -38,7 +38,7 @@ use snarkvm::prelude::{
 };
 
 use aleo_std::{StorageMode, aleo_ledger_dir};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -331,9 +331,8 @@ impl<N: Network> Node<N> {
 
         // Ensure that the target path exists as a folder or create it.
         if !auto_checkpoint_path.exists() {
-            if let Err(e) = fs::create_dir_all(&auto_checkpoint_path) {
-                bail!("Couldn't create the specified path for the automatic ledger checkpoints: {e}");
-            }
+            fs::create_dir_all(&auto_checkpoint_path)
+                .with_context(|| "Couldn't create the specified path for the automatic ledger checkpoints")?;
         } else if auto_checkpoint_path.exists() && !auto_checkpoint_path.is_dir() {
             bail!("The specified path for automatic ledger checkpoints is not a directory");
         }

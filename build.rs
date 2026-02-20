@@ -325,9 +325,9 @@ impl ErrorChecker {
             let has_captured_error = ERROR_VAR_NAMES.iter().any(|var| tokens.contains(&format!("\"{{{var}}}\"")));
             // Also catch `"...{var}..."` where the var appears inside a longer format string.
             let has_embedded_error = !has_captured_error
-                && ERROR_VAR_NAMES.iter().any(|var| {
-                    tokens.contains(&format!("{{{var}}}")) || tokens.contains(&format!("{{{var}:"))
-                });
+                && ERROR_VAR_NAMES
+                    .iter()
+                    .any(|var| tokens.contains(&format!("{{{var}}}")) || tokens.contains(&format!("{{{var}:")));
             if has_captured_error || has_embedded_error {
                 self.violations.push((line, format!("{mac_name}!({tokens})")));
             }

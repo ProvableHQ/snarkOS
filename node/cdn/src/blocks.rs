@@ -108,7 +108,7 @@ impl CdnBlockSync {
             bail!("CDN task was already awaited");
         };
 
-        let result = hdl.await.map_err(|err| anyhow!("Failed to wait for CDN task: {err}"));
+        let result = hdl.await.with_context(|| "Failed to wait for CDN task");
         self.done.store(true, Ordering::SeqCst);
         result
     }
@@ -182,7 +182,8 @@ pub async fn load_blocks<N: Network>(
     let client = match Client::builder().use_rustls_tls().build() {
         Ok(client) => client,
         Err(error) => {
-            return Err((start_height.saturating_sub(1), anyhow!("Failed to create a CDN request client - {error}")));
+            let error: anyhow::Error = error.into();
+            return Err((start_height.saturating_sub(1), error.context("Failed to create a CDN request client")));
         }
     };
 
@@ -437,28 +438,26 @@ async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &http
     // Prepare the URL.
     let latest_json_url = format!("{base_url}/latest.json");
     // Send the request.
-    let response = match client.get(latest_json_url).send().await {
-        Ok(response) => response,
-        Err(error) => bail!("Failed to fetch the CDN height - {error}"),
-    };
+    let response = client.get(latest_json_url).send().await.with_context(|| "Failed to fetch the CDN height")?;
     // Parse the response.
-    let bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(error) => bail!("Failed to parse the CDN height response - {error}"),
-    };
+    let bytes = response.bytes().await.with_context(|| "Failed to parse the CDN height response")?;
     // Parse the bytes for the string.
     let latest_state_string = match bincode::deserialize::<String>(&bytes) {
         Ok(string) => string,
         Err(error) => {
+            let error: anyhow::Error = error.into();
             let bytes_as_string = String::from_utf8_lossy(&bytes);
-            bail!("Failed to deserialize the CDN height response - {error} - {bytes_as_string}")
+            bail!(
+                "Failed to deserialize the CDN height response - {full_error} - {bytes_as_string}",
+                full_error = flatten_error(&error)
+            );
         }
     };
     // Parse the string for the tip.
-    let tip = match serde_json::from_str::<LatestState>(&latest_state_string) {
-        Ok(latest) => latest.exclusive_height,
-        Err(error) => bail!("Failed to extract the CDN height response - {error}"),
-    };
+    let tip = serde_json::from_str::<LatestState>(&latest_state_string)
+        .with_context(|| "Failed to extract the CDN height response")?
+        .exclusive_height;
+
     // Decrement the tip by a few blocks to ensure the CDN is caught up.
     let tip = tip.saturating_sub(10);
     // Adjust the tip to the closest subsequent multiple of BLOCKS_PER_FILE.
@@ -468,25 +467,23 @@ async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &http
 /// Retrieves the objects from the CDN with the given URL.
 async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str, ctx: &str) -> Result<T> {
     // Fetch the bytes from the given URL.
-    let response = match client.get(url).send().await {
-        Ok(response) => response,
-        Err(error) => bail!("Failed to fetch {ctx} - {error}"),
-    };
+    let response = client.get(url).send().await.with_context(|| format!("Failed to fetch {ctx}"))?;
     // Parse the response.
-    let bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(error) => bail!("Failed to parse {ctx} - {error}"),
-    };
+    let bytes = response.bytes().await.with_context(|| format!("Failed to parse {ctx}"))?;
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
-        Ok((Ok(objects), _)) => Ok(objects),
-        Ok((Err(error), response_bytes)) => {
+    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes))
+        .await
+        .with_context(|| format!("Failed to join task for {ctx}"))?
+    {
+        (Ok(objects), _) => Ok(objects),
+        (Err(error), response_bytes) => {
             let bytes_as_string = String::from_utf8_lossy(&response_bytes);
-            bail!("Failed to deserialize {ctx} - {error} - {bytes_as_string}")
-        }
-        Err(error) => {
-            bail!("Failed to join task for {ctx} - {error}")
+            let error: anyhow::Error = error.into();
+            Err(anyhow!(
+                "Failed to deserialize {ctx} - {full_error} - {bytes_as_string}",
+                full_error = flatten_error(&error)
+            ))
         }
     }
 }

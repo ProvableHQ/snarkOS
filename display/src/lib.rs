@@ -26,7 +26,7 @@ use snarkos_utilities::Stoppable;
 
 use snarkvm::prelude::Network;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -102,12 +102,16 @@ impl<N: Network> Display<N> {
 
 impl<N: Network> Display<N> {
     /// Renders the display.
-    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>, stoppable: Arc<dyn Stoppable>) -> Result<()> {
+    fn render<B: Backend>(&mut self, terminal: &mut Terminal<B>, stoppable: Arc<dyn Stoppable>) -> Result<()>
+    where
+        B::Error: Into<anyhow::Error>,
+    {
         let mut last_tick = Instant::now();
         loop {
-            if let Err(err) = terminal.draw(|f| self.draw(f)) {
-                return Err(anyhow!("{err}").context("Failed to draw terminal UI"));
-            }
+            terminal.draw(|f| self.draw(f)).map_err(|err| {
+                let err: anyhow::Error = err.into();
+                err.context("Failed to draw terminal UI")
+            })?;
 
             // Determine how long to wait for an input event, before we redraw.
             let timeout = self.tick_rate.saturating_sub(last_tick.elapsed());
