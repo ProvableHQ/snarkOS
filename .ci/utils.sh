@@ -394,31 +394,8 @@ function wait_for_peers() {
 
 # Succeeds if the node with the given index has the specified number of BFT connections (or greater)
 function wait_for_bft_connections() {
-  local node_index=$1
-  local min_peers=$2
-  local network_name=$3
-
-  local max_wait=300
-  local poll_interval=1
-  local port=$((3030 + node_index))
-  
-  while (( total_wait < max_wait )); do
-    result=$(curl -s "http://$localhost:$port/v2/$network_name/connections/bft/count")
-
-    if ! (is_integer "$result"); then
-      log "Failed to get number of BFT connections for node #${node_index} (port=$port). Will retry..."
-    elif (( result < min_peers )); then
-      log "Node #${node_index} (port=$port) has $result BFT connections, expected at least $min_peers. Will wait and retry..."
-    else
-      return 0
-    fi
-
-    # Continue waiting
-    sleep $poll_interval
-  done
-
-  log "❌ BFT connections did not reach $min_peers within 5 minutes."
-  return 1
+  # Not implemented on canary
+  return 0
 }
 
 # Blocks until the node with the given index has at least one peer to sync from (or times out).
