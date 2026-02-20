@@ -39,6 +39,7 @@ enum ImportOfInterest {
     Tokio,
 }
 
+/// Determines, if a directory contains auxiliary files, not source code, and should be skipped.
 fn should_skip_dir(entry: &DirEntry) -> bool {
     let entry_type = entry.file_type();
     if !entry_type.is_dir() {
@@ -169,7 +170,7 @@ fn check_source_files<P: AsRef<Path>>(path: P) {
     }
 
     if !error_formatting_violations.is_empty() {
-        eprintln!("Forbidden error formatting found! Use `{{:#}}` or helper like `full_chain()`:");
+        eprintln!("Forbidden error formatting found! Use `{{:#}}` in log macros or chain errors via `.context()`:");
         for (file, line, code) in error_formatting_violations {
             eprintln!("{file}:{line} -> {code}");
         }
@@ -177,6 +178,8 @@ fn check_source_files<P: AsRef<Path>>(path: P) {
     }
 }
 
+/// Verifies that, if the locktick feature is enabled, the build profile includes the required settings
+/// (`line-tables-only` and `strip = "none"`).
 fn check_locktick_profile() {
     let locktick_enabled = env::var("CARGO_FEATURE_LOCKTICK").is_ok();
     if locktick_enabled {
@@ -297,24 +300,37 @@ struct ErrorChecker {
 impl ErrorChecker {
     fn check_macro(&mut self, mac: &Macro) {
         let mac_name = mac.path.segments.last().unwrap().ident.to_string();
-        if !["println", "format", "error", "warn", "info", "debug", "trace"].contains(&mac_name.as_str()) {
-            return;
+        let tokens = mac.tokens.to_string();
+        let line = mac.span().start().line;
+
+        // Check logging macros for raw error display — should use `{:#}` or a helper.
+        if ["println", "format", "error", "warn", "info", "debug", "trace"].contains(&mac_name.as_str()) {
+            // Detect `"{}"` with a standalone error variable, or captured-identifier syntax
+            // `"{error}"` / `"{err}"` / `"{e}"`. Use word-boundary splitting for the plain
+            // case to avoid matching substrings like "current_round" when checking for "err".
+            let has_plain_placeholder = tokens.contains("\"{}\"")
+                && ERROR_VAR_NAMES
+                    .iter()
+                    .any(|var| tokens.split(|c: char| !c.is_alphanumeric() && c != '_').any(|word| word == *var));
+            let has_captured_error = ERROR_VAR_NAMES.iter().any(|var| tokens.contains(&format!("\"{{{var}}}\"")));
+            if (has_plain_placeholder || has_captured_error) && !ALLOWED_WRAPPERS.iter().any(|f| tokens.contains(f)) {
+                self.violations.push((line, format!("{mac_name}!({tokens})")));
+            }
         }
 
-        let tokens = mac.tokens.to_string();
-
-        // Heuristic: detect raw error formatting via `"{}"` with an error variable,
-        // or via the captured-identifier syntax `"{error}"` / `"{err}"` / `"{e}"`.
-        //
-        // For the plain-placeholder case, check that the variable name appears as a
-        // standalone identifier (not as a substring of a longer word like "current_round").
-        let has_plain_placeholder = tokens.contains("\"{}\"")
-            && ERROR_VAR_NAMES
-                .iter()
-                .any(|var| tokens.split(|c: char| !c.is_alphanumeric() && c != '_').any(|word| word == *var));
-        let has_captured_error = ERROR_VAR_NAMES.iter().any(|var| tokens.contains(&format!("\"{{{var}}}\"")));
-        if (has_plain_placeholder || has_captured_error) && !ALLOWED_WRAPPERS.iter().any(|f| tokens.contains(f)) {
-            self.violations.push((mac.span().start().line, tokens));
+        // Check error-construction macros (anyhow!, bail!, format_err!) for embedded error
+        // variables — errors should be chained via `.context()`/`.with_context()` instead.
+        // Use `anyhow_concat!` or `bail_concat!` to explicitly opt in to concatenation.
+        if ["anyhow", "bail", "format_err"].contains(&mac_name.as_str()) {
+            let has_captured_error = ERROR_VAR_NAMES.iter().any(|var| tokens.contains(&format!("\"{{{var}}}\"")));
+            // Also catch `"...{var}..."` where the var appears inside a longer format string.
+            let has_embedded_error = !has_captured_error
+                && ERROR_VAR_NAMES.iter().any(|var| {
+                    tokens.contains(&format!("{{{var}}}")) || tokens.contains(&format!("{{{var}:"))
+                });
+            if has_captured_error || has_embedded_error {
+                self.violations.push((line, format!("{mac_name}!({tokens})")));
+            }
         }
     }
 }
