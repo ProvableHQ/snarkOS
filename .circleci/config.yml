@@ -590,12 +590,12 @@ jobs:
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
-          timeout: 5m 
+          no_output_timeout: 5m 
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
         name: "Run Reset Minority Devnet Test"
-        timeout: 20m  # Allow 20 minutes total
+        no_output_timeout: 5m 
         command: |
           ./.ci/test_reset_minority.sh 7 0 50 250 3
      - clear_environment:
@@ -607,21 +607,21 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-reset-test-cache
+        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache
      - install_rust
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
-          timeout: 5m 
+          no_output_timeout: 5m 
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
-          name: "Run Reset Majority Devnet Test"
-          timeout: 20m  # Allow 20 minutes total
+          name: "Run Restart Majority Devnet Test"
+          no_output_timeout: 5m 
           command: |
-            ./.ci/test_reset_majority.sh 7 0 20 250 3
+            ./.ci/test_restart_majority.sh 7 0 20 250 3
      - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-reset-test-cache 
+          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache 
 
   upgrade-test:
     executor: rust-docker
@@ -798,7 +798,7 @@ workflows:
           filters:
             branches:
               only:
-                - ci/updated_network_delay_test 
+                - ci/chaotic-tests-keep-proposal 
                 - canary
                 - testnet
                 - mainnet
