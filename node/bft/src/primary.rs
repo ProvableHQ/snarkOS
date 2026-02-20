@@ -179,6 +179,20 @@ impl<N: Network> Primary<N> {
                     let (latest_certificate_round, proposed_batch, signed_proposals, pending_certificates) =
                         proposal_cache.into();
 
+                    // Verify that the proposal cache is not too far ahead of the ledger.
+                    // If the cache round exceeds the ledger round by more than MAX_GC_ROUNDS, the ledger
+                    // snapshot is too old to recover from the cached state. The operator must restore a
+                    // more recent ledger snapshot before restarting the node.
+                    let ledger_round = self.ledger.latest_round();
+                    let max_gc_rounds = BatchHeader::<N>::MAX_GC_ROUNDS as u64;
+                    if latest_certificate_round > ledger_round.saturating_add(max_gc_rounds) {
+                        bail!(
+                            "The proposal cache (round {latest_certificate_round}) is more than {max_gc_rounds} \
+                             rounds ahead of the ledger (round {ledger_round}). \
+                             Please restore a more recent ledger snapshot before restarting the node."
+                        );
+                    }
+
                     // Write the proposed batch.
                     *self.proposed_batch.write() = proposed_batch;
                     // Write the signed proposals.
