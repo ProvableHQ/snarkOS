@@ -344,7 +344,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
             Ok(val) => val,
             Err(err) => {
-                error!("{err}");
+                error!("{}", flatten_error(err));
                 return;
             }
         };

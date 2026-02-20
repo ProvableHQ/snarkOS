@@ -365,6 +365,13 @@ version = "0.9"
 [build-dependencies.walkdir]
 version = "2"
 
+[build-dependencies.proc-macro2]
+version = "1"
+features = ["span-locations"]
+
+[build-dependencies.syn]
+version = "2"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

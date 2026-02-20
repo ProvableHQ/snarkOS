@@ -22,8 +22,9 @@ use std::{
     process,
     str,
 };
+use syn::{ExprMacro, Macro, StmtMacro, spanned::Spanned, visit::Visit};
 use toml::Value;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 // The following license text that should be present at the beginning of every source file.
 const EXPECTED_LICENSE_TEXT: &[u8] = include_bytes!(".resources/license_header");
@@ -38,35 +39,66 @@ enum ImportOfInterest {
     Tokio,
 }
 
-fn check_locktick_imports<P: AsRef<Path>>(path: P) {
+fn should_skip_dir(entry: &DirEntry) -> bool {
+    let entry_type = entry.file_type();
+    if !entry_type.is_dir() {
+        return false;
+    }
+    // Skip root-level dot folders (e.g. .git, .github, .cargo, .ci).
+    if entry.depth() == 1 && entry.file_name().to_str().is_some_and(|n| n.starts_with('.')) {
+        return true;
+    }
+    // Skip the specified directories at any depth.
+    DIRS_TO_SKIP.contains(&entry.file_name().to_str().unwrap_or(""))
+}
+
+/// Checks license headers, locktick import balance, and forbidden error formatting in a single
+/// directory walk to avoid reading every source file more than once.
+fn check_source_files<P: AsRef<Path>>(path: P) {
+    // Perform the license year check if on Linux.
+    if cfg!(target_os = "linux") {
+        let os_year = process::Command::new("date").arg("+%Y").output().expect("Failed to execute 'date' command");
+        let current_year = str::from_utf8(&os_year.stdout).expect("Date output was not valid UTF-8").trim();
+        let license_year = str::from_utf8(&EXPECTED_LICENSE_TEXT[22..][..4]).unwrap();
+        assert_eq!(license_year, current_year, "The license year doesn't match the current OS year");
+    }
+
+    let mut error_formatting_violations: Vec<(String, usize, String)> = Vec::new();
+
     let mut iter = WalkDir::new(path).into_iter();
     while let Some(entry) = iter.next() {
         let entry = entry.unwrap();
-        let entry_type = entry.file_type();
 
-        // Skip the specified directories.
-        if entry_type.is_dir() && DIRS_TO_SKIP.contains(&entry.file_name().to_str().unwrap_or("")) {
+        if should_skip_dir(&entry) {
             iter.skip_current_dir();
+            continue;
+        }
 
+        // Only process .rs files.
+        if !entry.file_type().is_file() || entry.path().extension() != Some(OsStr::new("rs")) {
             continue;
         }
 
         let path = entry.path();
 
-        // Ignore non-rs
-        if path.extension() != Some(OsStr::new("rs")) {
-            continue;
+        // --- License check (reads only the header bytes) ---
+        {
+            let file = File::open(path).unwrap();
+            let mut contents = Vec::with_capacity(EXPECTED_LICENSE_TEXT.len());
+            file.take(EXPECTED_LICENSE_TEXT.len() as u64).read_to_end(&mut contents).unwrap();
+            assert!(
+                contents == EXPECTED_LICENSE_TEXT,
+                "The license in \"{}\" is either missing or it doesn't match the expected string!",
+                path.display()
+            );
         }
 
-        // Read the entire file.
-        let file = fs::read_to_string(path).unwrap();
+        // Read the full file once for the remaining checks.
+        let src = fs::read_to_string(path).unwrap();
 
-        // Prepare a filtered line iterator.
-        let lines = file
-            .lines()
-            .filter(|l| !l.is_empty()) // Ignore empty lines.
-            .skip_while(|l| !l.starts_with("use")) // Skip the license etc.
-            .take_while(|l| { // Process the section containing import statements.
+        // --- Locktick import balance check ---
+        {
+            let lines = src.lines().filter(|l| !l.is_empty()).skip_while(|l| !l.starts_with("use")).take_while(|l| {
                 l.starts_with("use")
                     || l.starts_with("#[cfg")
                     || l.starts_with("//")
@@ -74,113 +106,74 @@ fn check_locktick_imports<P: AsRef<Path>>(path: P) {
                     || l.starts_with(|c: char| c.is_ascii_whitespace())
             });
 
-        // The currently processed import of interest.
-        let mut import_of_interest: Option<ImportOfInterest> = None;
-        // This value not being zero at the end of the imports suggests a missing locktick import.
-        let mut lock_balance: i8 = 0;
+            let mut import_of_interest: Option<ImportOfInterest> = None;
+            let mut lock_balance: i8 = 0;
 
-        // Process the filtered lines.
-        for line in lines {
-            // Check if this is a lock-related import.
-            if import_of_interest.is_none() {
-                if line.starts_with("use locktick::") {
-                    import_of_interest = Some(ImportOfInterest::Locktick);
-                } else if line.starts_with("use parking_lot::") {
-                    import_of_interest = Some(ImportOfInterest::ParkingLot);
-                } else if line.starts_with("use tokio::") {
-                    import_of_interest = Some(ImportOfInterest::Tokio);
+            for line in lines {
+                if import_of_interest.is_none() {
+                    if line.starts_with("use locktick::") {
+                        import_of_interest = Some(ImportOfInterest::Locktick);
+                    } else if line.starts_with("use parking_lot::") {
+                        import_of_interest = Some(ImportOfInterest::ParkingLot);
+                    } else if line.starts_with("use tokio::") {
+                        import_of_interest = Some(ImportOfInterest::Tokio);
+                    }
+                }
+
+                let Some(ioi) = import_of_interest else {
+                    continue;
+                };
+
+                if [ImportOfInterest::ParkingLot, ImportOfInterest::Tokio].contains(&ioi) {
+                    if line.contains("Mutex") {
+                        lock_balance += 1;
+                    }
+                    if line.contains("RwLock") {
+                        lock_balance += 1;
+                    }
+                } else if ioi == ImportOfInterest::Locktick {
+                    // Use `matches` instead of just `contains` here, as more than a single
+                    // lock type entry is possible in a locktick import.
+                    for _hit in line.matches("Mutex") {
+                        lock_balance -= 1;
+                    }
+                    for _hit in line.matches("RwLock") {
+                        lock_balance -= 1;
+                    }
+                    // A correction in case of the `use tokio::Mutex as TMutex` convention.
+                    if line.contains("TMutex") {
+                        lock_balance += 1;
+                    }
+                }
+
+                if line.ends_with(";") {
+                    import_of_interest = None;
                 }
             }
-
-            // Skip irrelevant imports.
-            let Some(ioi) = import_of_interest else {
-                continue;
-            };
-
-            // Modify the lock balance based on the type of the relevant import.
-            if [ImportOfInterest::ParkingLot, ImportOfInterest::Tokio].contains(&ioi) {
-                if line.contains("Mutex") {
-                    lock_balance += 1;
-                }
-                if line.contains("RwLock") {
-                    lock_balance += 1;
-                }
-            } else if ioi == ImportOfInterest::Locktick {
-                // Use `matches` instead of just `contains` here, as more than a single
-                // lock type entry is possible in a locktick import.
-                for _hit in line.matches("Mutex") {
-                    lock_balance -= 1;
-                }
-                for _hit in line.matches("RwLock") {
-                    lock_balance -= 1;
-                }
-                // A correction in case of the `use tokio::Mutex as TMutex` convention.
-                if line.contains("TMutex") {
-                    lock_balance += 1;
-                }
-            }
-
-            // Register the end of an import statement.
-            if line.ends_with(";") {
-                import_of_interest = None;
-            }
-        }
-
-        // If the file has a lock import "imbalance", print it out and increment the counter.
-        assert!(
-            lock_balance == 0,
-            "The locks in \"{}\" don't seem to have `locktick` counterparts!",
-            entry.path().display()
-        );
-    }
-}
-
-fn check_file_licenses<P: AsRef<Path>>(path: P) {
-    let path = path.as_ref();
-
-    // Perform the license year check if on Linux.
-    if cfg!(target_os = "linux") {
-        // Get the current year from the OS
-        let os_year = process::Command::new("date")
-            .arg("+%Y") // ask only for the year
-            .output()
-            .expect("Failed to execute 'date' command");
-        let current_year = str::from_utf8(&os_year.stdout).expect("Date output was not valid UTF-8").trim();
-
-        // Check if the end of the year range in the license matches the OS year.
-        let license_year = str::from_utf8(&EXPECTED_LICENSE_TEXT[22..][..4]).unwrap();
-        assert_eq!(license_year, current_year, "The license year doesn't match the current OS year");
-    }
-
-    let mut iter = WalkDir::new(path).into_iter();
-    while let Some(entry) = iter.next() {
-        let entry = entry.unwrap();
-        let entry_type = entry.file_type();
-
-        // Skip the root-level dot folders (e.g. .git, .github, .cargo, .ci).
-        if entry_type.is_dir() && entry.depth() == 1 && entry.file_name().to_str().is_some_and(|n| n.starts_with('.')) {
-            iter.skip_current_dir();
-            continue;
-        }
-
-        // Skip the specified directories (any depth).
-        if entry_type.is_dir() && DIRS_TO_SKIP.contains(&entry.file_name().to_str().unwrap_or("")) {
-            iter.skip_current_dir();
-            continue;
-        }
-
-        // Check all files with the ".rs" extension.
-        if entry_type.is_file() && entry.file_name().to_str().unwrap_or("").ends_with(".rs") {
-            let file = File::open(entry.path()).unwrap();
-            let mut contents = Vec::with_capacity(EXPECTED_LICENSE_TEXT.len());
-            file.take(EXPECTED_LICENSE_TEXT.len() as u64).read_to_end(&mut contents).unwrap();
 
             assert!(
-                contents == EXPECTED_LICENSE_TEXT,
-                "The license in \"{}\" is either missing or it doesn't match the expected string!",
-                entry.path().display()
+                lock_balance == 0,
+                "The locks in \"{}\" don't seem to have `locktick` counterparts!",
+                path.display()
             );
         }
+
+        // --- Error formatting check ---
+        {
+            let ast = syn::parse_file(&src).unwrap();
+            let mut checker = ErrorChecker { violations: Vec::new() };
+            checker.visit_file(&ast);
+            error_formatting_violations
+                .extend(checker.violations.into_iter().map(|(line, code)| (path.display().to_string(), line, code)));
+        }
+    }
+
+    if !error_formatting_violations.is_empty() {
+        eprintln!("Forbidden error formatting found! Use `{{:#}}` or helper like `full_chain()`:");
+        for (file, line, code) in error_formatting_violations {
+            eprintln!("{file}:{line} -> {code}");
+        }
+        panic!("Build failed due to forbidden error formatting.");
     }
 }
 
@@ -292,12 +285,56 @@ fn check_tokio_console_flags() {
     }
 }
 
+/// List of allowed wrapper function names
+const ALLOWED_WRAPPERS: &[&str] = &["flatten_error"];
+/// Common variable names used for errors (used to detect captured-identifier format syntax).
+const ERROR_VAR_NAMES: &[&str] = &["error", "err", "e"];
+
+struct ErrorChecker {
+    violations: Vec<(usize, String)>,
+}
+
+impl ErrorChecker {
+    fn check_macro(&mut self, mac: &Macro) {
+        let mac_name = mac.path.segments.last().unwrap().ident.to_string();
+        if !["println", "format", "error", "warn", "info", "debug", "trace"].contains(&mac_name.as_str()) {
+            return;
+        }
+
+        let tokens = mac.tokens.to_string();
+
+        // Heuristic: detect raw error formatting via `"{}"` with an error variable,
+        // or via the captured-identifier syntax `"{error}"` / `"{err}"` / `"{e}"`.
+        //
+        // For the plain-placeholder case, check that the variable name appears as a
+        // standalone identifier (not as a substring of a longer word like "current_round").
+        let has_plain_placeholder = tokens.contains("\"{}\"")
+            && ERROR_VAR_NAMES
+                .iter()
+                .any(|var| tokens.split(|c: char| !c.is_alphanumeric() && c != '_').any(|word| word == *var));
+        let has_captured_error = ERROR_VAR_NAMES.iter().any(|var| tokens.contains(&format!("\"{{{var}}}\"")));
+        if (has_plain_placeholder || has_captured_error) && !ALLOWED_WRAPPERS.iter().any(|f| tokens.contains(f)) {
+            self.violations.push((mac.span().start().line, tokens));
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for ErrorChecker {
+    fn visit_expr_macro(&mut self, node: &'ast ExprMacro) {
+        self.check_macro(&node.mac);
+        syn::visit::visit_expr_macro(self, node);
+    }
+
+    fn visit_stmt_macro(&mut self, node: &'ast StmtMacro) {
+        self.check_macro(&node.mac);
+        syn::visit::visit_stmt_macro(self, node);
+    }
+}
+
 // The build script.
 fn main() {
-    // Check licenses in the current folder.
-    check_file_licenses(".");
-    // Ensure that lock imports have locktick counterparts.
-    check_locktick_imports(".");
+    // Single walk: check licenses, locktick imports, and error formatting for all source files.
+    check_source_files(".");
     // Check if locktick feature is correctly enabled.
     check_locktick_profile();
     // Check if the tokio_console feature is correctly enabled.
