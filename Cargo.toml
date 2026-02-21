@@ -355,6 +355,9 @@ workspace = true
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
+[build-dependencies.anyhow]
+workspace = true
+
 [build-dependencies.built]
 version = "0.8"
 features = [ "git2" ]

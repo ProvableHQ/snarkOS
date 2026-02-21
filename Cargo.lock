@@ -4588,6 +4588,7 @@ dependencies = [
 name = "snarkos"
 version = "4.4.0"
 dependencies = [
+ "anyhow",
  "built",
  "clap",
  "locktick",
