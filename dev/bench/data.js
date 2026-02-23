@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771808934709,
+  "lastUpdate": 1771888267224,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -9342,6 +9342,72 @@ window.BENCHMARK_DATA = {
             "value": 1.2,
             "unit": "blocks/s",
             "extra": "total_wait=208s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c339bf145c7069716185231f55818a53beb0b3b",
+          "message": "Merge pull request #4129 from ProvableHQ/ci/minority-reset-no-cache\n\n[CI] Remove proposal cache in minority reset test",
+          "timestamp": "2026-02-23T14:42:35-08:00",
+          "tree_id": "a33a6253215765e1d57016425fc50fe5fcb4eea2",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7c339bf145c7069716185231f55818a53beb0b3b"
+        },
+        "date": 1771888266561,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.500338287595633,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=87.26735973358154, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7702.639431955905,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.3860502243042, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1009.0277865485945,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7928423881530762, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.65,
+            "unit": "blocks/s",
+            "extra": "total_wait=151s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.172121,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=146, mean_speed=1.203311, max_speed=2.666667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.58,
+            "unit": "blocks/s",
+            "extra": "total_wait=158s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.18,
+            "unit": "blocks/s",
+            "extra": "total_wait=211s, target_height=250"
           }
         ]
       }
