@@ -26,6 +26,7 @@ use crate::{
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{
     BLOCK_REQUEST_BATCH_DELAY,
+    BftSyncMode,
     BlockSync,
     InsertBlockResponseError,
     Ping,
@@ -103,6 +104,7 @@ pub struct Sync<N: Network> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// The response lock.
     response_lock: Arc<TMutex<()>>,
+
     /// The latest block responses.
     ///
     /// This is used in [`Sync::sync_storage_with_block()`] to accumulate blocks
@@ -125,6 +127,9 @@ impl<N: Network> Sync<N> {
         ledger: Arc<dyn LedgerService<N>>,
         block_sync: Arc<BlockSync<N>>,
     ) -> Self {
+        // Validators start in fast-sync mode until they confirm they are within the GC range.
+        block_sync.set_bft_sync_mode(BftSyncMode::Fast);
+
         // Return the sync instance.
         Self {
             gateway,
@@ -372,15 +377,10 @@ impl<N: Network> Sync<N> {
         self.send_block_requests(requests, sync_peers).await;
     }
 
-    /// Test-only method to manually trigger block synchronization.
-    /// This combines both request generation and response processing for testing purposes.
+    /// Test-only method that allows setting the sync height to the given nubmer    
     #[cfg(test)]
-    pub(crate) async fn testing_only_try_block_sync_testing_only(&self) {
-        // First try issuing block requests
-        self.try_issuing_block_requests().await;
-
-        // Then try advancing with any available responses
-        self.try_advancing_block_synchronization(&None).await;
+    pub(crate) fn testing_only_set_sync_height_testing_only(&self, height: u32) {
+        self.block_sync.set_sync_height(height);
     }
 }
 
@@ -461,7 +461,9 @@ impl<N: Network> Sync<N> {
         // Sync the round with the block.
         self.storage.sync_round_with_block(latest_block.round());
         // Perform GC on the latest block round.
-        self.storage.garbage_collect_certificates(latest_block.round());
+        self.storage
+            .garbage_collect_certificates(latest_block.round())
+            .with_context(|| "Failed to garbage collect certificates")?;
 
         // Iterate over the blocks.
         for block in blocks.clone() {
@@ -612,17 +614,31 @@ impl<N: Network> Sync<N> {
         // conservatively set to the block height minus the maximum number of blocks calculated above.
         // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
         let max_gc_height = tip.saturating_sub(max_gc_blocks);
-        let within_gc = (ledger_height + 1) > max_gc_height;
+
+        // Retrieve the current height, based on the ledger height and the
+        // (unconfirmed) blocks that are already queued up.
+        let start_height = self.compute_sync_height();
+
+        // A node that has entered fast-sync must complete the transition via
+        // `sync_storage_with_ledger_at_bootup` before it is allowed to use the BFT/DAG path.
+        // Without this guard a drop in the reported peer tip could shrink `max_gc_height` and
+        // make the outer `within_gc` check flip to `true` prematurely, bypassing the bootup routine.
+        let within_gc = start_height >= max_gc_height;
 
         if within_gc {
-            // Retrieve the current height, based on the ledger height and the
-            // (unconfirmed) blocks that are already queued up.
-            let start_height = self.compute_sync_height();
+            // For the (unlikely) case that network tip decreased, check here as well if sync mode has switched.
+            let previous = self.block_sync.set_bft_sync_mode(BftSyncMode::Dag);
+            let was_in_fast_sync = previous == Some(BftSyncMode::Fast);
+
+            if was_in_fast_sync {
+                debug!("Finished catching up with the network. Switching to DAG sync.");
+                self.sync_storage_with_ledger_at_bootup().await?;
+            }
 
             // The height is incremented as blocks are added.
             let mut current_height = start_height;
             trace!(
-                "Try advancing blocks responses with BFT (starting at block {current_height}, current sync speed is {})",
+                "Try advancing blocks responses with DAG updates (starting at block {current_height}, current sync speed is {})",
                 self.block_sync.get_sync_speed()
             );
 
@@ -649,12 +665,18 @@ impl<N: Network> Sync<N> {
 
             cleanup(start_height, current_height, None)
         } else {
-            // For non-BFT sync we need to start at the current height of the ledger,as blocks are immediately
-            // added to it and not queue up in `latest_block_responses`.
-            let start_height = ledger_height;
+            let previous = self.block_sync.set_bft_sync_mode(BftSyncMode::Fast);
+            let was_in_dag_sync = previous == Some(BftSyncMode::Dag);
+            if was_in_dag_sync {
+                // Peers may have advanced faster than this node is syncing, so it is reverting back to fast sync.
+                warn!("Node is switching from DAG sync back to fast sync. The network tip may have regressed.");
+            }
+
+            // For fast sync, blocks still go through `pending_blocks` and the availability threshold check,
+            // but certificates are *not* inserted into the BFT DAG (see `sync_storage_with_block` with `within_gc_range = false`).
             let mut current_height = start_height;
 
-            trace!("Try advancing block responses without BFT (starting at block {current_height})");
+            trace!("Try advancing block responses without updating the DAG (starting at block {current_height})");
 
             // Try to advance the ledger *to tip* without updating the BFT,
             // The BFT will only be updated if we reached the GC range after adding the new blocks.
@@ -684,7 +706,8 @@ impl<N: Network> Sync<N> {
             // Sync the storage with the ledger if we should transition to the BFT sync.
             let within_gc = (current_height + 1) > max_gc_height;
             if within_gc {
-                info!("Finished catching up with the network. Switching back to BFT sync.");
+                info!("Finished catching up with the network. Switching back to DAG sync.");
+                self.block_sync.set_bft_sync_mode(BftSyncMode::Dag);
                 self.sync_storage_with_ledger_at_bootup()
                     .await
                     .with_context(|| "BFT sync (with bootup routine) failed")?;
@@ -1506,6 +1529,93 @@ mod tests {
         // Ensure blocks 1 and 2 were added to the ledger.
         // Unlike with normal sync, the ledger is advanced by Sync when pending blocks are committed.
         assert_eq!(syncing_bft.testing_only_latest_committed_round(), 4);
+    }
+
+    /// Tests that a node can correctly revert from DAG sync back to fast sync.
+    ///
+    /// This mirrors `test_commit_chain_with_swich_to_bft` in the opposite direction:
+    /// the first blocks are processed in DAG-sync mode (within GC range), then the
+    /// final block is processed in fast-sync mode (outside GC range, no DAG updates).
+    ///
+    /// The ledger should still advance correctly because `pending_blocks` and the
+    /// availability-threshold check are shared between both modes.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_commit_chain_with_switch_to_fast_sync() {
+        let rng = &mut TestRng::default();
+        let (genesis, mut blocks) = setup_commit_chain(rng).await;
+        let max_gc_rounds = BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64;
+        let storage_mode = StorageMode::new_test(None);
+
+        let syncing_ledger = {
+            let storage_mode = storage_mode.clone();
+            Arc::new(CoreLedgerService::new(
+                spawn_blocking!(CurrentLedger::load(genesis, storage_mode)).unwrap(),
+                SimpleStoppable::new(),
+            ))
+        };
+
+        let account = Account::new(rng).unwrap();
+        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let gateway = Gateway::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
+
+        let syncing_bft = BFT::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            block_sync,
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+
+        // -- Run test -- //
+        let last_block = blocks.pop().unwrap();
+
+        // Insert all but the last block in DAG-sync mode (within GC range).
+        // Certificates are inserted into the BFT DAG but the availability threshold
+        // is not yet met, so the ledger should not advance.
+        for block in blocks {
+            sync.sync_storage_with_block(block, true).await.unwrap();
+            assert_eq!(syncing_ledger.latest_block_height(), 0);
+        }
+
+        // -- Switch back to fast sync (simulate the network tip dropping below the GC boundary) --
+
+        // The final block is processed in fast-sync mode: no DAG updates.
+        // The pending_blocks chain now has enough successors to confirm the availability
+        // threshold for block 2, so the ledger advances to height 2.
+        // Block 3 (the fast-sync one) remains pending — it needs a further successor
+        // with enough votes to be confirmed.
+        sync.sync_storage_with_block(last_block, false).await.unwrap();
+
+        // Blocks 1 and 2 should have been committed to the ledger.
+        assert_eq!(syncing_ledger.latest_block_height(), 2);
+        assert!(syncing_ledger.contains_block_height(1));
+        assert!(syncing_ledger.contains_block_height(2));
+
+        // The BFT committed round is 0: the last block was processed in fast-sync mode so
+        // its certificates were never passed to the BFT DAG, meaning the BFT itself did not
+        // advance its committed round beyond the initial state.
+        assert_eq!(syncing_bft.testing_only_latest_committed_round(), 0);
     }
 
     #[tokio::test]

@@ -2489,8 +2489,8 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should succeed.
         assert!(
@@ -2568,8 +2568,8 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should succeed.
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
@@ -2603,7 +2603,8 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2648,7 +2649,8 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2704,7 +2706,8 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2754,11 +2757,11 @@ mod tests {
 
         // primary v4 must be considered synced.
         primary_v4.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary_v4.sync.testing_only_try_block_sync_testing_only().await;
+        primary_v4.sync.testing_only_set_sync_height_testing_only(0);
 
         // primary v5 must be ocnsidered synced.
         primary_v5.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary_v5.sync.testing_only_try_block_sync_testing_only().await;
+        primary_v5.sync.testing_only_set_sync_height_testing_only(0);
 
         // Check the spend limit is enforced from V5 onwards.
         assert!(

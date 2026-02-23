@@ -134,9 +134,11 @@ impl<N: Network> Storage<N> {
             batch_ids: Default::default(),
             transmissions,
         }));
+
         // Perform GC on the current round.
         // Since there are no certificates yet, this only sets `gc_round`.
-        storage.garbage_collect_certificates(current_round);
+        storage.garbage_collect_certificates(current_round).unwrap();
+
         // Return the storage.
         storage
     }
@@ -158,6 +160,9 @@ impl<N: Network> Storage<N> {
     }
 
     /// Returns the `round` that garbage collection has occurred **up to** (inclusive).
+    ///
+    /// # Invariants
+    /// The value returned is greater or equal to return values of prior calls to this method.
     pub fn gc_round(&self) -> u64 {
         // Get the GC round.
         self.gc_round.load(Ordering::SeqCst)
@@ -231,13 +236,21 @@ impl<N: Network> Storage<N> {
     }
 
     /// Update the storage by performing garbage collection based on the next round.
-    pub(crate) fn garbage_collect_certificates(&self, next_round: u64) {
+    pub(crate) fn garbage_collect_certificates(&self, next_round: u64) -> Result<()> {
         // Fetch the current GC round.
         let current_gc_round = self.gc_round();
         // Compute the next GC round.
         let next_gc_round = next_round.saturating_sub(self.max_gc_rounds);
         // Check if storage needs to be garbage collected.
         if next_gc_round > current_gc_round {
+            if self
+                .gc_round
+                .compare_exchange(current_gc_round, next_gc_round, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                bail!("Concurrent updates to GC round detected.");
+            }
+
             // Remove the GC round(s) from storage.
             for gc_round in current_gc_round..=next_gc_round {
                 // Iterate over the certificates for the GC round.
@@ -250,7 +263,11 @@ impl<N: Network> Storage<N> {
             }
             // Update the GC round.
             self.gc_round.store(next_gc_round, Ordering::SeqCst);
+        } else if next_gc_round < current_gc_round {
+            bail!("Attempted to decrease GC round from {current_gc_round} to {next_gc_round}");
         }
+
+        Ok(())
     }
 }
 

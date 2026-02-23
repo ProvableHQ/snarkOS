@@ -54,6 +54,7 @@ mod helpers;
 use helpers::rangify_heights;
 
 mod sync_state;
+pub use sync_state::BftSyncMode;
 use sync_state::SyncState;
 
 mod metrics;
@@ -261,6 +262,21 @@ impl<N: Network> BlockSync<N> {
     #[inline]
     pub fn get_sync_height(&self) -> u32 {
         self.sync_state.read().get_sync_height()
+    }
+
+    /// Returns the BFT sync mode (fast or DAG), or `None` if no BFT layer is attached.
+    #[inline]
+    pub fn get_bft_sync_mode(&self) -> Option<BftSyncMode> {
+        self.sync_state.read().get_bft_sync_mode()
+    }
+
+    /// Sets the BFT sync mode. Should only be called by the BFT layer.
+    ///
+    /// # Returns
+    /// The previous BFT sync mode (if any).
+    #[inline]
+    pub fn set_bft_sync_mode(&self, mode: BftSyncMode) -> Option<BftSyncMode> {
+        self.sync_state.write().set_bft_sync_mode(mode)
     }
 
     /// Returns the number of blocks we requested from peers, but have not received yet.

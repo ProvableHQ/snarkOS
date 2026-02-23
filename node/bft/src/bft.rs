@@ -802,7 +802,9 @@ impl<N: Network> BFT<N> {
         // so long as garbage collection is done after each chunk.
         // If garbage collection were done after each committed certificate,
         // that exclusion in `order_dag_with_dfs()` should be unnecessary.
-        self.storage().garbage_collect_certificates(latest_leader_round);
+        self.storage()
+            .garbage_collect_certificates(latest_leader_round)
+            .with_context(|| "BFT failed to garbage collect certificates")?;
 
         Ok(())
     }

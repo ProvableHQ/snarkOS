@@ -16,6 +16,7 @@
 use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
+use snarkos_node_sync::BftSyncMode;
 #[cfg(feature = "history-staking-rewards")]
 use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
@@ -100,6 +101,9 @@ struct SyncStatus<'a> {
     ledger_height: u32,
     /// Which way are we sync'ing (either "cdn" or "p2p")
     sync_mode: &'a str,
+    /// Validators can either sync in "fast" mode, by fetching blocks similar to how clients do,
+    /// or the can sync certificates in "dag" mode.
+    bft_sync_mode: Option<&'a str>,
     /// The block height of the CDN (if connected to a CDN).
     cdn_height: Option<u32>,
     /// The greatest known block height of a peer.
@@ -227,8 +231,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Generate a string representing the current sync mode.
         let sync_mode = if cdn_sync { "cdn" } else { "p2p" };
 
+        let bft_sync_mode = rest.block_sync.get_bft_sync_mode().map(|mode| match mode {
+            BftSyncMode::Fast => "fast",
+            BftSyncMode::Dag => "dag",
+        });
+
         Ok(ErasedJson::pretty(SyncStatus {
             sync_mode,
+            bft_sync_mode,
             cdn_height,
             is_synced: !cdn_sync && rest.routing.is_block_synced(),
             ledger_height: rest.ledger.latest_height(),
