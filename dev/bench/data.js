@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771681557582,
+  "lastUpdate": 1771808934709,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -9270,6 +9270,72 @@ window.BENCHMARK_DATA = {
             "value": 1.52,
             "unit": "blocks/s",
             "extra": "total_wait=164s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.2,
+            "unit": "blocks/s",
+            "extra": "total_wait=208s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8742f450cbd7955ece06c288d6af2241ad13afab",
+          "message": "Merge pull request #4126 from ProvableHQ/fix/reject-proposal-cache-mismatch\n\n[Fix] Do not start nodes if proposal cache and ledger rounds are too far apart",
+          "timestamp": "2026-02-22T16:41:28-08:00",
+          "tree_id": "4c3b29040559ff45858f2c93c4ceef60466608b7",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/8742f450cbd7955ece06c288d6af2241ad13afab"
+        },
+        "date": 1771808933925,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.667086992820133,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=84.6995997428894, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7832.326963625385,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.214078187942505, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1020.5069561705296,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7839241027832031, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.996768,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=149, mean_speed=1.133110, max_speed=2.583333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.54,
+            "unit": "blocks/s",
+            "extra": "total_wait=162s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
