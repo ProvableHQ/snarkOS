@@ -788,7 +788,7 @@ workflows:
           filters:
             branches:
               only:
-                - ci/updated_network_delay_test 
+                - ci/minority-reset-no-cache
                 - canary
                 - testnet
                 - mainnet

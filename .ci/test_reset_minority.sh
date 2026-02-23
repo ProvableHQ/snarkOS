@@ -80,7 +80,7 @@ for iter in $(seq 1 "$num_resets"); do
 
   for target_index in "${target_indices[@]}"; do
     # Remove the original ledger
-    snarkos clean "--network=$network_id" "--dev=$target_index" --keep-node-data
+    snarkos clean "--network=$network_id" "--dev=$target_index"
     # Wait until the cleanup concludes
     sleep 1
     # Restart
