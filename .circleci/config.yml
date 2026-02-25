@@ -104,7 +104,7 @@ commands:
             # it causes longer build times and causes some builds to fail
 
             # echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
-            # echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
+            # echo 'export "SCCACHE_CACHE_SIZE"="2000M"' >> $BASH_ENV
             # Disable incremental builds so that sccache works as expected
             # echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
       - run:
