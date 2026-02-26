@@ -243,7 +243,7 @@ pub async fn load_blocks<N: Network>(
         if stoppable.is_stopped() {
             info!("Stopping block sync at {} - shutting down", current_height);
             // We can shut down cleanly from here, as the node hasn't been started yet.
-            std::process::exit(0);
+            return Ok(current_height);
         }
 
         let mut candidate_blocks = pending_blocks.lock().await;
@@ -283,7 +283,7 @@ pub async fn load_blocks<N: Network>(
                     if stoppable_clone.is_stopped() {
                         info!("Stopping block sync at {} - the node is shutting down", current_height);
                         // We can shut down cleanly from here, as the node hasn't been started yet.
-                        std::process::exit(0);
+                        break;
                     }
 
                     // Register the next block's height, as the block gets consumed next.
