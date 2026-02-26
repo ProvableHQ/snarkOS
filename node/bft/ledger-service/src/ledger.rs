@@ -46,7 +46,7 @@ use snarkvm::{
     },
 };
 
-use anyhow::ensure;
+use anyhow::{Context, ensure};
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -260,32 +260,28 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 TransmissionID::Solution(expected_solution_id, expected_checksum),
                 Transmission::Solution(solution_data),
             ) => {
-                match solution_data.clone().deserialize_blocking() {
-                    Ok(solution) => {
-                        if solution.id() != expected_solution_id {
-                            bail!(
-                                "Received mismatching solution ID - expected {}, found {}",
-                                fmt_id(expected_solution_id),
-                                fmt_id(solution.id()),
-                            );
-                        }
+                let solution =
+                    solution_data.clone().deserialize_blocking().with_context(|| "Failed to deserialize solution")?;
 
-                        // Ensure the transmission checksum matches the expected checksum.
-                        let checksum = solution_data.to_checksum::<N>()?;
-                        if checksum != expected_checksum {
-                            bail!(
-                                "Received mismatching checksum for solution {} - expected {expected_checksum} but found {checksum}",
-                                fmt_id(expected_solution_id)
-                            );
-                        }
-
-                        // Update the transmission with the deserialized solution.
-                        *solution_data = Data::Object(solution);
-                    }
-                    Err(err) => {
-                        bail!("Failed to deserialize solution: {err}");
-                    }
+                if solution.id() != expected_solution_id {
+                    bail!(
+                        "Received mismatching solution ID - expected {}, found {}",
+                        fmt_id(expected_solution_id),
+                        fmt_id(solution.id()),
+                    );
                 }
+
+                // Ensure the transmission checksum matches the expected checksum.
+                let checksum = solution_data.to_checksum::<N>()?;
+                if checksum != expected_checksum {
+                    bail!(
+                        "Received mismatching checksum for solution {} - expected {expected_checksum} but found {checksum}",
+                        fmt_id(expected_solution_id)
+                    );
+                }
+
+                // Update the transmission with the deserialized solution.
+                *solution_data = Data::Object(solution);
             }
             _ => {
                 bail!("Mismatching `(transmission_id, transmission)` pair");
@@ -321,10 +317,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
         // Ensure that the solution is valid for the given epoch.
         let puzzle = self.ledger.puzzle().clone();
-        match spawn_blocking!(puzzle.check_solution(&solution, epoch_hash, proof_target)) {
-            Ok(()) => Ok(()),
-            Err(e) => bail!("Invalid solution '{}' for the current epoch - {e}", fmt_id(solution_id)),
-        }
+        spawn_blocking!(puzzle.check_solution(&solution, epoch_hash, proof_target))
+            .with_context(|| format!("Invalid solution '{}' for the current epoch", fmt_id(solution_id)))
     }
 
     /// Checks the given transaction is well-formed and unique.

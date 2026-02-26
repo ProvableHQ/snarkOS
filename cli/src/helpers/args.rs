@@ -23,7 +23,7 @@ use snarkvm::{
 };
 
 use aleo_std::aleo_dir;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::builder::RangedU64ValueParser;
 use std::{path::PathBuf, str::FromStr};
 use ureq::http::{Uri, uri};
@@ -65,7 +65,7 @@ pub(crate) fn parse_private_key<N: Network>(
     let key_str = if let Some(keystr) = cmdline {
         keystr
     } else if let Some(file_name) = file_name {
-        let path = file_name.parse::<PathBuf>().map_err(|e| anyhow!("Invalid path - {e}"))?;
+        let path = file_name.parse::<PathBuf>().with_context(|| "Invalid private key path")?;
         std::fs::read_to_string(path).with_context(|| "Failed to read private key from disk")?.trim().to_string()
     } else {
         unreachable!();

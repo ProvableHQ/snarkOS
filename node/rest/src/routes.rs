@@ -480,7 +480,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 Ok(ErasedJson::pretty(mapping_values))
             }
             Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to read mapping"))),
-            Err(err) => Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+                Err(RestError::internal_server_error(err.context("Tokio error")))
+            }
         }
     }
 
@@ -686,7 +689,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Ok(json) => json,
             Err(JsonRejection::JsonDataError(err)) => {
                 // For JsonDataError, return 422 to let transaction validation handle it
-                return Err(RestError::unprocessable_entity(anyhow!("Invalid transaction data: {err}")));
+                let err: anyhow::Error = err.into();
+                return Err(RestError::unprocessable_entity(err.context("Invalid transaction data")));
             }
             Err(other_rejection) => return Err(other_rejection.into()),
         };
@@ -867,7 +871,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                         };
                     }
                     Err(err) => {
-                        return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
+                        let err: anyhow::Error = err.into();
+                        return Err(RestError::internal_server_error(err.context("Tokio error")));
                     }
                 };
             // Release the slot.

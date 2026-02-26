@@ -19,9 +19,10 @@ use snarkos_utilities::NodeDataDir;
 use snarkvm::{
     console::{account::Address, network::Network, program::SUBDAG_CERTIFICATES_DEPTH},
     ledger::narwhal::BatchCertificate,
-    prelude::{FromBytes, IoResult, Read, Result, ToBytes, Write, anyhow, bail, error},
+    prelude::{FromBytes, IoResult, Read, Result, ToBytes, Write, bail, error},
 };
 
+use anyhow::Context;
 use indexmap::IndexSet;
 use std::{fs, path::PathBuf};
 
@@ -102,8 +103,7 @@ impl<N: Network> ProposalCache<N> {
         // Serialize the proposal cache.
         let bytes = self.to_bytes_le()?;
         // Store the proposal cache to the file system.
-        fs::write(&path, bytes)
-            .map_err(|err| anyhow!("Couldn't write the proposal cache to {} - {err}", path.display()))?;
+        fs::write(&path, bytes).with_context(|| format!("Couldn't write the proposal cache to {}", path.display()))?;
 
         Ok(())
     }

@@ -1095,17 +1095,16 @@ fn load_or_compute_genesis<N: Network>(
 
 fn resolve_potential_hostnames(ip_or_hostname: &str) -> Result<SocketAddr> {
     let trimmed = ip_or_hostname.trim();
-    match trimmed.to_socket_addrs() {
-        Ok(mut ip_iter) => {
-            // A hostname might resolve to multiple IP addresses. We will use only the first one,
-            // assuming this aligns with the user's expectations.
-            let Some(ip) = ip_iter.next() else {
-                return Err(anyhow!("The supplied trusted hostname ('{trimmed}') does not reference any ip."));
-            };
-            Ok(ip)
-        }
-        Err(e) => Err(anyhow!("The supplied trusted hostname or IP ('{trimmed}') is malformed: {e}")),
-    }
+    let mut ip_iter = trimmed
+        .to_socket_addrs()
+        .with_context(|| format!("The supplied trusted hostname or IP ('{trimmed}') is malformed"))?;
+
+    // A hostname might resolve to multiple IP addresses. We will use only the first one,
+    // assuming this aligns with the user's expectations.
+    let Some(ip) = ip_iter.next() else {
+        return Err(anyhow!("The supplied trusted hostname ('{trimmed}') does not reference any ip."));
+    };
+    Ok(ip)
 }
 
 #[cfg(test)]

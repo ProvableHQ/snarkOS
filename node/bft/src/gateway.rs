@@ -61,7 +61,7 @@ use snarkos_node_tcp::{
     Tcp,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
-use snarkos_utilities::NodeDataDir;
+use snarkos_utilities::{NodeDataDir, prefix_error};
 use snarkvm::{
     console::prelude::*,
     ledger::{
@@ -71,6 +71,7 @@ use snarkvm::{
     prelude::{Address, Field},
 };
 
+use anyhow::Context;
 use colored::Colorize;
 use futures::{SinkExt, future::join_all};
 use indexmap::IndexMap;
@@ -598,16 +599,17 @@ impl<N: Network> Gateway<N> {
                 let self_ = self.clone();
                 let blocks = match task::spawn_blocking(move || {
                     // Retrieve the blocks within the requested range.
-                    match self_.ledger.get_blocks(start_height..end_height) {
-                        Ok(blocks) => Ok(DataBlocks(blocks)),
-                        Err(error) => bail!("Missing blocks {start_height} to {end_height} from ledger - {error}"),
-                    }
+                    let blocks = self_
+                        .ledger
+                        .get_blocks(start_height..end_height)
+                        .with_context(|| format!("Missing blocks {start_height} to {end_height} from ledger"))?;
+                    Ok(DataBlocks(blocks))
                 })
                 .await
                 {
                     Ok(Ok(blocks)) => blocks,
                     Ok(Err(error)) => return Err(error),
-                    Err(error) => return Err(anyhow!("[BlockRequest] {error}")),
+                    Err(error) => return Err(prefix_error("BlockRequest", error.into())),
                 };
 
                 let self_ = self.clone();
@@ -632,14 +634,12 @@ impl<N: Network> Gateway<N> {
                     // this on a blocking task, but on a rayon thread pool.
                     let (send, recv) = tokio::sync::oneshot::channel();
                     rayon::spawn_fifo(move || {
-                        let blocks = blocks.deserialize_blocking().map_err(|error| anyhow!("[BlockResponse] {error}"));
-                        let _ = send.send(blocks);
+                        let _ = send.send(blocks.deserialize_blocking());
                     });
-                    let blocks = match recv.await {
-                        Ok(Ok(blocks)) => blocks,
-                        Ok(Err(error)) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
-                        Err(error) => bail!("Peer '{peer_ip}' sent an invalid block response - {error}"),
-                    };
+                    let blocks = recv
+                        .await
+                        .with_context(|| format!("Peer '{peer_ip}' sent an invalid block response"))?
+                        .with_context(|| format!("Peer '{peer_ip}' sent an invalid block response"))?;
 
                     // Ensure the block response is well-formed.
                     blocks.ensure_response_is_well_formed(peer_ip, request.start_height, request.end_height)?;
@@ -705,9 +705,10 @@ impl<N: Network> Gateway<N> {
                 // Update the peer locators. Except for some tests, there is always a sync sender.
                 if let Some(sync_sender) = self.sync_sender.get() {
                     // Check the block locators are valid, and update the validators in the sync module.
-                    if let Err(error) = sync_sender.update_peer_locators(peer_ip, block_locators).await {
-                        bail!("Validator '{peer_ip}' sent invalid block locators - {error}");
-                    }
+                    sync_sender
+                        .update_peer_locators(peer_ip, block_locators)
+                        .await
+                        .with_context(|| format!("Validator '{peer_ip}' sent invalid block locators"))?;
                 }
 
                 // Send the batch certificates to the primary.

@@ -355,6 +355,9 @@ workspace = true
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
+[build-dependencies.anyhow]
+workspace = true
+
 [build-dependencies.built]
 version = "0.8"
 features = [ "git2" ]
@@ -363,6 +366,13 @@ features = [ "git2" ]
 version = "0.9"
 
 [build-dependencies.walkdir]
+version = "2"
+
+[build-dependencies.proc-macro2]
+version = "1"
+features = ["span-locations"]
+
+[build-dependencies.syn]
 version = "2"
 
 [profile.release]

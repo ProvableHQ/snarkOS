@@ -26,7 +26,7 @@ use snarkvm::console::{
     types::Field,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use colored::Colorize;
 use core::str::FromStr;
@@ -231,9 +231,7 @@ impl Account {
         // Recover the seed.
         let seed = match seed {
             // Recover the field element deterministically.
-            Some(seed) => {
-                Field::new(<N as Environment>::Field::from_str(&seed).map_err(|e| anyhow!("Invalid seed - {e}"))?)
-            }
+            Some(seed) => Field::new(<N as Environment>::Field::from_str(&seed).with_context(|| "Invalid session")?),
             // Sample a random field element.
             None => Field::rand(&mut ChaChaRng::from_entropy()),
         };

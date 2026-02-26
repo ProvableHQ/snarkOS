@@ -281,19 +281,21 @@ impl<N: Network> SyncSender<N> {
         // This `tx_block_sync_advance_with_sync_blocks.send()` call
         // causes the `rx_block_sync_advance_with_sync_blocks.recv()` call
         // in one of the loops in [`Sync::run()`] to return.
-        if let Err(err) = self
-            .tx_block_sync_insert_block_response
+        self.tx_block_sync_insert_block_response
             .send((peer_ip, blocks, latest_consensus_version, callback_sender))
             .await
-        {
-            return Err(anyhow!("Failed to send block response - {err}").into());
-        }
+            .map_err(|err| {
+                let err: anyhow::Error = err.into();
+                let err = err.context("Failed to send block response to '{peer_ip}'");
+                InsertBlockResponseError::Other(err)
+            })?;
 
         // Await the callback to continue.
-        match callback_receiver.await {
-            Ok(result) => result,
-            Err(err) => Err(anyhow!("Failed to wait for block response insertion - {err}").into()),
-        }
+        callback_receiver.await.map_err(|err| {
+            let err: anyhow::Error = err.into();
+            let err = err.context("Failed to wait for block response insertion");
+            InsertBlockResponseError::Other(err)
+        })?
     }
 }
 

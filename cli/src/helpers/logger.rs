@@ -15,8 +15,7 @@
 
 use crate::helpers::{DynamicFormatter, LogWriter};
 
-use anyhow::{Result, bail};
-
+use anyhow::{Context, Result, bail};
 use crossterm::tty::IsTty;
 use std::{
     fs::File,
@@ -145,15 +144,15 @@ pub fn initialize_logger<P: AsRef<Path>>(
     let Some(logfile_dir) = logfile.as_ref().parent() else { bail!("Root directory passed as a logfile") };
 
     if !logfile_dir.exists() {
-        if let Err(err) = std::fs::create_dir_all(logfile_dir) {
-            bail!("Failed to create a directory: '{}' ({err})", logfile_dir.display());
-        }
+        std::fs::create_dir_all(logfile_dir)
+            .with_context(|| format!("Failed to create a directory: '{}'", logfile_dir.display()))?;
     }
     // Create a file to write logs to.
-    let logfile = match File::options().append(true).create(true).open(logfile) {
-        Ok(logfile) => logfile,
-        Err(err) => bail!("Failed to open the file for writing logs: {err}"),
-    };
+    let logfile = File::options()
+        .append(true)
+        .create(true)
+        .open(logfile)
+        .with_context(|| "Failed to open the file for writing logs")?;
 
     // Initialize the log channel.
     let (log_sender, log_receiver) = mpsc::channel(1024);
