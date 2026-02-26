@@ -312,21 +312,11 @@ impl<N: Network> BlockSync<N> {
 
     /// Returns a summary of all in-flight requests.
     pub fn get_block_requests_summary(&self) -> BlockRequestsSummary {
-        let completed = self
-            .requests
-            .read()
-            .iter()
-            .filter_map(|(h, e)| if e.sync_ips().is_empty() { Some(*h) } else { None })
-            .collect::<Vec<_>>();
+        let requests = self.requests.read();
+        let completed = requests.iter().filter_map(|(h, e)| if e.sync_ips().is_empty() { Some(*h) } else { None });
+        let outstanding = requests.iter().filter_map(|(h, e)| if !e.sync_ips().is_empty() { Some(*h) } else { None });
 
-        let outstanding = self
-            .requests
-            .read()
-            .iter()
-            .filter_map(|(h, e)| if !e.sync_ips().is_empty() { Some(*h) } else { None })
-            .collect::<Vec<_>>();
-
-        BlockRequestsSummary { completed: rangify_heights(&completed), outstanding: rangify_heights(&outstanding) }
+        BlockRequestsSummary { completed: rangify_heights(completed), outstanding: rangify_heights(outstanding) }
     }
 
     pub fn get_sync_speed(&self) -> f64 {
@@ -889,6 +879,11 @@ impl<N: Network> BlockSync<N> {
                 greatest_peer_height,
             );
 
+            trace!(
+                "Generated new block requests for the following heights: {}",
+                rangify_heights(requests.iter().map(|(h, _)| *h))
+            );
+
             (requests, sync_peers)
         } else if self.requests.read().is_empty() {
             // This can happen during a race condition where the node just finished syncing.
@@ -1266,6 +1261,9 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Given the sync peers and their minimum common ancestor, return a list of block requests.
+    ///
+    /// # Returns
+    /// The list of block requests, ordered by height.
     fn construct_requests(
         &self,
         sync_peers: &IndexMap<SocketAddr, BlockLocators<N>>,

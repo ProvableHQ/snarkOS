@@ -638,8 +638,9 @@ impl<N: Network> Sync<N> {
             // The height is incremented as blocks are added.
             let mut current_height = start_height;
             trace!(
-                "Try advancing blocks responses with DAG updates (starting at block {current_height}, current sync speed is {})",
-                self.block_sync.get_sync_speed()
+                "Try advancing blocks responses with DAG updates (starting at block {next_height}, current sync speed is {speed})",
+                next_height = current_height + 1,
+                speed = self.block_sync.get_sync_speed(),
             );
 
             // If we already were within GC or successfully caught up with GC, try to advance BFT normally again.
@@ -669,14 +670,19 @@ impl<N: Network> Sync<N> {
             let was_in_dag_sync = previous == Some(BftSyncMode::Dag);
             if was_in_dag_sync {
                 // Peers may have advanced faster than this node is syncing, so it is reverting back to fast sync.
-                warn!("Node is switching from DAG sync back to fast sync. The network tip may have regressed.");
+                warn!(
+                    "Node is switching from DAG sync back to fast sync. The network tip may have advanced faster than this node is syncing."
+                );
             }
 
             // For fast sync, blocks still go through `pending_blocks` and the availability threshold check,
             // but certificates are *not* inserted into the BFT DAG (see `sync_storage_with_block` with `within_gc_range = false`).
             let mut current_height = start_height;
 
-            trace!("Try advancing block responses without updating the DAG (starting at block {current_height})");
+            trace!(
+                "Try advancing block responses without updating the DAG (starting at block {next_height})",
+                next_height = current_height + 1
+            );
 
             // Try to advance the ledger *to tip* without updating the BFT,
             // The BFT will only be updated if we reached the GC range after adding the new blocks.
@@ -704,7 +710,7 @@ impl<N: Network> Sync<N> {
             }
 
             // Sync the storage with the ledger if we should transition to the BFT sync.
-            let within_gc = (current_height + 1) > max_gc_height;
+            let within_gc = current_height >= max_gc_height;
             if within_gc {
                 info!("Finished catching up with the network. Switching back to DAG sync.");
                 self.block_sync.set_bft_sync_mode(BftSyncMode::Dag);

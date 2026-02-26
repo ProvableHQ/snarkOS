@@ -1402,8 +1402,9 @@ impl<N: Network> Primary<N> {
                 tokio::spawn(async move {
                     // Process the batch proposal.
                     let round = batch_propose.round;
-                    if let Err(e) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
-                        warn!("Cannot sign a batch at round {round} from '{peer_ip}' - {e}");
+                    if let Err(err) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
+                        let err = err.context(format!("Cannot sign a batch at round {round} from '{peer_ip}'"));
+                        warn!("{}", flatten_error(err));
                     }
                 });
             }

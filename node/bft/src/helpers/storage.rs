@@ -816,7 +816,7 @@ impl<N: Network> Storage<N> {
             info!("Synced to round {next_round}...");
         } else {
             trace!(
-                "Skipping sync to round {next_round} as it is less than the current round ({})",
+                "Skipping sync to round {next_round} as it is less than or equal to the current round ({})",
                 self.current_round()
             );
         }
