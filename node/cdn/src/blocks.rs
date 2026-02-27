@@ -236,6 +236,9 @@ pub async fn load_blocks<N: Network>(
         });
     }
 
+    // Initialize a temporary threadpool that can use the full CPU.
+    let threadpool = Arc::new(rayon::ThreadPoolBuilder::new().build().unwrap());
+
     // A loop for inserting the pending blocks into the ledger.
     let mut current_height = start_height.saturating_sub(1);
     while current_height < end_height - 1 {
@@ -270,14 +273,12 @@ pub async fn load_blocks<N: Network>(
         let next_blocks = std::mem::replace(&mut *candidate_blocks, retained_blocks);
         drop(candidate_blocks);
 
-        // Initialize a temporary threadpool that can use the full CPU.
-        let threadpool = rayon::ThreadPoolBuilder::new().build().unwrap();
-
         // Attempt to advance the ledger using the CDN block bundle.
         let mut process_clone = process.clone();
         let stoppable_clone = stoppable.clone();
+        let threadpool_clone = threadpool.clone();
         current_height = tokio::task::spawn_blocking(move || {
-            threadpool.install(|| {
+            threadpool_clone.install(|| {
                 for block in next_blocks.into_iter().filter(|b| (start_height..end_height).contains(&b.height())) {
                     // If we are instructed to shut down, abort.
                     if stoppable_clone.is_stopped() {
