@@ -21,7 +21,7 @@ use snarkos_utilities::{SignalHandler, Stoppable};
 
 use snarkvm::{
     prelude::{Deserialize, DeserializeOwned, Ledger, Network, Serialize, block::Block, store::ConsensusStorage},
-    utilities::flatten_error,
+    utilities::{flatten_error, unchecked_deserialize},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -480,7 +480,7 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
     };
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
+    match tokio::task::spawn_blocking(move || (unchecked_deserialize::<T>(&bytes), bytes)).await {
         Ok((Ok(objects), _)) => Ok(objects),
         Ok((Err(error), response_bytes)) => {
             let bytes_as_string = String::from_utf8_lossy(&response_bytes);
