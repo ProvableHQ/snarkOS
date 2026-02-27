@@ -481,6 +481,46 @@ impl<N: Network> BlockSync<N> {
         true
     }
 
+    /// Handles timeouts, checks if block sync is possible, prepares block requests,
+    /// and sends them via the given [`CommunicationService`].
+    ///
+    /// Callers typically call this in a loop after waiting for peer updates, e.g.
+    /// `timeout(MAX_SYNC_INTERVAL, self.wait_for_peer_update())`.
+    pub async fn try_issuing_block_requests<C: CommunicationService>(&self, communication: &C) {
+        self.handle_block_request_timeouts();
+
+        if !self.can_block_sync() {
+            trace!("Nothing to sync. Will not issue new block requests");
+            return;
+        }
+
+        let batches = self.prepare_block_requests();
+
+        if batches.is_empty() {
+            let total_requests = self.num_total_block_requests();
+            let num_outstanding = self.num_outstanding_block_requests();
+            if total_requests > 0 {
+                trace!(
+                    "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
+                );
+            } else {
+                debug!(
+                    "Not block synced yet, and there are no outstanding block requests or \
+                 new block requests to send"
+                );
+            }
+        } else {
+            for (block_requests, sync_peers) in batches {
+                for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
+                    if !self.send_block_requests(communication, &sync_peers, requests).await {
+                        break;
+                    }
+                    tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
+                }
+            }
+        }
+    }
+
     /// Inserts a new block response from the given peer IP.
     ///
     /// Returns an error if the block was malformed, or we already received a different block for this height.
@@ -1597,13 +1637,15 @@ mod tests {
         };
 
         // Prepare the block requests.
-        let (requests, sync_peers) = sync.prepare_block_requests().pop().unwrap();
+        let mut batches = sync.prepare_block_requests();
 
         // If there are no peers, then there should be no requests.
         if peers.is_empty() {
-            assert!(requests.is_empty());
+            assert!(batches.is_empty());
             return;
         }
+
+        let (requests, sync_peers) = batches.pop().unwrap();
 
         // Otherwise, there should be requests.
         let expected_num_requests = core::cmp::min(min_common_ancestor as usize, MAX_BLOCK_REQUESTS);

@@ -57,12 +57,6 @@ common_flags=(
   "--dev-num-validators=$total_validators"  "--dev-num-clients=$total_clients"
 )
 
-# Ensure the `test_consensus_heights` feature is enabled. We can query it using the CLI"s version information.
-if ! (snarkos --version | grep -q "test_consensus_heights"); then
-  log "❌ snarkOS was built without the \`test_consensus_heights\`, which is required for this test."
-  exit 1
-fi
-
 # Start all validator nodes in the background
 for validator_index in $(seq 0 $((total_validators-1))); do
   snarkos clean "--dev=$validator_index" "--network=$network_id"

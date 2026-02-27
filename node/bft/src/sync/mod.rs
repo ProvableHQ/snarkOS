@@ -17,22 +17,14 @@ use crate::{
     Gateway,
     MAX_FETCH_TIMEOUT_IN_MS,
     Transport,
-    events::{CertificateRequest, CertificateResponse, DataBlocks, Event},
+    events::{CertificateRequest, CertificateResponse, Event},
     helpers::{Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
     ledger_service::{BeginLedgerUpdateError, LedgerService},
     spawn_blocking,
 };
 
 use snarkos_node_network::PeerPoolHandling;
-use snarkos_node_sync::{
-    BLOCK_REQUEST_BATCH_DELAY,
-    BftSyncMode,
-    BlockSync,
-    InsertBlockResponseError,
-    Ping,
-    PrepareSyncRequest,
-    locators::BlockLocators,
-};
+use snarkos_node_sync::{BftSyncMode, BlockSync, InsertBlockResponseError, Ping, locators::BlockLocators};
 use snarkos_utilities::CallbackHandle;
 
 use snarkvm::{
@@ -45,7 +37,6 @@ use snarkvm::{
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
@@ -162,30 +153,6 @@ impl<N: Network> Sync<N> {
         Ok(())
     }
 
-    /// Sends the given batch of block requests to peers.
-    ///
-    /// Responses to block requests will eventually be processed by `Self::try_advancing_block_synchronization`.
-    #[inline]
-    async fn send_block_requests(
-        &self,
-
-        block_requests: Vec<(u32, PrepareSyncRequest<N>)>,
-        sync_peers: IndexMap<SocketAddr, BlockLocators<N>>,
-    ) {
-        trace!("Prepared {num_requests} block requests", num_requests = block_requests.len());
-
-        // Sends the block requests to the sync peers.
-        for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.block_sync.send_block_requests(&self.gateway, &sync_peers, requests).await {
-                // Stop if we fail to process a batch of requests.
-                break;
-            }
-
-            // Sleep to avoid triggering spam detection.
-            tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
-        }
-    }
-
     /// Starts the sync module.
     ///
     /// When this function returns successfully, the sync module will have spawned background tasks
@@ -203,7 +170,7 @@ impl<N: Network> Sync<N> {
                 // Issue block requests to peers.
                 self_.try_issuing_block_requests().await;
 
-                // Rate limiting happens in [`Self::send_block_requests`] and no additional sleeps are needed here.
+                // Rate limiting happens in [`BlockSync::try_issuing_block_requests`] and no additional sleeps are needed here.
             }
         });
 
@@ -338,42 +305,7 @@ impl<N: Network> Sync<N> {
     /// This method handles timeout removal, checks if block sync is possible,
     /// and issues block requests to peers.
     async fn try_issuing_block_requests(&self) {
-        // Check if any existing requests can be removed.
-        // We should do this even if we cannot block sync, to ensure
-        // there are no dangling block requests.
-        self.block_sync.handle_block_request_timeouts();
-
-        // Do not attempt to sync if there are no blocks to sync.
-        // This prevents redundant log messages and performing unnecessary computation.
-        if !self.block_sync.can_block_sync() {
-            return;
-        }
-
-        // Prepare the block requests, if any.
-        // In the process, we update the state of `is_block_synced` for the sync module.
-        let batches = self.block_sync.prepare_block_requests();
-
-        // If there are no block requests, but there are pending block responses in the sync pool,
-        // then try to advance the ledger using these pending block responses.
-        if batches.is_empty() {
-            let total_requests = self.block_sync.num_total_block_requests();
-            let num_outstanding = self.block_sync.num_outstanding_block_requests();
-            if total_requests > 0 {
-                trace!(
-                    "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
-                );
-            } else {
-                // This can happen during peer rotation and should not be a warning.
-                debug!(
-                    "Not block synced yet, and there are no outstanding block requests or \
-                 new block requests to send"
-                );
-            }
-        } else {
-            for (block_requests, sync_peers) in batches {
-                self.send_block_requests(block_requests, sync_peers).await;
-            }
-        }
+        self.block_sync.try_issuing_block_requests(&self.gateway).await;
     }
 
     /// Test-only method that allows setting the sync height to the given nubmer    

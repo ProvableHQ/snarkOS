@@ -16,7 +16,7 @@
 mod router;
 
 use crate::{
-    bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
+    bft::{helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
     cdn::CdnBlockSync,
     traits::NodeInterface,
 };
@@ -32,7 +32,7 @@ use snarkos_node_router::{
     Routing,
     messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
@@ -53,7 +53,6 @@ use snarkvm::{
 use aleo_std::StorageMode;
 use anyhow::{Context, Result};
 use core::future::Future;
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 use lru::LruCache;
@@ -314,57 +313,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
     async fn try_issuing_block_requests(&self) {
-        self.sync.handle_block_request_timeouts();
-
-        // Do not attempt to sync if there are not blocks to sync.
-        // This prevents redundant log messages and performing unnecessary computation.
-        if !self.sync.can_block_sync() {
-            trace!("Nothing to sync. Will not issue new block requests");
-            return;
-        }
-
-        // Prepare the block requests, if any.
-        // In the process, we update the state of `is_block_synced` for the sync module.
-        let batches = self.sync.prepare_block_requests();
-
-        // If there are no block requests, but there are pending block responses in the sync pool,
-        // then try to advance the ledger using these pending block responses.
-        if batches.is_empty() {
-            let total_requests = self.sync.num_total_block_requests();
-            let num_outstanding = self.sync.num_outstanding_block_requests();
-            if total_requests > 0 {
-                trace!(
-                    "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
-                );
-            } else {
-                // This can happen during peer rotation and should not be a warning.
-                debug!(
-                    "Not block synced yet, and there are no outstanding block requests or \
-                 new block requests to send"
-                );
-            }
-        } else {
-            for (block_requests, sync_peers) in batches {
-                self.send_block_requests(block_requests, sync_peers).await;
-            }
-        }
-    }
-
-    async fn send_block_requests(
-        &self,
-        block_requests: Vec<(u32, PrepareSyncRequest<N>)>,
-        sync_peers: IndexMap<SocketAddr, BlockLocators<N>>,
-    ) {
-        // Issues the block requests in batches.
-        for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
-                // Stop if we fail to process a batch of requests.
-                break;
-            }
-
-            // Sleep to avoid triggering spam detection.
-            tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
-        }
+        self.sync.try_issuing_block_requests(self.router()).await;
     }
 
     /// Initializes solution verification.
