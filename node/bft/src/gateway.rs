@@ -71,6 +71,7 @@ use snarkvm::{
         narwhal::{BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::flatten_error,
 };
 
 use colored::Colorize;
@@ -1353,15 +1354,29 @@ impl<N: Network> Disconnect for Gateway<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
-            self.downgrade_peer_to_candidate(peer_ip);
+            // TODO(kaimast): This can, in theory, still lead to race conditions, if we immediately reconnect to the same peer.
+            // In practice, there should always be a significant delay between those two delays, so it is not an immediate issue.
+            //
+            // To properly fix this, we either needk hold a lock here, or add a dedicated "disconnecting" state, so that
+            // a peer is not re-added while the rest of the disconnect logic is running.
+            let was_fully_connected = self.downgrade_peer_to_candidate(peer_ip);
+
             // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-            if let Some(sync_sender) = self.sync_sender.get() {
+            if was_fully_connected && let Some(sync_sender) = self.sync_sender.get() {
                 let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                        warn!("{CONTEXT} Unable to remove '{peer_ip}' from the sync module - {err}");
-                    }
-                });
+                let (tx, rx) = oneshot::channel();
+
+                if let Err(err) = tx_block_sync_remove_peer_.send((peer_ip, tx)).await {
+                    let err: anyhow::Error = err.into();
+                    let err = err.context(format!("Unable to remove '{peer_ip}' from the sync module"));
+                    warn!("{CONTEXT} {}", flatten_error(err));
+                }
+
+                if let Err(err) = rx.await {
+                    let err: anyhow::Error = err.into();
+                    let err = err.context(format!("Unable to remove '{peer_ip}' from the sync module"));
+                    warn!("{CONTEXT} {}", flatten_error(err));
+                }
             }
             // We don't clear this map based on time but only on peer disconnect.
             // This is sufficient to avoid infinite growth as the committee has a fixed number
@@ -1370,6 +1385,8 @@ impl<N: Network> Disconnect for Gateway<N> {
             self.cache.clear_outbound_block_requests(peer_ip);
             #[cfg(feature = "metrics")]
             self.update_metrics();
+        } else {
+            warn!("{CONTEXT} Got disconnect for a peer '{peer_addr}' that is not in the peer pool");
         }
     }
 }

@@ -33,9 +33,11 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::RwLock;
+use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(feature = "locktick")]
 use locktick::tokio::Mutex as TMutex;
+#[cfg(not(feature = "locktick"))]
+use parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use rand::seq::{IteratorRandom, SliceRandom};
@@ -192,6 +194,9 @@ pub struct BlockSync<N: Network> {
 
     /// Tracks sync speed
     metrics: BlockSyncMetrics,
+
+    /// Meta lock that ensures no new block requests are created while a peer is removed.
+    prepare_requests_lock: Mutex<()>,
 }
 
 impl<N: Network> BlockSync<N> {
@@ -210,6 +215,7 @@ impl<N: Network> BlockSync<N> {
             common_ancestors: Default::default(),
             advance_with_sync_blocks_lock: Default::default(),
             metrics: Default::default(),
+            prepare_requests_lock: Default::default(),
         }
     }
 
@@ -789,6 +795,9 @@ impl<N: Network> BlockSync<N> {
     pub fn remove_peer(&self, peer_ip: &SocketAddr) {
         trace!("Removing peer {peer_ip} from block sync");
 
+        // Ensure no new block requests are issued to this peer, while it is disconnecting.
+        let _prepare_requests_lock = self.prepare_requests_lock.lock();
+
         // Remove the locators entry for the given peer IP.
         self.locators.write().remove(peer_ip);
         // Remove all common ancestor entries for this peers.
@@ -827,6 +836,8 @@ impl<N: Network> BlockSync<N> {
     ///    `Client::try_issuing_block_requests` which calls this function.
     ///  - Provers do not call this function.
     pub fn prepare_block_requests(&self) -> BlockRequestBatch<N> {
+        let _block_requests_lock = self.prepare_requests_lock.lock();
+
         // Used to print more information when we max out on requests.
         let print_requests = || {
             if tracing::enabled!(tracing::Level::TRACE) {
@@ -1031,20 +1042,35 @@ impl<N: Network> BlockSync<N> {
     /// This is used when disconnecting from a peer or when a peer sends invalid block responses.
     fn remove_block_requests_to_peer(&self, peer_ip: &SocketAddr) {
         trace!("Block sync is removing all block requests to peer {peer_ip}...");
+        let mut heights = vec![];
+        let mut removed_count = 0;
 
         // Remove the peer IP from the requests map. If any request entry is now empty,
         // and its corresponding response entry is also empty, then remove that request entry altogether.
         self.requests.write().retain(|height, e| {
             let had_peer = e.sync_ips_mut().swap_remove(peer_ip);
 
+            if had_peer && e.response.is_none() {
+                trace!("Removed outstanding block request to peer {peer_ip} at height {height}");
+                heights.push(*height);
+            }
+
             // Only remove requests that were sent to this peer, that have no other peer that can respond instead,
             // and that were not completed yet.
             let retain = !had_peer || !e.sync_ips().is_empty() || e.response.is_some();
             if !retain {
-                trace!("Removed block request timestamp for {peer_ip} at height {height}");
+                removed_count += 1;
             }
             retain
         });
+
+        if !heights.is_empty() {
+            debug!(
+                "Removed outstanding block requests to disconnecting peer '{peer_ip}' at heights: {}. {} were fully removed.",
+                rangify_heights(heights),
+                removed_count
+            );
+        }
 
         // No need to remove responses here, because requests with responses will be retained.
     }
@@ -1064,62 +1090,64 @@ impl<N: Network> BlockSync<N> {
         &self,
         _peer_pool_handler: &P,
     ) -> Result<Option<BlockRequestBatch<N>>> {
-        // Acquire the write lock on the requests map.
-        let mut requests = self.requests.write();
-
-        // Retrieve the current time.
-        let now = Instant::now();
-
-        // Retrieve the current block height
-        let current_height = self.ledger.latest_block_height();
-
-        // Track the number of timed out block requests (only used to print a log message).
-        let mut timed_out_requests = vec![];
-
-        // Track which peers should be banned due to unresponsiveness.
-        let mut peers_to_ban: HashSet<SocketAddr> = HashSet::new();
-
-        // Remove timed out block requests.
-        requests.retain(|height, e| {
-            let is_obsolete = *height <= current_height;
-            // Determine if the duration since the request timestamp has exceeded the request timeout.
-            let timer_elapsed = now.duration_since(e.timestamp) > BLOCK_REQUEST_TIMEOUT;
-            // Determine if the request is incomplete.
-            let is_complete = e.sync_ips().is_empty();
-
-            // Determine if the request has timed out.
-            let is_timeout = timer_elapsed && !is_complete;
-
-            // Retain if this is not a timeout and is not obsolete.
-            let retain = !is_timeout && !is_obsolete;
-
-            if is_timeout {
-                trace!("Block request at height {height} has timed out: timer_elapsed={timer_elapsed}, is_complete={is_complete}, is_obsolete={is_obsolete}");
-
-                // Increment the number of timed out block requests.
-                timed_out_requests.push(*height);
-            } else if is_obsolete {
-                trace!("Block request at height {height} became obsolete (current_height={current_height})");
-            }
-
-            // If the request timed out, also remove and ban given peer.
-            if is_timeout {
-                for peer_ip in e.sync_ips().iter() {
-                    peers_to_ban.insert(*peer_ip);
-                }
-            }
-
-            retain
-        });
-
-        if !timed_out_requests.is_empty() {
-            debug!("{num} block requests timed out", num = timed_out_requests.len());
-        }
-
-        let next_request_height = requests.iter().next().map(|(h, _)| *h);
-
         // Avoid locking `locators` and `requests` at the same time.
-        drop(requests);
+        let (next_request_height, peers_to_ban) = {
+            // Acquire the write lock on the requests map.
+            let mut requests = self.requests.write();
+
+            // Retrieve the current time.
+            let now = Instant::now();
+
+            // Retrieve the current block height
+            let current_height = self.ledger.latest_block_height();
+
+            // Track the number of timed out block requests (only used to print a log message).
+            let mut timed_out_requests = vec![];
+
+            // Track which peers should be banned due to unresponsiveness.
+            let mut peers_to_ban: HashSet<SocketAddr> = HashSet::new();
+
+            // Remove timed out block requests.
+            requests.retain(|height, e| {
+                let is_obsolete = *height <= current_height;
+                // Determine if the duration since the request timestamp has exceeded the request timeout.
+                let timer_elapsed = now.duration_since(e.timestamp) > BLOCK_REQUEST_TIMEOUT;
+                // Determine if the request is incomplete.
+                let is_complete = e.sync_ips().is_empty();
+
+                // Determine if the request has timed out.
+                let is_timeout = timer_elapsed && !is_complete;
+
+                // Retain if this is not a timeout and is not obsolete.
+                let retain = !is_timeout && !is_obsolete;
+
+                if is_timeout {
+                    trace!("Block request at height {height} has timed out: timer_elapsed={timer_elapsed}, is_complete={is_complete}, is_obsolete={is_obsolete}");
+
+                    // Increment the number of timed out block requests.
+                    timed_out_requests.push(*height);
+                } else if is_obsolete {
+                    trace!("Block request at height {height} became obsolete (current_height={current_height})");
+                }
+
+                // If the request timed out, also remove and ban given peer.
+                if is_timeout {
+                    for peer_ip in e.sync_ips().iter() {
+                        peers_to_ban.insert(*peer_ip);
+                    }
+                }
+
+                retain
+            });
+
+            if !timed_out_requests.is_empty() {
+                debug!("{num} block requests timed out", num = timed_out_requests.len());
+            }
+
+            let next_request_height = requests.iter().next().map(|(h, _)| *h);
+
+            (next_request_height, peers_to_ban)
+        };
 
         // Now remove and ban any unresponsive peers
         for peer_ip in peers_to_ban {
@@ -1537,6 +1565,7 @@ mod tests {
             sync_state: RwLock::new(sync.sync_state.read().clone()),
             advance_with_sync_blocks_lock: Default::default(),
             metrics: Default::default(),
+            prepare_requests_lock: Default::default(),
         }
     }
 

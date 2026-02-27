@@ -284,8 +284,9 @@ impl<N: Network> Sync<N> {
         // Process the block sync request to remove the peer.
         let self_ = self.clone();
         self.spawn(async move {
-            while let Some(peer_ip) = rx_block_sync_remove_peer.recv().await {
+            while let Some((peer_ip, tx)) = rx_block_sync_remove_peer.recv().await {
                 self_.remove_peer(peer_ip);
+                tx.send(()).ok();
             }
         });
 
@@ -406,7 +407,7 @@ impl<N: Network> Sync<N> {
 
     /// A peer disconnected.
     fn remove_peer(&self, peer_ip: SocketAddr) {
-        self.block_sync.remove_peer(&peer_ip);
+        self.block_sync.remove_peer(&peer_ip)
     }
 
     #[cfg(test)]

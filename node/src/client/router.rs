@@ -89,14 +89,20 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Client<N, C> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
-            self.sync.remove_peer(&peer_ip);
+            let was_fully_connected = self.router.downgrade_peer_to_candidate(peer_ip);
 
-            self.router.downgrade_peer_to_candidate(peer_ip);
+            // Only remove the peer from sync if the handshake was successful.
+            // This handles the cases where a client unsuccessfully tries to connect to another client using the router.
+            if was_fully_connected {
+                self.sync.remove_peer(&peer_ip);
+            }
 
             // Clear cached entries applicable to the peer.
             self.router.cache().clear_peer_entries(peer_ip);
             #[cfg(feature = "metrics")]
             self.router.update_metrics();
+        } else {
+            warn!("Got disconnect for a peer '{peer_addr}' that is not in the peer pool");
         }
     }
 }

@@ -96,6 +96,8 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Validator<N, C> {
             self.router.cache().clear_peer_entries(peer_ip);
             #[cfg(feature = "metrics")]
             self.router.update_metrics();
+        } else {
+            warn!("Got disconnect for a peer '{peer_addr}' that is not in the peer pool");
         }
     }
 }
