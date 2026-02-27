@@ -48,7 +48,6 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
-    utilities::flatten_error,
 };
 
 use aleo_std::StorageMode;
@@ -266,6 +265,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let self_ = self.clone();
         self.spawn(async move {
             while !self_.signal_handler.is_stopped() {
+                // Wait for peer updates or timeout
+                let _ = timeout(Self::MAX_SYNC_INTERVAL, self_.sync.wait_for_peer_update()).await;
+
                 // Perform the sync routine.
                 self_.try_issuing_block_requests().await;
             }
@@ -312,26 +314,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
     async fn try_issuing_block_requests(&self) {
-        // Wait for peer updates or timeout
-        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
-
-        // For sanity, check that sync height is never below ledger height.
-        // (if the ledger height is lower or equal to the current sync height, this is a noop)
-        self.sync.set_sync_height(self.ledger.latest_height());
-
-        match self.sync.handle_block_request_timeouts(&self.router) {
-            Ok(Some((requests, sync_peers))) => {
-                // Re-request blocks instead of performing regular block sync.
-                self.send_block_requests(requests, sync_peers).await;
-                return;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                // Abort and retry later.
-                error!("{}", flatten_error(&err));
-                return;
-            }
-        }
+        self.sync.handle_block_request_timeouts();
 
         // Do not attempt to sync if there are not blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
@@ -340,34 +323,13 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             return;
         }
 
-        // First, try to advance the ledger with new responses.
-        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
-            Ok(val) => val,
-            Err(err) => {
-                error!("{err}");
-                return;
-            }
-        };
-
-        if has_new_blocks {
-            match self.sync.get_block_locators() {
-                Ok(locators) => self.ping.update_block_locators(locators),
-                Err(err) => error!("Failed to get block locators: {err}"),
-            }
-
-            // If these were the last blocks to process, do not continue.
-            if !self.sync.can_block_sync() {
-                return;
-            }
-        }
-
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.sync.prepare_block_requests();
+        let batches = self.sync.prepare_block_requests();
 
         // If there are no block requests, but there are pending block responses in the sync pool,
         // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() {
+        if batches.is_empty() {
             let total_requests = self.sync.num_total_block_requests();
             let num_outstanding = self.sync.num_outstanding_block_requests();
             if total_requests > 0 {
@@ -382,7 +344,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 );
             }
         } else {
-            self.send_block_requests(block_requests, sync_peers).await;
+            for (block_requests, sync_peers) in batches {
+                self.send_block_requests(block_requests, sync_peers).await;
+            }
         }
     }
 

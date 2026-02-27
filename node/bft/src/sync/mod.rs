@@ -338,26 +338,10 @@ impl<N: Network> Sync<N> {
     /// This method handles timeout removal, checks if block sync is possible,
     /// and issues block requests to peers.
     async fn try_issuing_block_requests(&self) {
-        // Update the sync height to the latest ledger height.
-        // (if the ledger height is lower or equal to the current sync height, this is a noop)
-        self.block_sync.set_sync_height(self.ledger.latest_block_height());
-
         // Check if any existing requests can be removed.
         // We should do this even if we cannot block sync, to ensure
         // there are no dangling block requests.
-        match self.block_sync.handle_block_request_timeouts(&self.gateway) {
-            Ok(Some((requests, sync_peers))) => {
-                // Re-request blocks instead of performing regular block sync.
-                self.send_block_requests(requests, sync_peers).await;
-                return;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                // Abort and retry later.
-                error!("{}", &flatten_error(err));
-                return;
-            }
-        }
+        self.block_sync.handle_block_request_timeouts();
 
         // Do not attempt to sync if there are no blocks to sync.
         // This prevents redundant log messages and performing unnecessary computation.
@@ -367,15 +351,29 @@ impl<N: Network> Sync<N> {
 
         // Prepare the block requests, if any.
         // In the process, we update the state of `is_block_synced` for the sync module.
-        let (requests, sync_peers) = self.block_sync.prepare_block_requests();
+        let batches = self.block_sync.prepare_block_requests();
 
-        // If there are no block requests, return early.
-        if requests.is_empty() {
-            return;
+        // If there are no block requests, but there are pending block responses in the sync pool,
+        // then try to advance the ledger using these pending block responses.
+        if batches.is_empty() {
+            let total_requests = self.block_sync.num_total_block_requests();
+            let num_outstanding = self.block_sync.num_outstanding_block_requests();
+            if total_requests > 0 {
+                trace!(
+                    "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
+                );
+            } else {
+                // This can happen during peer rotation and should not be a warning.
+                debug!(
+                    "Not block synced yet, and there are no outstanding block requests or \
+                 new block requests to send"
+                );
+            }
+        } else {
+            for (block_requests, sync_peers) in batches {
+                self.send_block_requests(block_requests, sync_peers).await;
+            }
         }
-
-        // Send the block requests to peers.
-        self.send_block_requests(requests, sync_peers).await;
     }
 
     /// Test-only method that allows setting the sync height to the given nubmer    
