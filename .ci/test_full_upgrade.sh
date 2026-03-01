@@ -114,7 +114,7 @@ function start_node() {
     heights_env="$CONSENSUS_VERSION_HEIGHTS_CURRENT"
   fi
 
-  CONSENSUS_VERSION_HEIGHTS="$heights_env" "$bin" start "${flags[@]}" &
+  run_with_prefix "$role-$node_index" env CONSENSUS_VERSION_HEIGHTS="$heights_env" "$bin" start "${flags[@]}"
   PIDS[node_index]=$!
   log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin") with heights=$heights_env"
 }
@@ -346,7 +346,7 @@ for client_index in $(seq 0 $((total_clients-1))); do
   fi
 done
 
-wait_for_nodes "$total_validators" "$total_clients"
+wait_for_nodes "$total_validators" "$total_clients" "$network_name" 120
 wait_for_stable_consensus_version 0 "$network_name"
 
 for node_index in $(seq 0 $((total_validators+total_clients-1))); do

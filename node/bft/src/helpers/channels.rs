@@ -65,8 +65,11 @@ pub fn init_consensus_channels<N: Network>() -> (ConsensusSender<N>, ConsensusRe
 pub struct BFTSender<N: Network> {
     pub tx_primary_round: mpsc::Sender<(u64, oneshot::Sender<bool>)>,
     pub tx_primary_certificate: mpsc::Sender<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
+    /// Notifies that sync without BFT is done.
     pub tx_sync_bft_dag_at_bootup: mpsc::Sender<Vec<BatchCertificate<N>>>,
     pub tx_sync_bft: mpsc::Sender<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
+    /// Notifies that we synced a block with BFT.
+    pub tx_sync_block_committed: mpsc::Sender<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
 }
 
 impl<N: Network> BFTSender<N> {
@@ -108,6 +111,7 @@ pub struct BFTReceiver<N: Network> {
     pub rx_primary_certificate: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
     pub rx_sync_bft_dag_at_bootup: mpsc::Receiver<Vec<BatchCertificate<N>>>,
     pub rx_sync_bft: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
+    pub rx_sync_block_committed: mpsc::Receiver<(BatchCertificate<N>, oneshot::Sender<Result<()>>)>,
 }
 
 /// Initializes the BFT channels, and returns the sending and receiving ends.
@@ -116,9 +120,22 @@ pub fn init_bft_channels<N: Network>() -> (BFTSender<N>, BFTReceiver<N>) {
     let (tx_primary_certificate, rx_primary_certificate) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_sync_bft_dag_at_bootup, rx_sync_bft_dag_at_bootup) = mpsc::channel(MAX_CHANNEL_SIZE);
     let (tx_sync_bft, rx_sync_bft) = mpsc::channel(MAX_CHANNEL_SIZE);
+    let (tx_sync_block_committed, rx_sync_block_committed) = mpsc::channel(MAX_CHANNEL_SIZE);
 
-    let sender = BFTSender { tx_primary_round, tx_primary_certificate, tx_sync_bft_dag_at_bootup, tx_sync_bft };
-    let receiver = BFTReceiver { rx_primary_round, rx_primary_certificate, rx_sync_bft_dag_at_bootup, rx_sync_bft };
+    let sender = BFTSender {
+        tx_primary_round,
+        tx_primary_certificate,
+        tx_sync_bft_dag_at_bootup,
+        tx_sync_bft,
+        tx_sync_block_committed,
+    };
+    let receiver = BFTReceiver {
+        rx_primary_round,
+        rx_primary_certificate,
+        rx_sync_bft_dag_at_bootup,
+        rx_sync_bft,
+        rx_sync_block_committed,
+    };
 
     (sender, receiver)
 }

@@ -133,7 +133,7 @@ function start_node() {
     flags+=( --client "--logfile=$log_file" )
   fi
 
-  "$bin" start "${flags[@]}" &
+  run_with_prefix "$role-$node_index" "$bin" start "${flags[@]}"
   PIDS[node_index]=$!
   log "Started $role $node_index with PID ${PIDS[node_index]} using $(basename "$bin")"
 }
@@ -229,7 +229,7 @@ for validator_index in $(seq 0 $((total_validators-1)) ); do
 done
 
 # Ensure the network is up and running.
-wait_for_nodes "$total_validators" 0
+wait_for_nodes "$total_validators" 0 "$network_name" 120
 
 # Block until the consensus version does not increase anymore.
 if ! wait_for_stable_consensus_version 0 "$network_name"; then

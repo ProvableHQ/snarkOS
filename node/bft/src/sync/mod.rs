@@ -928,7 +928,7 @@ impl<N: Network> Sync<N> {
                 let ledger = self.ledger.clone();
                 let storage = self.storage.clone();
 
-                spawn_blocking!({
+                let leader_certificate: Option<BatchCertificate<N>> = spawn_blocking!({
                     let block = ledger.check_block_content(pending_block).with_context(|| {
                         format!("Failed to check contents of pending block {hash} at height {height}")
                     })?;
@@ -940,8 +940,26 @@ impl<N: Network> Sync<N> {
                     // Sync the round with the block.
                     storage.sync_round_with_block(block.round());
 
-                    Ok(())
-                })?
+                    if let Authority::Quorum(subdag) = block.authority() {
+                        Ok(Some(subdag.leader_certificate().clone()))
+                    } else {
+                        Ok(None)
+                    }
+                })?;
+
+                // If a BFT sender was provided, send the leader certificate to the BFT.
+                // This will update the primary's DAG as expected.
+                if let Some(leader_certificate) = leader_certificate
+                    && let Some(bft_sender) = self.bft_sender.get()
+                {
+                    let (callback_tx, callback_rx) = oneshot::channel();
+                    bft_sender
+                        .tx_sync_block_committed
+                        .send((leader_certificate, callback_tx))
+                        .await
+                        .with_context(|| "Failed to mark leader certificate as committed")?;
+                    callback_rx.await?.with_context(|| "Failed to mark leader certificate as committed")?;
+                }
             }
         } else {
             trace!("No pending block are ready to be committed ({} block(s) are pending)", pending_blocks.len());

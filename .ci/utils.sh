@@ -41,6 +41,19 @@ function check_node_stopped() {
 }
 
 ########################################
+# Log prefixing
+########################################
+
+# Runs a command in the background with stdout/stderr prefixed by "[label] ".
+# Usage: run_with_prefix <label> <command...>
+# After calling, $! holds the PID of the backgrounded command.
+function run_with_prefix() {
+  local label="$1"
+  shift
+  stdbuf -oL -eL "$@" > >(awk -v prefix="[$label] " '{print prefix $0}') 2>&1 &
+}
+
+########################################
 # Basic utility functions
 ########################################
 
@@ -71,6 +84,67 @@ function get_network_name() {
       echo "mainnet"
       ;;
   esac
+}
+
+# Generates the given number of random indices up to max_index.
+function generate_random_indices() {
+  local count=$1
+  local max_index=$2
+
+  # Check if count is greater than max_index + 1 (impossible request)
+  if (( count > max_index + 1 )); then
+    echo "Error: Cannot request more unique indices than exist." >&2
+    return 1
+  fi
+
+  # shuf -i generates a range (0 to max), -n picks N items
+  shuf -i 0-"$max_index" -n "$count"
+}
+
+# Stops select running processes from the PIDS list.
+function stop_some_nodes() {
+  local indices=("$@")
+  local killed_pids=()
+
+  echo "🚨 Stopping ${#indices[@]} selected node(s)..."
+
+  for i in "${indices[@]}"; do
+    # Get the PID from the global PIDS array using the index
+    local pid="${PIDS[$i]}"
+
+    # Check if PID exists (is not empty) and is currently running
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "Killing PIDS[$i] -> $pid"
+      # Use SIGTERM to gracefully shut down the node.
+      kill "$pid" 2>/dev/null || true
+      # Add to list of PIDs to wait for specifically
+      killed_pids+=("$pid")
+    else
+      echo "Skipping PIDS[$i] (PID: $pid) - Already dead or invalid."
+    fi
+  done
+
+  # Wait up to 60 seconds for all selected nodes to shut down.
+  elapsed=0
+  while (( elapsed < 60 )); do
+    still_running=false
+    for pid in "${killed_pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=true
+        break
+      fi
+    done
+
+    if ! $still_running; then
+      return 0 
+    else 
+      sleep 1
+      elapsed=$((elapsed + 1))
+    fi
+  done
+
+  log "❌ Not all nodes shut down within 60 seconds."
+  return 1
 }
 
 # Succeeds if the given string is an integer.
@@ -107,10 +181,10 @@ function init_log_dir() {
 
 # Write a log message to the console and "ci-runner.log".
 function log() {
-  msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+  msg="$(date -u +"%Y-%m-%dT%H:%M:%SZ") $*"
   echo "$msg" >> "$log_dir/ci-runner.log"
   # Print to message to stderr so it is always visible.
-  >&2 echo "$msg"
+  >&2 echo "[ci-runner] $msg"
 }
 
 ###########################################
@@ -174,9 +248,18 @@ function check_heights() {
   fi
 
   for node_index in $(seq "$start_index" $((end_index-1))); do
-    height=$(get_block_height "$node_index" "$network_name" || echo 0)
-
-    if (( height < min_height )); then
+    port=$((3030 + node_index))
+    height=$(curl -s "http://127.0.0.1:$port/v2/$network_name/block/height/latest" || echo "0")
+    
+    # Track highest height for reporting
+    if (is_integer "$height") && (( height > highest_height )); then
+      highest_height=$height
+    fi
+    
+    if ! (is_integer "$height"); then
+      log "Node #${node_index} (port=$port) did not respont to height request"
+      all_reached=false
+    elif (( height < min_height )); then
       log "Node #${node_index} (port=$port) only reached height $height, expected at least $min_height"
       all_reached=false
     fi
@@ -188,7 +271,7 @@ function check_heights() {
   else
     if (( elapsed > 0 && ((elapsed % 60) == 0) )); then
       elapsed_mins=$((elapsed / 60))
-      echo "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height, elapsed: $elapsed_mins minutes)"
+      log "⏳ WAITING: Not all nodes reached minimum height of $min_height (highest so far: $highest_height, elapsed: $elapsed_mins minutes)"
     fi
 
     return 1
@@ -197,15 +280,19 @@ function check_heights() {
 
 # Function checking that nodes created logs on disk and they contain no errors.
 function check_logs() {
-  echo "Checking logs exist for all nodes..."
+  log "Checking logs exist for all nodes..."
   local log_dir=$1
   local total_validators=$2
   local total_clients=$3
-  
+  # The maximum number of warnings allow in each node's log file.
+  # Nodes may create some warnings at startup because they cannot connect to each other yet.
+  local max_warnings=$4
+
+ 
   local all_reached=true
   local highest_height=0
 
-  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+  for validator_index in $(seq 0 $((total_validators-1))); do 
     if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
       log "❌ Test failed! Validator #${validator_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -218,9 +305,15 @@ function check_logs() {
       grep "ERROR" "$log_dir/validator-${validator_index}.log" | grep -v "already exists in the ledger"
       return 1
     fi
+
+    num_warnings=$(grep -c "WARN" "$log_dir/validator-${validator_index}.log")
+    if (( num_warnings > max_warnings )); then
+      echo "❌ Test failed! Validator #${validator_index} logs contain more than ${max_warnings} warnings."
+      return 1
+    fi
   done
 
-  for ((client_index = 0; client_index < total_clients; client_index++)); do
+  for client_index in $(seq 0 $((total_clients-1))); do
     if [ ! -s "$log_dir/client-${client_index}.log" ]; then
       log "❌ Test failed! Client #${client_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -232,7 +325,12 @@ function check_logs() {
       grep "ERROR" "$log_dir/client-${client_index}.log" | grep -v "already exists in the ledger"
       return 1
     fi
- 
+
+    num_warnings=$(grep -c "WARN" "$log_dir/client-${client_index}.log")
+    if (( num_warnings > max_warnings )); then
+      echo "❌ Test failed! Client #${client_index} logs contain more than ${max_warnings} warnings."
+      return 1
+    fi
   done
 
   return 0
@@ -245,10 +343,11 @@ function check_logs() {
 function check_nodes() {
   local total_validators=$1
   local total_clients=$2
+  local network_name=$3
 
-  for ((node_index = 0; node_index < total_validators + total_clients; node_index++)); do
+  for node_index in $(seq 0 $((total_validators+total_clients-1))); do
     port=$((3030 + node_index))
-    status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/v2/$network_name/version")
+    status=$(curl -s -o /dev/null -w "%{http_code}" "http://$localhost:$port/v2/$network_name/version")
     # Fail if the HTTP response is not 2XX.
     if (( status < 200 || status > 300 )); then
       log "Node #${node_index} (port=$port) is not ready yet"
@@ -263,6 +362,7 @@ function check_nodes() {
 function wait_for_peers() {
   local node_index=$1
   local min_peers=$2
+  local network_name=$3
 
   local max_wait=300
   local poll_interval=1
@@ -271,7 +371,7 @@ function wait_for_peers() {
   SECONDS=0
   
   while (( SECONDS < max_wait )); do
-    result=$(curl -s "http://localhost:$port/v2/$network_name/peers/count")
+    result=$(curl -s "http://$localhost:$port/v2/$network_name/peers/count")
 
     if (is_integer "$result"); then
       if (( result < min_peers )); then
@@ -290,6 +390,12 @@ function wait_for_peers() {
 
   log "❌ Nodes did not connect within 5 minutes."
   return 1
+}
+
+# Succeeds if the node with the given index has the specified number of BFT connections (or greater)
+function wait_for_bft_connections() {
+  # Not implemented on canary
+  return 0
 }
 
 # Blocks until the node with the given index has at least one peer to sync from (or times out).
@@ -324,8 +430,15 @@ function wait_for_nodes() {
   
   local total_validators=$1
   local total_clients=$2
+  local network_name=$3
+  # Default to 60s if not provided. 
+  local max_wait=${4:-60}
 
-  while true; do
+  local poll_interval=1
+
+  SECONDS=0
+
+  while (( SECONDS < max_wait )); do
     if check_node_stopped; then
       log "ERROR: one or more nodes stopped unexpectedly"
       return 1
@@ -337,10 +450,10 @@ function wait_for_nodes() {
     fi
 
     # Pause to give the nodes time to start up.
-    sleep 1
+    sleep $poll_interval
   done
 
-  log "❌ Nodes did not become ready within 60 seconds."
+  log "❌ Nodes did not become ready within $max_wait seconds."
   return 1
 }
 
@@ -356,6 +469,30 @@ function print_validator_logs() {
     echo "=== Validator $validator_index logs ==="
     tail -n 20 "$log_dir/validator-$validator_index.log"
   done
+}
+
+function wait_for_heights() {
+  local start_index=$1
+  local end_index=$2
+  local min_height=$3
+  local network_name=$4
+  local max_wait=$5
+  local poll_interval=$6
+
+  # Defaultv values
+  : "${max_wait:=300}"
+  : "${poll_interval:=5}"
+
+  SECONDS=0 
+  while (( SECONDS < max_wait )); do
+    if check_heights "$start_index" "$end_index" "$min_height" "$network_name" "$elapsed"; then
+      return 0
+    fi
+
+    # Continue waiting
+    sleep 5
+  done
+  return 1
 }
 
 function print_client_logs() {
