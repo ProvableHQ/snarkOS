@@ -239,9 +239,14 @@ impl<N: Network> Sync<N> {
                 rx_block_sync_insert_block_response.recv().await
             {
                 let result = self_.insert_block_response(peer_ip, blocks, latest_consensus_version).await;
+
                 //TODO remove this once channels are gone
                 if let Err(err) = &result {
-                    warn!("Failed to insert block response from '{peer_ip}' - {err}");
+                    if err.is_benign() {
+                        trace!("Failed to insert block response from '{peer_ip}' - {err}");
+                    } else {
+                        warn!("Failed to insert block response from '{peer_ip}' - {err}");
+                    }
                 }
 
                 callback.send(result).ok();
@@ -323,7 +328,7 @@ impl<N: Network> Sync<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<(), InsertBlockResponseError> {
+    ) -> Result<(), InsertBlockResponseError<N>> {
         self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)
 
         // No need to advance block sync here, as the new response will

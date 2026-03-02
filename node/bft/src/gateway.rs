@@ -651,6 +651,11 @@ impl<N: Network> Gateway<N> {
                     // Send the blocks to the sync module.
                     match sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await {
                         Ok(_) => Ok(true),
+                        Err(err) if err.is_benign() => {
+                            // Do not disconnect for benign errors, such as the ledger already advanced past the height of the block.
+                            trace!("Unable to process block response from '{peer_ip}' - {err}");
+                            Ok(true)
+                        }
                         Err(err @ InsertBlockResponseError::EmptyBlockResponse)
                         | Err(err @ InsertBlockResponseError::NoConsensusVersion)
                         | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
@@ -1066,6 +1071,7 @@ impl<N: Network> Gateway<N> {
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.connect(peer_ip) {
                     Ok(hdl) => {
+                        debug!("{CONTEXT} (Re-)connecting to bootstrap peer at '{peer_ip}'");
                         let result = hdl.await;
                         if let Err(err) = result {
                             warn!("{CONTEXT} Failed to connect to bootstrap peer at '{peer_ip}' - {err}");
