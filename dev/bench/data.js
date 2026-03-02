@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772205008627,
+  "lastUpdate": 1772489797141,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -9672,6 +9672,72 @@ window.BENCHMARK_DATA = {
             "value": 1.58,
             "unit": "blocks/s",
             "extra": "total_wait=158s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f104cb382b4a50b88f027518eb2a720b90348e3a",
+          "message": "Merge pull request #4132 from ProvableHQ/fix/cleaner_cdn_exit\n\n[Fix] Stop CDN processing cleanly when receiving SIGINT",
+          "timestamp": "2026-03-02T13:47:42-08:00",
+          "tree_id": "b5a15e6bb92c4b6a454285d64f038c294eceecd8",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f104cb382b4a50b88f027518eb2a720b90348e3a"
+        },
+        "date": 1772489796259,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 4.900760607610933,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=97.94398021697998, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 10239.394410816401,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=7.812962055206299, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 932.9115813946117,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.8575303554534912, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.55,
+            "unit": "blocks/s",
+            "extra": "total_wait=161s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.958405,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=157, mean_speed=1.090446, max_speed=2.383333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.4,
+            "unit": "blocks/s",
+            "extra": "total_wait=178s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.53,
+            "unit": "blocks/s",
+            "extra": "total_wait=163s, target_height=250"
           }
         ]
       }
