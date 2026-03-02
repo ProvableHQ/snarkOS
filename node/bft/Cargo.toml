@@ -102,6 +102,9 @@ workspace = true
 version = "0.10"
 default-features = false
 
+[dependencies.smol_str]
+workspace = true
+
 [dependencies.snarkos-account]
 workspace = true
 

@@ -24,6 +24,7 @@ use crate::{
     helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
+use smol_str::SmolStr;
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
     BlockRequest,
@@ -50,6 +51,7 @@ use snarkos_node_network::{
     bootstrap_peers,
     get_repo_commit_hash,
     log_repo_sha_comparison,
+    shorten_snarkos_sha,
 };
 use snarkos_node_sync::{InsertBlockResponseError, MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
@@ -475,6 +477,7 @@ impl<N: Network> Gateway<N> {
                 address,
                 NodeType::Validator,
                 0,
+                get_repo_commit_hash(),
                 ConnectionMode::Gateway,
             );
         }
@@ -886,7 +889,7 @@ impl<N: Network> Gateway<N> {
     /// Logs the connected validators.
     fn log_connected_validators(&self) {
         // Retrieve the connected validators and current committee.
-        let connected_validators = self.connected_peers();
+        let connected_validators = self.get_connected_peers();
         let committee = match self.ledger.current_committee() {
             Ok(c) => c,
             Err(err) => {
@@ -908,15 +911,30 @@ impl<N: Network> Gateway<N> {
 
         // Collect the connected validator addresses and stake.
         let mut connected_validator_addresses = HashSet::with_capacity(connected_validators.len());
+        let mut connected_validator_shas: HashMap<SmolStr, u64> = HashMap::with_capacity(connected_validators.len());
+        // Insert our sha.
+        let our_sha = shorten_snarkos_sha(&get_repo_commit_hash());
+        let our_stake = committee.get_stake(self.account.address());
+        connected_validator_shas.insert(our_sha.clone(), our_stake);
         // Include our own address.
         connected_validator_addresses.insert(self.account.address());
         // Include and log the connected validators.
-        for peer_ip in &connected_validators {
-            let address = self.resolve_to_aleo_addr(*peer_ip).map_or("Unknown".to_string(), |a| {
-                connected_validator_addresses.insert(a);
-                a.to_string()
-            });
-            debug!("{}", format!("  Connected to: {peer_ip} - {address}").dimmed());
+        for peer in &connected_validators {
+            let peer_ip = peer.listener_addr;
+            // Register the Aleo address, which is guaranteed to be present for validators.
+            let address = self.resolve_to_aleo_addr(peer_ip).unwrap();
+            connected_validator_addresses.insert(address);
+            // Register the snarkOS commit SHA and the associated stake.
+            let address_stake = committee.get_stake(address);
+            let short_peer_sha = shorten_snarkos_sha(&peer.snarkos_sha);
+            *connected_validator_shas.entry(short_peer_sha.clone()).or_default() += address_stake;
+            // Log the connected validator.
+            debug!("{}", format!("  Connected to: {peer_ip} - {address} @ {short_peer_sha}").dimmed());
+        }
+
+        if let Some(combined_stake) = connected_validator_shas.get(&our_sha) {
+            let percentage = *combined_stake as f64 / committee.total_stake() as f64 * 100.0;
+            debug!("{}", format!("  Combined stake @ {our_sha}: {percentage:.2}%").dimmed());
         }
 
         // Log the validators that are not connected.
@@ -1509,8 +1527,9 @@ impl<N: Network> Gateway<N> {
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
-        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
-            (true, Some(sha)) => Some(sha),
+        let snarkos_sha = match (self.is_dev(), consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, _, Some(sha)) => Some(sha),
+            (_, true, Some(sha)) => Some(sha),
             _ => None,
         };
         // Send a challenge request to the peer.
@@ -1616,8 +1635,9 @@ impl<N: Network> Gateway<N> {
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
-        let snarkos_sha = match (consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
-            (true, Some(sha)) => Some(sha),
+        let snarkos_sha = match (self.is_dev(), consensus_version >= ConsensusVersion::V12, get_repo_commit_hash()) {
+            (true, _, Some(sha)) => Some(sha),
+            (_, true, Some(sha)) => Some(sha),
             _ => None,
         };
         // Send the challenge request.

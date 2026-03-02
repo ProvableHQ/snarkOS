@@ -37,6 +37,9 @@ workspace = true
 [dependencies.serde]
 workspace = true
 
+[dependencies.smol_str]
+workspace = true
+
 [dependencies.snarkos-node-tcp]
 workspace = true
 

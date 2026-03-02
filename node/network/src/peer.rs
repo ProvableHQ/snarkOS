@@ -107,6 +107,7 @@ impl<N: Network> Peer<N> {
     }
 
     /// Promote a connecting peer to a fully connected one.
+    #[allow(clippy::too_many_arguments)]
     pub fn upgrade_to_connected(
         &mut self,
         connected_addr: SocketAddr,

@@ -29,6 +29,7 @@ pub use resolver::*;
 
 use snarkvm::prelude::Network;
 
+use smol_str::SmolStr;
 use std::{env::VarError, net::SocketAddr, str::FromStr};
 use tracing::*;
 
@@ -112,4 +113,17 @@ pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &Option<[u8; 40]
     };
 
     debug!("{ctx} Peer '{peer_addr}' uses snarkOS{sha_cmp}");
+}
+
+pub fn shorten_snarkos_sha(sha: &Option<[u8; 40]>) -> SmolStr {
+    if let Some(full_sha) = sha.as_ref().and_then(|s| str::from_utf8(s).ok()) {
+        let end_idx = full_sha.char_indices()
+            .nth(7) // GitHub commit SHA shorthand.
+            .map(|(i, _)| i)
+            .unwrap_or(full_sha.len()); // Can't really fail.
+
+        SmolStr::from(&full_sha[..end_idx])
+    } else {
+        "unknown snarkOS SHA".into()
+    }
 }
