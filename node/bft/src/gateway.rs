@@ -457,6 +457,7 @@ impl<N: Network> Gateway<N> {
         Ok(())
     }
 
+    /// Updates the connection metrics for the gateway.
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
         metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_peers() as f64);
@@ -889,7 +890,9 @@ impl<N: Network> Gateway<N> {
     /// Logs the connected validators.
     fn log_connected_validators(&self) {
         // Retrieve the connected validators and current committee.
-        let connected_validators = self.get_connected_peers();
+        // The gatway may also be connected to bootstrap clients, which we should not log as connected validators.
+        let connected_validators = self.filter_connected_peers(|peer| peer.node_type == NodeType::Validator);
+
         let committee = match self.ledger.current_committee() {
             Ok(c) => c,
             Err(err) => {
@@ -920,7 +923,6 @@ impl<N: Network> Gateway<N> {
         connected_validator_addresses.insert(self.account.address());
         // Include and log the connected validators.
         for peer in &connected_validators {
-            let peer_ip = peer.listener_addr;
             // Register the Aleo address.
             let address = peer.aleo_addr;
             connected_validator_addresses.insert(address);
@@ -928,10 +930,20 @@ impl<N: Network> Gateway<N> {
             let address_stake = committee.get_stake(address);
             let short_peer_sha = shorten_snarkos_sha(&peer.snarkos_sha);
             *connected_validator_shas.entry(short_peer_sha.clone()).or_default() += address_stake;
-            // Log the connected validator.
-            debug!("{}", format!("  Connected to: {peer_ip} - {address} @ {short_peer_sha}").dimmed());
+
+            debug!(
+                "{}",
+                format!(
+                    "  Connected to: {} - {} (connection age {:?})",
+                    peer.listener_addr,
+                    peer.aleo_addr,
+                    peer.first_seen.elapsed()
+                )
+                .dimmed()
+            );
         }
 
+        // Log how much of the stake uses our git commit hash.
         if let Some(combined_stake) = connected_validator_shas.get(&our_sha) {
             let percentage = *combined_stake as f64 / committee.total_stake() as f64 * 100.0;
             debug!("{}", format!("  Combined stake @ {our_sha}: {percentage:.2}%").dimmed());
