@@ -571,6 +571,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "borsh"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1da5ab77c1437701eeff7c88d968729e7766172279eab0676857b3d63af7a6f"
+dependencies = [
+ "cfg_aliases",
+]
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4585,6 +4594,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol_str"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9676b89cd56310a87b93dec47b11af744f34d5fc9f367b829474eec0a891350d"
+dependencies = [
+ "borsh",
+ "serde",
+]
+
+[[package]]
 name = "snarkos"
 version = "4.4.0"
 dependencies = [
@@ -4746,6 +4765,7 @@ dependencies = [
  "rand_distr",
  "rayon",
  "sha2",
+ "smol_str 0.3.2",
  "snarkos-account",
  "snarkos-node-bft",
  "snarkos-node-bft-events",
@@ -4890,6 +4910,7 @@ dependencies = [
  "locktick",
  "parking_lot",
  "serde",
+ "smol_str 0.3.2",
  "snarkos-node-network",
  "snarkos-node-tcp",
  "snarkvm",
@@ -5965,7 +5986,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "smol_str",
+ "smol_str 0.2.2",
  "snarkvm-utilities-derives",
  "thiserror 2.0.18",
  "tracing",
