@@ -1423,6 +1423,7 @@ impl<N: Network> Handshake for Gateway<N> {
                             cr.address,
                             node_type,
                             cr.version,
+                            cr.snarkos_sha,
                             ConnectionMode::Gateway,
                         );
                     }
