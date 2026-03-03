@@ -921,8 +921,8 @@ impl<N: Network> Gateway<N> {
         // Include and log the connected validators.
         for peer in &connected_validators {
             let peer_ip = peer.listener_addr;
-            // Register the Aleo address, which is guaranteed to be present for validators.
-            let address = self.resolve_to_aleo_addr(peer_ip).unwrap();
+            // Register the Aleo address.
+            let address = peer.aleo_addr;
             connected_validator_addresses.insert(address);
             // Register the snarkOS commit SHA and the associated stake.
             let address_stake = committee.get_stake(address);
