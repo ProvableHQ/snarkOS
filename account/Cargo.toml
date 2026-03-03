@@ -25,4 +25,4 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console" ]
+features = [ "console", "history-staking-rewards" ]
