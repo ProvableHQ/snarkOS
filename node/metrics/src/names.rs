@@ -16,9 +16,10 @@
 pub(super) const COUNTER_NAMES: [&str; 3] =
     [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSACTIONS, consensus::STALE_UNCONFIRMED_SOLUTIONS];
 
-pub(super) const GAUGE_NAMES: [&str; 27] = [
+pub(super) const GAUGE_NAMES: [&str; 28] = [
     bft::CONNECTED,
     bft::CONNECTED_STAKE,
+    bft::CONNECTED_STAKE_WITH_MATCHING_SHA,
     bft::CONNECTING,
     bft::LAST_STORED_ROUND,
     bft::PROPOSAL_ROUND,
@@ -53,6 +54,7 @@ pub mod bft {
     pub const COMMIT_ROUNDS_LATENCY: &str = "snarkos_bft_commit_rounds_latency_secs"; // <-- This one doesn't even make sense.
     pub const CONNECTED: &str = "snarkos_bft_connected_total";
     pub const CONNECTED_STAKE: &str = "snarkos_bft_connected_stake_as_percentage";
+    pub const CONNECTED_STAKE_WITH_MATCHING_SHA: &str = "snarkos_bft_connected_stake_with_matching_sha_as_percentage";
     pub const CONNECTING: &str = "snarkos_bft_connecting_total";
     pub const LAST_STORED_ROUND: &str = "snarkos_bft_last_stored_round";
     pub const LEADERS_ELECTED: &str = "snarkos_bft_leaders_elected_total";

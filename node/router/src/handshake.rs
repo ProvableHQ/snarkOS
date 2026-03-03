@@ -143,6 +143,7 @@ impl<N: Network> Router<N> {
                             cr.address,
                             cr.node_type,
                             cr.version,
+                            cr.snarkos_sha,
                             ConnectionMode::Router,
                         );
                     }

@@ -72,6 +72,8 @@ pub struct ConnectedPeer<N: Network> {
     pub node_type: NodeType,
     /// The message version of the peer.
     pub version: u32,
+    /// The snarkOS commit hash of the peer.
+    pub snarkos_sha: Option<[u8; 40]>,
     /// The latest block height known to be associated with the peer.
     pub last_height_seen: Option<u32>,
     /// The timestamp of the first message received from the peer.
@@ -105,6 +107,7 @@ impl<N: Network> Peer<N> {
     }
 
     /// Promote a connecting peer to a fully connected one.
+    #[allow(clippy::too_many_arguments)]
     pub fn upgrade_to_connected(
         &mut self,
         connected_addr: SocketAddr,
@@ -112,6 +115,7 @@ impl<N: Network> Peer<N> {
         aleo_address: Address<N>,
         node_type: NodeType,
         node_version: u32,
+        snarkos_sha: Option<[u8; 40]>,
         connection_mode: ConnectionMode,
     ) {
         let timestamp = Instant::now();
@@ -131,6 +135,7 @@ impl<N: Network> Peer<N> {
             node_type,
             trusted: self.is_trusted(),
             version: node_version,
+            snarkos_sha,
             last_height_seen: None,
             first_seen: timestamp,
             last_seen: timestamp,

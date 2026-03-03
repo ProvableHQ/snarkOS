@@ -155,6 +155,9 @@ default-features = false
 [workspace.dependencies.rand_distr]
 version = "0.4"
 
+[workspace.dependencies.smol_str]
+version = "=0.3.2" # Update after Rust >1.88
+
 [workspace.dependencies.tracing]
 version = "0.1"
 default-features = false
@@ -356,8 +359,7 @@ workspace = true
 version = "0.11.2"
 
 [build-dependencies.built]
-version = "0.8"
-features = [ "git2" ]
+workspace = true
 
 [build-dependencies.toml]
 version = "0.9"
