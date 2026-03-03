@@ -935,6 +935,8 @@ impl<N: Network> Gateway<N> {
         if let Some(combined_stake) = connected_validator_shas.get(&our_sha) {
             let percentage = *combined_stake as f64 / committee.total_stake() as f64 * 100.0;
             debug!("{}", format!("  Combined stake @ {our_sha}: {percentage:.2}%").dimmed());
+            #[cfg(feature = "metrics")]
+            metrics::gauge(metrics::bft::CONNECTED_STAKE_WITH_MATCHING_SHA, percentage);
         }
 
         // Log the validators that are not connected.
