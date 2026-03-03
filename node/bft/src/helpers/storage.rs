@@ -811,18 +811,18 @@ impl<N: Network> Storage<N> {
         block: &Block<N>,
         certificate: BatchCertificate<N>,
         unconfirmed_transactions: &HashMap<N::TransactionID, Transaction<N>>,
-    ) {
+    ) -> Result<()> {
         // Skip if the certificate round is below the GC round.
         let gc_round = self.gc_round();
         if certificate.round() <= gc_round {
             trace!("Got certificate for round {} below GC round ({gc_round}). Will not store it.", certificate.round());
-            return;
+            return Ok(());
         }
 
         // If the certificate ID already exists in storage, skip it.
         if self.contains_certificate(certificate.id()) {
             trace!("Got certificate {} for round {} more than once.", certificate.id(), certificate.round());
-            return;
+            return Ok(());
         }
         // Retrieve the transmissions for the certificate.
         let mut missing_transmissions = HashMap::new();
@@ -848,54 +848,73 @@ impl<N: Network> Storage<N> {
             match transmission_id {
                 TransmissionID::Ratification => (),
                 TransmissionID::Solution(solution_id, _) => {
-                    // Retrieve the solution.
-                    match block.get_solution(solution_id) {
-                        // Insert the solution.
-                        Some(solution) => missing_transmissions.insert(*transmission_id, (*solution).into()),
-                        // Otherwise, try to load the solution from the ledger.
-                        None => match self.ledger.get_solution(solution_id) {
-                            // Insert the solution.
-                            Ok(Some(solution)) => missing_transmissions.insert(*transmission_id, solution.into()),
-                            // Check if the solution is in the aborted solutions.
-                            Ok(None) | Err(_) => {
-                                // Insert the aborted solution if it exists in the block or ledger.
-                                match aborted_solutions.contains(solution_id)
-                                    || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
-                                {
-                                    true => {
-                                        aborted_transmissions.insert(*transmission_id);
-                                    }
-                                    false => error!("Missing solution {solution_id} in block {}", block.height()),
-                                }
-                                continue;
+                    // The solution may exist either in the block itself, or stored in the ledger.
+                    // Note that the ledger does *not* store aborted transmissions, so we need to check if the solution
+                    // was aborted before querying the ledger.
+                    if let Some(solution) = block.get_solution(solution_id) {
+                        missing_transmissions.insert(*transmission_id, (*solution).into());
+                    } else if aborted_solutions.contains(solution_id) {
+                        // The solution was already marked as aborted.
+                        if self.ledger.contains_transmission(transmission_id).unwrap_or(false) {
+                            aborted_transmissions.insert(*transmission_id);
+                        } else {
+                            error!("Missing solution {solution_id} in block {}", block.height());
+                        }
+                    } else {
+                        match self.ledger.get_solution(solution_id) {
+                            Ok(Some(solution)) => {
+                                missing_transmissions.insert(*transmission_id, solution.into());
                             }
-                        },
-                    };
+                            Ok(None) => {
+                                warn!("Missing solution {solution_id} in block {}", block.height());
+                            }
+                            Err(err) => {
+                                // This is safe because, the associated block was already created and we solely need the certificate in storage
+                                // so that we can resolve references to it in future certificates.
+                                // TODO(kaimast): this is a workaround, and we should investigate the root cause of this.
+                                let err = err.context(format!(
+                                    "Failed to fetch solution {solution_id} from ledger for block {}",
+                                    block.height()
+                                ));
+                                error!("{}", &flatten_error(&err));
+                                aborted_transmissions.insert(*transmission_id);
+                            }
+                        }
+                    }
                 }
                 TransmissionID::Transaction(transaction_id, _) => {
-                    // Retrieve the transaction.
-                    match unconfirmed_transactions.get(transaction_id) {
-                        // Insert the transaction.
-                        Some(transaction) => missing_transmissions.insert(*transmission_id, transaction.clone().into()),
-                        // Otherwise, try to load the unconfirmed transaction from the ledger.
-                        None => match self.ledger.get_unconfirmed_transaction(*transaction_id) {
-                            // Insert the transaction.
-                            Ok(Some(transaction)) => missing_transmissions.insert(*transmission_id, transaction.into()),
-                            // Check if the transaction is in the aborted transactions.
-                            Ok(None) | Err(_) => {
-                                // Insert the aborted transaction if it exists in the block or ledger.
-                                match aborted_transactions.contains(transaction_id)
-                                    || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
-                                {
-                                    true => {
-                                        aborted_transmissions.insert(*transmission_id);
-                                    }
-                                    false => warn!("Missing transaction {transaction_id} in block {}", block.height()),
-                                }
-                                continue;
+                    // The transaction may exists either in the block itself, or stored in the ledger.
+                    // Note that the ledger does *not* store aborted transmissions, so we need to check if the transaction
+                    // was aborted before querying the ledger.
+                    if let Some(transaction) = unconfirmed_transactions.get(transaction_id) {
+                        missing_transmissions.insert(*transmission_id, transaction.clone().into());
+                    } else if aborted_transactions.contains(transaction_id) {
+                        // The transaction was already marked as aborted.
+                        if self.ledger.contains_transmission(transmission_id).unwrap_or(false) {
+                            aborted_transmissions.insert(*transmission_id);
+                        } else {
+                            error!("Missing transaction {transaction_id} in block {}", block.height());
+                        }
+                    } else {
+                        match self.ledger.get_unconfirmed_transaction(*transaction_id) {
+                            Ok(Some(transaction)) => {
+                                missing_transmissions.insert(*transmission_id, transaction.into());
                             }
-                        },
-                    };
+                            Ok(None) => {
+                                warn!("Missing transaction {transaction_id} in block {}", block.height());
+                            }
+                            Err(err) => {
+                                // This is safe because, the associated block was already created and we solely need the certificate in storage
+                                // so that we can resolve references to it in future certificates.
+                                // TODO(kaimast): this is a workaround, and we should investigate the root cause of this.
+                                let err = err.context(format!(
+                                    "Failed to fetch transaction {transaction_id} from ledger for block {}",
+                                    block.height()
+                                ));
+                                error!("{}", &flatten_error(&err));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -907,12 +926,8 @@ impl<N: Network> Storage<N> {
             certificate.transmission_ids().len()
         );
 
-        if let Err(error) = self
-            .insert_certificate(certificate, missing_transmissions, aborted_transmissions)
+        self.insert_certificate(certificate, missing_transmissions, aborted_transmissions)
             .with_context(|| format!("Failed to insert certificate '{certificate_id}' from block {}", block.height()))
-        {
-            error!("{}", &flatten_error(&error));
-        }
     }
 }
 

@@ -471,9 +471,11 @@ impl<N: Network> Sync<N> {
 
                 // Iterate over the certificates.
                 for certificates in subdag.values().cloned() {
-                    cfg_into_iter!(certificates).for_each(|certificate| {
-                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
-                    });
+                    cfg_into_iter!(certificates).try_for_each(|certificate| {
+                        self.storage
+                            .sync_certificate_with_block(block, certificate, &unconfirmed_transactions)
+                            .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
+                    })?;
                 }
 
                 // Update the validator telemetry.
@@ -728,10 +730,12 @@ impl<N: Network> Sync<N> {
 
         // Iterate over the certificates.
         for certificates in subdag.values().cloned() {
-            cfg_into_iter!(certificates.clone()).for_each(|certificate| {
+            cfg_into_iter!(certificates.clone()).try_for_each(|certificate| -> Result<()> {
                 // Sync the batch certificate with the block.
-                self.storage.sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions);
-            });
+                self.storage
+                    .sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions)
+                    .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
+            })?;
 
             // Sync the BFT DAG with the certificates.
             if let Some(cb) = self.sync_callback.get() {
