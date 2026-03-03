@@ -27,6 +27,7 @@ use snarkvm::{
     prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail},
 };
 
+use anyhow::anyhow;
 use indexmap::IndexMap;
 use std::ops::Range;
 
@@ -107,12 +108,12 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
         bail!("Solution '{solution_id}' does not exist in prover")
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
         bail!("Transaction '{transaction_id}' does not exist in prover")
     }
 
@@ -195,8 +196,8 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         &self,
         _subdag: Subdag<N>,
         _transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
-        bail!("Cannot prepare advance to next quorum block in prover")
+    ) -> Result<Block<N>, CheckBlockError<N>> {
+        Err(anyhow!("Cannot prepare advance to next quorum block in prover").into())
     }
 
     /// Adds the given block as the next block in the ledger.

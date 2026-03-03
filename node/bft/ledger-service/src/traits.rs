@@ -68,11 +68,11 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>>;
 
-    /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>>;
+    /// Returns the solution for the given solution ID, or `None` if no such solution exists.
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>>;
 
-    /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>>;
+    /// Returns the unconfirmed transaction for the given transaction ID, or `None` if no such transaction exists.
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>>;
 
     /// Returns the batch certificate for the given batch certificate ID.
     fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
@@ -128,7 +128,7 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
         &self,
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>>;
+    ) -> Result<Block<N>, CheckBlockError<N>>;
 
     /// Adds the given block as the next block in the ledger.
     #[cfg(feature = "ledger-write")]

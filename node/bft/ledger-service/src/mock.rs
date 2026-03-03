@@ -139,12 +139,12 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, _solution_id: &SolutionID<N>) -> Result<Solution<N>> {
+    fn get_solution(&self, _solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
         unreachable!("MockLedgerService does not support get_solution")
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, _transaction_id: N::TransactionID) -> Result<Transaction<N>> {
+    fn get_unconfirmed_transaction(&self, _transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
         unreachable!("MockLedgerService does not support get_unconfirmed_transaction")
     }
 
@@ -237,7 +237,7 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         &self,
         _subdag: Subdag<N>,
         _transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
+    ) -> Result<Block<N>, CheckBlockError<N>> {
         unreachable!("MockLedgerService does not support prepare_advance_to_next_quorum_block")
     }
 

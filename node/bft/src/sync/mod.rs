@@ -1425,7 +1425,8 @@ mod tests {
             subdag_map.insert(commit_round - 1, previous_cert_map.clone());
             let subdag = Subdag::from(subdag_map.clone())?;
             let ledger = core_ledger.clone();
-            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))?
+            tokio::task::spawn_blocking(move || ledger.prepare_advance_to_next_quorum_block(subdag, Default::default()))
+                .await??
         };
         // Insert block 1.
         let ledger = core_ledger.clone();
@@ -1448,7 +1449,11 @@ mod tests {
             subdag_map_2.insert(leader_round_2 - 1, previous_cert_map_2.clone());
             let subdag_2 = Subdag::from(subdag_map_2.clone())?;
             let ledger = core_ledger.clone();
-            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default()))?
+
+            tokio::task::spawn_blocking(move || {
+                ledger.prepare_advance_to_next_quorum_block(subdag_2, Default::default())
+            })
+            .await??
         };
         // Insert block 2.
         let ledger = core_ledger.clone();
@@ -1471,7 +1476,11 @@ mod tests {
             subdag_map_3.insert(leader_round_3 - 1, previous_cert_map_3.clone());
             let subdag_3 = Subdag::from(subdag_map_3.clone())?;
             let ledger = core_ledger.clone();
-            spawn_blocking!(ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default()))?
+
+            tokio::task::spawn_blocking(move || {
+                ledger.prepare_advance_to_next_quorum_block(subdag_3, Default::default())
+            })
+            .await??
         };
         // Insert block 3.
         let ledger = core_ledger.clone();
