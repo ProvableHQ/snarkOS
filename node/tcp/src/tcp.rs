@@ -571,6 +571,9 @@ impl Tcp {
                 // Add the task to the connection so it gets aborted on disconnect.
                 if let Some(conn) = self.connections.0.write().get_mut(&peer_addr) {
                     conn.tasks.push(handle);
+                } else {
+                    // The connection has just been terminated; abort the OnConnect work.
+                    handle.abort();
                 }
             }
         }
