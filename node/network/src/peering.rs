@@ -66,8 +66,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// It must be lower than `MAXIMUM_POOL_SIZE`.
     const PEER_SLASHING_COUNT: usize;
 
+    /// Returns the mapping of all known peers (connected or otherwise), keyed by their public listener address.
     fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>>;
 
+    /// Returns the resolver for translating between public listener addresses and connected addresses.
     fn resolver(&self) -> &RwLock<Resolver<N>>;
 
     /// Returns `true` if the owning node is in development mode.
