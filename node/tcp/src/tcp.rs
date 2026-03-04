@@ -36,7 +36,7 @@ use tokio::{
     io::split,
     net::{TcpListener, TcpSocket, TcpStream},
     sync::oneshot,
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
     time::timeout,
 };
 use tracing::*;
@@ -274,10 +274,17 @@ impl Tcp {
         if let Some(listening_task) = tasks.next() {
             listening_task.abort(); // abort the listening task first
         }
+
         // Disconnect from all connected peers.
+        let mut disconnect_tasks = JoinSet::new();
         for addr in self.connected_addrs() {
-            self.disconnect(addr).await;
+            let node = self.clone();
+            disconnect_tasks.spawn(async move {
+                node.disconnect(addr).await;
+            });
         }
+        while disconnect_tasks.join_next().await.is_some() {}
+
         // Abort all remaining tasks.
         for handle in tasks {
             handle.abort();
