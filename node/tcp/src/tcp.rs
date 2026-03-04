@@ -425,7 +425,12 @@ impl Tcp {
                 // Await for a new connection.
                 match listener.accept().await {
                     Ok((stream, addr)) => tcp.handle_connection(stream, addr),
-                    Err(e) => error!(parent: tcp.span(), "Failed to accept a connection: {e}"),
+                    Err(e) => {
+                        error!(parent: tcp.span(), "Failed to accept a connection: {e}");
+                        // if we ran out of FDs, sleep to avoid spinning 100% CPU
+                        // while waiting for a slot to free up
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
                 }
             }
         });
