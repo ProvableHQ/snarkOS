@@ -366,7 +366,15 @@ impl Tcp {
         if let Some(handler) = self.protocols.disconnect.get() {
             let (sender, receiver) = oneshot::channel();
             handler.trigger((addr, sender));
-            let _ = receiver.await; // can't really fail
+            if let Ok((handle, waiter)) = receiver.await {
+                // register the associated task with the connection, in case
+                // it gets terminated before its completion
+                if let Some(conn) = self.connections.0.write().get_mut(&addr) {
+                    conn.tasks.push(handle);
+                }
+                // wait for the OnDisconnect protocol to perform its specified actions
+                let _ = waiter.await;
+            }
         }
 
         let conn = self.connections.remove(addr);
