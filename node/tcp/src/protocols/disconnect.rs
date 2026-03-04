@@ -43,8 +43,10 @@ where
     /// Attaches the behavior specified in [`Disconnect::handle_disconnect`] to every occurrence of the
     /// node disconnecting from a peer.
     async fn enable_disconnect(&self) {
-        let (from_node_sender, mut from_node_receiver) =
-            mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<(JoinHandle<()>, oneshot::Receiver<()>)>)>();
+        let (from_node_sender, mut from_node_receiver) = mpsc::channel::<(
+            SocketAddr,
+            oneshot::Sender<(JoinHandle<()>, oneshot::Receiver<()>)>,
+        )>(self.tcp().config().max_connections as usize);
 
         // use a channel to know when the disconnect task is ready
         let (tx, rx) = oneshot::channel::<()>();

@@ -70,7 +70,7 @@ where
 
     /// Prepares the node to send messages.
     async fn enable_writing(&self) {
-        let (conn_sender, mut conn_receiver) = mpsc::unbounded_channel();
+        let (conn_sender, mut conn_receiver) = mpsc::channel(self.tcp().config().max_connections as usize);
 
         // the conn_senders are used to send messages from the Tcp to individual connections
         let conn_senders: WritingSenders = Default::default();
@@ -283,8 +283,8 @@ pub(crate) struct WritingHandler {
 }
 
 impl Protocol<Connection, io::Result<Connection>> for WritingHandler {
-    fn trigger(&self, item: ReturnableConnection) {
-        self.handler.trigger(item);
+    async fn trigger(&self, item: ReturnableConnection) {
+        self.handler.trigger(item).await;
     }
 }
 

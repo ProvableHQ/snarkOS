@@ -35,8 +35,10 @@ where
     /// Attaches the behavior specified in [`OnConnect::on_connect`] right after every successful
     /// handshake.
     async fn enable_on_connect(&self) {
-        let (from_node_sender, mut from_node_receiver) =
-            mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<tokio::task::JoinHandle<()>>)>();
+        let (from_node_sender, mut from_node_receiver) = mpsc::channel::<(
+            SocketAddr,
+            oneshot::Sender<tokio::task::JoinHandle<()>>,
+        )>(self.tcp().config().max_connections as usize);
 
         // use a channel to know when the on_connect task is ready
         let (tx, rx) = oneshot::channel::<()>();
