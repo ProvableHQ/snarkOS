@@ -20,7 +20,10 @@
 use std::{io, net::SocketAddr};
 
 use once_cell::race::OnceBox;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 use crate::connections::Connection;
 
@@ -41,7 +44,7 @@ pub(crate) struct Protocols {
     pub(crate) handshake: OnceBox<ProtocolHandler<Connection, io::Result<Connection>>>,
     pub(crate) reading: OnceBox<ProtocolHandler<Connection, io::Result<Connection>>>,
     pub(crate) writing: OnceBox<writing::WritingHandler>,
-    pub(crate) on_connect: OnceBox<ProtocolHandler<SocketAddr, ()>>,
+    pub(crate) on_connect: OnceBox<ProtocolHandler<SocketAddr, JoinHandle<()>>>,
     pub(crate) disconnect: OnceBox<ProtocolHandler<SocketAddr, ()>>,
 }
 
