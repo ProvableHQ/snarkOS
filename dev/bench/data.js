@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772559953718,
+  "lastUpdate": 1772610391974,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -9804,6 +9804,72 @@ window.BENCHMARK_DATA = {
             "value": 1.52,
             "unit": "blocks/s",
             "extra": "total_wait=164s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "10691c85464e8b087fe279cdd7a1c865520326f2",
+          "message": "Merge pull request #4137 from ProvableHQ/fix/log-validators-only\n\n[Fix] Do not log bootstrap clients as connected validators",
+          "timestamp": "2026-03-04T08:19:34+01:00",
+          "tree_id": "3b1d021efe2fdfc34b4d27485c6d37bf9fdca875",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/10691c85464e8b087fe279cdd7a1c865520326f2"
+        },
+        "date": 1772610390794,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.702076442334389,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=84.17986059188843, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7384.910748800149,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.832900047302246, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 985.4719214311098,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.8117938041687012, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.66,
+            "unit": "blocks/s",
+            "extra": "total_wait=150s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.190504,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=146, mean_speed=1.178767, max_speed=2.716667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.5,
+            "unit": "blocks/s",
+            "extra": "total_wait=166s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=159s, target_height=250"
           }
         ]
       }
