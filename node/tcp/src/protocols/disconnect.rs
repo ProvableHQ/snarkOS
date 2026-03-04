@@ -13,11 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
+    time::timeout,
 };
 use tracing::*;
 
@@ -34,6 +35,11 @@ pub trait Disconnect: P2P
 where
     Self: Clone + Send + Sync + 'static,
 {
+    /// The maximum time allowed for the on_disconnect hook to execute.
+    /// If the hook exceeds this time, it will be aborted to ensure the node cleans up
+    /// resources promptly.
+    const TIMEOUT: Duration = Duration::from_secs(3);
+
     /// Attaches the behavior specified in [`Disconnect::handle_disconnect`] to every occurrence of the
     /// node disconnecting from a peer.
     async fn enable_disconnect(&self) {
@@ -55,7 +61,9 @@ where
                 let (done_tx, done_rx) = oneshot::channel();
                 let handle = tokio::spawn(async move {
                     // perform the specified extra actions
-                    self_clone2.handle_disconnect(peer_addr).await;
+                    if timeout(Self::TIMEOUT, self_clone2.handle_disconnect(peer_addr)).await.is_err() {
+                        warn!(parent: self_clone2.tcp().span(), "Disconnect logic timed out for {peer_addr}");
+                    }
                     // notify the node that the extra actions have concluded
                     // and that the related connection can be dropped
                     let _ = done_tx.send(());
