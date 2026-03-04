@@ -550,7 +550,13 @@ impl Tcp {
         if let Some(handler) = self.protocols.on_connect.get() {
             let (sender, receiver) = oneshot::channel();
             handler.trigger((peer_addr, sender));
-            let _ = receiver.await; // can't really fail
+            // Receive the handle for the running task.
+            if let Ok(handle) = receiver.await {
+                // Add the task to the connection so it gets aborted on disconnect.
+                if let Some(conn) = self.connections.0.write().get_mut(&peer_addr) {
+                    conn.tasks.push(handle);
+                }
+            }
         }
 
         Ok(())
