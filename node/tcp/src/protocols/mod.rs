@@ -59,15 +59,15 @@ pub(crate) type ReturnableItem<T, U> = (T, oneshot::Sender<U>);
 
 pub(crate) type ReturnableConnection = ReturnableItem<Connection, io::Result<Connection>>;
 
-pub(crate) struct ProtocolHandler<T, U>(mpsc::UnboundedSender<ReturnableItem<T, U>>);
+pub(crate) struct ProtocolHandler<T, U>(mpsc::Sender<ReturnableItem<T, U>>);
 
 pub(crate) trait Protocol<T, U> {
-    fn trigger(&self, item: ReturnableItem<T, U>);
+    async fn trigger(&self, item: ReturnableItem<T, U>);
 }
 
 impl<T, U> Protocol<T, U> for ProtocolHandler<T, U> {
-    fn trigger(&self, item: ReturnableItem<T, U>) {
+    async fn trigger(&self, item: ReturnableItem<T, U>) {
         // ignore errors; they can only happen if a disconnect interrupts the protocol setup process
-        let _ = self.0.send(item);
+        let _ = self.0.send(item).await;
     }
 }

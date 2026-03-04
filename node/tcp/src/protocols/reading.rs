@@ -72,7 +72,7 @@ where
 
     /// Prepares the node to receive messages.
     async fn enable_reading(&self) {
-        let (conn_sender, mut conn_receiver) = mpsc::unbounded_channel();
+        let (conn_sender, mut conn_receiver) = mpsc::channel(self.tcp().config().max_connections as usize);
 
         // use a channel to know when the reading task is ready
         let (tx_reading, rx_reading) = oneshot::channel();

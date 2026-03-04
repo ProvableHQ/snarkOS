@@ -372,7 +372,7 @@ impl Tcp {
 
         if let Some(handler) = self.protocols.disconnect.get() {
             let (sender, receiver) = oneshot::channel();
-            handler.trigger((addr, sender));
+            handler.trigger((addr, sender)).await;
             if let Ok((handle, waiter)) = receiver.await {
                 // register the associated task with the connection, in case
                 // it gets terminated before its completion
@@ -568,7 +568,7 @@ impl Tcp {
         // If enabled, enact OnConnect.
         if let Some(handler) = self.protocols.on_connect.get() {
             let (sender, receiver) = oneshot::channel();
-            handler.trigger((peer_addr, sender));
+            handler.trigger((peer_addr, sender)).await;
             // Receive the handle for the running task.
             if let Ok(handle) = receiver.await {
                 // Add the task to the connection so it gets aborted on disconnect.
@@ -592,7 +592,7 @@ impl Tcp {
                 if let Some(handler) = $node.protocols.$handler_type.get() {
                     let (conn_returner, conn_retriever) = oneshot::channel();
 
-                    handler.trigger(($conn, conn_returner));
+                    handler.trigger(($conn, conn_returner)).await;
 
                     match conn_retriever.await {
                         Ok(Ok(conn)) => conn,
