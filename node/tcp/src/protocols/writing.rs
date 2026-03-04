@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc};
+use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures_util::sink::SinkExt;
@@ -24,6 +24,7 @@ use parking_lot::RwLock;
 use tokio::{
     io::AsyncWrite,
     sync::{mpsc, oneshot},
+    time::timeout,
 };
 use tokio_util::codec::{Encoder, FramedWrite};
 use tracing::*;
@@ -54,6 +55,10 @@ where
     fn message_queue_depth(&self) -> usize {
         1024
     }
+
+    /// The maximum time (in milliseconds) allowed for a single message write to flush
+    /// to the underlying stream before the connection is considered dead.
+    const TIMEOUT: Duration = Duration::from_secs(5);
 
     /// The type of the outbound messages; unless their serialization is expensive and the message
     /// is broadcasted (in which case it would get serialized multiple times), serialization should
@@ -183,9 +188,12 @@ impl<W: Writing> WritingInternal for W {
     ) -> Result<usize, <Self::Codec as Encoder<Self::Message>>::Error> {
         writer.feed(message).await?;
         let len = writer.write_buffer().len();
-        writer.flush().await?;
-
-        Ok(len)
+        // Guard against write starvation
+        match timeout(W::TIMEOUT, writer.flush()).await {
+            Ok(Ok(())) => Ok(len),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "write timed out")),
+        }
     }
 
     async fn handle_new_connection(
