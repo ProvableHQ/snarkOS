@@ -25,10 +25,11 @@ use crate::{
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::StreamExt;
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, time::Duration};
 use tokio::{
     io::AsyncRead,
     sync::{mpsc, oneshot},
+    time::timeout,
 };
 use tokio_util::codec::{Decoder, FramedRead};
 use tracing::*;
@@ -59,6 +60,9 @@ where
     ///
     /// The default value is 1024KiB.
     const INITIAL_BUFFER_SIZE: usize = 1024 * 1024;
+
+    /// The maximum time the node will wait for a new message before considering the connection dead.
+    const IDLE_TIMEOUT: Duration = Duration::from_secs(150);
 
     /// The final (deserialized) type of inbound messages.
     type Message: Send;
@@ -168,9 +172,17 @@ impl<R: Reading> ReadingInternal for R {
             // this task gets aborted, so there is no need for a dedicated timeout
             let _ = rx_conn_ready.await;
 
-            while let Some(bytes) = framed.next().await {
-                match bytes {
-                    Ok(msg) => {
+            loop {
+                let next_frame_future = framed.next();
+                let read_result = match timeout(Self::IDLE_TIMEOUT, next_frame_future).await {
+                    Ok(res) => res, // IO completed (success or error)
+                    Err(_) => {
+                        debug!(parent: node.span(), "connection with {addr} timed out due to inactivity");
+                        break;
+                    }
+                };
+                match read_result {
+                    Some(Ok(msg)) => {
                         // send the message for further processing
                         if let Err(e) = inbound_message_sender.try_send(msg) {
                             error!(parent: node.span(), "can't process a message from {addr}: {e}");
@@ -182,13 +194,14 @@ impl<R: Reading> ReadingInternal for R {
                         #[cfg(feature = "metrics")]
                         metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         error!(parent: node.span(), "can't read from {addr}: {e}");
                         node.known_peers().register_failure(addr.ip());
                         if node.config().fatal_io_errors.contains(&e.kind()) {
                             break;
                         }
                     }
+                    None => break, // end of stream
                 }
             }
 
