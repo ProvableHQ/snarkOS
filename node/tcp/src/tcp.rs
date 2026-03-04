@@ -378,21 +378,20 @@ impl Tcp {
         }
 
         let conn = self.connections.remove(addr);
+        let disconnected = conn.is_some();
 
-        if let Some(ref conn) = conn {
-            debug!(parent: self.span(), "Disconnecting from {}", conn.addr());
+        if let Some(conn) = conn {
+            debug!(parent: self.span(), "Disconnecting from {addr}");
 
             // Shut down the associated tasks of the peer.
-            for task in conn.tasks.iter().rev() {
-                task.abort();
-            }
+            drop(conn);
 
-            debug!(parent: self.span(), "Disconnected from {}", conn.addr());
+            debug!(parent: self.span(), "Disconnected from {addr}");
         } else {
             warn!(parent: self.span(), "Failed to disconnect, was not connected to {addr}");
         }
 
-        conn.is_some()
+        disconnected
     }
 }
 
