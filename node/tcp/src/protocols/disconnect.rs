@@ -15,7 +15,10 @@
 
 use std::net::SocketAddr;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 use tracing::*;
 
 #[cfg(doc)]
@@ -34,7 +37,8 @@ where
     /// Attaches the behavior specified in [`Disconnect::handle_disconnect`] to every occurrence of the
     /// node disconnecting from a peer.
     async fn enable_disconnect(&self) {
-        let (from_node_sender, mut from_node_receiver) = mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<()>)>();
+        let (from_node_sender, mut from_node_receiver) =
+            mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<(JoinHandle<()>, oneshot::Receiver<()>)>)>();
 
         // use a channel to know when the disconnect task is ready
         let (tx, rx) = oneshot::channel::<()>();
@@ -47,13 +51,18 @@ where
 
             while let Some((peer_addr, notifier)) = from_node_receiver.recv().await {
                 let self_clone2 = self_clone.clone();
-                tokio::spawn(async move {
+                // create a channel for waiting on completion
+                let (done_tx, done_rx) = oneshot::channel();
+                let handle = tokio::spawn(async move {
                     // perform the specified extra actions
                     self_clone2.handle_disconnect(peer_addr).await;
                     // notify the node that the extra actions have concluded
                     // and that the related connection can be dropped
-                    let _ = notifier.send(()); // can't really fail
+                    let _ = done_tx.send(());
                 });
+                // provide the node with a handle to the scheduled task,
+                // and a receiver that will notify it of its completion
+                let _ = notifier.send((handle, done_rx)); // can't really fail
             }
         });
         let _ = rx.await;
