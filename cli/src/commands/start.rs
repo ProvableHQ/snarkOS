@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 
 use std::{
     fs,
+    io::IsTerminal,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -313,6 +314,13 @@ impl Start {
             shutdown.clone(),
         )
         .with_context(|| "Failed to set up logger")?;
+
+        // When running in a non-interactive session, disallow the use of the terminal UI.
+        if !std::io::stdout().is_terminal() && !self.nodisplay {
+            anyhow::bail!(
+                "snarkOS cannot use the terminal UI in a non-interactive session. Please restart with `--nodisplay`."
+            );
+        }
 
         // Initialize the runtime.
         Self::runtime().block_on(async move {
