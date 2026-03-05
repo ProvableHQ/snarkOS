@@ -15,7 +15,7 @@
 
 use crate::{
     Gateway,
-    MAX_FETCH_TIMEOUT_IN_MS,
+    MAX_FETCH_TIMEOUT,
     Transport,
     events::{CertificateRequest, CertificateResponse, Event},
     helpers::{Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
@@ -205,7 +205,7 @@ impl<N: Network> Sync<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+                tokio::time::sleep(MAX_FETCH_TIMEOUT).await;
 
                 // Remove the expired pending transmission requests.
                 let self__ = self_.clone();
@@ -1041,7 +1041,7 @@ impl<N: Network> Sync<N> {
         }
         // Wait for the certificate to be fetched.
         // TODO (raychu86): Consider making the timeout dynamic based on network traffic and/or the number of validators.
-        tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+        tokio::time::timeout(MAX_FETCH_TIMEOUT, callback_receiver)
             .await
             .with_context(|| format!("Unable to fetch batch certificate {} (timeout)", fmt_id(certificate_id)))?
             .with_context(|| format!("Unable to fetch batch certificate {}", fmt_id(certificate_id)))

@@ -99,6 +99,12 @@ pub mod consensus {
     pub const COMMITTED_CERTIFICATES: &str = "snarkos_consensus_committed_certificates_total";
     pub const BLOCK_LATENCY: &str = "snarkos_consensus_block_latency_secs";
     pub const BLOCK_LAG: &str = "snarkos_consensus_block_lag_ms";
+    /// Time spent in prepare_advance_to_next_quorum_block (block construction).
+    pub const PREPARE_ADVANCE_SECS: &str = "snarkos_consensus_prepare_advance_secs";
+    /// Time spent in check_next_block.
+    pub const CHECK_NEXT_BLOCK_SECS: &str = "snarkos_consensus_check_next_block_secs";
+    /// Time spent in advance_to_next_block (ledger write).
+    pub const ADVANCE_TO_NEXT_BLOCK_SECS: &str = "snarkos_consensus_advance_to_next_block_secs";
     pub const UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_unconfirmed_transactions_total";
     pub const UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_unconfirmed_solutions_total";
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";

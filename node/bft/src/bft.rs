@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use crate::{
-    MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
+    MAX_LEADER_CERTIFICATE_DELAY,
     helpers::{ConsensusSender, DAG, PrimaryReceiver, PrimarySender, Storage, fmt_id, now},
     primary::{Primary, PrimaryCallback},
     sync::SyncCallback,
@@ -482,7 +482,7 @@ impl<N: Network> BFT<N> {
     ///
     /// This is always true for a new BFT instance.
     fn is_timer_expired(&self) -> bool {
-        self.leader_certificate_timer.load(Ordering::SeqCst) + MAX_LEADER_CERTIFICATE_DELAY_IN_SECS <= now()
+        self.leader_certificate_timer.load(Ordering::SeqCst) + MAX_LEADER_CERTIFICATE_DELAY.as_secs() as i64 <= now()
     }
 
     /// Returns 'true' if the quorum threshold `(N - f)` is reached for this round under one of the following conditions:
@@ -881,7 +881,7 @@ impl<N: Network> BFT<N> {
 mod tests {
     use crate::{
         BFT,
-        MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
+        MAX_LEADER_CERTIFICATE_DELAY,
         PrimaryCallback,
         helpers::{Storage, dag::test_helpers::mock_dag_with_modified_last_committed_round},
         sync::SyncCallback,
@@ -1113,9 +1113,7 @@ mod tests {
             assert!(!result);
         }
         // Wait for the timer to expire.
-        let leader_certificate_timeout =
-            std::time::Duration::from_millis(MAX_LEADER_CERTIFICATE_DELAY_IN_SECS as u64 * 1000);
-        std::thread::sleep(leader_certificate_timeout);
+        std::thread::sleep(MAX_LEADER_CERTIFICATE_DELAY);
         // Once the leader certificate timer has expired and quorum threshold is reached, we are ready to advance to the next round.
         let result = bft_timer.is_even_round_ready_for_next_round(certificates.clone(), committee.clone(), 2);
         if bft_timer.is_timer_expired() {
