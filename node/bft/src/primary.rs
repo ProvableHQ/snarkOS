@@ -15,13 +15,13 @@
 
 use crate::{
     Gateway,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     MAX_WORKERS,
-    MIN_BATCH_DELAY_IN_SECS,
-    PRIMARY_PING_IN_MS,
+    MIN_BATCH_DELAY,
+    PRIMARY_PING_INTERVAL,
     Sync,
     Transport,
-    WORKER_PING_IN_MS,
+    WORKER_PING_INTERVAL,
     Worker,
     events::{BatchPropose, BatchSignature, Event},
     helpers::{
@@ -81,7 +81,6 @@ use std::{
     future::Future,
     net::SocketAddr,
     sync::{Arc, OnceLock},
-    time::Duration,
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::RwLock as TRwLock;
@@ -1253,7 +1252,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(PRIMARY_PING_IN_MS)).await;
+                tokio::time::sleep(PRIMARY_PING_INTERVAL).await;
 
                 // Retrieve the block locators.
                 let self__ = self_.clone();
@@ -1341,7 +1340,7 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_millis(WORKER_PING_IN_MS)).await;
+                tokio::time::sleep(WORKER_PING_INTERVAL).await;
                 // If the primary is not synced, then do not broadcast the worker ping(s).
                 if !self_.sync.is_synced() {
                     trace!("Skipping worker ping(s) {}", "(node is syncing)".dimmed());
@@ -1361,7 +1360,7 @@ impl<N: Network> Primary<N> {
                 // Wait until the timeout or for is_ready=true.
                 tokio::select! {
                     _ = self_.is_ready_notify.notified() => {}
-                    _ = tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)) => {}
+                    _ = tokio::time::sleep(MAX_BATCH_DELAY) => {}
                 }
 
                 let current_round = self_.current_round();
@@ -1464,7 +1463,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                tokio::time::sleep(MAX_BATCH_DELAY).await;
                 // If the primary is not synced, then do not increment to the next round.
                 if !self_.sync.is_synced() {
                     trace!("Skipping round increment {}", "(node is syncing)".dimmed());
@@ -1657,7 +1656,7 @@ impl<N: Network> Primary<N> {
             .checked_sub(previous_timestamp)
             .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
         // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
-        match elapsed < MIN_BATCH_DELAY_IN_SECS as i64 {
+        match elapsed < MIN_BATCH_DELAY.as_secs() as i64 {
             true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
             false => Ok(()),
         }
@@ -1671,7 +1670,7 @@ impl<N: Network> Primary<N> {
             .checked_sub(previous_timestamp)
             .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
         // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
-        match elapsed < MIN_BATCH_DELAY_IN_SECS as i64 {
+        match elapsed < MIN_BATCH_DELAY.as_secs() as i64 {
             true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
             false => Ok(()),
         }
@@ -2342,7 +2341,7 @@ mod tests {
         store_certificate_chain(&primary, &accounts, round, &mut rng);
 
         // Sleep for a while to ensure the primary is ready to propose the next round.
-        tokio::time::sleep(Duration::from_secs(MIN_BATCH_DELAY_IN_SECS)).await;
+        tokio::time::sleep(MIN_BATCH_DELAY).await;
 
         // Generate a solution and a transaction.
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
@@ -2409,7 +2408,7 @@ mod tests {
         }
 
         // Sleep for a while to ensure the primary is ready to propose the next round.
-        tokio::time::sleep(Duration::from_secs(MIN_BATCH_DELAY_IN_SECS)).await;
+        tokio::time::sleep(MIN_BATCH_DELAY).await;
 
         // Advance to the next round.
         assert!(primary.storage.increment_to_next_round(round).is_ok());
@@ -2474,7 +2473,7 @@ mod tests {
         let round = 1;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2513,7 +2512,7 @@ mod tests {
         let round = 1;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2553,7 +2552,7 @@ mod tests {
         // Create a valid proposal with an author that isn't the primary.
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2590,7 +2589,7 @@ mod tests {
         let round = 1;
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2636,7 +2635,7 @@ mod tests {
         // Create a valid proposal with an author that isn't the primary.
         let peer_account = &accounts[1];
         let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             &peer_account.1,
             primary.ledger.current_committee().unwrap(),
@@ -2692,7 +2691,7 @@ mod tests {
             .get_certificate_for_round_with_author(round - 1, peer_account.1.address())
             .expect("No previous proposal exists")
             .timestamp();
-        let invalid_timestamp = last_timestamp + (MIN_BATCH_DELAY_IN_SECS as i64) - 1;
+        let invalid_timestamp = last_timestamp + (MIN_BATCH_DELAY.as_secs() as i64) - 1;
 
         let proposal = create_test_proposal(
             &peer_account.1,
@@ -2746,7 +2745,7 @@ mod tests {
         let peer_account = &accounts[2];
         let peer_ip = peer_account.0;
 
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
 
         let proposal =
             create_test_proposal(&peer_account.1, committee, round, Default::default(), timestamp, 4, &mut rng);
@@ -2806,7 +2805,7 @@ mod tests {
         let (old_proposal_round, old_proposal_timestamp) =
             primary.latest_proposed_batch.read().await.map(|(round, timestamp)| (round, timestamp)).unwrap_or((0, 0));
         *primary.latest_proposed_batch.write().await =
-            Some((round + 1, old_proposal_timestamp + MIN_BATCH_DELAY_IN_SECS as i64));
+            Some((round + 1, old_proposal_timestamp + MIN_BATCH_DELAY.as_secs() as i64));
 
         // Propose a batch and enforce that it fails.
         assert!(primary.propose_batch().await.is_ok());
@@ -2858,7 +2857,7 @@ mod tests {
 
         // Create a valid proposal.
         let round = 1;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
             primary.ledger.current_committee().unwrap(),
@@ -2933,7 +2932,7 @@ mod tests {
 
         // Create a valid proposal.
         let round = 1;
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
             primary.ledger.current_committee().unwrap(),
@@ -2971,7 +2970,7 @@ mod tests {
         let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
 
         // Create a valid proposal.
-        let timestamp = now() + MIN_BATCH_DELAY_IN_SECS as i64;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
         let proposal = create_test_proposal(
             primary.gateway.account(),
             primary.ledger.current_committee().unwrap(),

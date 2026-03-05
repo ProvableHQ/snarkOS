@@ -17,7 +17,7 @@
 use crate::helpers::Telemetry;
 use crate::{
     CONTEXT,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
@@ -102,9 +102,9 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
 /// The maximum interval of events to cache.
-const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
+const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 /// The maximum interval of requests to cache.
-const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
+const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 
 /// The maximum number of connection attempts in an interval.
 #[cfg(not(test))]

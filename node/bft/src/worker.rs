@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use crate::{
-    MAX_FETCH_TIMEOUT_IN_MS,
+    MAX_FETCH_TIMEOUT,
     MAX_WORKERS,
     ProposedBatch,
     Transport,
@@ -40,7 +40,7 @@ use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use rand::seq::IteratorRandom;
-use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 /// A worker's main role is maintaining a queue of verified ("ready") transmissions,
@@ -441,7 +441,7 @@ impl<N: Network> Worker<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+                tokio::time::sleep(MAX_FETCH_TIMEOUT).await;
 
                 // Remove the expired pending certificate requests.
                 let self__ = self_.clone();
@@ -519,9 +519,9 @@ impl<N: Network> Worker<N> {
                 self.format_transmission_id(transmission_id)
             );
         }
-        // Wait for the transmission to be fetched.
 
-        let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+        // Wait for the transmission to be fetched.
+        let transmission = timeout(MAX_FETCH_TIMEOUT, callback_receiver)
             .await
             .with_context(|| {
                 format!("Unable to fetch transmission {} (timeout)", self.format_transmission_id(transmission_id))
@@ -603,7 +603,7 @@ mod tests {
 
     use bytes::Bytes;
     use mockall::mock;
-    use std::{io, ops::Range};
+    use std::{io, ops::Range, time::Duration};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 

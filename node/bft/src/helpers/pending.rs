@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::MAX_FETCH_TIMEOUT_IN_MS;
+use crate::MAX_FETCH_TIMEOUT;
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
     console::network::{Network, consensus_config_value},
@@ -35,8 +35,8 @@ use time::OffsetDateTime;
 use tokio::sync::oneshot;
 
 /// The maximum number of seconds to wait before expiring a callback.
-/// We ensure that we don't truncate `MAX_FETCH_TIMEOUT_IN_MS` when converting to seconds.
-pub(crate) const CALLBACK_EXPIRATION_IN_SECS: i64 = MAX_FETCH_TIMEOUT_IN_MS.div_ceil(1000) as i64;
+/// We ensure that we don't truncate `MAX_FETCH_TIMEOUT` when converting to seconds.
+pub(crate) const CALLBACK_EXPIRATION_IN_SECS: i64 = MAX_FETCH_TIMEOUT.as_secs() as i64;
 
 /// Returns the maximum number of redundant requests for the number of validators in the specified round.
 pub fn max_redundant_requests<N: Network>(ledger: Arc<dyn LedgerService<N>>, round: u64) -> Result<usize> {

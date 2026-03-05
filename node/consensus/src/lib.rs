@@ -27,7 +27,7 @@ extern crate snarkos_node_metrics as metrics;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     Primary,
     helpers::{
         ConsensusReceiver,
@@ -64,7 +64,7 @@ use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc};
 use tokio::{
     sync::{Notify, oneshot},
     task::JoinHandle,
@@ -516,7 +516,7 @@ impl<N: Network> Consensus<N> {
                 // Wait for either a block commit notification or timeout.
                 tokio::select! {
                     _ = self_.block_commit_notify.notified() => {}
-                    _ = tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)) => {}
+                    _ = tokio::time::sleep(MAX_BATCH_DELAY) => {}
                 }
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(err) = self_.process_unconfirmed_transactions().await {
@@ -542,10 +542,13 @@ impl<N: Network> Consensus<N> {
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
         callback: oneshot::Sender<Result<bool>>,
     ) {
+        let recv_instant = std::time::Instant::now();
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
+        let total_elapsed = recv_instant.elapsed();
+        trace!("process_bft_subdag total (incl. spawn_blocking queue): {:.3}s", total_elapsed.as_secs_f64());
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
         if result.is_err() {
@@ -581,10 +584,18 @@ impl<N: Network> Consensus<N> {
         // Create the candidate next block.
         let ledger_update = self.ledger.begin_ledger_update()?;
 
-        let block = match ledger_update
-            .prepare_advance_to_next_quorum_block(subdag, transmissions)
-            .and_then(|block| ledger_update.check_next_block(block))
-        {
+        let prepare_instant = std::time::Instant::now();
+        let block = match ledger_update.prepare_advance_to_next_quorum_block(subdag, transmissions) {
+            Ok(block) => block,
+            Err(err) => return Err(err.into_anyhow()),
+        };
+        let prepare_elapsed = prepare_instant.elapsed();
+        trace!("prepare_advance_to_next_quorum_block took {:.3}s", prepare_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::PREPARE_ADVANCE_SECS, prepare_elapsed.as_secs_f64());
+
+        let check_instant = std::time::Instant::now();
+        let block = match ledger_update.check_next_block(block) {
             Ok(block) => block,
             Err(CheckBlockError::BlockAlreadyExists { .. }) => {
                 debug!("The given block hash already exists in the ledger");
@@ -600,11 +611,20 @@ impl<N: Network> Consensus<N> {
             }
             Err(err) => return Err(err.into_anyhow()),
         };
+        let check_elapsed = check_instant.elapsed();
+        trace!("check_next_block took {:.3}s", check_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::CHECK_NEXT_BLOCK_SECS, check_elapsed.as_secs_f64());
 
         let block_height = block.height();
 
         // Advance to the next block.
+        let advance_instant = std::time::Instant::now();
         ledger_update.advance_to_next_block(&block)?;
+        let advance_elapsed = advance_instant.elapsed();
+        trace!("advance_to_next_block took {:.3}s", advance_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_SECS, advance_elapsed.as_secs_f64());
 
         #[cfg(feature = "telemetry")]
         // Fetch the latest committee.
