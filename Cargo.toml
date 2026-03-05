@@ -264,6 +264,7 @@ path = "snarkos/main.rs"
 [features]
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history" ]
+history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",

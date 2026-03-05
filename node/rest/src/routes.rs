@@ -16,6 +16,8 @@
 use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
+#[cfg(feature = "history-staking-rewards")]
+use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
     prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
@@ -937,6 +939,24 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .map_err(|err| {
                 RestError::not_found(err.context(format!("Could not load mapping '{mapping_name}/{mapping_key}' for program '{program_id}' from block '{height}'")))
             })?;
+
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
+    }
+
+    /// GET /{network}/staking/rewards/{address}/{height}
+    #[cfg(feature = "history-staking-rewards")]
+    pub(crate) async fn get_staking_reward(
+        State(rest): State<Self>,
+        Path((address, height)): Path<(Address<N>, u32)>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Retrieve the history for the given block height and variant.
+        let value = rest.ledger.vm().finalize_store().staking_rewards_map().get_confirmed(&(address, height)).map_err(
+            |err| {
+                RestError::not_found(
+                    err.context(format!("Could not load the staking reward for {address} from block '{height}'")),
+                )
+            },
+        )?;
 
         Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
