@@ -30,7 +30,9 @@ pub use resolver::*;
 use snarkvm::prelude::Network;
 
 use smol_str::SmolStr;
-use std::{env::VarError, net::SocketAddr, str::FromStr};
+use socket2::SockRef;
+use std::{env::VarError, io, net::SocketAddr, str::FromStr, time::Duration};
+use tokio::net::TcpStream;
 use tracing::*;
 
 // Include the generated build information.
@@ -115,6 +117,7 @@ pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &Option<[u8; 40]
     debug!("{ctx} Peer '{peer_addr}' uses snarkOS{sha_cmp}");
 }
 
+/// Shortens the commit SHA.
 pub fn shorten_snarkos_sha(sha: &Option<[u8; 40]>) -> SmolStr {
     if let Some(full_sha) = sha.as_ref().and_then(|s| str::from_utf8(s).ok()) {
         let end_idx = full_sha.char_indices()
@@ -126,4 +129,22 @@ pub fn shorten_snarkos_sha(sha: &Option<[u8; 40]>) -> SmolStr {
     } else {
         "unknown snarkOS SHA".into()
     }
+}
+
+/// Adjusts the low-level socket settings for extra robustness.
+pub fn harden_socket(stream: &TcpStream) -> io::Result<()> {
+    let socket = SockRef::from(stream);
+
+    // Make OS-level disconnects immediate (no TIME_WAIT).
+    socket.set_linger(Some(Duration::from_secs(0)))?;
+
+    // Disable Nagle's algorithm for lower latency.
+    socket.set_tcp_nodelay(true)?;
+
+    // Disconnect if unacknowledged data stalls for 20s. This protects
+    // the kernel's retransmission queue.
+    #[cfg(target_os = "linux")]
+    socket.set_tcp_user_timeout(Some(Duration::from_secs(20)))?;
+
+    Ok(())
 }

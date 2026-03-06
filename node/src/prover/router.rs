@@ -15,6 +15,7 @@
 
 use super::*;
 
+use snarkos_node_network::harden_socket;
 use snarkos_node_router::messages::{
     BlockRequest,
     DisconnectReason,
@@ -50,6 +51,8 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Prover<N, C> {
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust.
+        harden_socket(stream)?;
         let genesis_header = *self.genesis.header();
         let restrictions_id = Field::zero(); // Provers may bypass restrictions, since they do not validate transactions.
 

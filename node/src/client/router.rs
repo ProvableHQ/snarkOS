@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{PeerPoolHandling, harden_socket};
 use snarkos_node_router::{
     Routing,
     messages::{
@@ -55,6 +55,8 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust.
+        harden_socket(stream)?;
         let genesis_header = *self.genesis.header();
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
 
