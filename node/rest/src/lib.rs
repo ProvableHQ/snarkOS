@@ -257,6 +257,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         #[cfg(feature = "history")]
         let routes = routes.route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history));
 
+        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
+        #[cfg(feature = "history-staking-rewards")]
+        let routes = routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward));
+
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
