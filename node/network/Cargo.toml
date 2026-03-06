@@ -47,6 +47,9 @@ workspace = true
 workspace = true
 features = [ "console", "utilities" ]
 
+[dependencies.socket2]
+version = "0.6.2"
+
 [dependencies.tokio]
 workspace = true
 

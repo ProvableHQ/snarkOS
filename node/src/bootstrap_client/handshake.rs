@@ -21,6 +21,7 @@ use crate::{
     router::messages::{self, Message},
     tcp::{ConnectError, Connection, ConnectionSide, protocols::*},
 };
+use snarkos_node_network::harden_socket;
 use snarkvm::{
     ledger::narwhal::Data,
     prelude::{Address, Network, io_error},
@@ -100,6 +101,8 @@ impl<N: Network> Handshake for BootstrapClient<N> {
         let peer_addr = connection.addr();
         let peer_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust.
+        harden_socket(stream)?;
 
         // We don't know the listening address yet, as we don't initiate connections.
         let mut listener_addr = if peer_side == ConnectionSide::Initiator {
