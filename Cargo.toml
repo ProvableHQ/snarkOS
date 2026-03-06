@@ -252,7 +252,7 @@ version = "=4.5.0"
 
 [workspace.dependencies.snarkos-utilities]
 path = "utilities"
-version = "=4.2.1"
+version = "=4.5.0"
 
 [[bin]]
 name = "snarkos"
