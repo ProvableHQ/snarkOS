@@ -48,8 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-branch = "feat/historical_rewards"
-# rev = "b45b3864"
+rev = "8df377d"
 #version = "=4.4.0"
 default-features = false
 
