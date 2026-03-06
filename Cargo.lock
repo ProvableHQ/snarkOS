@@ -4914,6 +4914,7 @@ dependencies = [
  "snarkos-node-network",
  "snarkos-node-tcp",
  "snarkvm",
+ "socket2 0.6.2",
  "tokio",
  "tracing",
 ]
