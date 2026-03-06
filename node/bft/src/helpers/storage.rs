@@ -855,11 +855,10 @@ impl<N: Network> Storage<N> {
                         missing_transmissions.insert(*transmission_id, (*solution).into());
                     } else if aborted_solutions.contains(solution_id) {
                         // The solution was already marked as aborted.
-                        if self.ledger.contains_transmission(transmission_id).unwrap_or(false) {
-                            aborted_transmissions.insert(*transmission_id);
-                        } else {
-                            error!("Missing solution {solution_id} in block {}", block.height());
+                        if !self.ledger.contains_transmission(transmission_id).unwrap_or(false) {
+                            error!("Missing aborted solution {solution_id} for block {}", block.height());
                         }
+                        aborted_transmissions.insert(*transmission_id);
                     } else {
                         match self.ledger.get_solution(solution_id) {
                             Ok(Some(solution)) => {
@@ -867,6 +866,7 @@ impl<N: Network> Storage<N> {
                             }
                             Ok(None) => {
                                 warn!("Missing solution {solution_id} in block {}", block.height());
+                                aborted_transmissions.insert(*transmission_id);
                             }
                             Err(err) => {
                                 // This is safe because, the associated block was already created and we solely need the certificate in storage
@@ -890,11 +890,11 @@ impl<N: Network> Storage<N> {
                         missing_transmissions.insert(*transmission_id, transaction.clone().into());
                     } else if aborted_transactions.contains(transaction_id) {
                         // The transaction was already marked as aborted.
-                        if self.ledger.contains_transmission(transmission_id).unwrap_or(false) {
-                            aborted_transmissions.insert(*transmission_id);
-                        } else {
-                            error!("Missing transaction {transaction_id} in block {}", block.height());
+                        if !self.ledger.contains_transmission(transmission_id).unwrap_or(false) {
+                            error!("Missing aborted transaction {transaction_id} for block {}", block.height());
                         }
+
+                        aborted_transmissions.insert(*transmission_id);
                     } else {
                         match self.ledger.get_unconfirmed_transaction(*transaction_id) {
                             Ok(Some(transaction)) => {
@@ -902,6 +902,7 @@ impl<N: Network> Storage<N> {
                             }
                             Ok(None) => {
                                 warn!("Missing transaction {transaction_id} in block {}", block.height());
+                                aborted_transmissions.insert(*transmission_id);
                             }
                             Err(err) => {
                                 // This is safe because, the associated block was already created and we solely need the certificate in storage
@@ -912,6 +913,7 @@ impl<N: Network> Storage<N> {
                                     block.height()
                                 ));
                                 error!("{}", &flatten_error(&err));
+                                aborted_transmissions.insert(*transmission_id);
                             }
                         }
                     }
