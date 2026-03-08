@@ -15,24 +15,24 @@ log_filter="info,snarkos_node_rest=warn,snarkos_node_cdn=debug"
 max_wait=1800 # Wait for up to 30 minutes
 poll_interval=1 # Check block heights every second
 
+# shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
-network_name=$(get_network_name $network_id)
-echo "Using network: $network_name (ID: $network_id)"
-
 # Create log directory
-log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
+init_log_dir
+
+network_name=$(get_network_name $network_id)
+log "Using network: $network_name (ID: $network_id)"
 
 # Define a trap handler that cleans up all processes on exit.
+# shellcheck disable=SC2329
 function exit_handler() {
   stop_nodes
 }
 trap exit_handler EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs.
-trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
+trap 'log "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Ensure there are no old ledger files and the node syncs from scratch
 snarkos clean "--network=$network_id" || true
@@ -42,15 +42,16 @@ args=(
   "--network=$network_id"
   --nobanner --noupdater --nodisplay # reduce clutter in the output and hide TUI
   --rest-rps=1000000 # ensure benchmarks don't fail due to rate limiting
-  --log-filter=$log_filter # only show the logs we care about
+  "--log-filter=$log_filter" # only show the logs we care about
 )
 
 # Spawn the client that will sync the ledger.
 # Use the same CPU cores as in the other benchmarks, so the numbers are comparable.
-$TASKSET2 snarkos start --client "${args[@]}" &
+# shellcheck disable=SC2086
+run_with_prefix "client-0" $TASKSET2 snarkos start --client "${args[@]}"
 PIDS[0]=$!
 
-wait_for_nodes 0 1
+wait_for_nodes 0 1 "$network_name"
 
 # Check heights periodically with a timeout
 SECONDS=0
@@ -59,7 +60,7 @@ while (( SECONDS < max_wait )); do
     total_wait=$SECONDS
     throughput=$(compute_throughput "$min_height" "$total_wait")
 
-    echo "🎉 Benchmark done! Waited ${total_wait}s for $min_height blocks. Throughput was $throughput blocks/s."
+    log "🎉 Benchmark done! Waited ${total_wait}s for $min_height blocks. Throughput was $throughput blocks/s."
 
     # Append data to results file.
     printf "{ \"name\": \"cdn-sync\", \"unit\": \"blocks/s\", \"value\": %.3f, \"extra\": \"total_wait=%is, target_height=${min_height}\" }\n" \
@@ -71,6 +72,6 @@ while (( SECONDS < max_wait )); do
   sleep $poll_interval
 done
 
-echo "❌ Benchmark failed! Client did not sync within 30 minutes."
+log "❌ Benchmark failed! Client did not sync within 30 minutes."
 
 exit 1

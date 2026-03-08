@@ -22,9 +22,10 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
-    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
+    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by, flatten_error},
 };
 
+use anyhow::Context;
 use indexmap::{IndexMap, IndexSet, map::Entry};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -124,7 +125,7 @@ impl<N: Network> Storage<N> {
         let storage = Self(Arc::new(StorageInner {
             ledger,
             current_height: Default::default(),
-            current_round: Default::default(),
+            current_round: AtomicU64::new(current_round),
             gc_round: Default::default(),
             max_gc_rounds,
             rounds: Default::default(),
@@ -133,8 +134,6 @@ impl<N: Network> Storage<N> {
             batch_ids: Default::default(),
             transmissions,
         }));
-        // Update the storage to the current round.
-        storage.update_current_round(current_round);
         // Perform GC on the current round.
         // Since there are no certificates yet, this only sets `gc_round`.
         storage.garbage_collect_certificates(current_round);
@@ -183,6 +182,8 @@ impl<N: Network> Storage<N> {
             if next_round < storage_round {
                 return Ok(storage_round);
             }
+
+            trace!("Incrementing storage from round {storage_round} to {next_round}");
         }
 
         // Retrieve the current committee.
@@ -241,7 +242,9 @@ impl<N: Network> Storage<N> {
             for gc_round in current_gc_round..=next_gc_round {
                 // Iterate over the certificates for the GC round.
                 for id in self.get_certificate_ids_for_round(gc_round).into_iter() {
-                    // Remove the certificate from storage.
+                    trace!(
+                        "Garbage collecting certificate {id} at round {gc_round} (cut-off is round {next_gc_round})"
+                    );
                     self.remove_certificate(id);
                 }
             }
@@ -414,6 +417,12 @@ impl<N: Network> Storage<N> {
 
     /// Checks the given `batch_header` for validity, returning the missing transmissions from storage.
     ///
+    /// # Arguments
+    /// - `batch_header`: The batch header to check.
+    /// - `transmissions`: All transmissions referenced by the certificate.
+    /// - `aborted_transmissions`: The set of aborted transmissions in this certificate.
+    ///
+    /// # Invariants
     /// This method ensures the following invariants:
     /// - The batch ID does not already exist in storage.
     /// - The author is a member of the committee for the batch round.
@@ -424,12 +433,17 @@ impl<N: Network> Storage<N> {
     /// - All previous certificates are for the previous round (i.e. round - 1).
     /// - All previous certificates contain a unique author.
     /// - The previous certificates reached the quorum threshold (N - f).
+    ///
+    /// # Returns
+    /// - `Ok(Some(txns))` for a valid new batch, where `txns` is the set of missing transactions in the batch
+    ///   that need to be fetched from peers.
+    /// - `Ok(None)` if the batch already exists in storage
     pub fn check_batch_header(
         &self,
         batch_header: &BatchHeader<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
+    ) -> Result<Option<HashMap<TransmissionID<N>, Transmission<N>>>> {
         // Retrieve the round.
         let round = batch_header.round();
         // Retrieve the GC round.
@@ -439,7 +453,8 @@ impl<N: Network> Storage<N> {
 
         // Ensure the batch ID does not already exist in storage.
         if self.contains_batch(batch_header.batch_id()) {
-            bail!("Batch for round {round} already exists in storage {gc_log}")
+            debug!("Batch for round {round} already exists in storage {gc_log}");
+            return Ok(None);
         }
 
         // Retrieve the committee lookback for the batch round.
@@ -503,7 +518,8 @@ impl<N: Network> Storage<N> {
                 bail!("Previous certificates for a batch in round {round} did not reach quorum threshold {gc_log}")
             }
         }
-        Ok(missing_transmissions)
+
+        Ok(Some(missing_transmissions))
     }
 
     /// Check the validity of a certificate coming from another validator.
@@ -551,6 +567,12 @@ impl<N: Network> Storage<N> {
 
     /// Checks the given `certificate` for validity, returning the missing transmissions from storage.
     ///
+    /// # Arguments
+    /// - `certificate`: The certificate to check.
+    /// - `transmissions`: The transmissions contained in the certificate.
+    /// - `aborted_transmissions`: The aborted transmission contained in the certificate.
+    ///
+    /// # Invariants
     /// This method ensures the following invariants:
     /// - The certificate ID does not already exist in storage.
     /// - The batch ID does not already exist in storage.
@@ -588,8 +610,11 @@ impl<N: Network> Storage<N> {
         }
 
         // Ensure the batch header is well-formed.
-        let missing_transmissions =
-            self.check_batch_header(certificate.batch_header(), transmissions, aborted_transmissions)?;
+        let Some(missing_transmissions) =
+            self.check_batch_header(certificate.batch_header(), transmissions, aborted_transmissions)?
+        else {
+            bail!("Certificate for round {round} already exists in storage {gc_log}")
+        };
 
         // Check the timestamp for liveness.
         check_timestamp_for_liveness(certificate.timestamp())?;
@@ -620,6 +645,7 @@ impl<N: Network> Storage<N> {
         if !committee_lookback.is_quorum_threshold_reached(&signers) {
             bail!("Signatures for a batch in round {round} did not reach quorum threshold {gc_log}")
         }
+
         Ok(missing_transmissions)
     }
 
@@ -627,6 +653,12 @@ impl<N: Network> Storage<N> {
     ///
     /// This method triggers updates to the `rounds`, `certificates`, `batch_ids`, and `transmissions` maps.
     ///
+    /// # Arguments
+    /// - `certificate`: The certificate to insert.
+    /// - `transmissions`: The transmissions contained in the certificate, or the subset of the transmissions that in the certificate that do not yet exist in storage.
+    /// - `aborted_transmissions`: The aborted transmission contained in the certificate.
+    ///
+    /// # Invariants
     /// This method ensures the following invariants:
     /// - The certificate ID does not already exist in storage.
     /// - The batch ID does not already exist in storage.
@@ -699,7 +731,7 @@ impl<N: Network> Storage<N> {
         Ok(())
     }
 
-    /// Removes the given `certificate ID` from storage.
+    /// Removes the given `certificate ID` from storage. This method is used to garbage collect individual certificates once blocks are committed.
     ///
     /// This method triggers updates to the `rounds`, `certificates`, `batch_ids`, and `transmissions` maps.
     ///
@@ -757,7 +789,7 @@ impl<N: Network> Storage<N> {
 
     /// Syncs the current round with the block.
     pub(crate) fn sync_round_with_block(&self, next_round: u64) {
-        // Retrieve the current round in the block.
+        // Ensure we sync to at least round 1.
         let next_round = next_round.max(1);
         // If the round in the block is greater than the current round in storage, sync the round.
         if next_round > self.current_round() {
@@ -765,6 +797,11 @@ impl<N: Network> Storage<N> {
             self.update_current_round(next_round);
             // Log the updated round.
             info!("Synced to round {next_round}...");
+        } else {
+            trace!(
+                "Skipping sync to round {next_round} as it is less than the current round ({})",
+                self.current_round()
+            );
         }
     }
 
@@ -869,8 +906,12 @@ impl<N: Network> Storage<N> {
             certificate.round(),
             certificate.transmission_ids().len()
         );
-        if let Err(error) = self.insert_certificate(certificate, missing_transmissions, aborted_transmissions) {
-            error!("Failed to insert certificate '{certificate_id}' from block {} - {error}", block.height());
+
+        if let Err(error) = self
+            .insert_certificate(certificate, missing_transmissions, aborted_transmissions)
+            .with_context(|| format!("Failed to insert certificate '{certificate_id}' from block {}", block.height()))
+        {
+            error!("{}", &flatten_error(&error));
         }
     }
 }

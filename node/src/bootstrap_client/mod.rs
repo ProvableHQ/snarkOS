@@ -21,6 +21,7 @@ use crate::tcp::{self, Tcp};
 use snarkos_account::Account;
 use snarkos_node_network::{ConnectionMode, Peer, Resolver};
 use snarkos_node_tcp::{P2P, protocols::*};
+use snarkos_utilities::SignalHandler;
 use snarkvm::{
     ledger::committee::Committee,
     prelude::{Address, Field, Header, Network, PrivateKey, ViewKey},
@@ -186,8 +187,10 @@ impl<N: Network> BootstrapClient<N> {
         if now - *timestamp >= Self::COMMITTEE_REFRESH_TIME {
             debug!("Updating the validator committee");
             *timestamp = now;
-            let committe_query_addr = format!("https://api.explorer.provable.com/v2/{}/committee/latest", N::NAME);
+            let committe_query_addr =
+                format!("https://api.explorer.provable.com/v2/{}/committee/latest", N::SHORT_NAME);
             let response = self.http_client.get(committe_query_addr).send().await?;
+            debug!("Received response from the explorer: {:?}", response);
             let json = response.text().await?;
             let full_committee = Committee::from_str(&json)?;
             *committee = full_committee.members().keys().copied().collect();
@@ -229,5 +232,13 @@ impl<N: Network> BootstrapClient<N> {
         if let Some(shutdown_tx) = self.shutdown_tx.lock().take() {
             let _ = shutdown_tx.send(());
         }
+    }
+
+    /// Blocks until a shutdown signal was received or manual shutdown was triggered.
+    pub async fn wait_for_signals(&self, handler: &SignalHandler) {
+        handler.wait_for_signals().await;
+
+        // If the node is already initialized, then shut it down.
+        self.shut_down().await;
     }
 }

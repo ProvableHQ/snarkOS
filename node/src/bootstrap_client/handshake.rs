@@ -281,7 +281,7 @@ impl<N: Network> BootstrapClient<N> {
     ) -> io::Result<bool> {
         match request {
             MessageOrEvent::Message(Message::ChallengeRequest(msg)) => {
-                log_repo_sha_comparison(peer_addr, msg.snarkos_sha.as_ref(), Self::OWNER);
+                log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
 
                 if msg.version < Message::<N>::latest_message_version() {
                     let msg = Message::Disconnect::<N>(messages::DisconnectReason::OutdatedClientVersion.into());
@@ -303,7 +303,7 @@ impl<N: Network> BootstrapClient<N> {
                 }
             }
             MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
-                log_repo_sha_comparison(peer_addr, msg.snarkos_sha.as_ref(), Self::OWNER);
+                log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
 
                 if msg.version < Event::<N>::VERSION {
                     let msg = Event::Disconnect::<N>(events::DisconnectReason::OutdatedClientVersion.into());

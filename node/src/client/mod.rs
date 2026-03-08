@@ -15,11 +15,13 @@
 
 mod router;
 
-use crate::traits::NodeInterface;
+use crate::{
+    bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
+    cdn::CdnBlockSync,
+    traits::NodeInterface,
+};
 
 use snarkos_account::Account;
-use snarkos_node_bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService};
-use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_network::NodeType;
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
@@ -35,6 +37,8 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
+use snarkos_utilities::{NodeDataDir, SignalHandler, Stoppable};
+
 use snarkvm::{
     console::network::Network,
     ledger::{
@@ -44,11 +48,11 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
-    utilities::log_error,
+    utilities::flatten_error,
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -62,7 +66,6 @@ use std::{
     sync::{
         Arc,
         atomic::{
-            AtomicBool,
             AtomicUsize,
             Ordering::{Acquire, Relaxed},
         },
@@ -123,10 +126,10 @@ pub struct Client<N: Network, C: ConsensusStorage<N>> {
     num_verifying_executions: Arc<AtomicUsize>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The shutdown signal.
-    shutdown: Arc<AtomicBool>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
+    /// The signal handling logic.
+    signal_handler: Arc<SignalHandler>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
@@ -140,19 +143,22 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
-
         // Initialize the ledger.
-        let ledger = Ledger::<N, C>::load(genesis.clone(), storage_mode.clone())?;
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), shutdown.clone()));
-
+        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
         // Initialize the node router.
         let router = Router::new(
             node_ip,
@@ -162,7 +168,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             trusted_peers_only,
-            storage_mode.clone(),
+            node_data_dir.clone(),
             dev.is_some(),
         )
         .await?;
@@ -190,13 +196,13 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             num_verifying_deploys: Default::default(),
             num_verifying_executions: Default::default(),
             handles: Default::default(),
-            shutdown: shutdown.clone(),
+            signal_handler: signal_handler.clone(),
         };
 
         // Perform sync with CDN (if enabled).
         let cdn_sync = cdn.map(|base_url| {
             trace!("CDN sync is enabled");
-            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown))
+            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler))
         });
 
         // Initialize the REST server.
@@ -209,7 +215,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Set up everything else after CDN sync is done.
         if let Some(cdn_sync) = cdn_sync {
-            if let Err(error) = cdn_sync.wait().await {
+            if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
                 crate::log_clean_error(&storage_mode);
                 node.shut_down().await;
                 return Err(error);
@@ -228,8 +234,6 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node.initialize_execute_verification();
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
         // Return the node.
         Ok(node)
     }
@@ -261,11 +265,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Start the block request generation loop (outgoing).
         let self_ = self.clone();
         self.spawn(async move {
-            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+            while !self_.signal_handler.is_stopped() {
                 // Perform the sync routine.
                 self_.try_issuing_block_requests().await;
-
-                // Rate limiting happens in [`Self::send_block_requests`] and no additional sleeps are needed here
             }
 
             info!("Stopped block request generation");
@@ -274,7 +276,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Start the block response processing loop (incoming).
         let self_ = self.clone();
         self.spawn(async move {
-            while !self_.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+            while !self_.signal_handler.is_stopped() {
                 // Wait until there is something to do or until the timeout.
                 let _ = timeout(Self::MAX_SYNC_INTERVAL, self_.sync.wait_for_block_responses()).await;
 
@@ -326,7 +328,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             Ok(None) => {}
             Err(err) => {
                 // Abort and retry later.
-                log_error(&err);
+                error!("{}", flatten_error(&err));
                 return;
             }
         }
@@ -336,6 +338,27 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         if !self.sync.can_block_sync() {
             trace!("Nothing to sync. Will not issue new block requests");
             return;
+        }
+
+        // First, try to advance the ledger with new responses.
+        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
+            Ok(val) => val,
+            Err(err) => {
+                error!("{err}");
+                return;
+            }
+        };
+
+        if has_new_blocks {
+            match self.sync.get_block_locators() {
+                Ok(locators) => self.ping.update_block_locators(locators),
+                Err(err) => error!("Failed to get block locators: {err}"),
+            }
+
+            // If these were the last blocks to process, do not continue.
+            if !self.sync.can_block_sync() {
+                return;
+            }
         }
 
         // Prepare the block requests, if any.
@@ -387,7 +410,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if node.shutdown.load(Acquire) {
+                if node.signal_handler.is_stopped() {
                     info!("Shutting down solution verification");
                     break;
                 }
@@ -461,7 +484,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if node.shutdown.load(Acquire) {
+                if node.signal_handler.is_stopped() {
                     info!("Shutting down deployment verification");
                     break;
                 }
@@ -529,7 +552,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         self.spawn(async move {
             loop {
                 // If the Ctrl-C handler registered the signal, stop the node.
-                if node.shutdown.load(Acquire) {
+                if node.signal_handler.is_stopped() {
                     info!("Shutting down execution verification");
                     break;
                 }
@@ -607,7 +630,6 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
-        self.shutdown.store(true, std::sync::atomic::Ordering::Release);
 
         // Abort the tasks.
         trace!("Shutting down the client...");

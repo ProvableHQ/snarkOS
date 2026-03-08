@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "4.4.0"
+version = "4.5.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -18,13 +18,15 @@ edition = "2024"
 
 [features]
 test = [ ]
-locktick = [ "dep:locktick", "snarkos-node-tcp/locktick", "snarkvm/locktick" ]
+locktick = [
+  "dep:locktick",
+  "snarkos-node-tcp/locktick",
+  "snarkvm/locktick",
+  "snarkos-node-network/locktick"
+]
 metrics = [ "dep:snarkos-node-metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda" ]
 serial = [ "snarkos-node-bft-ledger-service/serial" ]
-
-[dependencies.aleo-std]
-workspace = true
 
 [dependencies.anyhow]
 workspace = true
@@ -80,6 +82,9 @@ workspace = true
 workspace = true
 
 [dependencies.snarkos-node-tcp]
+workspace = true
+
+[dependencies.snarkos-utilities]
 workspace = true
 
 [dependencies.snarkvm]

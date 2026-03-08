@@ -15,7 +15,6 @@
 
 use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver, bootstrap_peers};
 
-use aleo_std::{StorageMode, aleo_ledger_dir};
 use snarkos_node_tcp::{P2P, is_bogon_ip, is_unspecified_or_broadcast_ip};
 use snarkvm::prelude::{Address, Network};
 
@@ -33,6 +32,7 @@ use std::{
     fs,
     io::{self, Write},
     net::{IpAddr, SocketAddr},
+    path::Path,
     str::FromStr,
     time::Instant,
 };
@@ -169,23 +169,33 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Downgrades a connected peer to candidate status.
-    fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) {
-        if let Some(peer) = self.peer_pool().write().get_mut(&listener_addr) {
-            if let Peer::Connected(peer) = peer {
-                // Exception: the BootstrapClient only has a single Resolver,
-                // so it may only map a validator's Aleo address once, for its
-                // Gateway-mode connection. This also means that the Router-mode
-                // connection may not remove that mapping.
-                let aleo_addr = if self.node_type() == NodeType::BootstrapClient
-                    && peer.connection_mode == ConnectionMode::Router
-                {
-                    None
-                } else {
-                    Some(peer.aleo_addr)
-                };
-                self.resolver().write().remove_peer(peer.connected_addr, aleo_addr);
-            }
+    ///
+    /// Returns true if the peer was fully connected.
+    fn downgrade_peer_to_candidate(&self, listener_addr: SocketAddr) -> bool {
+        let mut peer_pool = self.peer_pool().write();
+        let Some(peer) = peer_pool.get_mut(&listener_addr) else {
+            trace!("{} Downgrade peer to candidate failed - peer not found", Self::OWNER);
+            return false;
+        };
+
+        if let Peer::Connected(conn_peer) = peer {
+            // Exception: the BootstrapClient only has a single Resolver,
+            // so it may only map a validator's Aleo address once, for its
+            // Gateway-mode connection. This also means that the Router-mode
+            // connection may not remove that mapping.
+            let aleo_addr = if self.node_type() == NodeType::BootstrapClient
+                && conn_peer.connection_mode == ConnectionMode::Router
+            {
+                None
+            } else {
+                Some(conn_peer.aleo_addr)
+            };
+            self.resolver().write().remove_peer(conn_peer.connected_addr, aleo_addr);
             peer.downgrade_to_candidate(listener_addr);
+            true
+        } else {
+            peer.downgrade_to_candidate(listener_addr);
+            false
         }
     }
 
@@ -451,11 +461,8 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Loads any previously cached peer addresses so they can be introduced as initial
     /// candidate peers to connect to.
-    fn load_cached_peers(storage_mode: &StorageMode, filename: &str) -> Result<Vec<SocketAddr>> {
-        let mut peer_cache_path = aleo_ledger_dir(N::ID, storage_mode);
-        peer_cache_path.push(filename);
-
-        let peers = match fs::read_to_string(&peer_cache_path) {
+    fn load_cached_peers(path: &Path) -> Result<Vec<SocketAddr>> {
+        let peers = match fs::read_to_string(path) {
             Ok(cached_peers_str) => {
                 let mut cached_peers = Vec::new();
                 for peer_addr_str in cached_peers_str.lines() {
@@ -471,7 +478,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 Vec::new()
             }
             Err(error) => {
-                warn!("{} Couldn't load cached peers at {}: {error}", Self::OWNER, peer_cache_path.display());
+                warn!("{} Couldn't load cached peers at {}: {error}", Self::OWNER, path.display());
                 Vec::new()
             }
         };
@@ -481,7 +488,12 @@ pub trait PeerPoolHandling<N: Network>: P2P {
 
     /// Preserve the peers who have the greatest known block heights, and the lowest
     /// number of registered network failures.
-    fn save_best_peers(&self, storage_mode: &StorageMode, filename: &str, max_entries: Option<usize>) -> Result<()> {
+    ///
+    /// # Arguments
+    /// * `path` - The path to the file to save the peers to.
+    /// * `max_entries` - The maximum number of peers to save (if there are more, the extra ones are truncated).
+    /// * `store_ports` - Whether to store the ports of the peers, or just the IP addresses.
+    fn save_best_peers(&self, path: &Path, max_entries: Option<usize>, store_ports: bool) -> Result<()> {
         // Collect all prospect peers.
         let mut peers = self.get_peers();
 
@@ -502,12 +514,19 @@ pub trait PeerPoolHandling<N: Network>: P2P {
             peers.truncate(max);
         }
 
-        // Dump the connected peers to a file.
-        let mut path = aleo_ledger_dir(N::ID, storage_mode);
-        path.push(filename);
+        // Dump the connected and deduplicated peers to a file.
+        let addrs: HashSet<_> = peers
+            .iter()
+            .map(
+                |peer| {
+                    if store_ports { peer.listener_addr().to_string() } else { peer.listener_addr().ip().to_string() }
+                },
+            )
+            .collect();
+
         let mut file = fs::File::create(path)?;
-        for peer in peers {
-            writeln!(file, "{}", peer.listener_addr())?;
+        for addr in addrs {
+            writeln!(file, "{addr}")?;
         }
 
         Ok(())
@@ -534,6 +553,11 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Temporarily IP-ban and disconnect from the peer with the given listener address and an
     /// optional reason for the ban. This also removes the peer from the candidate pool.
     fn ip_ban_peer(&self, listener_addr: SocketAddr, reason: Option<&str>) {
+        // Ignore IP-banning if we are in dev mode.
+        if self.is_dev() {
+            return;
+        }
+
         let ip = listener_addr.ip();
         debug!("IP-banning {ip}{}", reason.map(|r| format!(" reason: {r}")).unwrap_or_default());
 

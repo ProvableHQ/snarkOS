@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "4.4.0"
+version = "4.5.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -17,12 +17,15 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-async = []
+default = [ ]
+async = [ ]
 locktick = [
   "dep:locktick",
+  "snarkos-display/locktick",
   "snarkos-node/locktick",
   "snarkos-node-cdn/locktick",
   "snarkos-node-rest/locktick",
+  "snarkos-utilities/locktick",
   "snarkvm/locktick"
 ]
 metrics = [ "dep:snarkos-node-metrics", "snarkos-node/metrics" ]
@@ -40,7 +43,11 @@ test_network = [
   "test_consensus_heights",
   "snarkvm/dev-print"
 ]
-serial = [ ]
+serial = [
+  "snarkvm/serial",
+  "snarkos-node/serial",
+  "snarkos-display/serial",
+]
 tokio_console = [ "dep:console-subscriber", "tokio/tracing" ]
 
 [dependencies.aleo-std]
@@ -126,6 +133,9 @@ optional = true
 [dependencies.snarkos-node-rest]
 workspace = true
 
+[dependencies.snarkos-utilities]
+workspace = true
+
 [dependencies.snarkvm]
 workspace = true
 features = [ "parameters", "circuit", "package" ]
@@ -161,6 +171,10 @@ default-features = true
 [dependencies.zeroize]
 version = "1"
 features = [ "derive" ]
+
+[dev-dependencies.snarkvm]
+workspace = true
+features = [ "test-helpers" ]
 
 [target."cfg(target_family = \"unix\")".dependencies.nix]
 version = "0.30"

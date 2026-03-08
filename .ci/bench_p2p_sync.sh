@@ -14,6 +14,8 @@ min_height=250
 num_validators=40
 
 # The number of clients that are syncing
+# Note: Because the first indexes 0-39 are resevered for validators, the first client will have index 40.
+# The script works around this by manually setting the storage, ports, and log files for the clients. 
 num_clients=1
 
 # Adjust this to show more/less log messages
@@ -22,7 +24,11 @@ log_filter="info,snarkos_node::client=trace,snarkos_node_sync=trace,snarkos_node
 max_wait=2400 # Wait for up to 40 minutes
 poll_interval=1 # Check block heights every second
 
+# shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
+
+# Create log directory
+init_log_dir
 
 # Running sums for variance: use sum and sumsq for unbiased sample variance
 sum_speed=0
@@ -45,13 +51,13 @@ function sample_sync_speeds() {
 
     # Skip null or empty
     if [[ -z "$speed" ]] || [[ "$speed" == "null" ]]; then
-      echo "Invalid speed value $speed"
+      log "Invalid speed value $speed"
       continue
     fi
 
     # Validate numeric (allow exponent)
     if ! (is_float "$speed"); then
-        echo "Invalid speed value $speed"
+        log "Invalid speed value $speed"
        continue
     fi
 
@@ -73,24 +79,19 @@ function sample_sync_speeds() {
 }
 
 branch_name=$(git rev-parse --abbrev-ref HEAD)
-echo "On branch: ${branch_name}"
+log "On branch: ${branch_name}"
 
 network_name=$(get_network_name $network_id)
-echo "Using network: $network_name (ID: $network_id)"
+log "Using network: $network_name (ID: $network_id)"
 
 snapshot_info=$(<info.txt)
-echo "Snapshot_info: ${snapshot_info}"
-
-# Create log directory
-log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
+log "Snapshot_info: ${snapshot_info}"
 
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
-trap child_exit_handler CHLD
 
 # Define a trap handler that prints a message when an error occurs.
-trap 'echo "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
+trap 'log "⛔️ Error in $BASH_SOURCE at line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 # Shared flags between all nodes
 common_flags=(
@@ -104,22 +105,28 @@ common_flags=(
 
 # The client that has the ledger
 # (runs on the first two cores)
-$TASKSET1 snarkos start --dev 0 --client "${common_flags[@]}" \
-  --logfile="$log_dir/client-0.log" &
+# shellcheck disable=SC2086
+run_with_prefix "client-0" $TASKSET1 snarkos start "--dev=$num_validators" --client "${common_flags[@]}" \
+  "--logfile=$log_dir/client-0.log" "--storage=.ledger-$network_id-0" \
+  "--node=127.0.0.1:4130" "--rest=127.0.0.1:3030"
 PIDS[0]=$!
 
 # Spawn the clients that will sync the ledger
 # (running on the other two cores)
 for client_index in $(seq 1 "$num_clients"); do
+  node_index=$((num_validators + client_index))
   prev_port=$((4130+client_index-1))
+  node_addr="127.0.0.1:$((4130+client_index))"
   name="client-$client_index"
 
   # Ensure there are no old ledger files and the node syncs from scratch
-  snarkos clean "--dev=$client_index" "--network=$network_id" || true
+  snarkos clean "--dev=$node_index" "--network=$network_id" "--path=.ledger-$network_id-$client_index" || true
 
-  $TASKSET2 snarkos start "--dev=$client_index" --client \
-    "${common_flags[@]}" "--peers=127.0.0.1:$prev_port" \
-    "--logfile=$log_dir/$name.log" &
+  # shellcheck disable=SC2086
+  run_with_prefix "$name" $TASKSET2 snarkos start "--dev=$node_index" --client \
+    "${common_flags[@]}" "--peers=127.0.0.1:$prev_port" "--node=$node_addr" \
+    "--rest=127.0.0.1:$((3030+client_index))" \
+    "--logfile=$log_dir/$name.log" "--storage=.ledger-$network_id-$client_index"
   PIDS[client_index]=$!
 
   # Add 1-second delay between starting nodes to avoid hitting rate limits
@@ -127,18 +134,18 @@ for client_index in $(seq 1 "$num_clients"); do
 done
 
 # Block until nodes are running and connected to each other.
-wait_for_nodes 0 $((num_clients+1))
+wait_for_nodes $((num_clients+1)) 0 "$network_name"
 
 # It takes about 30s for nodes to connect. Do not measure this time.
 SECONDS=0
 for node_index in $(seq 0 "$num_clients"); do
-  if ! (wait_for_peers "$node_index" $num_clients); then
+  if ! (wait_for_peers "$node_index" $num_clients "$network_name"); then
     exit 1
   fi
 done
 
 connect_time=$SECONDS
-echo "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
+log "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
 
 # Ensure the first node actually has the ledger snapshot.
 # This should succeed instantly in most cases
@@ -149,10 +156,12 @@ while (( SECONDS < 30 )); do
     has_blocks=true
     break
   fi
+
+  sleep $poll_interval
 done
 
 if ! $has_blocks; then
-  echo "Node #0 has not reached the expected height. Maybe the ledger snapshot is corrupted or outdated?"
+  log "Node #0 has not reached the expected height. Maybe the ledger snapshot is corrupted or outdated?"
   exit 1
 fi
 
@@ -178,7 +187,7 @@ while (( SECONDS < max_wait )); do
       variance=$(echo "scale=8; 0" | bc -l)
     fi
 
-    echo "🎉 P2P sync benchmark done! Waited $total_wait seconds for $min_height blocks. Throughput was $throughput blocks/s."
+    log "🎉 P2P sync benchmark done! Waited $total_wait seconds for $min_height blocks. Throughput was $throughput blocks/s."
 
     # Append data to results file.
     printf "{ \"name\": \"p2p-sync\", \"unit\": \"blocks/s\", \"value\": %.3f, \"extra\": \"total_wait=%is, target_height=%i, connect_time=%is, %s\" },\n" \
@@ -193,13 +202,9 @@ while (( SECONDS < max_wait )); do
   sleep $poll_interval
 done
 
-echo "❌ Benchmark failed! Clients did not sync within 40 minutes."
+log "❌ Benchmark failed! Clients did not sync within 40 minutes."
 
 # Print logs for debugging
-echo "Last 20 lines of client logs:"
-for ((client_index = 0; client_index < num_clients; client_index++)); do
-  echo "=== Client $client_index logs ==="
-  tail -n 20 "$log_dir/client-$client_index.log"
-done
+print_client_logs "$log_dir" "$num_validators" "$num_clients"
 
 exit 1

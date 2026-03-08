@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft"
-version = "4.4.0"
+version = "4.5.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A memory pool for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -25,6 +25,7 @@ locktick = [
   "snarkos-node-bft-storage-service/locktick",
   "snarkos-node-sync/locktick",
   "snarkos-node-tcp/locktick",
+  "snarkos-utilities/locktick",
   "snarkvm/locktick"
 ]
 metrics = [
@@ -44,7 +45,10 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
-serial = [ "snarkos-node-bft-ledger-service/serial" ]
+serial = [
+  "snarkos-node-metrics/serial",
+  "snarkos-node-bft-ledger-service/serial"
+]
 
 [dependencies.aleo-std]
 workspace = true
@@ -120,6 +124,9 @@ workspace = true
 [dependencies.snarkos-node-tcp]
 workspace = true
 
+[dependencies.snarkos-utilities]
+workspace = true
+
 [dependencies.snarkvm]
 workspace = true
 features = [ "utilities" ]
@@ -188,6 +195,9 @@ workspace = true
 features = [ "test" ]
 
 [dev-dependencies.test-strategy]
+workspace = true
+
+[dev-dependencies.test-log]
 workspace = true
 
 [dev-dependencies.tower-http]

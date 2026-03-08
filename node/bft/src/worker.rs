@@ -26,13 +26,14 @@ use snarkos_node_bft_ledger_service::LedgerService;
 use snarkvm::{
     console::prelude::*,
     ledger::{
-        block::Transaction,
+        Transaction,
         narwhal::{BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
 };
 
-use colored::Colorize;
+use anyhow::Context;
+use colored::{ColoredString, Colorize};
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -164,6 +165,17 @@ impl<N: Network> Worker<N> {
 }
 
 impl<N: Network> Worker<N> {
+    // Helper to print the transmission ID and checksum (if any).
+    fn format_transmission_id(&self, transmission_id: TransmissionID<N>) -> ColoredString {
+        if let Some(checksum) = transmission_id.checksum() {
+            // fmt_id will suffix with `..`, so we should not use `.`  as a separator.
+            format!("{}:{}", fmt_id(transmission_id), fmt_id(checksum))
+        } else {
+            fmt_id(transmission_id)
+        }
+        .dimmed()
+    }
+
     /// Returns `true` if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         let transmission_id = transmission_id.into();
@@ -283,10 +295,9 @@ impl<N: Network> Worker<N> {
                 // If the transmission was not fetched, then attempt to fetch it again.
                 Err(e) => {
                     warn!(
-                        "Worker {} - Failed to fetch transmission '{}.{}' from '{peer_ip}' (ping) - {e}",
+                        "Worker {} - Failed to fetch transmission '{}' from '{peer_ip}' (ping) - {e}",
                         self_.id,
-                        fmt_id(transmission_id),
-                        fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                        self_.format_transmission_id(transmission_id),
                     );
                 }
             }
@@ -330,21 +341,25 @@ impl<N: Network> Worker<N> {
         // If the transmission ID and transmission type matches, then insert the transmission into the ready queue.
         if is_well_formed && self.ready.write().insert(transmission_id, transmission) {
             trace!(
-                "Worker {} - Added transmission '{}.{}' from '{peer_ip}'",
+                "Worker {} - Added transmission '{}' from '{peer_ip}'",
                 self.id,
-                fmt_id(transmission_id),
-                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                self.format_transmission_id(transmission_id),
             );
         }
     }
 
     /// Handles the incoming unconfirmed solution.
     /// Note: This method assumes the incoming solution is valid and does not exist in the ledger.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the solution was added to the ready queue.
+    /// - `Ok(false)` if the solution was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the solution is invalid.
     pub(crate) async fn process_unconfirmed_solution(
         &self,
         solution_id: SolutionID<N>,
         solution: Data<Solution<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Construct the transmission.
         let transmission = Transmission::Solution(solution.clone());
         // Compute the checksum.
@@ -355,28 +370,32 @@ impl<N: Network> Worker<N> {
         self.pending.remove(transmission_id, Some(transmission.clone()));
         // Check if the solution exists.
         if self.contains_transmission(transmission_id) {
-            bail!("Solution '{}.{}' already exists.", fmt_id(solution_id), fmt_id(checksum).dimmed());
+            return Ok(false);
         }
         // Check that the solution is well-formed and unique.
         self.ledger.check_solution_basic(solution_id, solution).await?;
         // Adds the solution to the ready queue.
         if self.ready.write().insert(transmission_id, transmission) {
             trace!(
-                "Worker {} - Added unconfirmed solution '{}.{}'",
+                "Worker {} - Added unconfirmed solution '{}'",
                 self.id,
-                fmt_id(solution_id),
-                fmt_id(checksum).dimmed()
+                self.format_transmission_id(transmission_id),
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Handles the incoming unconfirmed transaction.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the transaction was added to the ready queue.
+    /// - `Ok(false)` if the transaction was valid but already exists in the ready queue.
+    /// - `Err(anyhow::Error)` if the transaction was invalid.
     pub(crate) async fn process_unconfirmed_transaction(
         &self,
         transaction_id: N::TransactionID,
         transaction: Data<Transaction<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Construct the transmission.
         let transmission = Transmission::Transaction(transaction.clone());
         // Compute the checksum.
@@ -387,7 +406,7 @@ impl<N: Network> Worker<N> {
         self.pending.remove(transmission_id, Some(transmission.clone()));
         // Check if the transaction ID exists.
         if self.contains_transmission(transmission_id) {
-            bail!("Transaction '{}.{}' already exists.", fmt_id(transaction_id), fmt_id(checksum).dimmed());
+            return Ok(false);
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
         let transaction = spawn_blocking!({
@@ -402,13 +421,12 @@ impl<N: Network> Worker<N> {
         // Adds the transaction to the ready queue.
         if self.ready.write().insert(transmission_id, transmission) {
             trace!(
-                "Worker {}.{} - Added unconfirmed transaction '{}'",
+                "Worker {} - Added unconfirmed transaction '{}'",
                 self.id,
-                fmt_id(transaction_id),
-                fmt_id(checksum).dimmed()
+                self.format_transmission_id(transmission_id),
             );
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -486,24 +504,32 @@ impl<N: Network> Worker<N> {
 
         // If the number of requests is less than or equal to the the redundancy factor, send the transmission request to the peer.
         if should_send_request {
+            trace!("Requesting transmission {} from peer '{peer_ip}'", self.format_transmission_id(transmission_id));
             // Send the transmission request to the peer.
             if self.gateway.send(peer_ip, Event::TransmissionRequest(transmission_id.into())).await.is_none() {
-                bail!("Unable to fetch transmission - failed to send request")
+                bail!(
+                    "Unable to fetch transmission {} - failed to send request",
+                    self.format_transmission_id(transmission_id)
+                )
             }
         } else {
             debug!(
-                "Skipped sending request for transmission {}.{} to '{peer_ip}' ({num_sent_requests} redundant requests)",
-                fmt_id(transmission_id),
-                fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                "Skipped sending request for transmission {} to '{peer_ip}' ({num_sent_requests} redundant requests)",
+                self.format_transmission_id(transmission_id)
             );
         }
         // Wait for the transmission to be fetched.
-        match timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver).await {
-            // If the transmission was fetched, return it.
-            Ok(result) => Ok((transmission_id, result?)),
-            // If the transmission was not fetched, return an error.
-            Err(e) => bail!("Unable to fetch transmission - (timeout) {e}"),
-        }
+
+        let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+            .await
+            .with_context(|| {
+                format!("Unable to fetch transmission {} (timeout)", self.format_transmission_id(transmission_id))
+            })?
+            .with_context(|| {
+                format!("Unable to fetch transmission {}", self.format_transmission_id(transmission_id))
+            })?;
+
+        Ok((transmission_id, transmission))
     }
 
     /// Handles the incoming transmission response.
@@ -517,6 +543,10 @@ impl<N: Network> Worker<N> {
             // Ensure the transmission is not a fee and matches the transmission ID.
             match self.ledger.ensure_transmission_is_well_formed(transmission_id, &mut transmission) {
                 Ok(()) => {
+                    trace!(
+                        "Received valid transmission response from peer '{peer_ip}' for transmission '{}'",
+                        self.format_transmission_id(transmission_id)
+                    );
                     // Remove the transmission ID from the pending queue.
                     self.pending.remove(transmission_id, Some(transmission));
                 }
@@ -560,7 +590,9 @@ mod tests {
     use snarkvm::{
         console::{network::Network, types::Field},
         ledger::{
-            block::Block,
+            Block,
+            CheckBlockError,
+            PendingBlock,
             committee::Committee,
             narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
             test_helpers::sample_execution_transaction_with_fee,
@@ -626,6 +658,8 @@ mod tests {
                 transaction_id: N::TransactionID,
                 transaction: Transaction<N>,
             ) -> Result<()>;
+            fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>>;
+            fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>>;
             fn check_next_block(&self, block: &Block<N>) -> Result<()>;
             fn prepare_advance_to_next_quorum_block(
                 &self,

@@ -30,11 +30,12 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
+use snarkos_node_sync::InsertBlockResponseError;
 use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
-    utilities::{log_error, log_warning},
+    utilities::flatten_error,
 };
 
 use std::{io, net::SocketAddr};
@@ -86,7 +87,9 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Client<N, C> {
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
             self.sync.remove_peer(&peer_ip);
+
             self.router.downgrade_peer_to_candidate(peer_ip);
+
             // Clear cached entries applicable to the peer.
             self.router.cache().clear_peer_entries(peer_ip);
             #[cfg(feature = "metrics")]
@@ -131,6 +134,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
             warn!("Failed to process inbound message from '{peer_addr}' - {error}");
+
+            //TODO(kaimast): set disconnect reason based on error
             if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
                 warn!("Disconnecting from '{peer_ip}' for protocol violation");
                 self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
@@ -184,7 +189,8 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         let latest_consensus_version = match N::CONSENSUS_VERSION(end_height.saturating_sub(1)) {
             Ok(version) => version,
             Err(err) => {
-                log_error(err.context("Failed to retrieve consensus version"));
+                let err = err.context("Failed to retrieve consensus version");
+                error!("{}", flatten_error(&err));
                 return false;
             }
         };
@@ -193,7 +199,9 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => DataBlocks(blocks),
             Err(error) => {
-                error!("Failed to retrieve blocks {start_height} to {end_height} from the ledger - {error}");
+                let err =
+                    error.context(format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"));
+                error!("{}", flatten_error(&err));
                 return false;
             }
         };
@@ -213,7 +221,17 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
-            log_warning(err.context("Failed to insert block response"));
+            warn!("Failed to insert block response from '{peer_ip}' - {err}");
+
+            // If the error indicates the peer missed an upgrade and forked, ban it.
+            if matches!(
+                err,
+                InsertBlockResponseError::ConsensusVersionMismatch { .. }
+                    | InsertBlockResponseError::NoConsensusVersion
+            ) {
+                self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
+            }
+
             false
         } else {
             true
@@ -225,8 +243,8 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         // If block locators were provided, then update the peer in the sync pool.
         if let Some(block_locators) = message.block_locators {
             // Check the block locators are valid, and update the peer in the sync pool.
-            if let Err(error) = self.sync.update_peer_locators(peer_ip, &block_locators) {
-                warn!("Peer '{peer_ip}' sent invalid block locators: {error}");
+            if let Err(err) = self.sync.update_peer_locators(peer_ip, &block_locators) {
+                warn!("{}", flatten_error(err.context(format!("Peer '{peer_ip}' sent invalid block locators"))));
                 return false;
             }
 
@@ -250,8 +268,9 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         // Retrieve the latest epoch hash.
         let epoch_hash = match self.ledger.latest_epoch_hash() {
             Ok(epoch_hash) => epoch_hash,
-            Err(error) => {
-                error!("Failed to prepare a puzzle request for '{peer_ip}': {error}");
+            Err(err) => {
+                let err = err.context(format!("Failed to prepare a puzzle request for '{peer_ip}'"));
+                error!("{}", flatten_error(err));
                 return false;
             }
         };
@@ -264,7 +283,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
 
     /// Saves the latest epoch hash and latest block header in the node.
     fn puzzle_response(&self, peer_ip: SocketAddr, _epoch_hash: N::BlockHash, _header: Header<N>) -> bool {
-        debug!("Disconnecting '{peer_ip}' for the following reason - {:?}", DisconnectReason::ProtocolViolation);
+        debug!("Disconnecting '{peer_ip}' for the following reason - {}", DisconnectReason::ProtocolViolation);
         false
     }
 

@@ -15,20 +15,34 @@
 
 use super::*;
 
-use std::io;
+use tracing::warn;
 
 /// The reason behind the node disconnecting from a peer.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[repr(u8)]
 pub enum DisconnectReason {
     /// The peer's challenge response is invalid.
-    InvalidChallengeResponse,
+    InvalidChallengeResponse = 0,
     /// No reason given.
-    NoReasonGiven,
+    NoReasonGiven = 1,
     /// The peer is not following the protocol.
-    ProtocolViolation,
+    ProtocolViolation = 2,
     /// The peer's client is outdated, judging by its version.
-    OutdatedClientVersion,
+    OutdatedClientVersion = 3,
+    /// The disconnect reason is not known. This is used for when the peers sends a disconnect reason that is not known to us.
+    UnknownReason = u8::MAX,
+}
+
+impl std::fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidChallengeResponse => write!(f, "invalid challenge response"),
+            Self::NoReasonGiven => write!(f, "no reason given"),
+            Self::ProtocolViolation => write!(f, "protocol violation"),
+            Self::OutdatedClientVersion => write!(f, "outdated client version"),
+            Self::UnknownReason => write!(f, "unknown"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -52,19 +66,30 @@ impl EventTrait for Disconnect {
 
 impl ToBytes for Disconnect {
     fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
-        (self.reason as u8).write_le(&mut writer)?;
-        Ok(())
+        if self.reason == DisconnectReason::UnknownReason {
+            return Err(io_error("Cannot serialize unknown disconnect reason"));
+        }
+
+        (self.reason as u8).write_le(&mut writer)
     }
 }
 
 impl FromBytes for Disconnect {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
-        let reason = match u8::read_le(&mut reader) {
-            Ok(0) => DisconnectReason::InvalidChallengeResponse,
-            Ok(1) => DisconnectReason::NoReasonGiven,
-            Ok(2) => DisconnectReason::ProtocolViolation,
-            Ok(3) => DisconnectReason::OutdatedClientVersion,
-            _ => return Err(io::Error::other("Invalid 'Disconnect' event")),
+        let index = match u8::read_le(&mut reader) {
+            Ok(index) => index,
+            Err(err) => return Err(io_error(format!("Failed to deserialize disconnect reason: {err}"))),
+        };
+
+        let reason = match index {
+            0 => DisconnectReason::InvalidChallengeResponse,
+            1 => DisconnectReason::NoReasonGiven,
+            2 => DisconnectReason::ProtocolViolation,
+            3 => DisconnectReason::OutdatedClientVersion,
+            val => {
+                warn!("received unknown disconnect reason (id={val})");
+                DisconnectReason::UnknownReason
+            }
         };
 
         Ok(Self { reason })
@@ -99,10 +124,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid 'Disconnect' event")]
-    fn deserializing_invalid_data_panics() {
+    fn deserialize_unknown_reason() {
         let mut buf = BytesMut::default().writer();
-        "not a DisconnectReason-value".as_bytes().write_le(&mut buf).unwrap();
-        let _disconnect = Disconnect::read_le(buf.into_inner().reader()).unwrap();
+        51u8.to_le_bytes().write_le(&mut buf).unwrap();
+        let disconnect = Disconnect::read_le(buf.into_inner().reader()).unwrap();
+        assert_eq!(disconnect.reason, DisconnectReason::UnknownReason);
     }
 }

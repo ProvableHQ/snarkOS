@@ -22,11 +22,12 @@ use std::{
     sync::Arc,
 };
 
-use aleo_std::StorageMode;
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::MockLedgerService;
 use snarkos_node_network::NodeType;
 use snarkos_node_router::Router;
+use snarkos_utilities::NodeDataDir;
+
 use snarkvm::{
     prelude::{FromBytes, MainnetV0 as CurrentNetwork, Network, PrivateKey, block::Block},
     utilities::TestRng,
@@ -68,7 +69,7 @@ pub async fn client(listening_port: u16, max_peers: u16, rng: &mut TestRng) -> T
         &[],
         max_peers,
         false,
-        StorageMode::new_test(None),
+        NodeDataDir::new_test(None),
         true,
     )
     .await
@@ -89,7 +90,7 @@ pub async fn prover(listening_port: u16, max_peers: u16, rng: &mut TestRng) -> T
         &[],
         max_peers,
         false,
-        StorageMode::new_test(None),
+        NodeDataDir::new_test(None),
         true,
     )
     .await
@@ -116,7 +117,7 @@ pub async fn validator(
         trusted_peers,
         max_peers,
         trusted_peers_only,
-        StorageMode::new_test(None),
+        NodeDataDir::new_test(None),
         true,
     )
     .await

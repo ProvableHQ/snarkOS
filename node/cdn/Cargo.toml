@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-cdn"
-version = "4.4.0"
+version = "4.5.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CDN client for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -17,9 +17,17 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-default = [ "parallel" ]
-locktick = [ "dep:locktick", "snarkvm/locktick" ]
-parallel = [ "rayon" ]
+default = [ ]
+serial = [ 
+  "snarkos-node-metrics/locktick",
+  "snarkvm/serial",
+]
+locktick = [
+  "dep:locktick",
+  "snarkvm/locktick",
+  "snarkos-node-metrics/locktick",
+  "snarkos-utilities/locktick"
+]
 cuda = [ "snarkvm/cuda" ]
 metrics = [ "dep:snarkos-node-metrics" ]
 
@@ -45,9 +53,11 @@ workspace = true
 optional = true
 features = [ "metrics" ]
 
+[dependencies.snarkos-utilities]
+workspace = true
+
 [dependencies.rayon]
 workspace = true
-optional = true
 
 [dependencies.reqwest]
 version = "0.12"
@@ -62,7 +72,7 @@ features = [ "preserve_order" ]
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console", "ledger" ]
+features = [ "console", "ledger", "utilities" ]
 
 [dependencies.http]
 workspace = true

@@ -17,17 +17,14 @@
 // https://github.com/rust-lang/rust-clippy/issues/6446
 #![allow(clippy::await_holding_lock)]
 
-use snarkvm::prelude::{
-    Deserialize,
-    DeserializeOwned,
-    Ledger,
-    Network,
-    Serialize,
-    block::Block,
-    store::ConsensusStorage,
+use snarkos_utilities::{SignalHandler, Stoppable};
+
+use snarkvm::{
+    prelude::{Deserialize, DeserializeOwned, Ledger, Network, Serialize, block::Block, store::ConsensusStorage},
+    utilities::flatten_error,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use colored::Colorize;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -81,17 +78,14 @@ pub struct CdnBlockSync {
 
 impl CdnBlockSync {
     /// Spawn a background task that loads blocks from a CDN into the ledger.
-    ///
-    /// On success, this function returns the completed block height.
-    /// On failure, this function returns the last successful block height (if any), along with the error.
     pub fn new<N: Network, C: ConsensusStorage<N>>(
         base_url: http::Uri,
         ledger: Ledger<N, C>,
-        shutdown: Arc<AtomicBool>,
+        stoppable: Arc<SignalHandler>,
     ) -> Self {
         let task = {
             let base_url = base_url.clone();
-            tokio::spawn(async move { Self::worker(base_url, ledger, shutdown).await })
+            tokio::spawn(async move { Self::worker(base_url, ledger, stoppable).await })
         };
 
         debug!("Started sync from CDN at {base_url}");
@@ -106,6 +100,9 @@ impl CdnBlockSync {
     }
 
     /// Wait for CDN sync to finish. Can only be called once.
+    ///
+    /// On success, this function returns the completed block height.
+    /// On failure, this function returns the last successful block height (if any), along with the error.
     pub async fn wait(&self) -> Result<SyncResult> {
         let Some(hdl) = self.task.lock().take() else {
             bail!("CDN task was already awaited");
@@ -119,42 +116,48 @@ impl CdnBlockSync {
     async fn worker<N: Network, C: ConsensusStorage<N>>(
         base_url: http::Uri,
         ledger: Ledger<N, C>,
-        shutdown: Arc<AtomicBool>,
+        stoppable: Arc<dyn Stoppable>,
     ) -> SyncResult {
         // Fetch the node height.
         let start_height = ledger.latest_height() + 1;
         // Load the blocks from the CDN into the ledger.
         let ledger_clone = ledger.clone();
-        let result = load_blocks(&base_url, start_height, None, shutdown, move |block: Block<N>| {
-            ledger_clone.advance_to_next_block(&block)
+        let result = load_blocks(&base_url, start_height, None, stoppable, move |block: Block<N>| {
+            ledger_clone
+                .advance_to_next_block(&block)
+                .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))
         })
         .await;
 
         // TODO (howardwu): Find a way to resolve integrity failures.
         // If the sync failed, check the integrity of the ledger.
-        if let Err((completed_height, error)) = &result {
-            warn!("{error}");
+        match result {
+            Ok(completed_height) => Ok(completed_height),
+            Err((completed_height, error)) => {
+                warn!("{}", flatten_error(error.context("Failed to sync block(s) from the CDN")));
 
-            // If the sync made any progress, then check the integrity of the ledger.
-            if *completed_height != start_height {
-                debug!("Synced the ledger up to block {completed_height}");
+                // If the sync made any progress, then check the integrity of the ledger.
+                if completed_height != start_height {
+                    debug!("Synced the ledger up to block {completed_height}");
 
-                // Retrieve the latest height, according to the ledger.
-                let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
-                // Check the integrity of the latest height.
-                if &node_height != completed_height {
-                    return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
+                    // Retrieve the latest height, according to the ledger.
+                    let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
+                    // Check the integrity of the latest height.
+                    if node_height != completed_height {
+                        return Err((
+                            completed_height,
+                            anyhow!("The ledger height does not match the last sync height"),
+                        ));
+                    }
+
+                    // Fetch the latest block from the ledger.
+                    if let Err(err) = ledger.get_block(node_height) {
+                        return Err((completed_height, err));
+                    }
                 }
 
-                // Fetch the latest block from the ledger.
-                if let Err(err) = ledger.get_block(node_height) {
-                    return Err((*completed_height, err));
-                }
+                Ok(completed_height)
             }
-
-            Ok(*completed_height)
-        } else {
-            result
         }
     }
 
@@ -172,7 +175,7 @@ pub async fn load_blocks<N: Network>(
     base_url: &http::Uri,
     start_height: u32,
     end_height: Option<u32>,
-    shutdown: Arc<AtomicBool>,
+    stoppable: Arc<dyn Stoppable>,
     process: impl FnMut(Block<N>) -> Result<()> + Clone + Send + Sync + 'static,
 ) -> Result<u32, (u32, anyhow::Error)> {
     // Create a Client to maintain a connection pool throughout the sync.
@@ -225,16 +228,19 @@ pub async fn load_blocks<N: Network>(
     // Spawn a background task responsible for concurrent downloads.
     let pending_blocks_clone = pending_blocks.clone();
     let base_url = base_url.to_owned();
-    let shutdown_clone = shutdown.clone();
-    tokio::spawn(async move {
-        download_block_bundles(client, &base_url, cdn_start, cdn_end, pending_blocks_clone, shutdown_clone).await;
-    });
+
+    {
+        let stoppable = stoppable.clone();
+        tokio::spawn(async move {
+            download_block_bundles(client, &base_url, cdn_start, cdn_end, pending_blocks_clone, stoppable).await;
+        });
+    }
 
     // A loop for inserting the pending blocks into the ledger.
     let mut current_height = start_height.saturating_sub(1);
     while current_height < end_height - 1 {
         // If we are instructed to shut down, abort.
-        if shutdown.load(Ordering::Acquire) {
+        if stoppable.is_stopped() {
             info!("Stopping block sync at {} - shutting down", current_height);
             // We can shut down cleanly from here, as the node hasn't been started yet.
             std::process::exit(0);
@@ -269,12 +275,12 @@ pub async fn load_blocks<N: Network>(
 
         // Attempt to advance the ledger using the CDN block bundle.
         let mut process_clone = process.clone();
-        let shutdown_clone = shutdown.clone();
+        let stoppable_clone = stoppable.clone();
         current_height = tokio::task::spawn_blocking(move || {
             threadpool.install(|| {
                 for block in next_blocks.into_iter().filter(|b| (start_height..end_height).contains(&b.height())) {
                     // If we are instructed to shut down, abort.
-                    if shutdown_clone.load(Ordering::Relaxed) {
+                    if stoppable_clone.is_stopped() {
                         info!("Stopping block sync at {} - the node is shutting down", current_height);
                         // We can shut down cleanly from here, as the node hasn't been started yet.
                         std::process::exit(0);
@@ -314,7 +320,7 @@ async fn download_block_bundles<N: Network>(
     cdn_start: u32,
     cdn_end: u32,
     pending_blocks: Arc<TMutex<Vec<Block<N>>>>,
-    shutdown: Arc<AtomicBool>,
+    stoppable: Arc<dyn Stoppable>,
 ) {
     // Keep track of the number of concurrent requests.
     let active_requests: Arc<AtomicU32> = Default::default();
@@ -322,7 +328,7 @@ async fn download_block_bundles<N: Network>(
     let mut start = cdn_start;
     while start < cdn_end - 1 {
         // If we are instructed to shut down, stop downloading.
-        if shutdown.load(Ordering::Acquire) {
+        if stoppable.is_stopped() {
             break;
         }
 
@@ -356,7 +362,7 @@ async fn download_block_bundles<N: Network>(
             let base_url_clone = base_url.clone();
             let pending_blocks_clone = pending_blocks.clone();
             let active_requests_clone = active_requests.clone();
-            let shutdown_clone = shutdown.clone();
+            let stoppable_clone = stoppable.clone();
             tokio::spawn(async move {
                 // Increment the number of active requests.
                 active_requests_clone.fetch_add(1, Ordering::Relaxed);
@@ -392,7 +398,7 @@ async fn download_block_bundles<N: Network>(
                             attempts += 1;
                             if attempts > MAXIMUM_REQUEST_ATTEMPTS {
                                 warn!("Maximum number of requests to {blocks_url} reached - shutting down...");
-                                shutdown_clone.store(true, Ordering::Relaxed);
+                                stoppable_clone.stop();
                                 break;
                             }
                             tokio::time::sleep(Duration::from_secs(attempts as u64 * 10)).await;
@@ -443,7 +449,10 @@ async fn cdn_height<const BLOCKS_PER_FILE: u32>(client: &Client, base_url: &http
     // Parse the bytes for the string.
     let latest_state_string = match bincode::deserialize::<String>(&bytes) {
         Ok(string) => string,
-        Err(error) => bail!("Failed to deserialize the CDN height response - {error}"),
+        Err(error) => {
+            let bytes_as_string = String::from_utf8_lossy(&bytes);
+            bail!("Failed to deserialize the CDN height response - {error} - {bytes_as_string}")
+        }
     };
     // Parse the string for the tip.
     let tip = match serde_json::from_str::<LatestState>(&latest_state_string) {
@@ -470,10 +479,15 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
     };
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || bincode::deserialize::<T>(&bytes)).await {
-        Ok(Ok(objects)) => Ok(objects),
-        Ok(Err(error)) => bail!("Failed to deserialize {ctx} - {error}"),
-        Err(error) => bail!("Failed to join task for {ctx} - {error}"),
+    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
+        Ok((Ok(objects), _)) => Ok(objects),
+        Ok((Err(error), response_bytes)) => {
+            let bytes_as_string = String::from_utf8_lossy(&response_bytes);
+            bail!("Failed to deserialize {ctx} - {error} - {bytes_as_string}")
+        }
+        Err(error) => {
+            bail!("Failed to join task for {ctx} - {error}")
+        }
     }
 }
 
@@ -553,8 +567,10 @@ fn log_progress<const OBJECTS_PER_FILE: u32>(
 
 #[cfg(test)]
 mod tests {
-    use super::{BLOCKS_PER_FILE, CDN_BASE_URL, cdn_height, log_progress};
-    use crate::load_blocks;
+    use super::{BLOCKS_PER_FILE, CDN_BASE_URL, cdn_height, load_blocks, log_progress};
+
+    use snarkos_utilities::SimpleStoppable;
+
     use snarkvm::prelude::{MainnetV0, block::Block};
 
     use http::Uri;
@@ -576,7 +592,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let completed_height =
-                load_blocks(&testnet_cdn_url, start, end, Default::default(), process).await.unwrap();
+                load_blocks(&testnet_cdn_url, start, end, SimpleStoppable::new(), process).await.unwrap();
             assert_eq!(blocks.read().len(), expected);
             if expected > 0 {
                 assert_eq!(blocks.read().last().unwrap().height(), completed_height);

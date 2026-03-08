@@ -42,6 +42,7 @@ use snarkos_node_bft::{
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_bft_storage_service::BFTPersistentStorage;
 use snarkos_node_sync::{BlockSync, Ping};
+use snarkos_utilities::NodeDataDir;
 
 use snarkvm::{
     ledger::{
@@ -50,10 +51,11 @@ use snarkvm::{
         puzzle::{Solution, SolutionID},
     },
     prelude::*,
+    utilities::flatten_error,
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -123,6 +125,7 @@ impl<N: Network> Consensus<N> {
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
     ) -> Result<Self> {
@@ -141,7 +144,7 @@ impl<N: Network> Consensus<N> {
             ip,
             trusted_validators,
             trusted_peers_only,
-            storage_mode,
+            node_data_dir,
             dev,
         )?;
         // Create a new instance of Consensus.
@@ -347,13 +350,24 @@ impl<N: Network> Consensus<N> {
             let solution_id = solution.id();
             trace!("Adding unconfirmed solution '{}' to the memory pool...", fmt_id(solution_id));
             // Send the unconfirmed solution to the primary.
-            if let Err(e) = self.primary_sender.send_unconfirmed_solution(solution_id, Data::Object(solution)).await {
-                // If the BFT is synced, then log the warning.
-                if self.bft.is_synced() {
-                    // If error occurs after the first 10 blocks of the epoch, log it as a warning, otherwise ignore.
-                    if self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
-                        warn!("Failed to add unconfirmed solution '{}' to the memory pool - {e}", fmt_id(solution_id))
-                    };
+            match self.primary_sender.send_unconfirmed_solution(solution_id, Data::Object(solution)).await {
+                Ok(true) => {}
+                Ok(false) => debug!(
+                    "Unable to add unconfirmed solution '{}' to the memory pool. Already exists.",
+                    fmt_id(solution_id)
+                ),
+                Err(err) => {
+                    let err = err.context(format!(
+                        "Unable to add unconfirmed solution '{}' to the memory pool",
+                        fmt_id(solution_id)
+                    ));
+
+                    // If the node is synced and the occurs after the first 10 blocks of an epoch, log it as a warning, otherwise trace it.
+                    if self.bft.is_synced() && self.ledger.latest_block_height() % N::NUM_BLOCKS_PER_EPOCH > 10 {
+                        warn!("{}", flatten_error(err));
+                    } else {
+                        trace!("{}", flatten_error(err));
+                    }
                 }
             }
         }
@@ -446,15 +460,21 @@ impl<N: Network> Consensus<N> {
             };
             trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
             // Send the unconfirmed transaction to the primary.
-            if let Err(e) =
-                self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await
-            {
-                // If the BFT is synced, then log the warning.
-                if self.bft.is_synced() {
-                    warn!(
-                        "Failed to add unconfirmed {tx_type_str} transaction '{}' to the memory pool - {e}",
-                        fmt_id(transaction_id)
-                    );
+            match self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await {
+                Ok(true) => {}
+                Ok(false) => debug!(
+                    "Unable to add unconfirmed {tx_type_str} transaction '{}' to the memory pool. Already exists.",
+                    fmt_id(transaction_id)
+                ),
+                Err(err) => {
+                    // If the BFT is synced, then log the warning.
+                    if self.bft.is_synced() {
+                        let err = err.context(format!(
+                            "Unable to add unconfirmed {tx_type_str} transaction '{}' to the memory pool",
+                            fmt_id(transaction_id)
+                        ));
+                        warn!("{}", flatten_error(err));
+                    }
                 }
             }
         }
@@ -487,12 +507,12 @@ impl<N: Network> Consensus<N> {
                 // Sleep briefly.
                 tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
                 // Process the unconfirmed transactions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_transactions().await {
-                    warn!("Cannot process unconfirmed transactions - {e}");
+                if let Err(err) = self_.process_unconfirmed_transactions().await {
+                    warn!("{}", flatten_error(err.context("Cannot process unconfirmed transactions")));
                 }
                 // Process the unconfirmed solutions in the memory pool.
-                if let Err(e) = self_.process_unconfirmed_solutions().await {
-                    warn!("Cannot process unconfirmed solutions - {e}");
+                if let Err(err) = self_.process_unconfirmed_solutions().await {
+                    warn!("{}", flatten_error(err.context("Cannot process unconfirmed solutions")));
                 }
             }
         });
@@ -508,11 +528,11 @@ impl<N: Network> Consensus<N> {
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
-        let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_) };
+        let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
         if let Err(e) = &result {
-            error!("Unable to advance to the next block - {e}");
+            error!("{}", flatten_error(e));
             // On failure, reinsert the transmissions into the memory pool.
             self.reinsert_transmissions(transmissions).await;
         }
@@ -611,27 +631,41 @@ impl<N: Network> Consensus<N> {
         // Iterate over the transmissions.
         for (transmission_id, transmission) in transmissions.into_iter() {
             // Reinsert the transmission into the memory pool.
-            if let Err(e) = self.reinsert_transmission(transmission_id, transmission).await {
-                warn!(
-                    "Unable to reinsert transmission {}.{} into the memory pool - {e}",
+            match self.reinsert_transmission(transmission_id, transmission).await {
+                Ok(true) => {}
+                Ok(false) => debug!(
+                    "Unable to reinsert transmission {}.{} into the memory pool. Already exists.",
                     fmt_id(transmission_id),
                     fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
-                );
+                ),
+                Err(err) => {
+                    let err = err.context(format!(
+                        "Unable to reinsert transmission {}.{} into the memory pool",
+                        fmt_id(transmission_id),
+                        fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                    ));
+                    warn!("{}", flatten_error(err));
+                }
             }
         }
     }
 
     /// Reinserts the given transmission into the memory pool.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the transmission was added to the memory pool.
+    /// - `Ok(false)` if the transmission was valid but already exists in the memory pool.
+    /// - `Err(anyhow::Error)` if the transmission was invalid.
     async fn reinsert_transmission(
         &self,
         transmission_id: TransmissionID<N>,
         transmission: Transmission<N>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Initialize a callback sender and receiver.
         let (callback, callback_receiver) = oneshot::channel();
         // Send the transmission to the primary.
         match (transmission_id, transmission) {
-            (TransmissionID::Ratification, Transmission::Ratification) => return Ok(()),
+            (TransmissionID::Ratification, Transmission::Ratification) => return Ok(true),
             (TransmissionID::Solution(solution_id, _), Transmission::Solution(solution)) => {
                 // Send the solution to the primary.
                 self.primary_sender.tx_unconfirmed_solution.send((solution_id, solution, callback)).await?;

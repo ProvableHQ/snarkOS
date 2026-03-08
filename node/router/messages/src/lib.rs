@@ -108,7 +108,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 7] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 8] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -116,6 +116,10 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V10, 21),
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
+        // For ConsensusVersion::V13, we forgot to run CI and increment the
+        // message version before the canary release, so we keep it the same for
+        // Canary.  We can bump it again on Canary for V14.
+        (ConsensusVersion::V13, 24),
     ];
 
     /// Returns the latest message version.
@@ -294,7 +298,7 @@ mod tests {
     /// Ensure that *message versions* are unique and incrementing by 1.
     fn consensus_constants_increasing_heights<N: Network>() {
         let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
-        for (_, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+        for (_consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
             assert_eq!(*message_version, previous_message_version + 1);
             previous_message_version = *message_version;
         }

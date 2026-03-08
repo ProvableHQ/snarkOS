@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-consensus"
-version = "4.4.0"
+version = "4.5.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node consensus for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -28,8 +28,11 @@ locktick = [
 metrics = [ "dep:snarkos-node-metrics" ]
 telemetry = [ "snarkos-node-bft/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-account/cuda", "snarkos-node-bft-ledger-service/cuda" ]
-serial = [ "snarkos-node-bft-ledger-service/serial" ]
-
+serial = [ 
+  "snarkos-node-bft-ledger-service/serial",
+  "snarkos-node-metrics/serial",
+  "snarkvm/serial"
+]
 
 [dependencies.aleo-std]
 workspace = true
@@ -74,6 +77,9 @@ workspace = true
 features = [ "persistent" ]
 
 [dependencies.snarkos-node-sync]
+workspace = true
+
+[dependencies.snarkos-utilities]
 workspace = true
 
 [dependencies.snarkvm]

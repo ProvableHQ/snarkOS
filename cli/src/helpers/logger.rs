@@ -45,21 +45,29 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
     // Now, set rules for specific crates.
     let filter = if verbosity >= 2 {
         filter.add_directive("snarkos_node_sync=trace".parse().unwrap())
-    } else {
+    } else if verbosity >= 1 {
         filter.add_directive("snarkos_node_sync=debug".parse().unwrap())
+    } else {
+        filter
     };
 
     let filter = if verbosity >= 3 {
-        filter
-            .add_directive("snarkos_node_bft=trace".parse().unwrap())
-            .add_directive("snarkos_node_bft::gateway=debug".parse().unwrap())
-    } else {
+        filter.add_directive("snarkos_node_bft=trace".parse().unwrap())
+    } else if verbosity >= 1 {
         filter.add_directive("snarkos_node_bft=debug".parse().unwrap())
+    } else {
+        filter
     };
 
     let filter = if verbosity >= 4 {
-        let filter = filter.add_directive("snarkos_node_bft::gateway=trace".parse().unwrap());
+        filter.add_directive("snarkos_node_bft::gateway=trace".parse().unwrap())
+    } else if verbosity >= 1 {
+        filter.add_directive("snarkos_node_bft::gateway=debug".parse().unwrap())
+    } else {
+        filter
+    };
 
+    let filter = if verbosity >= 4 {
         // At high log levels, also show warnings of third-party crates.
         filter
             .add_directive("mio=warn".parse().unwrap())
@@ -71,9 +79,8 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("tower=warn".parse().unwrap())
             .add_directive("axum=warn".parse().unwrap())
             .add_directive("ureq=warn".parse().unwrap())
+            .add_directive("rustls=warn".parse().unwrap())
     } else {
-        let filter = filter.add_directive("snarkos_node_bft::gateway=debug".parse().unwrap());
-
         // Disable logs from third-party crates by default.
         filter
             .add_directive("mio=off".parse().unwrap())
@@ -85,12 +92,15 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("tower=off".parse().unwrap())
             .add_directive("axum=off".parse().unwrap())
             .add_directive("ureq=off".parse().unwrap())
+            .add_directive("rustls=off".parse().unwrap())
     };
 
     let filter = if verbosity >= 5 {
         filter.add_directive("snarkos_node_router=trace".parse().unwrap())
-    } else {
+    } else if verbosity >= 1 {
         filter.add_directive("snarkos_node_router=debug".parse().unwrap())
+    } else {
+        filter
     };
 
     let filter = if verbosity >= 6 {
@@ -107,7 +117,9 @@ fn parse_log_filter(filter_str: &str) -> Result<EnvFilter> {
 }
 
 /// Sets the log filter based on the given verbosity level.
+/// Initializes the logger with the specified verbosity level, where 0 is the lowest verbosity and 6 the highest.
 ///
+/// The following shows what messages are enabled at each level.
 /// ```ignore
 /// 0 => info
 /// 1 => info, debug

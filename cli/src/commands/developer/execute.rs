@@ -36,7 +36,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, builder::NonEmptyStringValueParser};
 use colored::Colorize;
 use std::str::FromStr;
@@ -74,6 +74,8 @@ pub struct Execute {
     /// to fit the network type and query.
     /// For example, the base URL may extend to "http://mynode.com/testnet/transaction/unconfirmed/ID" to retrieve
     /// an unconfirmed transaction on the test network.
+    ///
+    /// The given value may also be a JSON serialized `StaticQuery` struct.
     #[clap(short, long, alias="query", default_value=DEFAULT_ENDPOINT, verbatim_doc_comment)]
     endpoint: Uri,
     /// The priority fee in microcredits.
@@ -103,6 +105,9 @@ pub struct Execute {
     /// Timeout in seconds when waiting for transaction confirmation. Default is 60 seconds.
     #[clap(long, default_value_t = 60, requires = "wait")]
     timeout: u64,
+    /// Send the transaction without checking if sufficient funds are available (intended for testing purposes only).
+    #[clap(long, hide = true)]
+    skip_funds_check: bool,
 }
 
 impl Drop for Execute {
@@ -122,7 +127,7 @@ impl Execute {
         // Specify the query
         let query = Query::<N, BlockMemory<N>>::from(endpoint.clone());
 
-        // TODO (kaimast): can this ever be true?
+        // Check if the query is a static query.
         let is_static_query = matches!(query, Query::STATIC(_));
 
         // Retrieve the private key.
@@ -152,14 +157,12 @@ impl Execute {
             let vm = VM::from(store)?;
 
             if !is_static_query && program_id != ProgramID::from_str("credits.aleo")? {
-                let height = query.current_block_height()?;
+                let height = query.current_block_height().with_context(|| "Failed to retrieve current block height")?;
                 let version = N::CONSENSUS_VERSION(height)?;
                 debug!("At block height {height} and consensus {version:?}");
-                let edition = Developer::get_latest_edition(&endpoint, &program_id)
-                    .with_context(|| format!("Failed to get latest edition for program {program_id}"))?;
 
                 // Load the program and it's imports into the process.
-                load_program(&query, &mut vm.process().write(), &program_id, edition)?;
+                load_program(&query, &mut vm.process().write(), &program_id, &endpoint)?;
             }
 
             // Prepare the fee.
@@ -184,11 +187,17 @@ impl Execute {
         };
 
         // Check if the public balance is sufficient.
-        if self.record.is_none() && !is_static_query {
+        if self.record.is_none() && !is_static_query && !self.skip_funds_check {
             // Fetch the public balance.
             let address = Address::try_from(&private_key)?;
             let public_balance = Developer::get_public_balance::<N>(&endpoint, &address)
-                .with_context(|| "Failed to check for sufficient funds to send transaction")?;
+                .with_context(|| "Failed to check for sufficient funds to send transaction")?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "No public balance found for sending account `{}`. It may not exist.",
+                        address.to_string().bold()
+                    )
+                })?;
 
             // Check if the public balance is sufficient.
             let storage_cost = transaction
@@ -233,10 +242,13 @@ fn load_program<N: Network>(
     query: &Query<N, BlockMemory<N>>,
     process: &mut Process<N>,
     program_id: &ProgramID<N>,
-    edition: u16,
+    endpoint: &Uri,
 ) -> Result<()> {
     // Fetch the program.
     let program = query.get_program(program_id).with_context(|| "Failed to fetch program")?;
+    // Fetch the latest edition of the program.
+    let edition = Developer::get_latest_edition(endpoint, program_id)
+        .with_context(|| format!("Failed to get latest edition for program {program_id}"))?;
 
     // Return early if the program is already loaded.
     if process.contains_program(program.id()) {
@@ -248,13 +260,14 @@ fn load_program<N: Network>(
         // Add the imports to the process if does not exist yet.
         if !process.contains_program(import_program_id) {
             // Recursively load the program and its imports.
-            load_program(query, process, import_program_id, edition)
+            load_program(query, process, import_program_id, endpoint)
                 .with_context(|| format!("Failed to load imported program {import_program_id}"))?;
         }
     }
 
     // Add the program to the process if it does not already exist.
     if !process.contains_program(program.id()) {
+        debug!("Adding program {program_id} with edition {edition}");
         process
             .add_programs_with_editions(&[(program, edition)])
             .with_context(|| format!("Failed to add program {program_id}"))?;

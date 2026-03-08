@@ -24,6 +24,7 @@ extern crate tracing;
 extern crate snarkos_node_metrics as metrics;
 
 pub use snarkos_node_router_messages as messages;
+use snarkos_utilities::NodeDataDir;
 
 mod handshake;
 
@@ -62,7 +63,6 @@ use snarkos_node_tcp::{Config, ConnectionSide, Tcp};
 
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 
-use aleo_std::StorageMode;
 use anyhow::Result;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -73,9 +73,6 @@ use tokio::task::JoinHandle;
 
 /// The default port used by the router.
 pub const DEFAULT_NODE_PORT: u16 = 4130;
-
-/// The name of the file containing cached peers.
-const PEER_CACHE_FILENAME: &str = "cached_router_peers";
 
 /// The router keeps track of connected and connecting peers.
 /// The actual network communication happens in Inbound/Outbound,
@@ -137,7 +134,7 @@ pub struct InnerRouter<N: Network> {
     /// If the flag is set, the node will only connect to trusted peers.
     trusted_peers_only: bool,
     /// The storage mode.
-    storage_mode: StorageMode,
+    node_data_dir: NodeDataDir,
     /// The boolean flag for the development mode.
     is_dev: bool,
 }
@@ -146,7 +143,7 @@ impl<N: Network> Router<N> {
     /// The minimum permitted interval between connection attempts for an IP; anything shorter is considered malicious.
     #[cfg(not(feature = "test"))]
     const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
-    /// The maximum amount of connection attempts within a 10 second threshold
+    /// The maximum amount of connection attempts within a 10 second threshold.
     #[cfg(not(feature = "test"))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
     /// The duration after which a connected peer is considered inactive or
@@ -165,7 +162,7 @@ impl<N: Network> Router<N> {
         trusted_peers: &[SocketAddr],
         max_peers: u16,
         trusted_peers_only: bool,
-        storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         is_dev: bool,
     ) -> Result<Self> {
         // Initialize the TCP stack.
@@ -176,7 +173,7 @@ impl<N: Network> Router<N> {
 
         // Load entries from the peer cache (if present and if we are not in trusted peers only mode).
         if !trusted_peers_only {
-            let cached_peers = Self::load_cached_peers(&storage_mode, PEER_CACHE_FILENAME)?;
+            let cached_peers = Self::load_cached_peers(&node_data_dir.router_peer_cache_path())?;
             for addr in cached_peers {
                 initial_peers.insert(addr, Peer::new_candidate(addr, false));
             }
@@ -197,7 +194,7 @@ impl<N: Network> Router<N> {
             peer_pool: RwLock::new(initial_peers),
             handles: Default::default(),
             trusted_peers_only,
-            storage_mode,
+            node_data_dir,
             is_dev,
         })))
     }
@@ -279,7 +276,9 @@ impl<N: Network> Router<N> {
     pub async fn shut_down(&self) {
         info!("Shutting down the router...");
         // Save the best peers for future use.
-        if let Err(e) = self.save_best_peers(&self.storage_mode, PEER_CACHE_FILENAME, Some(MAX_PEERS_TO_SEND)) {
+        if let Err(e) =
+            self.save_best_peers(&self.node_data_dir.router_peer_cache_path(), Some(MAX_PEERS_TO_SEND), true)
+        {
             warn!("Failed to persist best peers to disk: {e}");
         }
         // Abort the tasks.

@@ -79,19 +79,31 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
     }
 }
 
+/// Get our SHA from the build information (or None if it is not set or does not 40 bytes long).
+pub fn get_repo_commit_hash() -> Option<[u8; 40]> {
+    built_info::GIT_COMMIT_HASH.and_then(|sha| sha.as_bytes().try_into().ok())
+}
+
 /// Logs the peer's snarkOS repo SHA and how it compares to ours.
-pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: Option<&String>, ctx: &str) {
-    let our_sha = built_info::GIT_COMMIT_HASH.unwrap_or_default();
-    let unknown_sha = "unknown".to_owned();
-    let peer_sha = peer_sha.unwrap_or(&unknown_sha);
-    let sha_cmp = if peer_sha == &unknown_sha {
-        " with an unknown repo SHA".to_owned()
-    } else if peer_sha == our_sha {
-        format!("@{peer_sha} (same as us)")
-    } else if our_sha.is_empty() {
-        format!("@{peer_sha} (potentially different than us)")
-    } else {
-        format!("@{peer_sha} (different than us)")
+pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &Option<[u8; 40]>, ctx: &str) {
+    let our_sha = get_repo_commit_hash();
+
+    // Generate a string representation for the peers hash.
+    let peer_sha_str: Option<&str> = peer_sha.as_ref().and_then(|h| str::from_utf8(h).ok());
+
+    let sha_cmp = match (&our_sha, peer_sha, peer_sha_str) {
+        // They sent no hash, or an invalid string.
+        (_, _, None) | (_, None, _) => " with an unknown repo SHA".to_owned(),
+        // Our hash cannot be retrieved.
+        (None, _, Some(theirs_str)) => format!("@{theirs_str} (potentially different than us)"),
+        // Both hashes are valid. Compare.
+        (Some(ours), Some(theirs), Some(theirs_str)) => {
+            if ours == theirs {
+                format!("@{theirs_str} (same as us)")
+            } else {
+                format!("@{theirs_str} (different than us)")
+            }
+        }
     };
 
     debug!("{ctx} Peer '{peer_addr}' uses snarkOS{sha_cmp}");

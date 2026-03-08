@@ -68,7 +68,7 @@ pub use worker_ping::WorkerPing;
 
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::{
-    console::prelude::{FromBytes, Network, Read, ToBytes, Write, error},
+    console::prelude::{FromBytes, Network, Read, ToBytes, Write, error, io_error},
     ledger::{
         block::Block,
         narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},

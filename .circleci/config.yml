@@ -22,6 +22,10 @@ executors:
   rust-docker:
      docker:
       - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+  # The default VM used for devnet tests
+  ubuntu-vm:
+      machine:
+        image: ubuntu-2404:current
 
 commands:
   check_windows:
@@ -72,6 +76,19 @@ commands:
             - target
           key: cargo-cache-{{ arch }}-{{ checksum "rust-version" }}-{{ checksum "Cargo.lock" }}
 
+  install_snarkos:
+    description: "Install snarkOS"
+    steps:
+      - run:
+          name: Install snarkOS
+          command: |
+            export CARGO_TARGET_DIR="$PWD/.ci/target"
+            CARGO_PROFILE_RELEASE_LTO=off \
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
+            CARGO_PROFILE_RELEASE_DEBUG=0 \
+            cargo install --locked --path . --features test_network
+
   setup_environment:
     description: "Setup testing environment"
     parameters:
@@ -85,7 +102,7 @@ commands:
           command: |
             # Note: sccache cache is disabled for now
             # it causes longer build times and causes some builds to fail
-    
+
             # echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
             # echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
             # Disable incremental builds so that sccache works as expected
@@ -107,7 +124,7 @@ commands:
           name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -141,18 +158,184 @@ commands:
       flags:
         type: string
         default: ""
+      timeout:
+        type: string
+        default: 30m
+      no_output_timeout:
+        type: string
+        default: 30m
     steps:
       - checkout
       - setup_environment:
           cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+
       - run:
-          name: "Build tests"
-          no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >> --no-run
+          name: Install cargo-nextest
+          command: |
+            # Anything newer requires a Rust toolchain upgrade.
+            cargo install cargo-nextest@0.9.114 --locked || true
+
       - run:
-          name: "Run tests"
-          no_output_timeout: 30m
-          command: cd << parameters.workspace_member >> && RUST_MIN_STACK=67108864 cargo test << parameters.flags >>
+          name: "Run Tests"
+          timeout: << parameters.timeout >>
+          no_output_timeout: << parameters.no_output_timeout >>
+          command: |
+            set -euo pipefail
+            export CARGO_TERM_COLOR=never
+
+            mkdir -p artifacts target/nextest/ci
+
+            # Determine package / workspace targeting for nextest
+            WSM="<< parameters.workspace_member >>"
+            if [ "$WSM" = "." ]; then
+              # Root job: test only the root package instead of the whole workspace,
+              # to avoid OOM from `--workspace`.
+              # If your root package is named something else (e.g. snarkos-cli),
+              # change PKG_NAME accordingly.
+              PKG_NAME="snarkos"
+              PKG_ARGS="--package $PKG_NAME"
+              PKG_DESC="$PKG_NAME (root package)"
+              SAFE_NAME="$PKG_NAME"
+            else
+              PKG_NAME="snarkos-${WSM//\//-}"
+              PKG_ARGS="--package $PKG_NAME"
+              PKG_DESC="$PKG_NAME (from path $WSM)"
+              SAFE_NAME="${WSM//\//-}"
+            fi
+
+            # Artifact filenames (no slashes)
+            OUT="artifacts/${SAFE_NAME}-nextest.txt"
+            CSV="artifacts/${SAFE_NAME}-test-times.csv"
+            TOP="artifacts/${SAFE_NAME}-slow-tests-top30.csv"
+            JUNIT="target/nextest/ci/junit.xml"
+
+            mkdir -p "$(dirname "$OUT")" "$(dirname "$CSV")" "$(dirname "$TOP")"
+
+            # Extract and trim flags from parameters
+            FLAGS_FULL="<< parameters.flags >>"
+            FLAGS_TRIM="$(printf '%s' "$FLAGS_FULL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+            # Split into cargo flags (before --) and right-of-separator (test binary args)
+            RIGHT_OF_SEP=""
+            if printf '%s' "$FLAGS_TRIM" | grep -q ' -- '; then
+              BUILD_FLAGS="${FLAGS_TRIM%% -- *}"
+              RIGHT_OF_SEP="${FLAGS_TRIM#* -- }"
+            elif printf '%s' "$FLAGS_TRIM" | grep -Eq '^--[[:space:]]'; then
+              BUILD_FLAGS=""
+              RIGHT_OF_SEP="${FLAGS_TRIM#-- }"
+            else
+              BUILD_FLAGS="$FLAGS_TRIM"
+            fi
+
+            # Remove any --test target flags, they cause nextest build errors
+            BUILD_FLAGS_SANITIZED="$(printf '%s' "$BUILD_FLAGS" \
+              | sed -E "s/(^|[[:space:]])--test[[:space:]]+'[^']*'([[:space:]]|$)/ /g" \
+              | sed -E 's/(^|[[:space:]])--test[[:space:]]+\"[^\"]*\"([[:space:]]|$)/ /g' \
+              | sed -E 's/(^|[[:space:]])--test[[:space:]]+[^[:space:]]+([[:space:]]|$)/ /g' \
+              | tr -s ' ' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+            )"
+
+            # Build nextest filter expression from any --skip <pattern> arguments
+            FILTER_EXPR=""
+            if [ -n "$RIGHT_OF_SEP" ]; then
+              SKIPS="$(printf '%s\n' "$RIGHT_OF_SEP" \
+                | sed -E 's/[[:space:]]+/ /g' \
+                | grep -oE -- '--skip[[:space:]]+(\"[^\"]+\"|'\''[^'\'']+'\''|[^[:space:]]+)' || true)"
+              if [ -n "$SKIPS" ]; then
+                EXPRS=""
+                tmpf="$(mktemp)"
+                printf '%s\n' "$SKIPS" > "$tmpf"
+                while IFS= read -r line; do
+                  pat="${line#--skip }"
+                  pat="${pat%\"}"; pat="${pat#\"}"
+                  pat="${pat%\'}"; pat="${pat#\'}"
+                  pat_rx="${pat//\//\\/}"
+                  if [ -z "$EXPRS" ]; then
+                    EXPRS="test(/$pat_rx/)"
+                  else
+                    EXPRS="$EXPRS or test(/$pat_rx/)"
+                  fi
+                done < "$tmpf"
+                rm -f "$tmpf"
+                if [ -n "$EXPRS" ]; then
+                  FILTER_EXPR="not ($EXPRS)"
+                fi
+              fi
+            fi
+
+            # Detect and extract --test-threads value (used to set JOBS)
+            TEST_THREADS=""
+            if [ -n "$RIGHT_OF_SEP" ]; then
+              TEST_THREADS="$(printf '%s\n' "$RIGHT_OF_SEP" | sed -nE 's/.*--test-threads=([0-9]+).*/\1/p' | head -n1)"
+              if [ -z "$TEST_THREADS" ]; then
+                TEST_THREADS="$(printf '%s\n' "$RIGHT_OF_SEP" | sed -nE 's/.*--test-threads[[:space:]]+([0-9]+).*/\1/p' | head -n1)"
+              fi
+            fi
+
+            JOBS="${NEXTEST_JOBS:-2}"
+            if [ -n "$TEST_THREADS" ]; then
+              JOBS="$TEST_THREADS"
+            fi
+
+            # Create nextest config override
+            SLOW_PERIOD="${NEXTEST_SLOW_PERIOD:-60s}"
+            CFG_ARGS=()
+            TMPD="$(mktemp -d)"
+            if [ -f ".config/nextest.toml" ]; then
+              CFG_ARGS+=(--config-file ".config/nextest.toml")
+            fi
+            {
+              printf '%s\n' '[profile.ci]'
+              printf '%s\n' 'fail-fast = false'
+              printf '%s\n' "slow-timeout = \"${SLOW_PERIOD}\""
+              printf '%s\n' ''
+              printf '%s\n' '[profile.ci.junit]'
+              printf '%s\n' 'path = "junit.xml"'
+            } > "$TMPD/nextest-override.toml"
+            CFG_ARGS+=(--config-file "$TMPD/nextest-override.toml")
+
+            echo "==> nextest target: ${PKG_DESC}"
+            echo "==> build flags (sanitized): '${BUILD_FLAGS_SANITIZED}'"
+            echo "==> filter-expr: ${FILTER_EXPR:-<none>}  (right-of-sep: ${RIGHT_OF_SEP:-<none>})"
+            echo "==> test-threads override: ${TEST_THREADS:-<none>}"
+            echo "==> jobs: ${JOBS}"
+
+            # If flags explicitly include --no-run, fall back to plain cargo test
+            if printf '%s' " $BUILD_FLAGS_SANITIZED " | grep -q ' --no-run '; then
+              cargo test $PKG_ARGS $BUILD_FLAGS_SANITIZED | tee "$OUT"
+              : > "$CSV"; : > "$TOP"
+            else
+              cargo nextest run \
+                $PKG_ARGS $BUILD_FLAGS_SANITIZED \
+                --profile ci -j "${JOBS}" "${CFG_ARGS[@]}" \
+                --status-level fail --hide-progress-bar \
+                --no-tests=pass \
+                ${FILTER_EXPR:+--filter-expr "$FILTER_EXPR"} \
+                2>&1 | tee "$OUT"
+
+              if [ -f "$JUNIT" ]; then
+                awk -v RS='<testcase ' '
+                  NR>1 {
+                    name=""; classname=""; time="";
+                    start=index($0,"classname=\""); if(start>0){ start+=11; rest=substr($0,start); end=index(rest,"\""); if(end>0) classname=substr(rest,1,end-1) }
+                    start=index($0,"name=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) name=substr(rest,1,end-1) }
+                    start=index($0,"time=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) time=substr(rest,1,end-1) }
+                    if(name!="" && time!=""){ full=(classname!=""?classname"::"name:name); printf "%s,%s\n", full, time }
+                  }
+                ' "$JUNIT" > "$CSV" || true
+
+                sort -t, -k2,2nr "$CSV" | head -n 30 > "$TOP" || true
+              else
+                echo "WARN: $JUNIT not found; no timings extracted." >&2
+                : > "$CSV"; : > "$TOP"
+              fi
+            fi
+
+      - store_artifacts:
+          path: artifacts
+          destination: test-timings/<< parameters.workspace_member >>
+      - store_test_results:
+          path: target/nextest/ci
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
 
@@ -176,8 +359,8 @@ commands:
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
-  run_devnet:
-    description: "Run devnet for integration testing"
+  run_upgrade_test:
+    description: "Run upgrade test"
     parameters:
       workspace_member:
         type: string
@@ -197,22 +380,32 @@ commands:
         default: 45
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - v1-snarkos-release-
       - setup_environment:
           cache_key: << parameters.cache_key >>
+      - install_snarkos
       - run:
-          name: "Install snarkos"
+          name: "Run full upgrade test"
+          timeout: 30m  # Allow 30 minutes total
+          environment:
+            WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            cargo install --locked --path . --features test_network
+            ./.ci/test_full_upgrade.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
       - run:
-          name: "Run DB backup test"
-          timeout: 10m  # Allow 10 minutes total
+          name: "Run partial upgrade test"
+          timeout: 30m  # Allow 30 minutes total
+          environment:
+            WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
-      - run:
-          name: "Run block advancement test"
-          timeout: 20m  # Allow 20 minutes total
-          command: |
-            ./.ci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/test_partial_upgrade.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
+      - save_cache:
+          key: v1-snarkos-release-
+          paths:
+            - .ci/release-snarkos
+            - .ci/release-snarkos-src
+            - .ci/target
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
@@ -220,6 +413,15 @@ commands:
     description: "Install Rust nightly toolchain"
     steps:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
+
+  install_rust:
+    description: "Install Rust using rustup.rs"
+    steps:
+      - run:
+          timeout: 5m
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+            source $HOME/.cargo/env
 
 jobs:
   snarkos:
@@ -362,9 +564,72 @@ jobs:
     executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
-      - run_devnet:
+     - checkout
+     - setup_environment:
+         cache_key: v4.2.0-rust-1.88.0-devnet-test-cache 
+     - install_snarkos
+     - run:
+          name: "Run DB backup test"
+          timeout: 10m  # Allow 10 minutes total
+          command: |
+            ./.ci/test_db_backup.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+     - run:
+          name: "Run block advancement test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./.ci/test_devnet.sh
+
+  chaotic-minority-reset-test:
+    executor: ubuntu-vm
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+     - checkout
+     - setup_environment:
+        cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+     - install_rust
+     - install_snarkos
+     - run:
+          name: "Enable emulation of network latency spikes"
+          timeout: 5m 
+          command: |
+            sudo ./scripts/delay-network.sh spikes 5000-5100
+     - run:
+        name: "Run Reset Minority Devnet Test"
+        timeout: 20m  # Allow 20 minutes total
+        command: |
+          ./.ci/test_reset_minority.sh 7 0 50 250 3
+     - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+
+  chaotic-majority-reset-test:
+    executor: ubuntu-vm
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+     - checkout
+     - setup_environment:
+        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache
+     - install_rust
+     - install_snarkos
+     - run:
+          name: "Enable emulation of network latency spikes"
+          timeout: 5m 
+          command: |
+            sudo ./scripts/delay-network.sh spikes 5000-5100
+     - run:
+          name: "Run Restart Majority Devnet Test"
+          no_output_timeout: 5m 
+          command: |
+            ./.ci/test_restart_majority.sh 7 0 20 250 3
+     - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache 
+
+  upgrade-test:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - run_upgrade_test:
           workspace_member: .
-          cache_key: v4.2.0-rust-1.88.0-devnet-test-cache
+          cache_key: v4.2.0-rust-1.88.0-upgrade-test-cache
 
   # Check crates that do not have any tests individually
   check-other-crates:
@@ -421,13 +686,15 @@ jobs:
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
+      # Use nightly until we bump the MSRV to 1.89.0 or greater
+      - install_rust_nightly
       - setup_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
       - run:
           name: Check for security vulnerabilities
           no_output_timeout: 10m
           command: |
-            cargo install cargo-audit@0.21.2 --locked
+            cargo install cargo-audit@0.22.0 --locked
             cargo audit -D warnings
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
@@ -447,6 +714,27 @@ jobs:
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-clippy-cache
+
+  lint-scripts:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+      - run:
+           name: Install shellcheck
+           command: |
+            # Fetch from git so we reliably install the same version.
+            wget https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+            tar -xvf shellcheck-v0.11.0.linux.x86_64.tar.xz
+            sudo mv shellcheck-v0.11.0/shellcheck /usr/local/bin/
+      - run:
+          name: Lint scripts
+          command: |
+            shellcheck -x .ci/*.sh
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
 
   verify-windows:
     executor:
@@ -471,6 +759,7 @@ workflows:
       - check-unused-dependencies
       - check-cargo-audit
       - check-other-crates
+      - lint-scripts
 
   node-workflow:
     jobs:
@@ -493,6 +782,40 @@ workflows:
     jobs:
       - devnet-test
 
+  chaotic-devnet-workflow:
+    jobs:
+      - chaotic-minority-reset-test:
+          filters:
+            branches:
+              only:
+                - ci/log-ci-runner-canary
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
+      - chaotic-majority-reset-test:
+          filters:
+            branches:
+              only:
+                - ci/log-ci-runner-canary
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
+  upgrade-workflow:
+    jobs:
+      - upgrade-test:
+          filters:
+            branches:
+              only:
+                - ci/log-ci-runner-canary
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
   snarkos-workflow:
     jobs:
       - snarkos
@@ -502,6 +825,13 @@ workflows:
   windows-workflow:
     jobs:
       - verify-windows:
+          filters:
+            branches:
+              only:
+                - canary
+                - testnet
+                - mainnet
+                - staging
           matrix:
             parameters:
               workspace_member: [

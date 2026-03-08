@@ -36,6 +36,8 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
+use snarkos_utilities::{NodeDataDir, SignalHandler};
+
 use snarkvm::prelude::{
     Ledger,
     Network,
@@ -45,17 +47,13 @@ use snarkvm::prelude::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use core::future::Future;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicBool},
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
 /// A validator is a full node, capable of validating blocks.
@@ -73,8 +71,6 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     sync: Arc<BlockSync<N>>,
     /// The spawned handles.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The shutdown signal.
-    shutdown: Arc<AtomicBool>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
 }
@@ -92,19 +88,23 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         genesis: Block<N>,
         cdn: Option<http::Uri>,
         storage_mode: StorageMode,
+        node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
-        shutdown: Arc<AtomicBool>,
+        signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        // Initialize the signal handler.
-        let signal_node = Self::handle_signals(shutdown.clone());
-
         // Initialize the ledger.
-        let ledger = Ledger::load(genesis, storage_mode.clone())?;
+        let ledger = {
+            let storage_mode = storage_mode.clone();
+            let genesis = genesis.clone();
+
+            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+        }
+        .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), shutdown.clone()));
+        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
 
         // Initialize the node router.
         let router = Router::new(
@@ -115,7 +115,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             trusted_peers_only,
-            storage_mode.clone(),
+            node_data_dir.clone(),
             dev.is_some(),
         )
         .await?;
@@ -134,6 +134,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             trusted_validators,
             trusted_peers_only,
             storage_mode.clone(),
+            node_data_dir.clone(),
             ping.clone(),
             dev,
         )
@@ -148,11 +149,10 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync: sync.clone(),
             ping,
             handles: Default::default(),
-            shutdown: shutdown.clone(),
         };
 
         // Perform sync with CDN (if enabled).
-        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), shutdown)));
+        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler)));
 
         // Initialize the transaction pool.
         node.initialize_transaction_pool(dev, dev_txs)?;
@@ -175,7 +175,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
 
         // Set up everything else after CDN sync is done.
         if let Some(cdn_sync) = cdn_sync {
-            if let Err(error) = cdn_sync.wait().await {
+            if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
                 crate::log_clean_error(&storage_mode);
                 node.shut_down().await;
                 return Err(error);
@@ -186,8 +186,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         node.initialize_routing().await;
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
-        // Pass the node to the signal handler.
-        let _ = signal_node.set(node.clone());
+
         // Return the node.
         Ok(node)
     }
@@ -461,7 +460,6 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
-        self.shutdown.store(true, std::sync::atomic::Ordering::Release);
 
         // Abort the tasks.
         trace!("Shutting down the validator...");
@@ -502,6 +500,7 @@ mod tests {
         let node = SocketAddr::from_str("0.0.0.0:4130").unwrap();
         let rest = SocketAddr::from_str("0.0.0.0:3030").unwrap();
         let storage_mode = StorageMode::Development(0);
+        let node_data_dir = NodeDataDir::new_development(CurrentNetwork::ID, 0);
         let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.
@@ -528,10 +527,11 @@ mod tests {
             genesis,
             None,
             storage_mode,
+            node_data_dir,
             false,
             dev_txs,
             None,
-            Default::default(),
+            SignalHandler::new(),
         )
         .await
         .unwrap();
