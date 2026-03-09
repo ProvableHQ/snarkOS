@@ -542,24 +542,29 @@ impl<N: Network> Consensus<N> {
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
         callback: oneshot::Sender<Result<bool>>,
     ) {
-        let recv_instant = std::time::Instant::now();
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
-        let total_elapsed = recv_instant.elapsed();
-        trace!("process_bft_subdag total (incl. spawn_blocking queue): {:.3}s", total_elapsed.as_secs_f64());
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if result.is_err() {
-            // On failure, reinsert the transmissions into the memory pool.
-            self.reinsert_transmissions(transmissions).await;
-        } else {
-            // On success, notify that the BFT workers have freed capacity for more transmissions.
-            self.block_commit_notify.notify_one();
+        match result {
+            Ok(true) => {
+                // On success, notify that the BFT workers have freed capacity for more transmissions.
+                self.block_commit_notify.notify_one();
+            }
+            Ok(false) | Err(_) => {
+                if let Err(err) = self.reinsert_transmissions(transmissions).await {
+                    error!(
+                        "{}",
+                        flatten_error(
+                            err.context("Failed to reinsert transmissions after unsuccessful block advancement")
+                        )
+                    );
+                }
+            }
         }
-        // Send the callback **after** advancing to the next block.
-        // Note: We must await the block to be advanced before sending the callback.
+
         callback.send(result).ok();
     }
 
@@ -567,7 +572,7 @@ impl<N: Network> Consensus<N> {
     ///
     /// # Returns
     /// - `Ok(true)` if the ledger was advanced to the next block.
-    /// - `Ok(false)` if the block may be valide but the ledger already advanced.
+    /// - `Ok(false)` if the block may be valid but the ledger already advanced.
     /// - `Err(anyhow::Error)` for incorrect blocks and any other error.
     fn try_advance_to_next_block(
         &self,
@@ -681,27 +686,29 @@ impl<N: Network> Consensus<N> {
 
             // If telemetry is enabled, update participation scores.
             #[cfg(feature = "telemetry")]
-            match latest_committee {
-                Ok(latest_committee) => {
-                    // Retrieve the latest participation scores.
-                    let participation_scores = self
-                        .bft()
-                        .primary()
-                        .gateway()
-                        .validator_telemetry()
-                        .get_participation_scores(&latest_committee);
+            {
+                match latest_committee {
+                    Ok(latest_committee) => {
+                        // Retrieve the latest participation scores.
+                        let participation_scores = self
+                            .bft()
+                            .primary()
+                            .gateway()
+                            .validator_telemetry()
+                            .get_participation_scores(&latest_committee);
 
-                    // Log the participation scores.
-                    for (address, participation_score) in participation_scores {
-                        metrics::histogram_label(
-                            metrics::consensus::VALIDATOR_PARTICIPATION,
-                            "validator_address",
-                            address.to_string(),
-                            participation_score,
-                        )
+                        // Log the participation scores.
+                        for (address, participation_score) in participation_scores {
+                            metrics::histogram_label(
+                                metrics::consensus::VALIDATOR_PARTICIPATION,
+                                "validator_address",
+                                address.to_string(),
+                                participation_score,
+                            )
+                        }
                     }
+                    Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
                 }
-                Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
             }
         }
 
@@ -709,14 +716,14 @@ impl<N: Network> Consensus<N> {
     }
 
     /// Reinserts the given transmissions into the memory pool.
-    async fn reinsert_transmissions(&self, transmissions: IndexMap<TransmissionID<N>, Transmission<N>>) {
+    async fn reinsert_transmissions(&self, transmissions: IndexMap<TransmissionID<N>, Transmission<N>>) -> Result<()> {
         // Iterate over the transmissions.
         for (transmission_id, transmission) in transmissions.into_iter() {
             // Reinsert the transmission into the memory pool.
             match self.reinsert_transmission(transmission_id, transmission).await {
                 Ok(true) => {}
                 Ok(false) => debug!(
-                    "Unable to reinsert transmission {}.{} into the memory pool. Already exists.",
+                    "Unable to reinsert transmission {}:{} into the memory pool. Already exists.",
                     fmt_id(transmission_id),
                     fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
                 ),
@@ -730,6 +737,8 @@ impl<N: Network> Consensus<N> {
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Reinserts the given transmission into the memory pool.

@@ -25,7 +25,7 @@ use snarkos_node_bft::MAX_FETCH_TIMEOUT;
 use std::time::Duration;
 use tokio::time::sleep;
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[ignore = "long-running e2e test"]
 async fn test_state_coherence() {
     const N: u16 = 4;
@@ -95,7 +95,7 @@ async fn test_resync() {
     deadline!(Duration::from_secs(20), move || { network_clone.is_round_reached(RECOVERY_ROUND) });
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_quorum_threshold() {
     // Start N nodes but don't connect them.
     const N: u16 = 4;

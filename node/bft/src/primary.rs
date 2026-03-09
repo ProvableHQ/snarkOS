@@ -14,6 +14,7 @@
 // limitations under the License.
 
 use crate::{
+    CREATE_BATCH_INTERVAL,
     Gateway,
     MAX_BATCH_DELAY,
     MAX_WORKERS,
@@ -80,7 +81,9 @@ use std::{
     collections::{HashMap, HashSet},
     future::Future,
     net::SocketAddr,
+    pin::Pin,
     sync::{Arc, OnceLock},
+    time::Instant,
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::RwLock as TRwLock;
@@ -90,11 +93,17 @@ use tokio::{sync::Notify, task::JoinHandle};
 pub(crate) type ProposedBatch<N> = RwLock<Option<Proposal<N>>>;
 
 /// This callback trait allows listening to changes in the Primary, such as round advancement.
-/// This is currently used by BFT.
+/// This is implemented by [`BFT`].
 #[async_trait::async_trait]
 pub trait PrimaryCallback<N: Network>: Send + std::marker::Sync {
-    /// Notifies that a new round has started.
-    fn update_to_next_round(&self, current_round: u64) -> bool;
+    /// Asks the callback to if we can move to the next round.
+    ///
+    /// # Arguments
+    /// * `current_round` - the round the Primary is in (to avoid race conditions)
+    ///
+    /// # Returns
+    /// `true` if we moved to the next round.
+    fn try_advance_to_next_round(&self, current_round: u64) -> bool;
 
     /// Add a certificated that was created by the primary or received from a peer.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
@@ -114,8 +123,10 @@ pub struct Primary<N: Network> {
     ledger: Arc<dyn LedgerService<N>>,
     /// The workers.
     workers: Arc<OnceLock<Vec<Worker<N>>>>,
+
     /// The primary callback (used by [`BFT`]).
     primary_callback: Arc<CallbackHandle<Arc<dyn PrimaryCallback<N>>>>,
+
     /// The batch proposal, if the primary is currently proposing a batch.
     proposed_batch: Arc<ProposedBatch<N>>,
 
@@ -135,6 +146,10 @@ pub struct Primary<N: Network> {
 
     /// Allows notifying the proposal taks when a new batch can be proposed.
     is_ready_notify: Arc<Notify>,
+
+    /// Used to wake up a the dedicated round-increment task, if we may be able to advance to the next round.
+    /// This is used, so the timeout for round advancement is reset on every round increment.
+    round_increment_notify: Arc<Notify>,
 }
 
 impl<N: Network> Primary<N> {
@@ -182,6 +197,7 @@ impl<N: Network> Primary<N> {
             signed_proposals: Default::default(),
             handles: Default::default(),
             is_ready_notify: Default::default(),
+            round_increment_notify: Default::default(),
         })
     }
 
@@ -381,7 +397,11 @@ impl<N: Network> Primary<N> {
     /// 3. Set the batch proposal in the primary.
     /// 4. Broadcast the batch header to all validators for signing.
     ///
-    pub async fn propose_batch(&self) -> Result<()> {
+    /// # Returns
+    /// - `Ok(true)` if the batch was proposed.
+    /// - `Ok(false)` if the batch was not proposed for a benign reason, e.g., the timestamp is too soon after the previous certificate.
+    /// - `Err(err)` if an unexpected error occured.
+    pub async fn propose_batch(&self) -> Result<bool> {
         // Ensure there are not concurrent executions of this function.
         //
         // Note, in the current design, this function is only invoked from the batch proposal task, and it is technically
@@ -394,7 +414,7 @@ impl<N: Network> Primary<N> {
             .with_context(|| "Failed to check the proposed batch for expiration")
         {
             warn!("{}", flatten_error(&err));
-            return Ok(());
+            return Ok(false);
         }
 
         // Retrieve the current round.
@@ -412,7 +432,7 @@ impl<N: Network> Primary<N> {
             && round < *latest_round
         {
             warn!("Cannot propose a batch for round {round} - the latest proposal cache round is {latest_round}");
-            return Ok(());
+            return Ok(false);
         }
 
         // If there is a batch being proposed already,
@@ -430,7 +450,7 @@ impl<N: Network> Primary<N> {
                     "Cannot propose a batch for round {} - the current storage (round {round}) is not caught up to the proposed batch.",
                     proposal.round(),
                 );
-                return Ok(());
+                return Ok(false);
             }
             // Construct the event.
             // TODO(ljedrz): the BatchHeader should be serialized only once in advance before being sent to non-signers.
@@ -454,7 +474,7 @@ impl<N: Network> Primary<N> {
                 }
             }
             debug!("Proposed batch for round {} is still valid", proposal.round());
-            return Ok(());
+            return Ok(false);
         }
 
         #[cfg(feature = "metrics")]
@@ -462,28 +482,22 @@ impl<N: Network> Primary<N> {
 
         // Ensure that the primary does not create a new proposal too quickly.
         if let Some((_, latest_timestamp)) = &*lock_guard
-            && let Err(err) = self.check_own_proposal_timesatmp(previous_round, *latest_timestamp, now())
+            && !self.check_own_proposal_timestamp(previous_round, *latest_timestamp, now())?
         {
-            debug!(
-                "{}",
-                flatten_error(err.context(format!("Primary is safely skipping a batch proposal for round {round}")))
-            );
-            return Ok(());
+            return Ok(false);
         }
 
         // Ensure the primary has not proposed a batch for this round before.
         if self.storage.contains_certificate_in_round_from(round, self.gateway.account().address()) {
             // If a BFT sender was provided, attempt to advance the current round.
             if let Some(cb) = &*self.primary_callback.get_ref() {
-                match cb.update_to_next_round(self.current_round()) {
-                    // 'is_ready' is true if the primary is ready to propose a batch for the next round.
+                match cb.try_advance_to_next_round(self.current_round()) {
                     true => (), // continue,
-                    // 'is_ready' is false if the primary is not ready to propose a batch for the next round.
-                    false => return Ok(()),
+                    false => return Ok(false),
                 }
             }
             debug!("Primary is safely skipping {}", format!("(round {round} was already certified)").dimmed());
-            return Ok(());
+            return Ok(false);
         }
 
         // Determine if the current round has been proposed.
@@ -495,7 +509,7 @@ impl<N: Network> Primary<N> {
             && *latest_round == round
         {
             debug!("Primary is safely skipping a batch proposal - round {round} already proposed");
-            return Ok(());
+            return Ok(false);
         }
 
         // Retrieve the committee to check against.
@@ -513,7 +527,7 @@ impl<N: Network> Primary<N> {
                     "(please connect to more validators)".dimmed()
                 );
                 trace!("Primary is connected to {} validators", connected_validators.len() - 1);
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -542,7 +556,7 @@ impl<N: Network> Primary<N> {
                 "Primary is safely skipping a batch proposal for round {round} {}",
                 format!("(previous round {previous_round} has not reached quorum)").dimmed()
             );
-            return Ok(());
+            return Ok(false);
         }
 
         // Initialize the map of transmissions.
@@ -724,7 +738,7 @@ impl<N: Network> Primary<N> {
         // Broadcast the batch to all validators for signing.
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
 
-        Ok(())
+        Ok(true)
     }
 
     /// Processes a batch propose from a peer.
@@ -1222,7 +1236,7 @@ impl<N: Network> Primary<N> {
         // Determine whether to advance to the next round.
         if is_quorum && should_advance && certificate_round >= current_round {
             // If we have reached the quorum threshold and the round should advance, then proceed to the next round.
-            self.try_increment_to_the_next_round(current_round + 1).await?;
+            self.round_increment_notify.notify_one();
         }
         Ok(())
     }
@@ -1233,8 +1247,8 @@ impl<N: Network> Primary<N> {
     ///
     /// For each receiver in the `primary_receiver` struct, there will be a dedicated task
     /// that awaits new data and handles it accordingly.
-    /// Additionally, this spawns a task that periodically issues PrimaryPings and one that periodically
-    /// tries to move the the next round of batches.
+    /// Additionally, this spawns a task that periodically issues PrimaryPings and one that
+    /// tries to move to the next round when triggered (e.g. after a certificate is stored) or on a timeout.
     ///
     /// This function is called exactly once, in `Self::run()`.
     fn start_handlers(&self, primary_receiver: PrimaryReceiver<N>) {
@@ -1356,25 +1370,52 @@ impl<N: Network> Primary<N> {
         // Start the batch proposal task.
         let self_ = self.clone();
         self.spawn(async move {
+            // Each outer loop iteration represents one new proposed batch.
             loop {
-                // Wait until the timeout or for is_ready=true.
-                tokio::select! {
-                    _ = self_.is_ready_notify.notified() => {}
-                    _ = tokio::time::sleep(MAX_BATCH_DELAY) => {}
-                }
-
+                let round_start = Instant::now();
                 let current_round = self_.current_round();
-                // If the primary is not synced, then do not propose a batch.
-                if !self_.sync.is_synced() {
-                    debug!("Skipping batch proposal for round {current_round} {}", "(node is syncing)".dimmed());
-                    continue;
-                }
 
-                // If there is no proposed batch, attempt to propose a batch.
-                // Note: Do NOT spawn a task around this function call. Proposing a batch is a critical path,
-                // and only one batch needs to be proposed at a time.
-                if let Err(err) = self_.propose_batch().await {
-                    warn!("{}", flatten_error(err.context("Cannot propose a batch")));
+                // The inner loop represents multiple attempts to propose a batch within the same round.
+                // Propose a batch within the same round until the timeout is triggered, or the round is advanced by some other means.
+                while self_.current_round() == current_round {
+                    // Assemble a list of conditions that will trigger the primary to attempt batch creation.
+                    let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> = vec![];
+
+                    // Always wait for is_ready
+                    futures.push(Box::pin(self_.is_ready_notify.notified()));
+
+                    // If the maximum batch delay has not been reached, wait for it.
+                    // Otherwise, add a small timeout to avoid busy waiting.
+                    //
+                    // TODO(kaimast): ideally, we do not need the minimum timeout at all after MAX_BATCH_DELAY,
+                    // but that would need more testing to ensure this loop never gets stuck.
+                    let timeout = MAX_BATCH_DELAY.saturating_sub(round_start.elapsed()).max(CREATE_BATCH_INTERVAL);
+                    futures.push(Box::pin(tokio::time::sleep(timeout)));
+
+                    // If the node is not synced yet, wait for block sync to complete.
+                    if let Some(fut) = self_.sync.wait_for_synced_if_syncing() {
+                        futures.push(fut);
+                    }
+
+                    // Wait until one of the conditions is met.
+                    futures::future::select_all(futures).await;
+
+                    // If the primary is not synced, then do not propose a batch.
+                    if !self_.sync.is_synced() {
+                        debug!("Skipping batch proposal for round {current_round} {}", "(node is syncing)".dimmed());
+                        continue;
+                    }
+
+                    // If there is no proposed batch, attempt to propose a batch.
+                    // Note: Do NOT spawn a task around this function call. Proposing a batch is a critical path,
+                    // and only one batch needs to be proposed at a time.
+                    match self_.propose_batch().await {
+                        Ok(true) => break,
+                        Ok(false) => (), // retry
+                        Err(err) => {
+                            warn!("{}", flatten_error(err.context("Cannot propose a batch")));
+                        }
+                    }
                 }
             }
         });
@@ -1388,6 +1429,7 @@ impl<N: Network> Primary<N> {
                     trace!("Skipping a batch proposal from '{peer_ip}' {}", "(node is syncing)".dimmed());
                     continue;
                 }
+
                 // Spawn a task to process the proposed batch.
                 let self_ = self_.clone();
                 tokio::spawn(async move {
@@ -1455,44 +1497,53 @@ impl<N: Network> Primary<N> {
             }
         });
 
-        // This task periodically tries to move to the next round.
-        //
-        // Note: This is necessary to ensure that the primary is not stuck on a previous round
-        // despite having received enough certificates to advance to the next round.
+        // This task tries to move to the next round when triggered (e.g. after a certificate is stored)
+        // or after a timeout, so we are not stuck on a previous round despite having quorum.
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                // Sleep briefly.
-                tokio::time::sleep(MAX_BATCH_DELAY).await;
-                // If the primary is not synced, then do not increment to the next round.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping round increment {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-                // Attempt to increment to the next round.
+                let round_start = Instant::now();
                 let current_round = self_.current_round();
-                let next_round = current_round.saturating_add(1);
-                // Determine if the quorum threshold is reached for the current round.
-                let is_quorum_threshold_reached = {
-                    // Retrieve the certificate authors for the current round.
-                    let authors = self_.storage.get_certificate_authors_for_round(current_round);
-                    // If there are no certificates, then skip this check.
-                    if authors.is_empty() {
+
+                // Inner loop: wait and try to increment while we're still in the same round.
+                while self_.current_round() == current_round {
+                    let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> =
+                        vec![Box::pin(self_.round_increment_notify.notified())];
+
+                    if let Some(remaining_delay) = MAX_BATCH_DELAY.checked_sub(round_start.elapsed())
+                        && !remaining_delay.is_zero()
+                    {
+                        futures.push(Box::pin(tokio::time::sleep(remaining_delay)));
+                    }
+                    if !self_.sync.is_synced() {
+                        futures.push(Box::pin(self_.sync.wait_for_synced()));
+                    }
+                    let _ = futures::future::select_all(futures).await;
+
+                    if !self_.sync.is_synced() {
+                        trace!("Skipping round increment {}", "(node is syncing)".dimmed());
                         continue;
                     }
-                    // Retrieve the committee lookback for the current round.
-                    let Ok(committee_lookback) = self_.ledger.get_committee_lookback_for_round(current_round) else {
-                        warn!("Failed to retrieve the committee lookback for round {current_round}");
-                        continue;
+
+                    let next_round = current_round.saturating_add(1);
+                    let is_quorum_threshold_reached = {
+                        let authors = self_.storage.get_certificate_authors_for_round(current_round);
+                        if authors.is_empty() {
+                            continue;
+                        }
+                        let Ok(committee_lookback) = self_.ledger.get_committee_lookback_for_round(current_round)
+                        else {
+                            warn!("Failed to retrieve the committee lookback for round {current_round}");
+                            continue;
+                        };
+                        committee_lookback.is_quorum_threshold_reached(&authors)
                     };
-                    // Check if the quorum threshold is reached for the current round.
-                    committee_lookback.is_quorum_threshold_reached(&authors)
-                };
-                // Attempt to increment to the next round if the quorum threshold is reached.
-                if is_quorum_threshold_reached {
-                    debug!("Quorum threshold reached for round {current_round}");
-                    if let Err(err) = self_.try_increment_to_the_next_round(next_round).await {
-                        warn!("{}", flatten_error(err.context("Failed to increment to the next round")));
+
+                    if is_quorum_threshold_reached {
+                        debug!("Quorum threshold reached for round {current_round}");
+                        if let Err(err) = self_.try_increment_to_the_next_round(next_round).await {
+                            warn!("{}", flatten_error(err.context("Failed to increment to the next round")));
+                        }
                     }
                 }
             }
@@ -1591,7 +1642,7 @@ impl<N: Network> Primary<N> {
         if current_round < next_round {
             // If a BFT sender was provided, send the current round to the BFT.
             let is_ready = if let Some(cb) = self.primary_callback.get() {
-                cb.update_to_next_round(current_round)
+                cb.try_advance_to_next_round(current_round)
             }
             // Otherwise, handle the Narwhal case.
             else {
@@ -1601,14 +1652,13 @@ impl<N: Network> Primary<N> {
                 true
             };
 
-            // Log whether the next round is ready.
-            match is_ready {
-                true => debug!("Primary is ready to propose the next round"),
-                false => debug!("Primary is not ready to propose the next round"),
+            // Notify the proposal task if the new round is ready.
+            if is_ready && self.is_synced() {
+                debug!("Primary is ready to propose the next round");
+                self.is_ready_notify.notify_one();
+            } else {
+                debug!("Primary is not ready to propose the next round");
             }
-
-            // If the node is ready, wake up the proposal task.
-            self.is_ready_notify.notify_one();
         }
         Ok(())
     }
@@ -1645,7 +1695,7 @@ impl<N: Network> Primary<N> {
 
         // Retrieve the timestamp of the previous timestamp to check against.
         let previous_timestamp = match self.storage.get_certificate_for_round_with_author(previous_round, author) {
-            // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
+            // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY` seconds ago.
             Some(certificate) => certificate.timestamp(),
             // If we do not see a previous certificate for the author, then proceed optimistically.
             None => return Ok(()),
@@ -1655,7 +1705,7 @@ impl<N: Network> Primary<N> {
         let elapsed = timestamp
             .checked_sub(previous_timestamp)
             .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
-        // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
+        // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY` seconds ago.
         match elapsed < MIN_BATCH_DELAY.as_secs() as i64 {
             true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
             false => Ok(()),
@@ -1664,25 +1714,38 @@ impl<N: Network> Primary<N> {
 
     /// Ensure the primary is not creating batch proposals too frequently.
     /// This checks that the certificate timestamp for the previous round is within the expected range.
-    fn check_own_proposal_timesatmp(&self, previous_round: u64, previous_timestamp: i64, timestamp: i64) -> Result<()> {
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the timestamp allows a new proposal.
+    /// - `Ok(false)` if the timestamp is valid but too soon after the previous proposal.
+    /// - `Err(err)` if an unexpected error occured, such as the timestamp being before the previous certificate.
+    fn check_own_proposal_timestamp(
+        &self,
+        previous_round: u64,
+        previous_timestamp: i64,
+        timestamp: i64,
+    ) -> Result<bool> {
         // Determine the elapsed time since the previous timestamp.
         let elapsed = timestamp
             .checked_sub(previous_timestamp)
             .ok_or_else(|| anyhow!("Timestamp cannot be before the previous certificate at round {previous_round}"))?;
-        // Ensure that the previous certificate was created at least `MIN_BATCH_DELAY_IN_SECS` seconds ago.
-        match elapsed < MIN_BATCH_DELAY.as_secs() as i64 {
-            true => bail!("Timestamp is too soon after the previous certificate at round {previous_round}"),
-            false => Ok(()),
-        }
+
+        Ok(elapsed >= MIN_BATCH_DELAY.as_secs() as i64)
     }
 
     /// Stores the certified batch and broadcasts it to all validators, returning the certificate.
     async fn store_and_broadcast_certificate(&self, proposal: &Proposal<N>, committee: &Committee<N>) -> Result<()> {
         // Create the batch certificate and transmissions.
         let (certificate, transmissions) = tokio::task::block_in_place(|| proposal.to_certificate(committee))?;
+
         // Convert the transmissions into a HashMap.
         // Note: Do not change the `Proposal` to use a HashMap. The ordering there is necessary for safety.
         let transmissions = transmissions.into_iter().collect::<HashMap<_, _>>();
+
+        // Store some metadata about the certified batch.
+        let round = certificate.round();
+        let num_transmissions = certificate.transmission_ids().len();
+
         // Store the certified batch.
         let (storage, certificate_) = (self.storage.clone(), certificate.clone());
         spawn_blocking!(storage.insert_certificate(certificate_, transmissions, Default::default()))?;
@@ -1690,18 +1753,20 @@ impl<N: Network> Primary<N> {
         // If a BFT sender was provided, send the certificate to the BFT.
         if let Some(cb) = self.primary_callback.get() {
             // Await the callback to continue.
-            cb.add_new_certificate(certificate.clone())
-                .await
-                .with_context(|| "Failed to add new certificate from primary")?;
+            cb.add_new_certificate(certificate.clone()).await.with_context(|| {
+                format!("Failed to insert our newly certified batch for round {round} into the DAG")
+            })?;
         }
         // Broadcast the certified batch to all validators.
-        self.gateway.broadcast(Event::BatchCertified(certificate.clone().into()));
+        self.gateway.broadcast(Event::BatchCertified(certificate.into()));
+
         // Log the certified batch.
-        let num_transmissions = certificate.transmission_ids().len();
-        let round = certificate.round();
         info!("Our batch with {num_transmissions} transmissions for round {round} was certified!");
-        // Increment to the next round.
-        self.try_increment_to_the_next_round(round + 1).await
+
+        // Wake up the round increment task to re-check quorum.
+        self.round_increment_notify.notify_one();
+
+        Ok(())
     }
 
     /// Inserts the missing transmissions from the proposal into the workers.
@@ -1778,6 +1843,8 @@ impl<N: Network> Primary<N> {
             if let Some(cb) = self.primary_callback.get() {
                 cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
             }
+            // Wake the round-increment task to re-check quorum.
+            self.round_increment_notify.notify_one();
         }
         Ok(())
     }
@@ -1821,7 +1888,9 @@ impl<N: Network> Primary<N> {
         // If our primary is far behind the peer, update our committee to the batch round.
         if is_behind_schedule || is_peer_far_in_future {
             // If the batch round is greater than the current committee round, update the committee.
-            self.try_increment_to_the_next_round(batch_round).await?;
+            self.try_increment_to_the_next_round(batch_round)
+                .await
+                .with_context(|| "Failed to fast forward current round")?;
         }
 
         // Ensure the primary has all of the transmissions.
@@ -2881,6 +2950,8 @@ mod tests {
 
         // Check the certificate was created and stored by the primary.
         assert!(primary.storage.contains_certificate_in_round_from(round, primary.gateway.account().address()));
+        // Manually attempt round advancement (because the handler is not running).
+        primary.try_increment_to_the_next_round(round + 1).await.unwrap();
         // Check the round was incremented.
         assert_eq!(primary.current_round(), round + 1);
     }
@@ -2920,6 +2991,8 @@ mod tests {
 
         // Check the certificate was created and stored by the primary.
         assert!(primary.storage.contains_certificate_in_round_from(round, primary.gateway.account().address()));
+        // Manually attempt round advancement (because the handler is not running).
+        primary.try_increment_to_the_next_round(round + 1).await.unwrap();
         // Check the round was incremented.
         assert_eq!(primary.current_round(), round + 1);
     }
