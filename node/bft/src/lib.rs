@@ -55,9 +55,16 @@ pub const MEMORY_POOL_PORT: u16 = 5000; // port
 
 /// The maximum time to wait before proposing a batch.
 pub const MAX_BATCH_DELAY: Duration = Duration::from_millis(2500);
+
 /// The minimum time that needs to elapse between two consecutive batch proposals.
 /// This creates a lower bound on the block interval, and ensures the network will not be overwhelmed with too many blocks/certificates.
 pub const MIN_BATCH_DELAY: Duration = Duration::from_secs(1);
+
+/// The time a primary waits between attempts to create a new batch (only relevant after `MIN_BATCH_DELAY` has passed).
+/// This only serves as a failsafe in case the task does not get woken up through other means.
+/// eowering it too much will most likely waste
+pub const CREATE_BATCH_INTERVAL: Duration = Duration::from_millis(250);
+
 /// The maximum time to wait before timing out on a fetch.
 pub const MAX_FETCH_TIMEOUT: Duration = Duration::from_secs(3 * MAX_BATCH_DELAY.as_secs());
 /// The maximum time allowed for the leader to send their certificate.

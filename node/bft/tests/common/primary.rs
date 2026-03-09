@@ -253,9 +253,10 @@ impl TestNetwork {
     pub async fn connect_validators(&self, first_id: u16, second_id: u16) {
         let first_validator = self.validators.get(&first_id).unwrap();
         let second_validator_ip = self.validators.get(&second_id).unwrap().primary.gateway().local_ip();
-        let _ = first_validator.primary.gateway().connect(second_validator_ip);
-        // Give the connection time to be established.
-        sleep(Duration::from_millis(100)).await;
+        let gateway = first_validator.primary.gateway();
+        let handle = gateway.connect(second_validator_ip).expect("connection attempt failed");
+        // Await the full TCP + handshake completion instead of relying on a fixed sleep.
+        handle.await.unwrap().expect("connecting validators failed");
     }
 
     // Connects all nodes to each other.

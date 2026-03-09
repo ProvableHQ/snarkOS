@@ -207,7 +207,13 @@ impl<N: Network> BFT<N> {
 #[async_trait::async_trait]
 impl<N: Network> PrimaryCallback<N> for BFT<N> {
     /// Notification that a new round has started.
-    fn update_to_next_round(&self, current_round: u64) -> bool {
+    ///
+    /// # Arguments
+    /// * `current_round` - the round the caller is in (to avoid race conditions)
+    ///
+    /// # Returns
+    /// `true` if the BFT moved to the next round.
+    fn try_advance_to_next_round(&self, current_round: u64) -> bool {
         // Ensure the current round is at least the storage round (this is a sanity check).
         let storage_round = self.storage().current_round();
         if current_round < storage_round {

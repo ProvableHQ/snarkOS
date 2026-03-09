@@ -23,7 +23,6 @@ use crate::{
     spawn_blocking,
 };
 
-use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BftSyncMode, BlockSync, InsertBlockResponseError, Ping, locators::BlockLocators};
 use snarkos_utilities::CallbackHandle;
 
@@ -53,7 +52,10 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{
+    sync::{Notify, oneshot},
+    task::JoinHandle,
+};
 
 /// This callback trait allows listening to synchronization updates, such as discorvering new `BatchCertificate`s.
 /// This is currently used by BFT.
@@ -105,6 +107,8 @@ pub struct Sync<N: Network> {
     ///
     /// Whenever a new block is added to this map, BlockSync::set_sync_height needs to be called.
     pending_blocks: Arc<Mutex<VecDeque<PendingBlock<N>>>>,
+    /// Notified after sync progress when the node is synced; used by [`Self::wait_for_synced`].
+    synced_notify: Arc<Notify>,
 }
 
 impl<N: Network> Sync<N> {
@@ -133,7 +137,20 @@ impl<N: Network> Sync<N> {
             handles: Default::default(),
             response_lock: Default::default(),
             pending_blocks: Default::default(),
+            synced_notify: Default::default(),
         }
+    }
+
+    /// Waits until the node is synced (has connected peers and is block-synced).
+    /// Returns immediately if already synced.
+    pub async fn wait_for_synced(&self) {
+        self.block_sync.wait_for_synced().await;
+    }
+
+    /// Returns `None` if the node is already synced.
+    /// Otherwise, returns a future that completes once the node becomes synced.
+    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<()>> {
+        self.block_sync.wait_for_synced_if_syncing()
     }
 
     /// Initializes the sync module and sync the storage with the ledger at bootup.
@@ -492,6 +509,11 @@ impl<N: Network> Sync<N> {
                 false
             }
         };
+
+        // When we are synced, wake waiters in [`Self::wait_for_synced`].
+        if self.is_synced() {
+            self.synced_notify.notify_waiters();
+        }
 
         if let Some(ping) = &ping
             && new_blocks
@@ -984,12 +1006,6 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// Returns `true` if the node is synced and has connected peers.
     pub fn is_synced(&self) -> bool {
-        // Ensure the validator is connected to other validators,
-        // not just clients.
-        if self.gateway.number_of_connected_peers() == 0 {
-            return false;
-        }
-
         self.block_sync.is_block_synced()
     }
 
