@@ -33,7 +33,7 @@ use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use tokio::{
     io::split,
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream},
     sync::oneshot,
     task::JoinHandle,
     time::timeout,
@@ -266,10 +266,7 @@ impl Tcp {
         // Bind the tcp socket to the configured listener ip if it's set.
         // Otherwise default to the system's default interface.
         let res = if let Some(listen_ip) = self.config().listener_ip {
-            let sock =
-                if listen_ip.is_ipv4() { tokio::net::TcpSocket::new_v4()? } else { tokio::net::TcpSocket::new_v6()? };
-            sock.bind(SocketAddr::new(listen_ip, 0))?;
-            timeout(timeout_duration, sock.connect(addr)).await
+            timeout(timeout_duration, self.connect_with_specific_interface(listen_ip, addr)).await
         } else {
             timeout(timeout_duration, TcpStream::connect(addr)).await
         };
@@ -296,6 +293,13 @@ impl Tcp {
         }
 
         ret.map_err(|err| err.into())
+    }
+
+    async fn connect_with_specific_interface(&self, listen_ip: IpAddr, addr: SocketAddr) -> io::Result<TcpStream> {
+        let sock = if listen_ip.is_ipv4() { TcpSocket::new_v4()? } else { TcpSocket::new_v6()? };
+        // Lock the socket to a specific interface.
+        sock.bind(SocketAddr::new(listen_ip, 0))?;
+        sock.connect(addr).await
     }
 
     /// Disconnects from the provided `SocketAddr`.

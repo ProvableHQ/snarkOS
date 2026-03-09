@@ -216,7 +216,7 @@ impl<N: Network> Gateway<N> {
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()? * 10));
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
@@ -1828,7 +1828,7 @@ mod prop_tests {
         assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap() * 10);
         assert_eq!(gateway.account().address(), account.address());
     }
 
@@ -1858,7 +1858,7 @@ mod prop_tests {
         }
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size().unwrap() * 10);
         assert_eq!(gateway.account().address(), account.address());
     }
 
