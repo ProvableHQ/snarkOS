@@ -1369,18 +1369,19 @@ impl<N: Network> Disconnect for Gateway<N> {
 
             // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
             if was_fully_connected && let Some(sync_sender) = self.sync_sender.get() {
-                let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
                 let (tx, rx) = oneshot::channel();
 
-                if let Err(err) = tx_block_sync_remove_peer_.send((peer_ip, tx)).await {
+                if let Err(err) = sync_sender.tx_block_sync_remove_peer.send((peer_ip, tx)).await {
                     let err: anyhow::Error = err.into();
-                    let err = err.context(format!("Unable to remove '{peer_ip}' from the sync module"));
+                    let err =
+                        err.context(format!("Unable to remove disconnecting peer '{peer_ip}' from the sync module"));
                     warn!("{CONTEXT} {}", flatten_error(err));
                 }
 
                 if let Err(err) = rx.await {
                     let err: anyhow::Error = err.into();
-                    let err = err.context(format!("Unable to remove '{peer_ip}' from the sync module"));
+                    let err =
+                        err.context(format!("Unable to remove disconnecting peer '{peer_ip}' from the sync module"));
                     warn!("{CONTEXT} {}", flatten_error(err));
                 }
             }

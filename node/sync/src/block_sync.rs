@@ -428,8 +428,6 @@ impl<N: Network> BlockSync<N> {
             }
         };
 
-        debug!("Sending {len} block requests to peer(s) at {peers:?}", len = requests.len(), peers = sync_peers.keys());
-
         // Use a randomly sampled subset of the sync IPs.
         let sync_ips: IndexSet<_> =
             sync_peers.keys().copied().choose_multiple(&mut rand::thread_rng(), max_num_sync_ips).into_iter().collect();
@@ -437,15 +435,37 @@ impl<N: Network> BlockSync<N> {
         // Calculate the end height.
         let end_height = start_height.saturating_add(requests.len() as u32);
 
-        // Insert the chunk of block requests.
-        for (height, (hash, previous_hash, _)) in requests.iter() {
-            // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
-            if let Err(err) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
-                let err = err.context(format!("Failed to insert block request for height {height}"));
-                warn!("{}", flatten_error(&err));
+        // A peer may have disconnected after we prepared this batch; inserting requests that
+        // reference them would leave those requests never cleaned by remove_peer. Hold the same
+        // lock that remove_peer uses so we're atomic: check that all selected peers are still
+        // connected, then insert, without a disconnect slipping in between.
+        {
+            let _prepare_requests_lock = self.prepare_requests_lock.lock();
+            let all_still_connected = {
+                let locators = self.locators.read();
+                sync_ips.iter().all(|ip| locators.contains_key(ip))
+            };
+
+            if !all_still_connected {
+                trace!(
+                    "Skipping block request batch for heights {start_height}-{inclusive_end}: at least one of the selected peer(s) has disconnected",
+                    inclusive_end = end_height.saturating_sub(1)
+                );
                 return false;
             }
+
+            // Insert the chunk of block requests (still holding lock so remove_peer cannot run).
+            for (height, (hash, previous_hash, _)) in requests.iter() {
+                // Insert the block request into the sync pool using the sync IPs from the last block request in the chunk.
+                if let Err(err) = self.insert_block_request(*height, (*hash, *previous_hash, sync_ips.clone())) {
+                    let err = err.context(format!("Failed to insert block request for height {height}"));
+                    warn!("{}", flatten_error(&err));
+                    return false;
+                }
+            }
         }
+
+        debug!("Sending {len} block requests to peer(s) at {peers:?}", len = requests.len(), peers = sync_ips);
 
         /* Send the block request to the peers */
 
