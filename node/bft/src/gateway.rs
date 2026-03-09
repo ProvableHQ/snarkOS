@@ -216,7 +216,7 @@ impl<N: Network> Gateway<N> {
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()?));
+        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()? * 10));
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
