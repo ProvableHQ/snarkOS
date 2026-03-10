@@ -428,26 +428,27 @@ impl<N: Network> Sync<N> {
                 #[cfg(feature = "telemetry")]
                 self.gateway.validator_telemetry().insert_subdag(subdag);
             }
+        }
 
-            if let Some(cb) = self.sync_callback.get() {
-                // Insert and commit ledger block certificates.
-                for block in ledger_blocks.iter() {
-                    if let Authority::Quorum(subdag) = block.authority() {
-                        for round in subdag.values() {
-                            for certificate in round {
-                                cb.add_certificate(certificate.clone());
-                                cb.commit_certificate(certificate);
-                            }
+        // Notify BFT of ledger and pending certificates once (not per-block, to avoid duplicate add/commit).
+        if let Some(cb) = self.sync_callback.get() {
+            // Insert and commit ledger block certificates.
+            for block in ledger_blocks.iter() {
+                if let Authority::Quorum(subdag) = block.authority() {
+                    for round in subdag.values() {
+                        for certificate in round {
+                            cb.add_certificate(certificate.clone());
+                            cb.commit_certificate(certificate);
                         }
                     }
                 }
-                // Insert (but do not commit) pending block certificates.
-                for block in pending_blocks.iter() {
-                    if let Authority::Quorum(subdag) = block.authority() {
-                        for round in subdag.values() {
-                            for certificate in round {
-                                cb.add_certificate(certificate.clone());
-                            }
+            }
+            // Insert (but do not commit) pending block certificates.
+            for block in pending_blocks.iter() {
+                if let Authority::Quorum(subdag) = block.authority() {
+                    for round in subdag.values() {
+                        for certificate in round {
+                            cb.add_certificate(certificate.clone());
                         }
                     }
                 }
@@ -1393,6 +1394,94 @@ mod tests {
         // Ensure the leaders are committed.
         // (blocks are not created as there is no active consensus instance)
         assert_eq!(syncing_bft.testing_only_latest_committed_round(), 4);
+    }
+
+    /// Verifies that after syncing blocks, the Sync module updates storage (BFT ledger) accordingly:
+    /// every certificate from each block's subDAG is present in storage, and height/round are updated.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn test_sync_updates_storage_with_block_certificates() {
+        let rng = &mut TestRng::default();
+
+        let (genesis, blocks) = setup_commit_chain(rng).await;
+        let max_gc_rounds = BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64;
+        let storage_mode = StorageMode::new_test(None);
+
+        let syncing_ledger = Arc::new(CoreLedgerService::new(
+            spawn_blocking!(CurrentLedger::load(genesis, storage_mode)).unwrap(),
+            SimpleStoppable::new(),
+        ));
+
+        let account = Account::new(rng).unwrap();
+        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let gateway = Gateway::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
+
+        let syncing_bft = BFT::new(
+            account.clone(),
+            syncing_storage.clone(),
+            syncing_ledger.clone(),
+            block_sync,
+            None,
+            &[],
+            false,
+            NodeDataDir::new_test(None),
+            None,
+        )
+        .unwrap();
+
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+
+        // Sync all blocks in order.
+        for block in &blocks {
+            sync.sync_storage_with_block(block.clone(), true).await.unwrap();
+        }
+
+        // The last block stays pending (no successor to satisfy availability threshold).
+        // Only committed blocks have their certificates in the ledger.
+        let committed_blocks = &blocks[..blocks.len().saturating_sub(1)];
+
+        // Assert Sync updated the underlying ledger accordingly: every certificate from each
+        // committed block's subDAG is present in the ledger, and ledger height/round are updated.
+        for block in committed_blocks {
+            let Authority::Quorum(subdag) = block.authority() else {
+                continue;
+            };
+            for certificates in subdag.values() {
+                for cert in certificates {
+                    assert!(
+                        syncing_ledger.contains_certificate(&cert.id()).unwrap_or(false),
+                        "Sync should have committed block {} so certificate is in the ledger",
+                        block.height()
+                    );
+                }
+            }
+        }
+
+        // Ledger height and round should match the latest committed block (not the tip).
+        let last_committed_block = committed_blocks.last().unwrap();
+        assert_eq!(
+            syncing_ledger.latest_block_height(),
+            last_committed_block.height(),
+            "Ledger height should match last committed block"
+        );
+        assert_eq!(
+            syncing_ledger.latest_block().round(),
+            last_committed_block.round(),
+            "Ledger round should match last committed block"
+        );
     }
 
     #[tokio::test]
