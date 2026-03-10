@@ -69,7 +69,7 @@ while (( $(elapsed_since "$start") < max_wait )); do
   fi
   
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
 done
 
 log "❌ Benchmark failed! Client did not sync within 30 minutes."
