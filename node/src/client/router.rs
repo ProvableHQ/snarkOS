@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{PeerPoolHandling, harden_socket};
 use snarkos_node_router::{
     Routing,
     messages::{
@@ -31,7 +31,7 @@ use snarkos_node_router::{
     },
 };
 use snarkos_node_sync::InsertBlockResponseError;
-use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
+use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
@@ -50,13 +50,16 @@ impl<N: Network, C: ConsensusStorage<N>> P2P for Client<N, C> {
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
     /// Performs the handshake protocol.
-    async fn perform_handshake(&self, mut connection: Connection) -> io::Result<Connection> {
+    async fn perform_handshake(&self, mut connection: Connection) -> Result<Connection, ConnectError> {
         // Perform the handshake.
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust.
+        harden_socket(stream)?;
         let genesis_header = *self.genesis.header();
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
+
         self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
         Ok(connection)

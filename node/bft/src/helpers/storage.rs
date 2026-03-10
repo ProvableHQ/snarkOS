@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,7 +119,7 @@ impl<N: Network> Storage<N> {
         // Retrieve the round at which that committee was created, or 1 if it is the genesis committee.
         let current_round = committee.starting_round().max(1);
         // Set the unprocessed certificates cache size.
-        let unprocessed_cache_size = NonZeroUsize::new((N::LATEST_MAX_CERTIFICATES().unwrap() * 2) as usize).unwrap();
+        let unprocessed_cache_size = NonZeroUsize::new((N::LATEST_MAX_CERTIFICATES() * 2) as usize).unwrap();
 
         // Create the storage.
         let storage = Self(Arc::new(StorageInner {

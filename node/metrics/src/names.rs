@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +16,10 @@
 pub(super) const COUNTER_NAMES: [&str; 3] =
     [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSACTIONS, consensus::STALE_UNCONFIRMED_SOLUTIONS];
 
-pub(super) const GAUGE_NAMES: [&str; 27] = [
+pub(super) const GAUGE_NAMES: [&str; 28] = [
     bft::CONNECTED,
     bft::CONNECTED_STAKE,
+    bft::CONNECTED_STAKE_WITH_MATCHING_SHA,
     bft::CONNECTING,
     bft::LAST_STORED_ROUND,
     bft::PROPOSAL_ROUND,
@@ -53,6 +54,7 @@ pub mod bft {
     pub const COMMIT_ROUNDS_LATENCY: &str = "snarkos_bft_commit_rounds_latency_secs"; // <-- This one doesn't even make sense.
     pub const CONNECTED: &str = "snarkos_bft_connected_total";
     pub const CONNECTED_STAKE: &str = "snarkos_bft_connected_stake_as_percentage";
+    pub const CONNECTED_STAKE_WITH_MATCHING_SHA: &str = "snarkos_bft_connected_stake_with_matching_sha_as_percentage";
     pub const CONNECTING: &str = "snarkos_bft_connecting_total";
     pub const LAST_STORED_ROUND: &str = "snarkos_bft_last_stored_round";
     pub const LEADERS_ELECTED: &str = "snarkos_bft_leaders_elected_total";
@@ -98,4 +100,8 @@ pub mod router {
 
 pub mod tcp {
     pub const TCP_TASKS: &str = "snarkos_tcp_tasks_total";
+}
+
+pub mod build {
+    pub const BUILD_INFO: &str = "snarkos_build_info";
 }

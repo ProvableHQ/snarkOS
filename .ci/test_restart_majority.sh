@@ -37,7 +37,7 @@ network_name=$(get_network_name "$network_id")
 verbosity=0
 
 # The time that is used to determine the total timeout for the test.
-# This is higher than the one for the minority test to account for the higher number of nodes that are reset.
+# Set this higher than the interval for the minority test, as more nodes need to sync.
 max_wait_per_block=20
 
 # Define a trap handler that cleans up all processes on exit.
@@ -52,9 +52,11 @@ common_flags=(
   "--dev-num-validators=$total_validators"
 )
 
+start=$(now)
+
 # Start all validator nodes in the background
 for validator_index in $(seq 0 $((total_validators-1))); do
-  snarkos clean "--dev=$validator_index" "--network=$network_id"
+  snarkos clean "--dev=$validator_index" "--network=$network_id" --keep-node-data
 
   run_with_prefix "validator-$validator_index" snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log"
   PIDS[validator_index]=$!
@@ -95,8 +97,8 @@ for iter in $(seq 1 "$num_resets"); do
   done
 done
 
-if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" "$max_wait"; then
-  log "SUCCESS!"
+if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
+  log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
   exit 0
 else
   log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."

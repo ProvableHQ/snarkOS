@@ -16,6 +16,9 @@ categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
 
+[dependencies.anyhow]
+workspace = true
+
 [dependencies.tokio]
 workspace = true
 features = [ "macros", "rt", "signal", "sync" ]

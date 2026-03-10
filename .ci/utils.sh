@@ -65,6 +65,17 @@ function require_cmd() {
   fi
 }
 
+# Get the current time in seconds since the node started.
+function now() {
+  echo "$SECONDS"
+}
+
+# Get the relative time since the given start time
+function elapsed_since() {
+  local start=$1
+  echo $((SECONDS - start))
+}
+
 # Determine network name based on network_id
 function get_network_name() {
   local network_id=$1
@@ -368,9 +379,10 @@ function wait_for_peers() {
   local poll_interval=1
   local port=$((3030+node_index))
 
-  SECONDS=0
+  local start
+  start=$(now)
   
-  while (( SECONDS < max_wait )); do
+  while (( $(elapsed_since "$start") < max_wait )); do
     result=$(curl -s "http://$localhost:$port/v2/$network_name/peers/count")
 
     if (is_integer "$result"); then
@@ -394,6 +406,38 @@ function wait_for_peers() {
 
 # Succeeds if the node with the given index has the specified number of BFT connections (or greater)
 function wait_for_bft_connections() {
+  local node_index=$1
+  local min_peers=$2
+  local network_name=$3
+
+  local max_wait=300
+  local poll_interval=1
+  local port=$((3030 + node_index))
+
+  local start
+  start=$(now)
+  
+  while (( $(elapsed_since "$start") < max_wait )); do
+    result=$(curl -s "http://$localhost:$port/v2/$network_name/connections/bft/count")
+
+    if ! (is_integer "$result"); then
+      log "Failed to get number of BFT connections for node #${node_index} (port=$port). Will retry..."
+    elif (( result < min_peers )); then
+      log "Node #${node_index} (port=$port) has $result BFT connections, expected at least $min_peers. Will wait and retry..."
+    else
+      return 0
+    fi
+
+    # Continue waiting
+    sleep $poll_interval
+  done
+
+  log "❌ BFT connections did not reach $min_peers within 5 minutes."
+  return 1
+}
+
+# Succeeds if the node with the given index has the specified number of BFT connections (or greater)
+function wait_for_bft_connections() {
   # Not implemented on canary
   return 0
 }
@@ -403,7 +447,10 @@ function wait_for_sync_peers() {
   local node_index=$1
 
   local max_wait=300 
-  for ((total_wait=0; total_wait < max_wait; ++total_wait)); do
+  local start
+  start=$(now)
+
+  while (( $(elapsed_since "$start") < max_wait )); do
     port=$((3030+node_index))
     result=$(curl -s "http://localhost:${port}/v2/$network_name/sync/peers")
     echo "$result"
@@ -436,9 +483,10 @@ function wait_for_nodes() {
 
   local poll_interval=1
 
-  SECONDS=0
+  local start
+  start=$(now)
 
-  while (( SECONDS < max_wait )); do
+  while (( $(elapsed_since "$start") < max_wait )); do
     if check_node_stopped; then
       log "ERROR: one or more nodes stopped unexpectedly"
       return 1
@@ -483,8 +531,10 @@ function wait_for_heights() {
   : "${max_wait:=300}"
   : "${poll_interval:=5}"
 
-  SECONDS=0 
-  while (( SECONDS < max_wait )); do
+  local start
+  start=$(now) 
+  
+  while (( $(elapsed_since "$start") < max_wait )); do
     if check_heights "$start_index" "$end_index" "$min_height" "$network_name" "$elapsed"; then
       return 0
     fi
@@ -518,8 +568,10 @@ function wait_for_stable_consensus_version() {
 
   # Check consensus versions periodically with a timeout
   log "ℹ️ Waiting for consensus version to stabilize..."
-  SECONDS=0
-  while (( SECONDS < 300 )); do  # 5 minutes max
+  local start
+  start=$(now)
+  
+  while (( $(elapsed_since "$start") < 300 )); do  # 5 minutes max
     consensus_version=$(get_consensus_version "$node_index" "$network_name" || echo "0")
     height=$(get_block_height "$node_index" "$network_name" || echo "0")
 
@@ -537,7 +589,7 @@ function wait_for_stable_consensus_version() {
 
     # Continue waiting
     sleep 10
-    log "Waited $SECONDS seconds so far..."
+    log "Waited $(elapsed_since "$start") seconds so far..."
   done
 
   return 1
@@ -612,8 +664,10 @@ function probe_stable_consensus_version() {
   # Wait for nodes to become ready
   log "Waiting for probe nodes to become ready..."
   local max_wait=120
-  SECONDS=0
-  while (( SECONDS < max_wait )); do
+  local start
+  start=$(now)
+  
+  while (( $(elapsed_since "$start") < max_wait )); do
     local all_ready=true
     for node_index in $(seq 0 $((total_validators-1))); do
       local port=$((3030 + node_index))
@@ -623,13 +677,13 @@ function probe_stable_consensus_version() {
       fi
     done
     if $all_ready; then
-      log "All probe nodes ready after ${SECONDS}s"
+      log "All probe nodes ready after $(elapsed_since "$start")s"
       break
     fi
     sleep 2
   done
 
-  if (( SECONDS >= max_wait )); then
+  if (( $(elapsed_since "$start") >= max_wait )); then
     log "ERROR: Probe nodes did not become ready within ${max_wait}s"
     stop_probe_nodes
     return 1

@@ -37,12 +37,18 @@ workspace = true
 [dependencies.serde]
 workspace = true
 
+[dependencies.smol_str]
+workspace = true
+
 [dependencies.snarkos-node-tcp]
 workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console" ]
+features = [ "console", "utilities" ]
+
+[dependencies.socket2]
+version = "0.6.2"
 
 [dependencies.tokio]
 workspace = true

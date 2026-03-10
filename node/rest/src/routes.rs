@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,8 @@
 use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
+#[cfg(feature = "history-staking-rewards")]
+use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
     prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
@@ -23,17 +25,21 @@ use snarkvm::{
 
 use axum::{Json, extract::rejection::JsonRejection};
 
+use aleo_std::aleo_ledger_dir;
 use anyhow::{Context, anyhow};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::{collections::HashMap, fs, sync::atomic::Ordering};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 
 use version::VersionInfo;
+
+#[cfg(feature = "history")]
+type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
 
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
@@ -565,19 +571,35 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
     }
 
-    /// GET /<network>/peers/count
+    /// GET /<network>/peers/count (alias: /connections/p2p/count)
     pub(crate) async fn get_peers_count(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().number_of_connected_peers())
     }
 
-    /// GET /<network>/peers/all
+    /// GET /<network>/peers/all (alias: /connections/p2p/all)
     pub(crate) async fn get_peers_all(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().connected_peers())
     }
 
-    /// GET /<network>/peers/all/metrics
+    /// GET /<network>/peers/all/metrics (alias: /connections/p2p/all/metrics)
     pub(crate) async fn get_peers_all_metrics(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().connected_metrics())
+    }
+
+    /// GET /<network>/connections/bft/count
+    pub(crate) async fn get_bft_connections_count(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => Ok(ErasedJson::pretty(consensus.bft().primary().gateway().number_of_connected_peers())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
+    }
+
+    /// GET /<network>/connections/bft/all
+    pub(crate) async fn get_bft_connections_all(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => Ok(ErasedJson::pretty(consensus.bft().primary().gateway().connected_peers())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
     }
 
     /// GET /<network>/node/address
@@ -676,7 +698,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // most transactions will be smaller and this reduces unnecessary allocations.
         // TODO: Should this be a blocking task?
         let buffer = Vec::with_capacity(3000);
-        if tx.write_le(LimitedWriter::new(buffer, N::MAX_TRANSACTION_SIZE)).is_err() {
+        if tx.write_le(LimitedWriter::new(buffer, N::LATEST_MAX_TRANSACTION_SIZE())).is_err() {
             return Err(RestError::bad_request(anyhow!("Transaction size exceeds the byte limit")));
         }
 
@@ -884,24 +906,59 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         backup_path: Query<BackupPath>,
     ) -> Result<ErasedJson, RestError> {
-        rest.ledger.backup_database(&backup_path.path)?;
+        // Create a checkpoint at the given location.
+        let mut backup_path = backup_path.path.clone();
+        rest.ledger.backup_database(&backup_path)?;
 
-        Ok(ErasedJson::pretty(()))
+        // Dump the block tree.
+        let ret = ErasedJson::pretty(());
+        if let Err(e) = rest.ledger.cache_block_tree() {
+            warn!("Couldn't cache the block tree for a ledger checkpoint: {e}");
+            return Ok(ret);
+        }
+
+        // Copy the block tree file to the new checkpoint.
+        let mut block_tree_path = aleo_ledger_dir(N::ID, rest.ledger.vm().block_store().storage_mode());
+        block_tree_path.push("block_tree");
+        backup_path.push("block_tree");
+        if let Err(e) = fs::copy(block_tree_path, backup_path) {
+            warn!("Couldn't copy the block tree file to a ledger checkpoint: {e}");
+        }
+
+        Ok(ret)
     }
 
-    /// GET /{network}/block/{blockHeight}/history/{mapping}
+    /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
     #[cfg(feature = "history")]
     pub(crate) async fn get_history(
         State(rest): State<Self>,
-        Path((height, mapping)): Path<(u32, snarkvm::synthesizer::MappingName)>,
+        Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         // Retrieve the history for the given block height and variant.
-        let history = snarkvm::synthesizer::History::new(N::ID, rest.ledger.vm().finalize_store().storage_mode());
-        let result = history.load_mapping(height, mapping).map_err(|err| {
-            RestError::not_found(err.context(format!("Could not load mapping '{mapping}' from block '{height}'")))
-        })?;
+        let value = rest.ledger.vm().finalize_store().get_historical_mapping_value(program_id, mapping_name, mapping_key.clone(), height)
+            .map_err(|err| {
+                RestError::not_found(err.context(format!("Could not load mapping '{mapping_name}/{mapping_key}' for program '{program_id}' from block '{height}'")))
+            })?;
 
-        Ok((StatusCode::OK, [(CONTENT_TYPE, "application/json")], result))
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
+    }
+
+    /// GET /{network}/staking/rewards/{address}/{height}
+    #[cfg(feature = "history-staking-rewards")]
+    pub(crate) async fn get_staking_reward(
+        State(rest): State<Self>,
+        Path((address, height)): Path<(Address<N>, u32)>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Retrieve the history for the given block height and variant.
+        let value = rest.ledger.vm().finalize_store().staking_rewards_map().get_confirmed(&(address, height)).map_err(
+            |err| {
+                RestError::not_found(
+                    err.context(format!("Could not load the staking reward for {address} from block '{height}'")),
+                )
+            },
+        )?;
+
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
 
     /// GET /{network}/validators/participation

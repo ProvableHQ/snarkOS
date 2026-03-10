@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,7 @@ use snarkos_utilities::{SignalHandler, Stoppable};
 
 use snarkvm::{
     prelude::{Deserialize, DeserializeOwned, Ledger, Network, Serialize, block::Block, store::ConsensusStorage},
-    utilities::flatten_error,
+    utilities::{flatten_error, unchecked_deserialize},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -236,6 +236,9 @@ pub async fn load_blocks<N: Network>(
         });
     }
 
+    // Initialize a temporary threadpool that can use the full CPU.
+    let threadpool = Arc::new(rayon::ThreadPoolBuilder::new().build().unwrap());
+
     // A loop for inserting the pending blocks into the ledger.
     let mut current_height = start_height.saturating_sub(1);
     while current_height < end_height - 1 {
@@ -243,7 +246,7 @@ pub async fn load_blocks<N: Network>(
         if stoppable.is_stopped() {
             info!("Stopping block sync at {} - shutting down", current_height);
             // We can shut down cleanly from here, as the node hasn't been started yet.
-            std::process::exit(0);
+            return Ok(current_height);
         }
 
         let mut candidate_blocks = pending_blocks.lock().await;
@@ -270,20 +273,18 @@ pub async fn load_blocks<N: Network>(
         let next_blocks = std::mem::replace(&mut *candidate_blocks, retained_blocks);
         drop(candidate_blocks);
 
-        // Initialize a temporary threadpool that can use the full CPU.
-        let threadpool = rayon::ThreadPoolBuilder::new().build().unwrap();
-
         // Attempt to advance the ledger using the CDN block bundle.
         let mut process_clone = process.clone();
         let stoppable_clone = stoppable.clone();
+        let threadpool_clone = threadpool.clone();
         current_height = tokio::task::spawn_blocking(move || {
-            threadpool.install(|| {
+            threadpool_clone.install(|| {
                 for block in next_blocks.into_iter().filter(|b| (start_height..end_height).contains(&b.height())) {
                     // If we are instructed to shut down, abort.
                     if stoppable_clone.is_stopped() {
                         info!("Stopping block sync at {} - the node is shutting down", current_height);
                         // We can shut down cleanly from here, as the node hasn't been started yet.
-                        std::process::exit(0);
+                        break;
                     }
 
                     // Register the next block's height, as the block gets consumed next.
@@ -479,7 +480,7 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
     };
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
+    match tokio::task::spawn_blocking(move || (unchecked_deserialize::<T>(&bytes), bytes)).await {
         Ok((Ok(objects), _)) => Ok(objects),
         Ok((Err(error), response_bytes)) => {
             let bytes_as_string = String::from_utf8_lossy(&response_bytes);

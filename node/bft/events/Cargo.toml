@@ -36,6 +36,9 @@ workspace = true
 [dependencies.snarkos-node-sync-locators]
 workspace = true
 
+[dependencies.snarkos-node-tcp]
+workspace = true
+
 [dependencies.snarkvm]
 workspace = true
 features = [ "ledger", "utilities" ]

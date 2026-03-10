@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ use snarkos_node_tcp::{
 };
 use snarkvm::prelude::Network;
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[async_trait]
 pub trait Routing<N: Network>:
@@ -50,24 +50,21 @@ pub trait Routing<N: Network>:
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
         self.router().spawn(async move {
-            // Sleep for `HEARTBEAT_IN_SECS` seconds.
-            let min_heartbeat_interval = Duration::from_secs(Self::HEARTBEAT_IN_SECS);
             let mut last_update = Instant::now();
 
             loop {
                 // Process a heartbeat in the router.
                 self_clone.heartbeat().await;
 
-                // Figure out how long the heartbeat took
+                // The heartbeat itself may take a while (as it is waiting for connection attempts to complete).
+                // Take this time into account when rate-limiting the heartbeat.
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(last_update);
-                last_update = now;
 
-                // (Potentially) sleep to avoid invoking heartbeat too frequently.
-                let sleep_time = min_heartbeat_interval.saturating_sub(elapsed);
-                if !sleep_time.is_zero() {
-                    tokio::time::sleep(sleep_time).await;
-                }
+                // Sleep for the remaining time.
+                tokio::time::sleep(Self::HEARTBEAT_INTERVAL.saturating_sub(elapsed)).await;
+                // Update the last update time.
+                last_update = now;
             }
         });
     }

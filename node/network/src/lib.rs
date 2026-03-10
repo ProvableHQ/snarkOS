@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,10 @@ pub use resolver::*;
 
 use snarkvm::prelude::Network;
 
-use std::{net::SocketAddr, str::FromStr};
+use smol_str::SmolStr;
+use socket2::SockRef;
+use std::{env::VarError, io, net::SocketAddr, str::FromStr, time::Duration};
+use tokio::net::TcpStream;
 use tracing::*;
 
 // Include the generated build information.
@@ -44,7 +47,12 @@ pub fn bootstrap_peers<N: Network>(is_dev: bool) -> Vec<SocketAddr> {
         // Development testing contains optional bootstrap peers loaded from the environment.
         match std::env::var("TEST_BOOTSTRAP_PEERS") {
             Ok(peers) => peers.split(',').map(|peer| SocketAddr::from_str(peer).unwrap()).collect(),
+            Err(VarError::NotPresent) => {
+                // Return an empty list if the environment variable is not present.
+                vec![]
+            }
             Err(err) => {
+                // Log other errors, e.g., invalid encoding.
                 warn!("Failed to load bootstrap peers from environment: {err}");
                 vec![]
             }
@@ -107,4 +115,36 @@ pub fn log_repo_sha_comparison(peer_addr: SocketAddr, peer_sha: &Option<[u8; 40]
     };
 
     debug!("{ctx} Peer '{peer_addr}' uses snarkOS{sha_cmp}");
+}
+
+/// Shortens the commit SHA.
+pub fn shorten_snarkos_sha(sha: &Option<[u8; 40]>) -> SmolStr {
+    if let Some(full_sha) = sha.as_ref().and_then(|s| str::from_utf8(s).ok()) {
+        let end_idx = full_sha.char_indices()
+            .nth(7) // GitHub commit SHA shorthand.
+            .map(|(i, _)| i)
+            .unwrap_or(full_sha.len()); // Can't really fail.
+
+        SmolStr::from(&full_sha[..end_idx])
+    } else {
+        "unknown snarkOS SHA".into()
+    }
+}
+
+/// Adjusts the low-level socket settings for extra robustness.
+pub fn harden_socket(stream: &TcpStream) -> io::Result<()> {
+    let socket = SockRef::from(stream);
+
+    // Make OS-level disconnects immediate (no TIME_WAIT).
+    socket.set_linger(Some(Duration::from_secs(0)))?;
+
+    // Disable Nagle's algorithm for lower latency.
+    socket.set_tcp_nodelay(true)?;
+
+    // Disconnect if unacknowledged data stalls for 20s. This protects
+    // the kernel's retransmission queue.
+    #[cfg(target_os = "linux")]
+    socket.set_tcp_user_timeout(Some(Duration::from_secs(20)))?;
+
+    Ok(())
 }
