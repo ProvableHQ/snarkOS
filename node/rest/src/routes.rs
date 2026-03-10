@@ -815,22 +815,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_solution = check_solution.check_solution.unwrap_or(false);
 
         if check_solution {
-            // Select counter and limit.
-            let (counter, limit, err_msg) =
-                (&rest.num_verifying_solutions, N::MAX_SOLUTIONS, "Too many solution verifications in progress");
-
             // Try to acquire a slot.
-            if counter
-                .fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |val| {
-                        if val < limit { Some(val + 1) } else { None }
-                    },
-                )
-                .is_err()
-            {
-                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
+            let slot = rest.num_verifying_solutions.acquire().await;
+            if slot.is_err() {
+                return Err(RestError::too_many_requests(anyhow!("Too many solution verifications in progress")));
             }
 
             // Compute the current epoch hash.
@@ -872,8 +860,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                         return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
                     }
                 };
-            // Release the slot.
-            counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
             res?;
         }

@@ -57,7 +57,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, atomic::AtomicUsize},
 };
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -91,7 +91,7 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     /// The number of ongoing execute transaction verifications via REST.
     num_verifying_executions: Arc<AtomicUsize>,
     /// The number of ongoing solution verifications via REST.
-    num_verifying_solutions: Arc<AtomicUsize>,
+    num_verifying_solutions: Arc<Semaphore>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -115,7 +115,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             handles: Default::default(),
             num_verifying_deploys: Default::default(),
             num_verifying_executions: Default::default(),
-            num_verifying_solutions: Default::default(),
+            num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
         };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
