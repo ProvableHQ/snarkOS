@@ -100,11 +100,7 @@ for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
   fi
 done
 
-<<<<<<< HEAD
-connect_time=$SECONDS
-=======
 connect_time=$(elapsed_since "$start")
->>>>>>> origin/staging
 log "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
 
 # Check heights periodically with a timeout
