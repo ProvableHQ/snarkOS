@@ -36,7 +36,7 @@ use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{program::ProgramID, types::Field},
     ledger::narwhal::Data,
-    prelude::{Ledger, Network, cfg_into_iter, store::ConsensusStorage},
+    prelude::{Ledger, Network, VM, cfg_into_iter, store::ConsensusStorage},
 };
 
 use anyhow::{Context, Result};
@@ -53,10 +53,7 @@ use axum_extra::response::ErasedJson;
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicUsize},
-};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
@@ -87,9 +84,9 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     /// A reference to BlockSync,
     block_sync: Arc<BlockSync<N>>,
     /// The number of ongoing deploy transaction verifications via REST.
-    num_verifying_deploys: Arc<AtomicUsize>,
+    num_verifying_deploys: Arc<Semaphore>,
     /// The number of ongoing execute transaction verifications via REST.
-    num_verifying_executions: Arc<AtomicUsize>,
+    num_verifying_executions: Arc<Semaphore>,
     /// The number of ongoing solution verifications via REST.
     num_verifying_solutions: Arc<Semaphore>,
 }
@@ -113,8 +110,8 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             cdn_sync,
             block_sync,
             handles: Default::default(),
-            num_verifying_deploys: Default::default(),
-            num_verifying_executions: Default::default(),
+            num_verifying_deploys: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS)),
+            num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
             num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
         };
         // Spawn the server.
