@@ -219,6 +219,12 @@ impl<N: Network> Gateway<N> {
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
+        //
+        // The 10x multiplier allows for more TCP connections than the maximum
+        // committee size to prevent "connection refused" errors when two nodes
+        // simultaneous attempt to connect to each other. Note, that later,
+        // during handshake, the Gateway applies its own limit to the number of
+        // active connections and removes duplicates.
         let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size() * 10));
 
         // Prepare the collection of the initial peers.
