@@ -1210,6 +1210,66 @@ pub(crate) mod tests {
         assert_storage(&storage, &rounds, &certificates, &batch_ids, &transmissions);
     }
 
+    /// Verify that when inserting a certificate with a mix of provided transmissions and aborted
+    /// transmission IDs, storage correctly records both: contains_transmission is true for all
+    /// (including aborted), and aborted IDs are stored so sync can resolve certificate references.
+    #[test]
+    fn test_certificate_insert_with_aborted_transmissions() {
+        use std::collections::HashSet;
+
+        let rng = &mut TestRng::default();
+
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+
+        let certificate = snarkvm::ledger::narwhal::batch_certificate::test_helpers::sample_batch_certificate(rng);
+        let certificate_id = certificate.id();
+        let round = certificate.round();
+        let transmission_ids: Vec<_> = certificate.transmission_ids().iter().copied().collect();
+
+        if transmission_ids.len() < 2 {
+            // Certificate has 0 or 1 transmission; just verify insert without aborted works.
+            let (missing_transmissions, _) = sample_transmissions(&certificate, rng);
+            storage.insert_certificate_atomic(certificate.clone(), HashSet::new(), missing_transmissions);
+            for id in certificate.transmission_ids() {
+                assert!(storage.contains_transmission(*id));
+            }
+            return;
+        }
+
+        let (all_missing, _) = sample_transmissions(&certificate, rng);
+        let aborted_id = transmission_ids[0];
+        let aborted_transmission_ids: HashSet<_> = [aborted_id].into_iter().collect();
+        let mut missing_transmissions = all_missing;
+        missing_transmissions.remove(&aborted_id);
+
+        storage.insert_certificate_atomic(certificate.clone(), aborted_transmission_ids, missing_transmissions);
+
+        assert!(storage.contains_certificate(certificate_id));
+        assert_eq!(storage.get_certificates_for_round(round), indexset! { certificate.clone() });
+
+        // Every transmission ID in the certificate (including aborted) should be resolvable.
+        for id in certificate.transmission_ids() {
+            assert!(
+                storage.contains_transmission(*id),
+                "contains_transmission should be true for all transmission IDs including aborted {id:?}"
+            );
+        }
+
+        // Aborted transmission has no content in storage; others do.
+        assert!(
+            storage.get_transmission(aborted_id).is_none(),
+            "Aborted transmission should not have content in storage"
+        );
+        for id in transmission_ids.iter().skip(1) {
+            assert!(
+                storage.get_transmission(*id).is_some(),
+                "Non-aborted transmission {id:?} should have content in storage"
+            );
+        }
+    }
+
     /// Test that `check_incoming_certificate` does not reject a valid cert.
     #[test]
     fn test_valid_incoming_certificate() {
