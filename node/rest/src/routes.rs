@@ -740,7 +740,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // most transactions will be smaller and this reduces unnecessary allocations.
         // TODO: Should this be a blocking task?
         let buffer = Vec::with_capacity(3000);
-        if tx.write_le(LimitedWriter::new(buffer, N::MAX_TRANSACTION_SIZE)).is_err() {
+        if tx.write_le(LimitedWriter::new(buffer, N::LATEST_MAX_TRANSACTION_SIZE())).is_err() {
             return Err(RestError::bad_request(anyhow!("Transaction size exceeds the byte limit")));
         }
 
@@ -951,21 +951,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         rest.ledger.backup_database(&backup_path.path)?;
 
         Ok(ErasedJson::pretty(()))
-    }
-
-    /// GET /{network}/block/{blockHeight}/history/{mapping}
-    #[cfg(feature = "history")]
-    pub(crate) async fn get_history(
-        State(rest): State<Self>,
-        Path((height, mapping)): Path<(u32, snarkvm::synthesizer::MappingName)>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        // Retrieve the history for the given block height and variant.
-        let history = snarkvm::synthesizer::History::new(N::ID, rest.ledger.vm().finalize_store().storage_mode());
-        let result = history.load_mapping(height, mapping).map_err(|err| {
-            RestError::not_found(err.context(format!("Could not load mapping '{mapping}' from block '{height}'")))
-        })?;
-
-        Ok((StatusCode::OK, [(CONTENT_TYPE, "application/json")], result))
     }
 
     /// GET /{network}/validators/participation

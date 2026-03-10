@@ -38,7 +38,6 @@ metrics = [
   "snarkos-node-router/metrics",
   "snarkos-node-tcp/metrics"
 ]
-history = [ "snarkos-node-rest/history" ]
 telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",

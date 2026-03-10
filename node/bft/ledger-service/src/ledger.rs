@@ -221,7 +221,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
                 let transaction = match transaction_data.clone() {
                     Data::Object(transaction) => transaction,
-                    Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?,
+                    Data::Buffer(bytes) => {
+                        Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?
+                    }
                 };
                 // Ensure the transaction ID matches the expected transaction ID.
                 if transaction.id() != expected_transaction_id {
@@ -363,7 +365,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<Block<N>> {
-        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
+        Ok(self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())?)
     }
 
     /// Adds the given block as the next block in the ledger.

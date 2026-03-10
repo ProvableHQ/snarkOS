@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "ea4aed5"
+rev = "1d74acb"
 #version = "=4.4.0"
 default-features = false
 
@@ -260,7 +260,6 @@ path = "snarkos/main.rs"
 
 [features]
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
-history = [ "snarkos-node/history" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",

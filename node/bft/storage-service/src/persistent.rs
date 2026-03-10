@@ -61,7 +61,7 @@ pub struct BFTPersistentStorage<N: Network> {
 impl<N: Network> BFTPersistentStorage<N> {
     /// Initializes a new BFT persistent storage service.
     pub fn open(storage_mode: StorageMode) -> Result<Self> {
-        let max_committee_size = Committee::<N>::max_committee_size().unwrap();
+        let max_committee_size = Committee::<N>::max_committee_size();
         let capacity =
             NonZeroUsize::new((max_committee_size as usize) * (BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH) * 2)
                 .ok_or_else(|| anyhow!("Could not construct NonZeroUsize"))?;
