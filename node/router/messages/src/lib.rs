@@ -116,10 +116,11 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V10, 21),
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
-        // For ConsensusVersion::V13, we forgot to run CI and increment the
-        // message version before the canary release, so we keep it the same for
-        // Canary.  We can bump it again on Canary for V14.
-        (ConsensusVersion::V13, 24),
+        // Historical note: ConsensusVersion::V13, we forgot to run CI and
+        // increment the message version before the canary release, so canary
+        // nodes need to jump from 23 to 25, whereas for testnet/mainnet we can
+        // then jump from 24 to 25 as usual.
+        (ConsensusVersion::V13, 23),
         (ConsensusVersion::V14, 25),
     ];
 
