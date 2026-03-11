@@ -1074,10 +1074,12 @@ impl<N: Network> BlockSync<N> {
                 greatest_peer_height,
             );
 
-            trace!(
-                "Generated new block requests for the following heights: {}",
-                rangify_heights(requests.iter().map(|(h, _)| *h))
-            );
+            if !requests.is_empty() {
+                trace!(
+                    "Generated new block requests for the following heights: {}",
+                    rangify_heights(requests.iter().map(|(h, _)| *h))
+                );
+            }
 
             vec![(requests, sync_peers)]
         } else if self.requests.read().is_empty() {

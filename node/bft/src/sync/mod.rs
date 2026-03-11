@@ -32,7 +32,14 @@ use snarkvm::{
         network::{ConsensusVersion, Network},
         types::Field,
     },
-    ledger::{CheckBlockError, PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
+    ledger::{
+        CheckBlockError,
+        PendingBlock,
+        authority::Authority,
+        block::Block,
+        narwhal::BatchCertificate,
+        puzzle::SolutionID,
+    },
     utilities::{cfg_into_iter, cfg_iter, ensure_equals, flatten_error},
 };
 
@@ -372,6 +379,16 @@ impl<N: Network> Sync<N> {
         let latest_block: &Block<N> = pending_blocks.back().map(|block| block.deref()).unwrap_or(&latest_ledger_block);
         let max_height = latest_block.height();
 
+        // Create the set of aborted transmissions in the pending blocks, as they will not be contained in the ledger.
+        let pending_aborted_transactions = pending_blocks
+            .iter()
+            .flat_map(|block| block.aborted_transaction_ids().iter().cloned())
+            .collect::<HashSet<_>>();
+        let pending_aborted_solutions = pending_blocks
+            .iter()
+            .flat_map(|block| block.aborted_solution_ids().iter().cloned())
+            .collect::<HashSet<_>>();
+
         // Determine the maximum number of blocks corresponding to rounds
         // that would not have been garbage collected, i.e. that would be kept in storage.
         // Since at most one block is created every two rounds,
@@ -418,7 +435,13 @@ impl<N: Network> Sync<N> {
                 for certificates in subdag.values().cloned() {
                     cfg_into_iter!(certificates).try_for_each(|certificate| {
                         self.storage
-                            .sync_certificate_with_block(block, certificate, &unconfirmed_transactions)
+                            .sync_certificate_with_block(
+                                block,
+                                certificate,
+                                &unconfirmed_transactions,
+                                &pending_aborted_transactions,
+                                &pending_aborted_solutions,
+                            )
                             .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
                     })?;
                 }
@@ -585,7 +608,7 @@ impl<N: Network> Sync<N> {
                 let Some(block) = self.block_sync.peek_next_block(next_height) else {
                     break;
                 };
-                info!("Syncing the BFT to block {}...", block.height());
+                info!("Trying to sync next block at height {} with the BFT...", block.height());
                 // Sync the storage with the block.
                 match self.sync_storage_with_block(block, true).await {
                     Ok(_) => {
@@ -662,7 +685,12 @@ impl<N: Network> Sync<N> {
     ///
     /// Note that the block authority is always a sub-DAG in production; beacon signatures are only used for testing,
     /// and as placeholder (irrelevant) block authority in the genesis block.
-    async fn add_block_subdag_to_bft(&self, block: &Block<N>) -> Result<()> {
+    async fn add_block_subdag_to_bft(
+        &self,
+        block: &Block<N>,
+        pending_aborted_transactions: &HashSet<N::TransactionID>,
+        pending_aborted_solutions: &HashSet<SolutionID<N>>,
+    ) -> Result<()> {
         // Nothing to do if this is a beacon block
         let Authority::Quorum(subdag) = block.authority() else {
             return Ok(());
@@ -678,7 +706,13 @@ impl<N: Network> Sync<N> {
             cfg_into_iter!(certificates.clone()).try_for_each(|certificate| -> Result<()> {
                 // Sync the batch certificate with the block.
                 self.storage
-                    .sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions)
+                    .sync_certificate_with_block(
+                        block,
+                        certificate.clone(),
+                        &unconfirmed_transactions,
+                        pending_aborted_transactions,
+                        pending_aborted_solutions,
+                    )
                     .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
             })?;
         }
@@ -776,7 +810,22 @@ impl<N: Network> Sync<N> {
 
         // Append the certificates to the storage, if the block is within the GC range.
         if within_gc_range {
-            self.add_block_subdag_to_bft(&new_block).await?;
+            // Extract the set of aborted transactions and solutions from the previous pending blocks (if any).
+            // There is only one sync advancement task, so we do not need to worry about the set being updated while running `add_block_subdag_to_bft`.
+            let (pending_aborted_transactions, pending_aborted_solutions) = {
+                let pending_blocks = self.pending_blocks.lock();
+                let pending_aborted_transactions = pending_blocks
+                    .iter()
+                    .flat_map(|block| block.aborted_transaction_ids().iter().cloned())
+                    .collect::<HashSet<_>>();
+                let pending_aborted_solutions = pending_blocks
+                    .iter()
+                    .flat_map(|block| block.aborted_solution_ids().iter().cloned())
+                    .collect::<HashSet<_>>();
+                (pending_aborted_transactions, pending_aborted_solutions)
+            };
+
+            self.add_block_subdag_to_bft(&new_block, &pending_aborted_transactions, &pending_aborted_solutions).await?;
         }
 
         // This optimistically performs updates to the pending block set.
