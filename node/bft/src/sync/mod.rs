@@ -136,7 +136,7 @@ impl<N: Network> Sync<N> {
     }
 
     /// Initializes the sync module and sync the storage with the ledger at bootup.
-    pub async fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
+    pub fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
         // If a callback was provided, set it.
         if let Some(callback) = sync_callback {
             self.sync_callback.set(callback).with_context(|| "Failed to set sync callback")?;
@@ -146,7 +146,6 @@ impl<N: Network> Sync<N> {
 
         // Sync the storage with the ledger.
         self.sync_storage_with_ledger_at_bootup()
-            .await
             .with_context(|| "Syncing storage with the ledger at bootup failed")?;
 
         debug!("Finished initial block synchronization at startup");
@@ -359,7 +358,7 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// This functions inserts the certificates from the most recent blocks into the BFT DAG.
     /// It is called when starting the validator and after finishing a sync without BFT.
-    async fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
+    fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
         let mut pending_blocks = self.pending_blocks.lock();
         let latest_ledger_block = self.ledger.latest_block();
 
@@ -569,7 +568,7 @@ impl<N: Network> Sync<N> {
 
             if was_in_fast_sync {
                 debug!("Finished catching up with the network. Switching to DAG sync.");
-                self.sync_storage_with_ledger_at_bootup().await?;
+                self.sync_storage_with_ledger_at_bootup()?;
             }
 
             // The height is incremented as blocks are added.
@@ -651,9 +650,7 @@ impl<N: Network> Sync<N> {
             if within_gc {
                 info!("Finished catching up with the network. Switching back to DAG sync.");
                 self.block_sync.set_bft_sync_mode(BftSyncMode::Dag);
-                self.sync_storage_with_ledger_at_bootup()
-                    .await
-                    .with_context(|| "BFT sync (with bootup routine) failed")?;
+                self.sync_storage_with_ledger_at_bootup().with_context(|| "BFT sync (with bootup routine) failed")?;
             }
 
             cleanup(start_height, current_height, None)
@@ -1374,7 +1371,7 @@ mod tests {
         )
         .unwrap();
 
-        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).unwrap();
 
         // -- Run test -- //
 
@@ -1442,7 +1439,7 @@ mod tests {
         )
         .unwrap();
 
-        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).unwrap();
 
         // Sync all blocks in order.
         for block in &blocks {
@@ -1532,7 +1529,7 @@ mod tests {
         )
         .unwrap();
 
-        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).unwrap();
 
         // -- Run test -- //
         let last_block = blocks.pop().unwrap();
@@ -1547,7 +1544,7 @@ mod tests {
         }
 
         // -- Switch to BFT --
-        sync.sync_storage_with_ledger_at_bootup().await.unwrap();
+        sync.sync_storage_with_ledger_at_bootup().unwrap();
 
         // Ensure blocks did not commit yet.
         assert_eq!(syncing_ledger.latest_block_height(), 0);
@@ -1616,7 +1613,7 @@ mod tests {
         )
         .unwrap();
 
-        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).unwrap();
 
         // -- Run test -- //
         let last_block = blocks.pop().unwrap();
@@ -1697,7 +1694,7 @@ mod tests {
         )
         .unwrap();
 
-        sync.initialize(Some(Arc::new(syncing_bft.clone()))).await.unwrap();
+        sync.initialize(Some(Arc::new(syncing_bft.clone()))).unwrap();
 
         // -- Run test -- //
         let last_block = blocks.pop().unwrap();

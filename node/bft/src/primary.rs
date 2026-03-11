@@ -282,7 +282,7 @@ impl<N: Network> Primary<N> {
         // First, initialize the sync channels.
         let (sync_sender, sync_receiver) = init_sync_channels();
         // Next, initialize the sync module and sync the storage from ledger.
-        self.sync.initialize(sync_callback).await?;
+        self.sync.initialize(sync_callback)?;
         // Next, load and process the proposal cache before running the sync module.
         self.load_proposal_cache().await?;
         // Next, run the sync module.
