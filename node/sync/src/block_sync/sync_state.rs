@@ -84,7 +84,7 @@ impl SyncState {
 
     /// Returns `true` if there a blocks to sync from other nodes.
     /// Returns `false` if the node has fully caught up with the rest of the network.
-    pub fn can_block_sync(&self) -> bool {
+    pub fn can_issue_new_block_requests(&self) -> bool {
         // Return true if sync state is false even if we there are no known blocks to fetch,
         // because otherwise nodes will never  switch to synced at startup.
         if let Some(num_behind) = self.num_blocks_behind() {

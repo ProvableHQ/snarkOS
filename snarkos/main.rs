@@ -97,7 +97,7 @@ fn main() {
                     let avg_wait_time = guard.avg_wait_time();
                     let num_waiting = guard.num_waiting();
                     tracing::info!(
-                        "[locktick] {location} ({:?}): {num_uses}; {active_users} active; {num_waiting} waiting; gavg d: {:?}; avg w: {:?}",
+                        "[locktick] {location} ({:?}): {num_uses}; {active_users} active; {num_waiting} waiting; avg d: {:?}; avg w: {:?}",
                         kind,
                         avg_duration,
                         avg_wait_time

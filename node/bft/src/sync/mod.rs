@@ -418,7 +418,7 @@ impl<N: Network> Sync<N> {
             .with_context(|| "Failed to garbage collect certificates")?;
 
         // Iterate over the blocks.
-        for block in blocks.clone() {
+        for block in blocks {
             if let Authority::Quorum(subdag) = block.authority() {
                 // If the block authority is a sub-DAG, then sync the batch certificates with the block.
                 // Note that the block authority is always a sub-DAG in production;
@@ -455,7 +455,7 @@ impl<N: Network> Sync<N> {
         // Notify BFT of ledger and pending certificates once (not per-block, to avoid duplicate add/commit).
         if let Some(cb) = self.sync_callback.get() {
             // Insert and commit ledger block certificates.
-            for block in ledger_blocks.iter() {
+            for block in ledger_blocks.into_iter() {
                 if let Authority::Quorum(subdag) = block.authority() {
                     for round in subdag.values() {
                         for certificate in round {
@@ -959,9 +959,7 @@ impl<N: Network> Sync<N> {
             return Ok(true);
         };
 
-        let ledger = self.ledger.clone();
-
-        let ledger_update = match ledger.begin_ledger_update() {
+        let ledger_update = match self.ledger.begin_ledger_update() {
             Ok(update) => update,
             Err(BeginLedgerUpdateError::ShuttingDown) => {
                 info!("BlockSync cannot advance the ledger any more. The node is shutting down.");

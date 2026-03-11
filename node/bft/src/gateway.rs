@@ -653,18 +653,18 @@ impl<N: Network> Gateway<N> {
                         Ok(_) => Ok(true),
                         Err(err) if err.is_benign() => {
                             // Do not disconnect for benign errors, such as the ledger already advanced past the height of the block.
-                            trace!("Unable to process block response from '{peer_ip}' - {err}");
+                            trace!("{CONTEXT} Unable to process block response from '{peer_ip}' - {err}");
                             Ok(true)
                         }
                         Err(err @ InsertBlockResponseError::EmptyBlockResponse)
                         | Err(err @ InsertBlockResponseError::NoConsensusVersion)
                         | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
-                            error!("Peer '{peer_ip}' sent an invalid block response - {err}");
+                            error!("{CONTEXT} Peer '{peer_ip}' sent an invalid block response - {err}");
                             self.ip_ban_peer(peer_ip, Some(&err.to_string()));
                             Err(err.into())
                         }
                         Err(err) => {
-                            warn!("Unable to process block response from '{peer_ip}' - {err}");
+                            warn!("{CONTEXT} Unable to process block response from '{peer_ip}' - {err}");
                             Err(err.into())
                         }
                     }

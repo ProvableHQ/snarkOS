@@ -266,18 +266,6 @@ impl<N: Network> BlockSync<N> {
         self.sync_state.read().is_block_synced()
     }
 
-    /// Returns `true` if there a blocks to fetch or responses to process.
-    ///
-    /// This will always return true if [`Self::is_block_synced`] returns false,
-    /// but it can return true when [`Self::is_block_synced`] returns true
-    /// (due to the latter having a tolerance of one block).
-    #[inline]
-    pub fn can_block_sync(&self) -> bool {
-        !self.failed_requests.lock().is_empty()
-            || self.sync_state.read().can_block_sync()
-            || self.has_pending_responses()
-    }
-
     /// Returns the number of blocks the node is behind the greatest peer height,
     /// or `None` if no peers are connected yet.
     #[inline]
@@ -529,7 +517,7 @@ impl<N: Network> BlockSync<N> {
     pub async fn try_issuing_block_requests<C: CommunicationService>(&self, communication: &C) {
         self.handle_block_request_timeouts();
 
-        if !self.can_block_sync() {
+        if !self.sync_state.read().can_issue_new_block_requests() && self.failed_requests.lock().is_empty() {
             trace!("Nothing to sync. Will not issue new block requests");
             return;
         }
@@ -539,7 +527,7 @@ impl<N: Network> BlockSync<N> {
         if batches.is_empty() {
             let total_requests = self.num_total_block_requests();
             let num_outstanding = self.num_outstanding_block_requests();
-            if total_requests > 0 {
+            if total_requests != 0 {
                 trace!(
                     "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
                 );
@@ -1113,7 +1101,7 @@ impl<N: Network> BlockSync<N> {
         let fully_synced = {
             let mut state = self.sync_state.write();
             state.set_sync_height(new_height);
-            !state.can_block_sync()
+            !state.can_issue_new_block_requests()
         };
 
         if fully_synced {
