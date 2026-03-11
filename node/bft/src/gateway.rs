@@ -1303,6 +1303,7 @@ impl<N: Network> OnConnect for Gateway<N> {
         if let Some(listener_addr) = self.resolve_to_listener(&peer_addr) {
             if let Some(peer) = self.get_connected_peer(listener_addr) {
                 if peer.node_type == NodeType::BootstrapClient {
+                    self.cache.increment_outbound_validators_requests(listener_addr);
                     let _ =
                         <Self as Transport<N>>::send(self, listener_addr, Event::ValidatorsRequest(ValidatorsRequest))
                             .await;
