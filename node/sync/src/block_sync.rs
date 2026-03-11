@@ -969,7 +969,7 @@ impl<N: Network> BlockSync<N> {
         if !failed_requests.is_empty() {
             trace!("There are {} failed requests that need to be re-issued.", failed_requests.len());
 
-            // Convert the set of failed requests one or multiple continuous ranges.
+            // Convert the set of failed requests into one or multiple continuous ranges.
             let iter = failed_requests.iter();
             let mut batches: VecDeque<Vec<(u32, _, _)>> = VecDeque::new();
 
@@ -1023,11 +1023,10 @@ impl<N: Network> BlockSync<N> {
                     greatest_peer_height,
                 );
 
-                // Remove the requests from the failed requests map.
-                while let Some(height) = failed_requests.keys().next()
-                    && *height <= end_height
-                {
-                    failed_requests.pop_first();
+                // Only remove from failed_requests the heights we actually re-issued.
+                // (If construct_requests returned empty we must not drop these failed requests.)
+                for (height, _) in &requests {
+                    failed_requests.remove(height);
                 }
 
                 result.push((requests, sync_peers));
@@ -1121,6 +1120,12 @@ impl<N: Network> BlockSync<N> {
     }
 
     /// Inserts a block request for the given height.
+    ///
+    /// With a single task issuing block requests, a height should not already be in the requests
+    /// map: heights in `failed_requests` were removed from `requests` when added there, and
+    /// `construct_requests` skips heights already in `requests`. If this returns "already in
+    /// requests map", logging the existing entry (e.g. has response? peers still in locators?)
+    /// may help diagnose why the height was included in the batch.
     fn insert_block_request(&self, height: u32, (hash, previous_hash, sync_ips): SyncRequest<N>) -> Result<()> {
         // Ensure the block request does not already exist.
         self.check_block_request(height)?;
@@ -1256,7 +1261,12 @@ impl<N: Network> BlockSync<N> {
             if !retain {
                 // Record the request to be re-issued.
                 let (hash, previous_hash, _) = &e.request;
-                self.failed_requests.lock().insert(*height, (*hash, *previous_hash));
+                let prev = self.failed_requests.lock().insert(*height, (*hash, *previous_hash));
+                if prev.is_some() {
+                    warn!(
+                        "Failed to mark block request at height {height} as failed, as it already exists in the failed requests map"
+                    );
+                }
                 removed_count += 1;
             }
             retain
@@ -1299,8 +1309,8 @@ impl<N: Network> BlockSync<N> {
                 let is_obsolete = *height <= current_height;
                 // Determine if the duration since the request timestamp has exceeded the request timeout.
                 let timer_elapsed = now.duration_since(e.timestamp) > BLOCK_REQUEST_TIMEOUT;
-                // Determine if the request is incomplete.
-                let is_complete = e.sync_ips().is_empty();
+                // Determine if the request is complete.
+                let is_complete = e.sync_ips().is_empty() && e.response.is_some();
 
                 // Determine if the request has timed out.
                 let is_timeout = timer_elapsed && !is_complete;
@@ -1329,22 +1339,31 @@ impl<N: Network> BlockSync<N> {
             });
 
             if !timed_out_requests.is_empty() {
-                debug!("{num} block requests timed out", num = timed_out_requests.len());
+                debug!(
+                    "{num} block requests timed out: {list}",
+                    num = timed_out_requests.len(),
+                    list = rangify_heights(timed_out_requests.iter().map(|(height, _)| *height))
+                );
             }
 
             (timed_out_requests, peers_to_ban)
         };
+
+        // Mark the non-obsolete requests that timed out as failed.
+        for (height, e) in timed_out_requests.into_iter() {
+            let prev = self.failed_requests.lock().insert(height, e);
+            if prev.is_some() {
+                warn!(
+                    "Failed to mark block request at height {height} as failed, as it already exists in the failed requests map"
+                );
+            }
+        }
 
         // Now remove and ban any unresponsive peers
         for peer_ip in peers_to_ban {
             self.remove_peer(&peer_ip);
             // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
             // peer_pool_handler.ip_ban_peer(peer_ip, Some("timed out on block requests"));
-        }
-
-        // Mark the non-obsolete requests that timed out as failed.
-        for (height, e) in timed_out_requests.into_iter() {
-            self.failed_requests.lock().insert(height, e);
         }
     }
 
