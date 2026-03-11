@@ -219,7 +219,13 @@ impl<N: Network> Gateway<N> {
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()));
+        //
+        // The 10x multiplier allows for more TCP connections than the maximum
+        // committee size to prevent "connection refused" errors when two nodes
+        // simultaneous attempt to connect to each other. Note, that later,
+        // during handshake, the Gateway applies its own limit to the number of
+        // active connections and removes duplicates.
+        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size() * 10));
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
@@ -1888,7 +1894,7 @@ mod prop_tests {
         assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size() * 10);
         assert_eq!(gateway.account().address(), account.address());
     }
 
@@ -1918,7 +1924,7 @@ mod prop_tests {
         }
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size() * 10);
         assert_eq!(gateway.account().address(), account.address());
     }
 

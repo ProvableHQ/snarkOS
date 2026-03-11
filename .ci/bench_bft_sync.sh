@@ -123,7 +123,7 @@ while (( $(elapsed_since "$start") < max_wait )); do
   fi
   
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
 done
 
 log "❌ Benchmark failed! Validators did not sync within 30 minutes."

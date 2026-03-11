@@ -397,7 +397,7 @@ function wait_for_peers() {
     fi
 
     # Continue waiting
-    sleep $poll_interval
+    sleep "$poll_interval"
   done
 
   log "❌ Nodes did not connect within 5 minutes."
@@ -429,7 +429,7 @@ function wait_for_bft_connections() {
     fi
 
     # Continue waiting
-    sleep $poll_interval
+    sleep "$poll_interval"
   done
 
   log "❌ BFT connections did not reach $min_peers within 5 minutes."
@@ -492,7 +492,7 @@ function wait_for_nodes() {
     fi
 
     # Pause to give the nodes time to start up.
-    sleep $poll_interval
+    sleep "$poll_interval"
   done
 
   log "❌ Nodes did not become ready within $max_wait seconds."
