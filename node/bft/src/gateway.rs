@@ -290,6 +290,18 @@ impl<N: Network> Gateway<N> {
         self.enable_disconnect().await;
         self.enable_on_connect().await;
 
+        // Spawn a loop for periodic metrics.
+        #[cfg(feature = "metrics")]
+        {
+            let gateway = self.clone();
+            self.spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    gateway.update_metrics();
+                }
+            });
+        }
+
         // Enable the TCP listener. Note: This must be called after the above protocols.
         let listen_addr = self.tcp.enable_listener().await.expect("Failed to enable the TCP listener");
         debug!("Listening for validator connections at address {listen_addr:?}");
@@ -799,9 +811,6 @@ impl<N: Network> Gateway<N> {
                     self.insert_candidate_peers(valid_addrs);
                 }
 
-                #[cfg(feature = "metrics")]
-                self.update_metrics();
-
                 Ok(true)
             }
             Event::WorkerPing(ping) => {
@@ -835,7 +844,7 @@ impl<N: Network> Gateway<N> {
         let self_clone = self.clone();
         self.spawn(async move {
             // Sleep briefly to ensure the other nodes are ready to connect.
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
@@ -1374,8 +1383,6 @@ impl<N: Network> Disconnect for Gateway<N> {
             // of members.
             self.cache.clear_outbound_validators_requests(peer_ip);
             self.cache.clear_outbound_block_requests(peer_ip);
-            #[cfg(feature = "metrics")]
-            self.update_metrics();
         }
     }
 }
@@ -1465,8 +1472,6 @@ impl<N: Network> Handshake for Gateway<N> {
                             ConnectionMode::Gateway,
                         );
                     }
-                    #[cfg(feature = "metrics")]
-                    self.update_metrics();
                     info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Err(error) => {
