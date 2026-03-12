@@ -84,7 +84,7 @@ impl Default for Config {
             allow_random_port: true,
             fatal_io_errors: vec![ConnectionReset, ConnectionAborted, BrokenPipe, InvalidData, UnexpectedEof],
             max_connections: 100,
-            connection_timeout_ms: 1_000,
+            connection_timeout_ms: 3_000,
         }
     }
 }
