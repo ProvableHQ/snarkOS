@@ -779,7 +779,7 @@ impl<N: Network> BFT<N> {
                 }
 
                 info!(
-                    "\n\nCommitting a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?} (syncing={IS_SYNCING})\n",
+                    "Committing a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?} (syncing={IS_SYNCING})"
                 );
             }
 
