@@ -39,7 +39,7 @@ The BFT module also advances the ledger as new certificates are added to the DAG
 
 When the node is actively participating in consensus and is synced with the network:
 
-1. **Certificate Collection**: The Primary receives batch certificates from validators and inserts them into the DAG via `update_dag()`.
+1. **Certificate Collection**: The Primary receives batch certificates from validators and passes them to the BFT using `add_new_certificate()`, which then updates the DAG.
 2. **Leader Election**: Leaders are elected in even rounds. When a certificate arrives for round `r`, the BFT checks if the leader certificate for round `r-1` can be committed.
 3. **Availability Threshold**: The leader certificate is ready to commit when the availability threshold is reached—i.e., enough validators in round `r` have included the leader's certificate in their previous certificate IDs.
 4. **Commit Chain**: `commit_leader_certificate()` is called, which:
@@ -47,8 +47,9 @@ When the node is actively participating in consensus and is synced with the netw
    - Builds a subDAG containing all certificates to be committed
    - Sends the subDAG to the Consensus module via `tx_consensus_subdag`
 5. **Block Creation**: The Consensus module receives the subDAG and calls `try_advance_to_next_block()`, which:
-   - Prepares a new block from the subDAG and its transmissions
-   - Validates and advances the ledger to the new block
+   - Calls `ledger.begin_ledger_update()` to obtain a LedgerUpdate (blocking other writers until the handle is dropped)
+   - Uses the handle to prepare a new block from the subDAG and its transmissions (`prepare_advance_to_next_quorum_block()`), validate it (`check_next_block()`), and advance the ledger (`advance_to_next_block()`)
+   - Drops the handle so the ledger lock is released
 
 #### 2. Sync Path (Catching Up)
 
@@ -71,7 +72,7 @@ When the node is too far behind (outside the GC range):
 2. **Block Verification**: Blocks are verified using `check_block_subdag()` and added to a queue of `pending_blocks` (same as with normal sync).
 3. **No DAG Updates**: Certificates are **not** added to the BFT's DAG, since they are too old to be useful for consensus.
 4. **Availability Threshold Check**: The Sync module checks whether each pending block's leader certificate has reached the availability threshold via `is_block_availability_threshold_reached()`. This uses certificates from subsequent pending blocks that reference the leader certificate.
-5. **Ledger Advancement**: Once the availability threshold is confirmed, the Sync module directly advances the ledger by calling `advance_to_next_block()` for each confirmed block, and updates storage height and round.
+5. **Ledger Advancement**: Once the availability threshold is confirmed, the Sync module acquires a LedgerUpdate via `ledger.begin_ledger_update()` and, for each confirmed block in sequence, calls `ledger_update.check_block_content(pending_block)` and `ledger_update.advance_to_next_block(&block)`. It also updates storage height and round. The single update handle ensures no concurrent advancement from the consensus path while sync is applying these blocks.
 6. **Transition to Normal Sync**: Once the node catches up to within the GC range, `sync_storage_with_ledger_at_bootup()` is called to populate the BFT DAG with recent certificates, and the node switches back to normal BFT-driven sync.
 
 ### Startup Initialization
@@ -95,7 +96,7 @@ When a node starts, the sync module reconstructs the BFT DAG for the most recent
    - Each certificate from the subDAG is inserted into storage via `sync_certificate_with_block()`
    - This populates the in-memory certificate maps and persists transmissions that are missing from disk
 
-5. **Populate the BFT DAG**: All certificates from the loaded blocks are sent to the BFT module via `tx_sync_bft_dag_at_bootup`. The BFT's `sync_bft_dag_at_bootup()` handler commits each certificate to the DAG, marking them as already committed so the BFT won't try to re-commit them.
+5. **Populate the BFT DAG**: All certificates from the loaded blocks are passed to the BFT module via `add_certificate_from_sync` and marked as committed using `commit_certificate_from_sync`, so the BFT won't try to re-commit them.
 
 6. **Set Sync Height**: Finally, `BlockSync::set_sync_height()` is called to inform the block sync module of the current synchronized height.
 

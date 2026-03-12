@@ -20,7 +20,6 @@ use snarkvm::{
     ledger::{
         block::{Block, Transaction},
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
-        puzzle::SolutionID,
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
     utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
@@ -829,8 +828,6 @@ impl<N: Network> Storage<N> {
         block: &Block<N>,
         certificate: BatchCertificate<N>,
         unconfirmed_transactions: &HashMap<N::TransactionID, Transaction<N>>,
-        pending_aborted_transactions: &HashSet<N::TransactionID>,
-        pending_aborted_solutions: &HashSet<SolutionID<N>>,
     ) -> Result<()> {
         // Skip if the certificate round is below the GC round.
         let gc_round = self.gc_round();
@@ -879,7 +876,6 @@ impl<N: Network> Storage<N> {
                     } else if let Ok(Some(solution)) = self.ledger.get_solution(solution_id) {
                         missing_transmissions.insert(*transmission_id, solution.into());
                     } else if aborted_solutions.contains(solution_id)
-                        || pending_aborted_solutions.contains(solution_id)
                         || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
                     {
                         aborted_transmissions.insert(*transmission_id);
@@ -899,7 +895,6 @@ impl<N: Network> Storage<N> {
                     } else if let Ok(Some(transaction)) = self.ledger.get_unconfirmed_transaction(*transaction_id) {
                         missing_transmissions.insert(*transmission_id, transaction.into());
                     } else if aborted_transactions.contains(transaction_id)
-                        || pending_aborted_transactions.contains(transaction_id)
                         || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
                     {
                         aborted_transmissions.insert(*transmission_id);

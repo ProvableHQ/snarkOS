@@ -32,14 +32,7 @@ use snarkvm::{
         network::{ConsensusVersion, Network},
         types::Field,
     },
-    ledger::{
-        CheckBlockError,
-        PendingBlock,
-        authority::Authority,
-        block::Block,
-        narwhal::BatchCertificate,
-        puzzle::SolutionID,
-    },
+    ledger::{CheckBlockError, PendingBlock, authority::Authority, block::Block, narwhal::BatchCertificate},
     utilities::{cfg_into_iter, cfg_iter, ensure_equals, flatten_error},
 };
 
@@ -66,10 +59,11 @@ use tokio::{sync::oneshot, task::JoinHandle};
 /// This is currently used by BFT.
 #[async_trait::async_trait]
 pub trait SyncCallback<N: Network>: Send + std::marker::Sync {
-    fn sync_bft_dag_at_bootup(&self, certificates: &[BatchCertificate<N>]);
+    // Adds a new certificate to the DAG.
+    fn add_certificate_from_sync(&self, certificate: BatchCertificate<N>);
 
-    fn add_certificate(&self, certificate: BatchCertificate<N>);
-    fn commit_certificate(&self, certificate: &BatchCertificate<N>);
+    // Commits a certificate into the DAG.
+    fn commit_certificate_from_sync(&self, certificate: &BatchCertificate<N>);
 }
 
 /// Block synchronization logic for validators.
@@ -363,8 +357,9 @@ impl<N: Network> Sync<N> {
 
 // Methods to manage storage.
 impl<N: Network> Sync<N> {
-    /// This functions inserts the certificates from the most recent blocks into the BFT DAG.
-    /// It is called when starting the validator and after finishing a sync without BFT.
+    /// Syncs the storage with the ledger at bootup.
+    ///
+    /// This is called when starting the validator and after finishing a sync without BFT.
     fn sync_storage_with_ledger_at_bootup(&self) -> Result<()> {
         let mut pending_blocks = self.pending_blocks.lock();
         let latest_ledger_block = self.ledger.latest_block();
@@ -379,16 +374,6 @@ impl<N: Network> Sync<N> {
         let latest_block: &Block<N> = pending_blocks.back().map(|block| block.deref()).unwrap_or(&latest_ledger_block);
         let max_height = latest_block.height();
 
-        // Create the set of aborted transmissions in the pending blocks, as they will not be contained in the ledger.
-        let pending_aborted_transactions = pending_blocks
-            .iter()
-            .flat_map(|block| block.aborted_transaction_ids().iter().cloned())
-            .collect::<HashSet<_>>();
-        let pending_aborted_solutions = pending_blocks
-            .iter()
-            .flat_map(|block| block.aborted_solution_ids().iter().cloned())
-            .collect::<HashSet<_>>();
-
         // Determine the maximum number of blocks corresponding to rounds
         // that would not have been garbage collected, i.e. that would be kept in storage.
         // Since at most one block is created every two rounds,
@@ -400,11 +385,11 @@ impl<N: Network> Sync<N> {
         // By virtue of the BFT protocol, we can guarantee that all GC range blocks will be loaded.
         let gc_height = max_height.saturating_sub(max_gc_blocks);
 
-        // Retrieve the DAGs of all blocks..
+        // Retrieve the DAGs of all recent blocks..
         let ledger_blocks = self.ledger.get_blocks(gc_height..(latest_ledger_block.height() + 1))?;
 
         let blocks = ledger_blocks.iter().chain(pending_blocks.iter().map(|block| block.deref()));
-        debug!("Syncing storage with the ledger from block {} to {}...", gc_height, latest_block.height());
+        debug!("Syncing storage with ledger and pending blocks from height {gc_height} to {max_height}...");
 
         /* Sync storage */
 
@@ -417,7 +402,7 @@ impl<N: Network> Sync<N> {
             .garbage_collect_certificates(latest_block.round())
             .with_context(|| "Failed to garbage collect certificates")?;
 
-        // Iterate over the blocks.
+        // Add the blocks to the BFT storage.
         for block in blocks {
             if let Authority::Quorum(subdag) = block.authority() {
                 // If the block authority is a sub-DAG, then sync the batch certificates with the block.
@@ -435,13 +420,7 @@ impl<N: Network> Sync<N> {
                 for certificates in subdag.values().cloned() {
                     cfg_into_iter!(certificates).try_for_each(|certificate| {
                         self.storage
-                            .sync_certificate_with_block(
-                                block,
-                                certificate,
-                                &unconfirmed_transactions,
-                                &pending_aborted_transactions,
-                                &pending_aborted_solutions,
-                            )
+                            .sync_certificate_with_block(block, certificate, &unconfirmed_transactions)
                             .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
                     })?;
                 }
@@ -452,25 +431,25 @@ impl<N: Network> Sync<N> {
             }
         }
 
-        // Notify BFT of ledger and pending certificates once (not per-block, to avoid duplicate add/commit).
+        // Add all certificates to the BFT DAG, and update the committed round.
         if let Some(cb) = self.sync_callback.get() {
-            // Insert and commit ledger block certificates.
             for block in ledger_blocks.into_iter() {
                 if let Authority::Quorum(subdag) = block.authority() {
                     for round in subdag.values() {
-                        for certificate in round {
-                            cb.add_certificate(certificate.clone());
-                            cb.commit_certificate(certificate);
+                        for cert in round {
+                            cb.add_certificate_from_sync(cert.clone());
+                            cb.commit_certificate_from_sync(cert);
                         }
                     }
                 }
             }
-            // Insert (but do not commit) pending block certificates.
+
+            // Pending blocks have not been committed yet.
             for block in pending_blocks.iter() {
                 if let Authority::Quorum(subdag) = block.authority() {
                     for round in subdag.values() {
-                        for certificate in round {
-                            cb.add_certificate(certificate.clone());
+                        for cert in round {
+                            cb.add_certificate_from_sync(cert.clone());
                         }
                     }
                 }
@@ -685,12 +664,7 @@ impl<N: Network> Sync<N> {
     ///
     /// Note that the block authority is always a sub-DAG in production; beacon signatures are only used for testing,
     /// and as placeholder (irrelevant) block authority in the genesis block.
-    async fn add_block_subdag_to_bft(
-        &self,
-        block: &Block<N>,
-        pending_aborted_transactions: &HashSet<N::TransactionID>,
-        pending_aborted_solutions: &HashSet<SolutionID<N>>,
-    ) -> Result<()> {
+    fn add_block_subdag_to_bft(&self, block: &Block<N>) -> Result<()> {
         // Nothing to do if this is a beacon block
         let Authority::Quorum(subdag) = block.authority() else {
             return Ok(());
@@ -706,13 +680,7 @@ impl<N: Network> Sync<N> {
             cfg_into_iter!(certificates.clone()).try_for_each(|certificate| -> Result<()> {
                 // Sync the batch certificate with the block.
                 self.storage
-                    .sync_certificate_with_block(
-                        block,
-                        certificate.clone(),
-                        &unconfirmed_transactions,
-                        pending_aborted_transactions,
-                        pending_aborted_solutions,
-                    )
+                    .sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions)
                     .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
             })?;
         }
@@ -721,7 +689,7 @@ impl<N: Network> Sync<N> {
         if let Some(cb) = self.sync_callback.get() {
             for round in subdag.values() {
                 for certificate in round {
-                    cb.add_certificate(certificate.clone());
+                    cb.add_certificate_from_sync(certificate.clone());
                 }
             }
         }
@@ -810,22 +778,7 @@ impl<N: Network> Sync<N> {
 
         // Append the certificates to the storage, if the block is within the GC range.
         if within_gc_range {
-            // Extract the set of aborted transactions and solutions from the previous pending blocks (if any).
-            // There is only one sync advancement task, so we do not need to worry about the set being updated while running `add_block_subdag_to_bft`.
-            let (pending_aborted_transactions, pending_aborted_solutions) = {
-                let pending_blocks = self.pending_blocks.lock();
-                let pending_aborted_transactions = pending_blocks
-                    .iter()
-                    .flat_map(|block| block.aborted_transaction_ids().iter().cloned())
-                    .collect::<HashSet<_>>();
-                let pending_aborted_solutions = pending_blocks
-                    .iter()
-                    .flat_map(|block| block.aborted_solution_ids().iter().cloned())
-                    .collect::<HashSet<_>>();
-                (pending_aborted_transactions, pending_aborted_solutions)
-            };
-
-            self.add_block_subdag_to_bft(&new_block, &pending_aborted_transactions, &pending_aborted_solutions).await?;
+            self.add_block_subdag_to_bft(&new_block)?;
         }
 
         // This optimistically performs updates to the pending block set.
@@ -1017,7 +970,7 @@ impl<N: Network> Sync<N> {
             {
                 for round in subdag.values() {
                     for certificate in round {
-                        cb.commit_certificate(certificate);
+                        cb.commit_certificate_from_sync(certificate);
                     }
                 }
             }

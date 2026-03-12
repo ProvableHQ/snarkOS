@@ -97,7 +97,7 @@ pub trait PrimaryCallback<N: Network>: Send + std::marker::Sync {
     /// Notifies that a new round has started.
     fn update_to_next_round(&self, current_round: u64) -> bool;
 
-    /// Sends a new certificate.
+    /// Add a certificated that was created by the primary or received from a peer.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
 }
 
