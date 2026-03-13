@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773328264120,
+  "lastUpdate": 1773403414994,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -10530,6 +10530,72 @@ window.BENCHMARK_DATA = {
             "value": 1.58,
             "unit": "blocks/s",
             "extra": "total_wait=158s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "556f1b810f530d6bd02dc751d751145ed369574a",
+          "message": "Merge pull request #4162 from ProvableHQ/fix/router_heartbeat_sleep\n\n[Fix] Correct the Router heartbeat interval",
+          "timestamp": "2026-03-13T12:34:13+01:00",
+          "tree_id": "a55f8a8a8b516d0f5fff6e2d0507877ff85ca9f0",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/556f1b810f530d6bd02dc751d751145ed369574a"
+        },
+        "date": 1773403413845,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.779199910438539,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=83.0564796924591, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7466.156023830246,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.715018510818481, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1046.423963717118,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7645084857940674, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.62,
+            "unit": "blocks/s",
+            "extra": "total_wait=154s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.051534,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=149, mean_speed=1.171700, max_speed=2.666667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.54,
+            "unit": "blocks/s",
+            "extra": "total_wait=162s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.56,
+            "unit": "blocks/s",
+            "extra": "total_wait=160s, target_height=250"
           }
         ]
       }
