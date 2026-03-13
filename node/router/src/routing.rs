@@ -54,11 +54,10 @@ pub trait Routing<N: Network>:
                 let start = Instant::now();
                 // Process a heartbeat in the router.
                 self_clone.heartbeat().await;
-                let end = Instant::now();
+                let took = start.elapsed();
 
                 // The heartbeat may take a while (as it is waiting for connection attempts to complete).
                 // Take this into account when calculating its sleep time.
-                let took = end.saturating_duration_since(start);
                 let sleep_time = Self::HEARTBEAT_INTERVAL.saturating_sub(took);
                 tokio::time::sleep(sleep_time).await;
             }
