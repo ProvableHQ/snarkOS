@@ -1233,7 +1233,7 @@ impl<N: Network> BlockSync<N> {
     fn remove_block_requests_to_peer(&self, peer_ip: &SocketAddr) {
         trace!("Block sync is removing all block requests to peer {peer_ip}...");
         let mut heights = vec![];
-        let mut removed_count = 0;
+        let mut removed_requests = vec![];
 
         // Remove the peer IP from the requests map. If any request entry is now empty,
         // and its corresponding response entry is also empty, then remove that request entry altogether.
@@ -1251,13 +1251,7 @@ impl<N: Network> BlockSync<N> {
             if !retain {
                 // Record the request to be re-issued.
                 let (hash, previous_hash, _) = &e.request;
-                let prev = self.failed_requests.lock().insert(*height, (*hash, *previous_hash));
-                if prev.is_some() {
-                    warn!(
-                        "Failed to mark block request at height {height} as failed, as it already exists in the failed requests map"
-                    );
-                }
-                removed_count += 1;
+                removed_requests.push((*height, (*hash, *previous_hash)));
             }
             retain
         });
@@ -1266,8 +1260,21 @@ impl<N: Network> BlockSync<N> {
             debug!(
                 "Removed outstanding block requests to disconnecting peer '{peer_ip}' at heights: {}. {} were fully removed.",
                 rangify_heights(heights),
-                removed_count
+                removed_requests.len(),
             );
+        }
+
+        // Mark all requests that were removed as failed.
+        if !removed_requests.is_empty() {
+            let mut failed_requests = self.failed_requests.lock();
+            for (height, e) in removed_requests.into_iter() {
+                let prev = failed_requests.insert(height, e);
+                if prev.is_some() {
+                    warn!(
+                        "Failed to mark block request at height {height} as failed, as it already exists in the failed requests map"
+                    );
+                }
+            }
         }
 
         // No need to remove responses here, because requests with responses will be retained.
@@ -1340,12 +1347,15 @@ impl<N: Network> BlockSync<N> {
         };
 
         // Mark the non-obsolete requests that timed out as failed.
-        for (height, e) in timed_out_requests.into_iter() {
-            let prev = self.failed_requests.lock().insert(height, e);
-            if prev.is_some() {
-                warn!(
-                    "Failed to mark block request at height {height} as failed, as it already exists in the failed requests map"
-                );
+        if !timed_out_requests.is_empty() {
+            let mut failed_requests = self.failed_requests.lock();
+            for (height, e) in timed_out_requests.into_iter() {
+                let prev = failed_requests.insert(height, e);
+                if prev.is_some() {
+                    warn!(
+                        "Failed to mark block request at height {height} as failed, as it already exists in the failed requests map"
+                    );
+                }
             }
         }
 
