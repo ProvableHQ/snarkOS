@@ -788,7 +788,7 @@ workflows:
           filters:
             branches:
               only:
-                - patch/tcp-socket-creation-2
+                - fix/4.5.3-hotfixes
                 - canary
                 - testnet
                 - mainnet
@@ -798,7 +798,7 @@ workflows:
           filters:
             branches:
               only:
-                - patch/tcp-socket-creation-2
+                - fix/4.5.3-hotfixes
                 - canary
                 - testnet
                 - mainnet
@@ -810,7 +810,7 @@ workflows:
           filters:
             branches:
               only:
-                - patch/tcp-socket-creation-2
+                - fix/4.5.3-hotfixes
                 - canary
                 - testnet
                 - mainnet
