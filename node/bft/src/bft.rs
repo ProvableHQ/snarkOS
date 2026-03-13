@@ -246,7 +246,7 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
                 let leader_round = leader_certificate.round();
                 match leader_round == current_round {
                     true => {
-                        info!("\n\nRound {current_round} elected a leader - {}\n", leader_certificate.author());
+                        info!("Round {current_round} elected a leader - {}", leader_certificate.author());
                         #[cfg(feature = "metrics")]
                         metrics::increment_counter(metrics::bft::LEADERS_ELECTED);
                     }
@@ -254,8 +254,8 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
                 }
             } else {
                 match is_ready {
-                    true => info!("\n\nRound {current_round} reached quorum without a leader\n"),
-                    false => info!("{}", format!("\n\nRound {current_round} did not elect a leader (yet)\n").dimmed()),
+                    true => info!("Round {current_round} reached quorum without a leader"),
+                    false => info!("{}", format!("Round {current_round} did not elect a leader (yet)").dimmed()),
                 }
             }
         }

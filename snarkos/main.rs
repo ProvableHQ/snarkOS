@@ -157,7 +157,7 @@ fn main() {
     // Process any errors (including panics).
     match result {
         Ok(Ok(output)) => {
-            print_info!("{output}\n");
+            print_info!("{output}");
             exit(0);
         }
         Ok(Err(err)) => {

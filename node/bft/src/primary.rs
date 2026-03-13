@@ -1698,7 +1698,7 @@ impl<N: Network> Primary<N> {
         // Log the certified batch.
         let num_transmissions = certificate.transmission_ids().len();
         let round = certificate.round();
-        info!("\n\nOur batch with {num_transmissions} transmissions for round {round} was certified!\n");
+        info!("Our batch with {num_transmissions} transmissions for round {round} was certified!");
         // Increment to the next round.
         self.try_increment_to_the_next_round(round + 1).await
     }

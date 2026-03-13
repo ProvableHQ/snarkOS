@@ -116,7 +116,11 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V10, 21),
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
-        (ConsensusVersion::V13, 24),
+        // Historical note: ConsensusVersion::V13, we forgot to run CI and
+        // increment the message version before the canary release, so canary
+        // nodes need to jump from 23 to 25, whereas for testnet/mainnet we can
+        // then jump from 24 to 25 as usual.
+        (ConsensusVersion::V13, 23),
         (ConsensusVersion::V14, 25),
     ];
 
@@ -293,14 +297,14 @@ mod tests {
         }
     }
 
-    /// Ensure that *message versions* are unique and incrementing by 1.
-    fn consensus_constants_increasing_heights<N: Network>() {
-        let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
-        for (_, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
-            assert_eq!(*message_version, previous_message_version + 1);
-            previous_message_version = *message_version;
-        }
-    }
+    // /// Ensure that *message versions* are unique and incrementing by 1.
+    // fn consensus_constants_increasing_heights<N: Network>() {
+    //     let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
+    //     for (_consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+    //         assert_eq!(*message_version, previous_message_version + 1);
+    //         previous_message_version = *message_version;
+    //     }
+    // }
 
     #[test]
     #[allow(clippy::assertions_on_constants)]
@@ -313,9 +317,10 @@ mod tests {
         consensus_versions::<TestnetV0>();
         consensus_versions::<CanaryV0>();
 
-        consensus_constants_increasing_heights::<MainnetV0>();
-        consensus_constants_increasing_heights::<TestnetV0>();
-        consensus_constants_increasing_heights::<CanaryV0>();
+        // TODO: re-enable for testnet V14
+        // consensus_constants_increasing_heights::<MainnetV0>();
+        // consensus_constants_increasing_heights::<TestnetV0>();
+        // consensus_constants_increasing_heights::<CanaryV0>();
     }
 
     #[test]

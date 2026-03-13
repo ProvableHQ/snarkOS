@@ -21,7 +21,7 @@ use snarkos_node_sync::BftSyncMode;
 use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
-    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
+    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, block::Transaction},
 };
 
 use axum::{Json, extract::rejection::JsonRejection};
@@ -32,7 +32,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
-use std::{collections::HashMap, fs, sync::atomic::Ordering};
+use std::{collections::HashMap, fs};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
@@ -726,32 +726,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
         if check_transaction {
-            // Select counter and limit based on transaction type.
-            let (counter, limit, err_msg) = if tx.is_execute() {
-                (
-                    &rest.num_verifying_executions,
-                    VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
-                    "Too many execution verifications in progress",
-                )
+            // Select the semaphore based on the transaction type.
+            let (slot, err_msg) = if tx.is_execute() {
+                (rest.num_verifying_executions.acquire().await, "Too many execution verifications in progress")
             } else {
-                (
-                    &rest.num_verifying_deploys,
-                    VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
-                    "Too many deploy verifications in progress",
-                )
+                (rest.num_verifying_deploys.acquire().await, "Too many deploy verifications in progress")
             };
 
-            // Try to acquire a slot.
-            if counter
-                .fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |val| {
-                        if val < limit { Some(val + 1) } else { None }
-                    },
-                )
-                .is_err()
-            {
+            if slot.is_err() {
                 return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
             }
 
@@ -766,8 +748,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                     }
                 }
             });
-            // Release the slot.
-            counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
             res?;
         }
@@ -825,22 +805,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_solution = check_solution.check_solution.unwrap_or(false);
 
         if check_solution {
-            // Select counter and limit.
-            let (counter, limit, err_msg) =
-                (&rest.num_verifying_solutions, N::MAX_SOLUTIONS, "Too many solution verifications in progress");
-
             // Try to acquire a slot.
-            if counter
-                .fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |val| {
-                        if val < limit { Some(val + 1) } else { None }
-                    },
-                )
-                .is_err()
-            {
-                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
+            let slot = rest.num_verifying_solutions.acquire().await;
+            if slot.is_err() {
+                return Err(RestError::too_many_requests(anyhow!("Too many solution verifications in progress")));
             }
 
             // Compute the current epoch hash.
@@ -882,8 +850,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                         return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
                     }
                 };
-            // Release the slot.
-            counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
             res?;
         }

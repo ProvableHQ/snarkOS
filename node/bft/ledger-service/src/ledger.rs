@@ -126,7 +126,7 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
             metrics::update_block_metrics(block);
         }
 
-        tracing::info!("\n\nAdvanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
+        tracing::info!("Advanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
         Ok(())
     }
 }

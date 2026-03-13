@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-utilities"
-version = "4.2.1"
+version = "4.5.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Utilities for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -12,7 +12,6 @@ keywords = [
   "decentralized",
   "zero-knowledge"
 ]
-include = ["../LICENSE.md"]
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
@@ -22,7 +21,7 @@ workspace = true
 
 [dependencies.tokio]
 workspace = true
-features = [ "macros", "signal", "sync" ]
+features = [ "macros", "rt", "signal", "sync" ]
 
 [dependencies.tracing]
 workspace = true
