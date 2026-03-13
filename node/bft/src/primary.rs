@@ -2060,7 +2060,7 @@ mod tests {
         height: u32,
     ) -> Primary<CurrentNetwork> {
         let ledger = Arc::new(MockLedgerService::new_at_height(committee, height));
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10).unwrap();
 
         // Initialize the primary.
         let account = accounts[account_index].1.clone();

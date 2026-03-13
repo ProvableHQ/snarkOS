@@ -1257,7 +1257,7 @@ mod tests {
         };
 
         // Initialize the storage.
-        let storage = Storage::new(core_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(core_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
 
         // Create a list of all certificates.
         let certificates: Vec<_> =
@@ -1342,7 +1342,8 @@ mod tests {
         };
 
         let account = Account::new(rng).unwrap();
-        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let syncing_storage =
+            Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let gateway = Gateway::new(
             account.clone(),
             syncing_storage.clone(),
@@ -1410,7 +1411,8 @@ mod tests {
         ));
 
         let account = Account::new(rng).unwrap();
-        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let syncing_storage =
+            Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let gateway = Gateway::new(
             account.clone(),
             syncing_storage.clone(),
@@ -1500,7 +1502,8 @@ mod tests {
         };
 
         let account = Account::new(rng).unwrap();
-        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let syncing_storage =
+            Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let gateway = Gateway::new(
             account.clone(),
             syncing_storage.clone(),
@@ -1584,7 +1587,8 @@ mod tests {
         };
 
         let account = Account::new(rng).unwrap();
-        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let syncing_storage =
+            Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let gateway = Gateway::new(
             account.clone(),
             syncing_storage.clone(),
@@ -1665,7 +1669,8 @@ mod tests {
         };
 
         let account = Account::new(rng).unwrap();
-        let syncing_storage = Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let syncing_storage =
+            Storage::new(syncing_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let gateway = Gateway::new(
             account.clone(),
             syncing_storage.clone(),
@@ -1797,7 +1802,7 @@ mod tests {
         };
 
         // Initialize the storage.
-        let storage = Storage::new(core_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(core_ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Insert certificates into storage.
         let mut certificates: Vec<BatchCertificate<CurrentNetwork>> = Vec::new();
         for i in 1..=commit_round + 8 {

@@ -2028,7 +2028,7 @@ mod prop_tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Initialize the gateway.
         let gateway = Gateway::new(
             account.clone(),

@@ -135,7 +135,8 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal transmissions.
         let transmissions = Arc::new(BFTPersistentStorage::open(storage_mode.clone())?);
         // Initialize the Narwhal storage.
-        let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
+        let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64)
+            .with_context(|| "Failed to initialize the BFT storage")?;
         // Initialize the BFT.
         let bft = BFT::new(
             account,

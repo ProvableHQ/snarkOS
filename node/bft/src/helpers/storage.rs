@@ -112,7 +112,7 @@ impl<N: Network> Storage<N> {
         ledger: Arc<dyn LedgerService<N>>,
         transmissions: Arc<dyn StorageService<N>>,
         max_gc_rounds: u64,
-    ) -> Self {
+    ) -> Result<Self> {
         // Retrieve the latest committee bonded in the ledger
         // (genesis committee if the ledger contains only the genesis block).
         let committee = ledger.current_committee().expect("Ledger is missing a committee.");
@@ -137,10 +137,10 @@ impl<N: Network> Storage<N> {
 
         // Perform GC on the current round.
         // Since there are no certificates yet, this only sets `gc_round`.
-        storage.garbage_collect_certificates(current_round).unwrap();
+        storage.garbage_collect_certificates(current_round)?;
 
         // Return the storage.
-        storage
+        Ok(storage)
     }
 }
 
@@ -1068,7 +1068,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Ensure the storage is empty.
         assert_storage(&storage, &[], &[], &[], &Default::default());
@@ -1132,7 +1132,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Ensure the storage is empty.
         assert_storage(&storage, &[], &[], &[], &Default::default());
@@ -1188,7 +1188,7 @@ pub(crate) mod tests {
 
         let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
         let ledger = Arc::new(MockLedgerService::new(committee));
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         let certificate = snarkvm::ledger::narwhal::batch_certificate::test_helpers::sample_batch_certificate(rng);
         let certificate_id = certificate.id();
@@ -1248,7 +1248,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1290,7 +1290,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1346,7 +1346,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1400,7 +1400,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1483,7 +1483,7 @@ pub mod prop_tests {
             (any::<CommitteeContext>(), 0..BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64)
                 .prop_map(|(CommitteeContext(committee, _), gc_rounds)| {
                     let ledger = Arc::new(MockLedgerService::new(committee));
-                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds)
+                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds).unwrap()
                 })
                 .boxed()
         }
@@ -1492,7 +1492,7 @@ pub mod prop_tests {
             (Just(context), 0..BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64)
                 .prop_map(|(CommitteeContext(committee, _), gc_rounds)| {
                     let ledger = Arc::new(MockLedgerService::new(committee));
-                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds)
+                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds).unwrap()
                 })
                 .boxed()
         }
@@ -1615,7 +1615,7 @@ pub mod prop_tests {
 
         // Initialize the storage.
         let ledger = Arc::new(MockLedgerService::new(committee));
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Ensure the storage is empty.
         assert_storage(&storage, &[], &[], &[], &Default::default());

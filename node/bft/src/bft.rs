@@ -957,7 +957,7 @@ mod tests {
         let account = Account::new(rng).unwrap();
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         let transmissions = Arc::new(BFTMemoryService::new());
-        let storage = Storage::new(ledger.clone(), transmissions, max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), transmissions, max_gc_rounds).unwrap();
 
         (committee, account, ledger, storage)
     }
@@ -1011,7 +1011,7 @@ mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10).unwrap();
         // Initialize the account.
         let account = Account::new(rng)?;
         // Initialize the BFT.
@@ -1108,7 +1108,7 @@ mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10).unwrap();
         // Initialize the account.
         let account = Account::new(rng)?;
 
@@ -1216,7 +1216,7 @@ mod tests {
 
         // Initialize the storage.
         let transmissions = Arc::new(BFTMemoryService::new());
-        let storage = Storage::new(ledger.clone(), transmissions, 10);
+        let storage = Storage::new(ledger.clone(), transmissions, 10).unwrap();
         storage.testing_only_insert_certificate_testing_only(certificates[0].clone());
         storage.testing_only_insert_certificate_testing_only(certificates[1].clone());
         storage.testing_only_insert_certificate_testing_only(certificates[2].clone());
@@ -1265,7 +1265,7 @@ mod tests {
         // Ensure the function succeeds in returning only certificates above GC.
         {
             // Initialize the storage.
-            let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+            let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
             // Initialize the BFT.
             let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
 
@@ -1295,7 +1295,7 @@ mod tests {
         // Ensure the function succeeds in returning all given certificates.
         {
             // Initialize the storage.
-            let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+            let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
             // Initialize the BFT.
             let bft = initialize_bft(account.clone(), storage.clone(), ledger.clone())?;
 
@@ -1403,7 +1403,7 @@ mod tests {
 
         // Initialize the storage.
         let transmissions = Arc::new(BFTMemoryService::new());
-        let storage = Storage::new(ledger.clone(), transmissions, max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), transmissions, max_gc_rounds).unwrap();
         // Insert the certificates into the storage.
         for certificate in certificates.iter() {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
@@ -1470,7 +1470,7 @@ mod tests {
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
 
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Insert the certificates into the storage.
         for certificate in certificates.iter() {
             storage.testing_only_insert_certificate_testing_only(certificate.clone());
@@ -1498,7 +1498,7 @@ mod tests {
         // Simulate a bootup of the BFT.
 
         // Initialize a new instance of storage.
-        let storage_2 = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage_2 = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Initialize a new instance of BFT.
         let bootup_bft = initialize_bft(account.clone(), storage_2, ledger)?;
 
@@ -1620,7 +1620,7 @@ mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Get the leaders for the next 2 commit rounds.
         let leader = committee.get_leader(commit_round).unwrap();
         let next_leader = committee.get_leader(next_round).unwrap();
@@ -1679,7 +1679,7 @@ mod tests {
         // Simulate a bootup of the BFT.
 
         // Initialize a new instance of storage.
-        let bootup_storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let bootup_storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
 
         // Initialize a new instance of BFT with bootup.
         let bootup_bft = initialize_bft(account.clone(), bootup_storage.clone(), ledger.clone())?;
@@ -1840,7 +1840,7 @@ mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Get the leaders for the next 2 commit rounds.
         let leader = committee.get_leader(commit_round).unwrap();
         let next_leader = committee.get_leader(next_round).unwrap();
@@ -1920,7 +1920,7 @@ mod tests {
 
         let committee = sample_committee_for_round_and_members(committee_round, addresses.clone(), rng);
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let bft = initialize_bft(Account::new(rng).unwrap(), storage.clone(), ledger.clone()).unwrap();
 
         let mut certificates_by_round: IndexMap<u64, IndexSet<BatchCertificate<CurrentNetwork>>> = IndexMap::new();
@@ -2069,7 +2069,7 @@ mod tests {
 
         let committee = sample_committee_for_round_and_members(committee_round, addresses.clone(), rng);
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         let bft = initialize_bft(Account::new(rng).unwrap(), storage.clone(), ledger.clone()).unwrap();
 
         let mut certificates_by_round: IndexMap<u64, IndexSet<BatchCertificate<CurrentNetwork>>> = IndexMap::new();

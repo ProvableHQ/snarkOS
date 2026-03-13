@@ -134,7 +134,7 @@ pub async fn start_bft(
         ledger.clone(),
         Arc::new(BFTMemoryService::new()),
         BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
-    );
+    )?;
     // Initialize the gateway IP and storage mode.
     let ip = match peers.get(&node_id) {
         Some(ip) => Some(*ip),
@@ -188,7 +188,7 @@ pub async fn start_primary(
         ledger.clone(),
         Arc::new(BFTMemoryService::new()),
         BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
-    );
+    )?;
     // Initialize the gateway IP and storage mode.
     let ip = match peers.get(&node_id) {
         Some(ip) => Some(*ip),
