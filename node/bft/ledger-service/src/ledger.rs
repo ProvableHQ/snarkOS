@@ -360,7 +360,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Checks the given block is valid next block.
     fn check_next_block(&self, block: &Block<N>) -> Result<()> {
-        self.ledger.check_next_block(block, &mut rand::thread_rng())
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+        let result = self.ledger.check_next_block(block, &mut rand::thread_rng());
+        #[cfg(feature = "metrics")]
+        if result.is_ok() {
+            metrics::histogram(metrics::consensus::CHECK_NEXT_BLOCK_LATENCY, start.elapsed().as_secs_f64());
+        }
+        result
     }
 
     /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
@@ -370,12 +377,24 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<Block<N>> {
-        Ok(self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())?)
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+        let result = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng());
+        #[cfg(feature = "metrics")]
+        if result.is_ok() {
+            metrics::histogram(
+                metrics::consensus::PREPARE_ADVANCE_TO_NEXT_QUORUM_BLOCK_LATENCY,
+                start.elapsed().as_secs_f64(),
+            );
+        }
+        result.map_err(|e| e.into())
     }
 
     /// Adds the given block as the next block in the ledger.
     #[cfg(feature = "ledger-write")]
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         // If the Ctrl-C handler registered the signal, then skip advancing to the next block.
         if self.stoppable.is_stopped() {
             bail!("Skipping advancing to block {} - The node is shutting down", block.height());
@@ -385,6 +404,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         // Update BFT metrics.
         #[cfg(feature = "metrics")]
         {
+            metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_LATENCY, start.elapsed().as_secs_f64());
             let num_sol = block.solutions().len();
             let num_tx = block.transactions().len();
 
