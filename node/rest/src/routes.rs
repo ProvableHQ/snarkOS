@@ -389,7 +389,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn return_program_with_metadata(&self, program: Program<N>, edition: u16) -> Result<ErasedJson, RestError> {
         let id = program.id();
         // Get the transaction ID associated with the program and edition.
-        let tx_id = self.ledger.find_transaction_id_from_program_id_and_edition(id, edition)?;
+        let tx_id = self.ledger.find_latest_transaction_id_from_program_id_and_edition(id, edition)?;
         // Get the optional program owner associated with the program.
         // Note: The owner is only available after `ConsensusVersion::V9`.
         let program_owner = match &tx_id {
@@ -403,11 +403,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 .and_then(|deployment| deployment.program_owner()),
             None => None,
         };
+        // Get the amendment count for this program and edition.
+        let amendment_count =
+            self.ledger.vm().block_store().transaction_store().get_amendment_count(id, edition)?.unwrap_or(0);
         Ok(ErasedJson::pretty(json!({
             "program": program,
             "edition": edition,
             "transaction_id": tx_id,
             "program_owner": program_owner,
+            "amendment_count": amendment_count,
         })))
     }
 
@@ -484,6 +488,40 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to read mapping"))),
             Err(err) => Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
         }
+    }
+
+    /// GET /<network>/program/{programID}/amendment_count
+    pub(crate) async fn get_program_amendment_count(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        // Get the latest edition.
+        let edition = rest.ledger.get_latest_edition_for_program(&id)?;
+        // Get the amendment count for this program and edition.
+        let amendment_count =
+            rest.ledger.vm().block_store().transaction_store().get_amendment_count(&id, edition)?.unwrap_or(0);
+
+        Ok(ErasedJson::pretty(json!({
+            "program_id": id,
+            "edition": edition,
+            "amendment_count": amendment_count,
+        })))
+    }
+
+    /// GET /<network>/program/{programID}/{edition}/amendment_count
+    pub(crate) async fn get_program_amendment_count_for_edition(
+        State(rest): State<Self>,
+        Path((id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        // Get the amendment count for this program and edition.
+        let amendment_count =
+            rest.ledger.vm().block_store().transaction_store().get_amendment_count(&id, edition)?.unwrap_or(0);
+
+        Ok(ErasedJson::pretty(json!({
+            "program_id": id,
+            "edition": edition,
+            "amendment_count": amendment_count,
+        })))
     }
 
     /// GET /<network>/statePath/{commitment}
@@ -632,11 +670,37 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/find/transactionID/deployment/{programID}/{edition}
-    pub(crate) async fn find_transaction_id_from_program_id_and_edition(
+    pub(crate) async fn find_latest_transaction_id_from_program_id_and_edition(
         State(rest): State<Self>,
         Path((program_id, edition)): Path<(ProgramID<N>, u16)>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id_and_edition(&program_id, edition)?))
+        Ok(ErasedJson::pretty(
+            rest.ledger.find_latest_transaction_id_from_program_id_and_edition(&program_id, edition)?,
+        ))
+    }
+
+    /// GET /<network>/find/transactionID/deployment/{programID}/{edition}/original
+    /// Finds the transaction ID for the original deployment (not an amendment).
+    pub(crate) async fn find_original_deployment_transaction_id(
+        State(rest): State<Self>,
+        Path((program_id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(
+            rest.ledger.find_original_transaction_id_from_program_id_and_edition(&program_id, edition)?,
+        ))
+    }
+
+    /// GET /<network>/find/transactionID/deployment/{programID}/{edition}/{amendment}
+    /// Finds the transaction ID for an amendment deployment at the specified index.
+    pub(crate) async fn find_transaction_id_from_program_id_edition_and_amendment(
+        State(rest): State<Self>,
+        Path((program_id, edition, amendment)): Path<(ProgramID<N>, u16, u64)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id_edition_and_amendment(
+            &program_id,
+            edition,
+            amendment,
+        )?))
     }
 
     /// GET /<network>/find/transactionID/{transitionID}

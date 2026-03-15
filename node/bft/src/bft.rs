@@ -223,7 +223,7 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
         }
 
         // Determine if the BFT is ready to update to the next round.
-        let is_ready = match current_round % 2 == 0 {
+        let is_ready = match current_round.is_multiple_of(2) {
             true => self.update_leader_certificate_to_even_round(current_round),
             false => self.is_leader_quorum_or_nonleaders_available(current_round),
         };
@@ -240,7 +240,7 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
         }
 
         // Log whether the round is going to update.
-        if current_round % 2 == 0 {
+        if current_round.is_multiple_of(2) {
             // Determine if there is a leader certificate.
             if let Some(leader_certificate) = self.leader_certificate.read().as_ref() {
                 // Ensure the state of the leader certificate is consistent with the BFT being ready.
@@ -331,7 +331,7 @@ impl<N: Network> BFT<N> {
         }
 
         // If the current round is odd, return false.
-        if current_round % 2 != 0 || current_round < 2 {
+        if !current_round.is_multiple_of(2) || current_round < 2 {
             error!("BFT cannot update the leader certificate in an odd round");
             return false;
         }
@@ -401,10 +401,10 @@ impl<N: Network> BFT<N> {
             return false;
         }
         // If the leader certificate is set for the current even round, return 'true'.
-        if let Some(leader_certificate) = self.leader_certificate.read().as_ref() {
-            if leader_certificate.round() == current_round {
-                return true;
-            }
+        if let Some(leader_certificate) = self.leader_certificate.read().as_ref()
+            && leader_certificate.round() == current_round
+        {
+            return true;
         }
         // If the timer has expired, and we can achieve quorum threshold (N - f) without the leader, return 'true'.
         if self.is_timer_expired() {
@@ -1575,7 +1575,7 @@ mod tests {
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
-            let private_keys = vec![
+            let private_keys = [
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
@@ -1792,7 +1792,7 @@ mod tests {
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
-            let private_keys = vec![
+            let private_keys = [
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),

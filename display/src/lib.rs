@@ -112,17 +112,17 @@ impl<N: Network> Display<N> {
             // Determine how long to wait for an input event, before we redraw.
             let timeout = self.tick_rate.saturating_sub(last_tick.elapsed());
 
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Esc => {
-                            stoppable.stop();
-                            return Ok(());
-                        }
-                        KeyCode::Left => self.tabs.previous(),
-                        KeyCode::Right => self.tabs.next(),
-                        _ => {}
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()?
+            {
+                match key.code {
+                    KeyCode::Esc => {
+                        stoppable.stop();
+                        return Ok(());
                     }
+                    KeyCode::Left => self.tabs.previous(),
+                    KeyCode::Right => self.tabs.next(),
+                    _ => {}
                 }
             }
 
