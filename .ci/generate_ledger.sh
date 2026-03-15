@@ -29,16 +29,14 @@ poll_interval=10
 #shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
 
+# Create log directory
+init_log_dir
+
 git_commit=$(git rev-parse --short=10 HEAD)
 echo "On git commit ${git_commit}"
 
 network_name=$(get_network_name "$network_id")
 echo "Network set to $network_name with $total_validators validators"
-
-# Create log directory
-log_dir="$PWD/.logs-$(date +"%Y%m%d%H%M%S")"
-mkdir -p "$log_dir"
-chmod 755 "$log_dir"
 
 # Define a trap handler that cleans up all processes on exit.
 #shellcheck disable=SC2329
@@ -60,11 +58,11 @@ for ((validator_index = 0; validator_index < total_validators; validator_index++
 
   log_file="$log_dir/validator-$validator_index.log"
   if [ $validator_index -eq 0 ]; then
-    snarkos start "${common_flags[@]}" --dev "$validator_index" \
-      --validator --logfile "$log_file" --metrics --no-dev-txs &
+    run_with_prefix "validator-$validator_index" snarkos start "${common_flags[@]}" --dev "$validator_index" \
+      --validator --logfile "$log_file" --metrics --no-dev-txs
   else
-    snarkos start "${common_flags[@]}" --dev "$validator_index" \
-      --validator --logfile "$log_file" &
+    run_with_prefix "validator-$validator_index" snarkos start "${common_flags[@]}" --dev "$validator_index" \
+      --validator --logfile "$log_file"
   fi
   PIDS[validator_index]=$!
   echo "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -80,7 +78,7 @@ wait_for_nodes "$total_validators" 0
 total_wait=0
 while ! check_heights 0 1 "$min_height" "$network_name"; do
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
   total_wait=$((total_wait + poll_interval))
   echo "Waited $total_wait seconds so far..."
 done

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-tcp"
-version = "4.4.0"
+version = "4.5.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A TCP stack for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -18,7 +18,7 @@ edition = "2024"
 
 [features]
 default = [ ]
-locktick = [ "dep:locktick" ]
+locktick = [ "dep:locktick", "snarkos-node-metrics/locktick" ]
 metrics = [ "dep:snarkos-node-metrics" ]
 
 [dependencies.async-trait]
@@ -59,6 +59,9 @@ features = [ "codec" ]
 workspace = true
 
 [dependencies.thiserror]
+workspace = true
+
+[dependencies.anyhow]
 workspace = true
 
 [dev-dependencies.tokio]

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,7 +84,7 @@ impl Default for Config {
             allow_random_port: true,
             fatal_io_errors: vec![ConnectionReset, ConnectionAborted, BrokenPipe, InvalidData, UnexpectedEof],
             max_connections: 100,
-            connection_timeout_ms: 1_000,
+            connection_timeout_ms: 3_000,
         }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{PeerPoolHandling, harden_socket};
 use snarkos_node_router::{
     Routing,
     messages::{
@@ -30,7 +30,8 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
-use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
+use snarkos_node_sync::InsertBlockResponseError;
+use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
@@ -49,13 +50,16 @@ impl<N: Network, C: ConsensusStorage<N>> P2P for Client<N, C> {
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
     /// Performs the handshake protocol.
-    async fn perform_handshake(&self, mut connection: Connection) -> io::Result<Connection> {
+    async fn perform_handshake(&self, mut connection: Connection) -> Result<Connection, ConnectError> {
         // Perform the handshake.
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust.
+        harden_socket(stream)?;
         let genesis_header = *self.genesis.header();
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
+
         self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
         Ok(connection)
@@ -133,6 +137,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Process the message. Disconnect if the peer violated the protocol.
         if let Err(error) = self.inbound(peer_addr, message).await {
             warn!("Failed to process inbound message from '{peer_addr}' - {error}");
+
+            //TODO(kaimast): set disconnect reason based on error
             if let Some(peer_ip) = self.router().resolve_to_listener(peer_addr) {
                 warn!("Disconnecting from '{peer_ip}' for protocol violation");
                 self.router().send(peer_ip, Message::Disconnect(DisconnectReason::ProtocolViolation.into()));
@@ -218,7 +224,17 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
     ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
         if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
-            warn!("{}", flatten_error(err.context("Failed to insert block response")));
+            warn!("Failed to insert block response from '{peer_ip}' - {err}");
+
+            // If the error indicates the peer missed an upgrade and forked, ban it.
+            if matches!(
+                err,
+                InsertBlockResponseError::ConsensusVersionMismatch { .. }
+                    | InsertBlockResponseError::NoConsensusVersion
+            ) {
+                self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
+            }
+
             false
         } else {
             true

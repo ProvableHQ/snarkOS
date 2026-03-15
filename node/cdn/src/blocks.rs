@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,17 +19,12 @@
 
 use snarkos_utilities::{SignalHandler, Stoppable};
 
-use snarkvm::prelude::{
-    Deserialize,
-    DeserializeOwned,
-    Ledger,
-    Network,
-    Serialize,
-    block::Block,
-    store::ConsensusStorage,
+use snarkvm::{
+    prelude::{Deserialize, DeserializeOwned, Ledger, Network, Serialize, block::Block, store::ConsensusStorage},
+    utilities::{flatten_error, unchecked_deserialize},
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use colored::Colorize;
 #[cfg(feature = "locktick")]
 use locktick::{parking_lot::Mutex, tokio::Mutex as TMutex};
@@ -83,9 +78,6 @@ pub struct CdnBlockSync {
 
 impl CdnBlockSync {
     /// Spawn a background task that loads blocks from a CDN into the ledger.
-    ///
-    /// On success, this function returns the completed block height.
-    /// On failure, this function returns the last successful block height (if any), along with the error.
     pub fn new<N: Network, C: ConsensusStorage<N>>(
         base_url: http::Uri,
         ledger: Ledger<N, C>,
@@ -108,6 +100,9 @@ impl CdnBlockSync {
     }
 
     /// Wait for CDN sync to finish. Can only be called once.
+    ///
+    /// On success, this function returns the completed block height.
+    /// On failure, this function returns the last successful block height (if any), along with the error.
     pub async fn wait(&self) -> Result<SyncResult> {
         let Some(hdl) = self.task.lock().take() else {
             bail!("CDN task was already awaited");
@@ -128,35 +123,41 @@ impl CdnBlockSync {
         // Load the blocks from the CDN into the ledger.
         let ledger_clone = ledger.clone();
         let result = load_blocks(&base_url, start_height, None, stoppable, move |block: Block<N>| {
-            ledger_clone.advance_to_next_block(&block)
+            ledger_clone
+                .advance_to_next_block(&block)
+                .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))
         })
         .await;
 
         // TODO (howardwu): Find a way to resolve integrity failures.
         // If the sync failed, check the integrity of the ledger.
-        if let Err((completed_height, error)) = &result {
-            warn!("{error}");
+        match result {
+            Ok(completed_height) => Ok(completed_height),
+            Err((completed_height, error)) => {
+                warn!("{}", flatten_error(error.context("Failed to sync block(s) from the CDN")));
 
-            // If the sync made any progress, then check the integrity of the ledger.
-            if *completed_height != start_height {
-                debug!("Synced the ledger up to block {completed_height}");
+                // If the sync made any progress, then check the integrity of the ledger.
+                if completed_height != start_height {
+                    debug!("Synced the ledger up to block {completed_height}");
 
-                // Retrieve the latest height, according to the ledger.
-                let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
-                // Check the integrity of the latest height.
-                if &node_height != completed_height {
-                    return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
+                    // Retrieve the latest height, according to the ledger.
+                    let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
+                    // Check the integrity of the latest height.
+                    if node_height != completed_height {
+                        return Err((
+                            completed_height,
+                            anyhow!("The ledger height does not match the last sync height"),
+                        ));
+                    }
+
+                    // Fetch the latest block from the ledger.
+                    if let Err(err) = ledger.get_block(node_height) {
+                        return Err((completed_height, err));
+                    }
                 }
 
-                // Fetch the latest block from the ledger.
-                if let Err(err) = ledger.get_block(node_height) {
-                    return Err((*completed_height, err));
-                }
+                Ok(completed_height)
             }
-
-            Ok(*completed_height)
-        } else {
-            result
         }
     }
 
@@ -235,6 +236,9 @@ pub async fn load_blocks<N: Network>(
         });
     }
 
+    // Initialize a temporary threadpool that can use the full CPU.
+    let threadpool = Arc::new(rayon::ThreadPoolBuilder::new().build().unwrap());
+
     // A loop for inserting the pending blocks into the ledger.
     let mut current_height = start_height.saturating_sub(1);
     while current_height < end_height - 1 {
@@ -242,7 +246,7 @@ pub async fn load_blocks<N: Network>(
         if stoppable.is_stopped() {
             info!("Stopping block sync at {} - shutting down", current_height);
             // We can shut down cleanly from here, as the node hasn't been started yet.
-            std::process::exit(0);
+            return Ok(current_height);
         }
 
         let mut candidate_blocks = pending_blocks.lock().await;
@@ -269,20 +273,18 @@ pub async fn load_blocks<N: Network>(
         let next_blocks = std::mem::replace(&mut *candidate_blocks, retained_blocks);
         drop(candidate_blocks);
 
-        // Initialize a temporary threadpool that can use the full CPU.
-        let threadpool = rayon::ThreadPoolBuilder::new().build().unwrap();
-
         // Attempt to advance the ledger using the CDN block bundle.
         let mut process_clone = process.clone();
         let stoppable_clone = stoppable.clone();
+        let threadpool_clone = threadpool.clone();
         current_height = tokio::task::spawn_blocking(move || {
-            threadpool.install(|| {
+            threadpool_clone.install(|| {
                 for block in next_blocks.into_iter().filter(|b| (start_height..end_height).contains(&b.height())) {
                     // If we are instructed to shut down, abort.
                     if stoppable_clone.is_stopped() {
                         info!("Stopping block sync at {} - the node is shutting down", current_height);
                         // We can shut down cleanly from here, as the node hasn't been started yet.
-                        std::process::exit(0);
+                        break;
                     }
 
                     // Register the next block's height, as the block gets consumed next.
@@ -478,7 +480,7 @@ async fn cdn_get<T: 'static + DeserializeOwned + Send>(client: Client, url: &str
     };
 
     // Parse the objects.
-    match tokio::task::spawn_blocking(move || (bincode::deserialize::<T>(&bytes), bytes)).await {
+    match tokio::task::spawn_blocking(move || (unchecked_deserialize::<T>(&bytes), bytes)).await {
         Ok((Ok(objects), _)) => Ok(objects),
         Ok((Err(error), response_bytes)) => {
             let bytes_as_string = String::from_utf8_lossy(&response_bytes);

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,7 @@ use snarkos_account::Account;
 use snarkos_node_bft::{Gateway, helpers::init_primary_channels};
 use snarkos_node_bft_events::{ChallengeRequest, ChallengeResponse, Event};
 use snarkos_node_network::PeerPoolHandling;
-use snarkos_node_tcp::P2P;
+use snarkos_node_tcp::{P2P, protocols::Handshake};
 use snarkvm::{ledger::narwhal::Data, prelude::TestRng};
 
 use std::time::Duration;
@@ -79,7 +79,10 @@ async fn handshake_responder_side_timeout() {
     // Check the tcp stack's connection counts, wait longer than the gateway's timeout to ensure
     // connecting peers are cleared.
     let gateway_clone = gateway.clone();
-    deadline!(Duration::from_secs(5), move || gateway_clone.tcp().num_connecting() == 0);
+    deadline!(Duration::from_millis(<Gateway<CurrentNetwork> as Handshake>::TIMEOUT_MS + 2_000), move || gateway_clone
+        .tcp()
+        .num_connecting()
+        == 0);
 
     // Check the test peer hasn't been added to the gateway's connected peers.
     assert!(gateway.connected_peers().is_empty());

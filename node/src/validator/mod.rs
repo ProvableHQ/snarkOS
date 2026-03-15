@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,7 +70,7 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     /// The block synchronization logic (used in the Router impl).
     sync: Arc<BlockSync<N>>,
     /// The spawned handles.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
 }
@@ -174,12 +174,12 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         }
 
         // Set up everything else after CDN sync is done.
-        if let Some(cdn_sync) = cdn_sync
-            && let Err(error) = cdn_sync.wait().await
-        {
-            crate::log_clean_error(&storage_mode);
-            node.shut_down().await;
-            return Err(error);
+        if let Some(cdn_sync) = cdn_sync {
+            if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
+                crate::log_clean_error(&storage_mode);
+                node.shut_down().await;
+                return Err(error);
+            }
         }
 
         // Initialize the routing.
@@ -428,7 +428,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                             None,
                             &mut rand::thread_rng(),
                         )
-                        .map_err(|e| anyhow::anyhow!("{e}"))
+                        .map_err(|err| err.into())
                 ) {
                     Ok(transaction) => transaction,
                     Err(error) => {

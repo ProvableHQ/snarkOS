@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@ use common::*;
 
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_tcp::{
+    ConnectError,
     P2P,
     protocols::{Disconnect, Handshake, OnConnect},
 };
@@ -42,7 +43,7 @@ async fn test_connect_without_handshake() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -56,7 +57,7 @@ async fn test_connect_without_handshake() {
     }
     {
         // Connect node0 from node1 again.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -70,7 +71,7 @@ async fn test_connect_without_handshake() {
     }
     {
         // Connect node1 from node0.
-        node1.connect(node0.local_ip());
+        let _ = node1.connect(node0.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -108,7 +109,7 @@ async fn test_connect_with_handshake() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
@@ -129,7 +130,7 @@ async fn test_connect_with_handshake() {
     }
     {
         // Connect node0 to node1 again.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
@@ -150,7 +151,7 @@ async fn test_connect_with_handshake() {
     }
     {
         // Connect node1 to node0.
-        node1.connect(node0.local_ip());
+        let _ = node1.connect(node0.local_ip());
         // Await for node0 to be connected.
         let node1_ip = node1.local_ip();
         let node0_ = node0.clone();
@@ -196,7 +197,7 @@ async fn test_validator_connection() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Await for node1 to be connected.
         let node0_ip = node0.local_ip();
         let node1_ = node1.clone();
@@ -225,10 +226,14 @@ async fn test_validator_connection() {
         });
 
         // Connect node1 to node0.
-        let Ok(res) = node1.connect(node0.local_ip()).unwrap().await else {
-            panic!("Connection failed for the wrong reasons.");
-        };
-        assert!(!res, "Connection was accepted when it should not have been.");
+        let res = node1.connect(node0.local_ip()).unwrap().await.unwrap();
+
+        assert!(
+            matches!(res, Err(ConnectError::Other { .. })),
+            "Connection was accepted or incorrect error was returned"
+        );
+
+        assert!(res.unwrap_err().to_string().contains("no external peers allowed"));
 
         // Check the TCP level - connection was not accepted.
         assert_eq!(node0.tcp().num_connected(), 0);
@@ -257,9 +262,9 @@ async fn test_connect_simultaneously_with_handshake() {
 
     {
         // Connect node0 to node1.
-        node0.connect(node1.local_ip());
+        let _ = node0.connect(node1.local_ip());
         // Connect node1 to node0.
-        node1.connect(node0.local_ip());
+        let _ = node1.connect(node0.local_ip());
         // Sleep briefly.
         tokio::time::sleep(Duration::from_millis(100)).await;
 

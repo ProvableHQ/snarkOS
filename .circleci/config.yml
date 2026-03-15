@@ -22,6 +22,10 @@ executors:
   rust-docker:
      docker:
       - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+  # The default VM used for devnet tests
+  ubuntu-vm:
+      machine:
+        image: ubuntu-2404:current
 
 commands:
   check_windows:
@@ -72,6 +76,19 @@ commands:
             - target
           key: cargo-cache-{{ arch }}-{{ checksum "rust-version" }}-{{ checksum "Cargo.lock" }}
 
+  install_snarkos:
+    description: "Install snarkOS"
+    steps:
+      - run:
+          name: Install snarkOS
+          command: |
+            export CARGO_TARGET_DIR="$PWD/.ci/target"
+            CARGO_PROFILE_RELEASE_LTO=off \
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
+            CARGO_PROFILE_RELEASE_DEBUG=0 \
+            cargo install --locked --path . --features test_network
+
   setup_environment:
     description: "Setup testing environment"
     parameters:
@@ -87,7 +104,7 @@ commands:
             # it causes longer build times and causes some builds to fail
 
             # echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
-            # echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
+            # echo 'export "SCCACHE_CACHE_SIZE"="2000M"' >> $BASH_ENV
             # Disable incremental builds so that sccache works as expected
             # echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
       - run:
@@ -107,7 +124,7 @@ commands:
           name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -368,23 +385,21 @@ commands:
             - v1-snarkos-release-
       - setup_environment:
           cache_key: << parameters.cache_key >>
+      - install_snarkos
       - run:
-          name: "Install snarkos"
-          no_output_timeout: 20m
-          command: |
-            export CARGO_TARGET_DIR="$PWD/.ci/target"
-            CARGO_PROFILE_RELEASE_LTO=off \
-            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
-            CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
-            CARGO_PROFILE_RELEASE_DEBUG=0 \
-              cargo install --locked --path . --features test_network
-      - run:
-          name: "Run upgrade nodes test"
+          name: "Run full upgrade test"
           timeout: 30m  # Allow 30 minutes total
           environment:
             WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/upgrade_nodes_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/test_full_upgrade.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+      - run:
+          name: "Run partial upgrade test"
+          timeout: 30m  # Allow 30 minutes total
+          environment:
+            WAIT_BETWEEN_UPGRADES: "60"
+          command: |
+            ./.ci/test_partial_upgrade.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
       - save_cache:
           key: v1-snarkos-release-
           paths:
@@ -394,51 +409,19 @@ commands:
       - clear_environment:
           cache_key: << parameters.cache_key >>
 
-  run_devnet:
-    description: "Run devnet for integration testing"
-    parameters:
-      workspace_member:
-        type: string
-      cache_key:
-        type: string
-      validators:
-        type: integer
-        default: 4
-      clients:
-        type: integer
-        default: 2
-      network_id:
-        type: integer
-        default: 0
-      min_height:
-        type: integer
-        default: 45
-    steps:
-      - checkout
-      - setup_environment:
-          cache_key: << parameters.cache_key >>
-      - run:
-          name: "Install snarkos"
-          no_output_timeout: 20m
-          command: |
-            cargo install --locked --path . --features test_network
-      - run:
-          name: "Run DB backup test"
-          timeout: 10m  # Allow 10 minutes total
-          command: |
-            ./.ci/db_backup_ci.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
-      - run:
-          name: "Run block advancement test"
-          timeout: 20m  # Allow 20 minutes total
-          command: |
-            ./.ci/devnet_ci.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
-      - clear_environment:
-          cache_key: << parameters.cache_key >>
-
   install_rust_nightly:
     description: "Install Rust nightly toolchain"
     steps:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
+
+  install_rust:
+    description: "Install Rust using rustup.rs"
+    steps:
+      - run:
+          timeout: 5m
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+            source $HOME/.cargo/env
 
 jobs:
   snarkos:
@@ -581,9 +564,64 @@ jobs:
     executor: rust-docker
     resource_class: << pipeline.parameters.xlarge >>
     steps:
-      - run_devnet:
-          workspace_member: .
-          cache_key: v4.2.0-rust-1.88.0-devnet-test-cache
+     - checkout
+     - setup_environment:
+         cache_key: v4.2.0-rust-1.88.0-devnet-test-cache 
+     - install_snarkos
+     - run:
+          name: "Run DB backup test"
+          timeout: 10m  # Allow 10 minutes total
+          command: |
+            ./.ci/test_db_backup.sh # run the db checkpoint test script first, and clean the dev ledgers afterwards
+     - run:
+          name: "Run block advancement test"
+          timeout: 20m  # Allow 20 minutes total
+          command: |
+            ./.ci/test_devnet.sh
+
+  chaotic-minority-reset-test:
+    executor: ubuntu-vm
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+     - checkout
+     - setup_environment:
+        cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+     - install_rust
+     - install_snarkos
+     - run:
+          name: "Enable emulation of network latency spikes"
+          no_output_timeout: 5m 
+          command: |
+            sudo ./scripts/delay-network.sh spikes 5000-5100
+     - run:
+        name: "Run Reset Minority Devnet Test"
+        no_output_timeout: 5m 
+        command: |
+          ./.ci/test_reset_minority.sh 7 0 50 250 3
+     - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+
+  chaotic-majority-reset-test:
+    executor: ubuntu-vm
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+     - checkout
+     - setup_environment:
+        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache
+     - install_rust
+     - install_snarkos
+     - run:
+          name: "Enable emulation of network latency spikes"
+          no_output_timeout: 5m 
+          command: |
+            sudo ./scripts/delay-network.sh spikes 5000-5100
+     - run:
+          name: "Run Restart Majority Devnet Test"
+          no_output_timeout: 5m 
+          command: |
+            ./.ci/test_restart_majority.sh 7 0 20 250 3
+     - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache 
 
   upgrade-test:
     executor: rust-docker
@@ -744,12 +782,35 @@ workflows:
     jobs:
       - devnet-test
 
+  chaotic-devnet-workflow:
+    jobs:
+      - chaotic-minority-reset-test:
+          filters:
+            branches:
+              only:
+                - ci/minority-reset-no-cache
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
+      - chaotic-majority-reset-test:
+          filters:
+            branches:
+              only:
+                - ci/chaotic-tests-keep-proposal 
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
   upgrade-workflow:
     jobs:
       - upgrade-test:
           filters:
             branches:
               only:
+                - ci/devnet-fixes 
                 - canary
                 - testnet
                 - mainnet

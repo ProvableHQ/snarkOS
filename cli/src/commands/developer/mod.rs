@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -274,9 +274,9 @@ impl Developer {
         let result =
             ureq::post(path).config().http_status_as_error(false).build().send_json(arg).map_err(|err| err.into());
 
-        match Self::handle_ureq_result(result).with_context(|| "HTTP POST request failed")? {
+        match Self::handle_ureq_result(result).with_context(|| format!("HTTP POST request to {path} failed"))? {
             Some(mut body) => {
-                let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
+                let json = body.read_json().with_context(|| format!("Failed to parse JSON response from {path}"))?;
                 Ok(Some(json))
             }
             None => Ok(None),
@@ -290,9 +290,10 @@ impl Developer {
 
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
-        match Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")? {
+        match Self::handle_ureq_result(result).with_context(|| format!("HTTP GET request to {endpoint} failed"))? {
             Some(mut body) => {
-                let json = body.read_json().with_context(|| "Failed to parse JSON response")?;
+                let json =
+                    body.read_json().with_context(|| format!("Failed to parse JSON response from {endpoint}"))?;
                 Ok(Some(json))
             }
             None => Ok(None),
@@ -306,7 +307,7 @@ impl Developer {
 
         let result = ureq::get(&endpoint).config().http_status_as_error(false).build().call().map_err(|err| err.into());
 
-        Self::handle_ureq_result(result).with_context(|| "HTTP GET request failed")
+        Self::handle_ureq_result(result).with_context(|| format!("HTTP GET request to {endpoint} failed"))
     }
 
     /// Wait for a transaction to be confirmed by the network.

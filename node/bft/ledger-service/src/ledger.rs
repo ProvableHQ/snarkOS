@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +68,11 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
+        // Initialize the block height metric.
+        #[cfg(feature = "metrics")]
+        {
+            metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        }
         Self { ledger, latest_leader: Default::default(), stoppable }
     }
 }
@@ -390,7 +395,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             metrics::update_block_metrics(block);
         }
 
-        tracing::info!("\n\nAdvanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
+        tracing::info!("Advanced to block {} at round {} - {}", block.height(), block.round(), block.hash());
         Ok(())
     }
 

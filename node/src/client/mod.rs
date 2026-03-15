@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -125,7 +125,7 @@ pub struct Client<N: Network, C: ConsensusStorage<N>> {
     /// The amount of executions currently being verified.
     num_verifying_executions: Arc<AtomicUsize>,
     /// The spawned handles.
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
     /// The signal handling logic.
@@ -214,12 +214,12 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         }
 
         // Set up everything else after CDN sync is done.
-        if let Some(cdn_sync) = cdn_sync
-            && let Err(error) = cdn_sync.wait().await
-        {
-            crate::log_clean_error(&storage_mode);
-            node.shut_down().await;
-            return Err(error);
+        if let Some(cdn_sync) = cdn_sync {
+            if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
+                crate::log_clean_error(&storage_mode);
+                node.shut_down().await;
+                return Err(error);
+            }
         }
 
         // Initialize the routing.
