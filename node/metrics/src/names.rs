@@ -46,10 +46,21 @@ pub(super) const GAUGE_NAMES: [&str; 27] = [
     tcp::TCP_TASKS,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 4] =
-    [bft::COMMIT_ROUNDS_LATENCY, consensus::CERTIFICATE_COMMIT_LATENCY, consensus::BLOCK_LATENCY, consensus::BLOCK_LAG];
+pub(super) const HISTOGRAM_NAMES: [&str; 9] = [
+    bft::COMMIT_ROUNDS_LATENCY,
+    bft::COMMIT_LEADER_CERTIFICATE_LATENCY,
+    bft::BATCH_CERTIFICATION_LATENCY,
+    consensus::CERTIFICATE_COMMIT_LATENCY,
+    consensus::BLOCK_LATENCY,
+    consensus::BLOCK_LAG,
+    consensus::PREPARE_ADVANCE_TO_NEXT_QUORUM_BLOCK_LATENCY,
+    consensus::CHECK_NEXT_BLOCK_LATENCY,
+    consensus::ADVANCE_TO_NEXT_BLOCK_LATENCY,
+];
 
 pub mod bft {
+    pub const BATCH_CERTIFICATION_LATENCY: &str = "snarkos_bft_batch_certification_latency_secs";
+    pub const COMMIT_LEADER_CERTIFICATE_LATENCY: &str = "snarkos_bft_commit_leader_certificate_latency_secs";
     pub const COMMIT_ROUNDS_LATENCY: &str = "snarkos_bft_commit_rounds_latency_secs"; // <-- This one doesn't even make sense.
     pub const CONNECTED: &str = "snarkos_bft_connected_total";
     pub const CONNECTED_STAKE: &str = "snarkos_bft_connected_stake_as_percentage";
@@ -78,6 +89,10 @@ pub mod blocks {
 }
 
 pub mod consensus {
+    pub const ADVANCE_TO_NEXT_BLOCK_LATENCY: &str = "snarkos_consensus_advance_to_next_block_latency_secs";
+    pub const CHECK_NEXT_BLOCK_LATENCY: &str = "snarkos_consensus_check_next_block_latency_secs";
+    pub const PREPARE_ADVANCE_TO_NEXT_QUORUM_BLOCK_LATENCY: &str =
+        "snarkos_consensus_prepare_advance_to_next_quorum_block_latency_secs";
     pub const CERTIFICATE_COMMIT_LATENCY: &str = "snarkos_consensus_certificate_commit_latency_secs";
     pub const COMMITTED_CERTIFICATES: &str = "snarkos_consensus_committed_certificates_total";
     pub const BLOCK_LATENCY: &str = "snarkos_consensus_block_latency_secs";

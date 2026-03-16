@@ -76,6 +76,8 @@ use locktick::{
 use parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -110,6 +112,10 @@ pub struct Primary<N: Network> {
     proposed_batch: Arc<ProposedBatch<N>>,
     /// The timestamp of the most recent proposed batch.
     latest_proposed_batch_timestamp: Arc<RwLock<i64>>,
+    /// The instant at which the current batch was proposed (used to measure certification latency).
+    /// (used for higher precision in the metrics compared to the batch timestamp)
+    #[cfg(feature = "metrics")]
+    batch_propose_start: Arc<Mutex<Option<Instant>>>,
     /// The recently-signed batch proposals.
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
     /// The handles for all background tasks spawned by this primary.
@@ -161,6 +167,8 @@ impl<N: Network> Primary<N> {
             bft_sender: Default::default(),
             proposed_batch: Default::default(),
             latest_proposed_batch_timestamp: Default::default(),
+            #[cfg(feature = "metrics")]
+            batch_propose_start: Default::default(),
             signed_proposals: Default::default(),
             handles: Default::default(),
             propose_lock: Default::default(),
@@ -721,6 +729,11 @@ impl<N: Network> Primary<N> {
         self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
         // Set the timestamp of the latest proposed batch.
         *self.latest_proposed_batch_timestamp.write() = proposal.timestamp();
+        // Record the wall-clock time at which the batch was proposed.
+        #[cfg(feature = "metrics")]
+        {
+            *self.batch_propose_start.lock() = Some(Instant::now());
+        }
         // Set the proposed batch.
         *self.proposed_batch.write() = Some(proposal);
         Ok(())
@@ -1692,6 +1705,11 @@ impl<N: Network> Primary<N> {
         let num_transmissions = certificate.transmission_ids().len();
         let round = certificate.round();
         info!("\n\nOur batch with {num_transmissions} transmissions for round {round} was certified!\n");
+        // Record the certification latency (time from batch proposal to certification).
+        #[cfg(feature = "metrics")]
+        if let Some(start) = self.batch_propose_start.lock().take() {
+            metrics::histogram(metrics::bft::BATCH_CERTIFICATION_LATENCY, start.elapsed().as_secs_f64());
+        }
         // Increment to the next round.
         self.try_increment_to_the_next_round(round + 1).await
     }
