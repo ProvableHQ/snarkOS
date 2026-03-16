@@ -46,9 +46,10 @@ pub(super) const GAUGE_NAMES: [&str; 27] = [
     tcp::TCP_TASKS,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 8] = [
+pub(super) const HISTOGRAM_NAMES: [&str; 9] = [
     bft::COMMIT_ROUNDS_LATENCY,
     bft::COMMIT_LEADER_CERTIFICATE_LATENCY,
+    bft::BATCH_CERTIFICATION_LATENCY,
     consensus::CERTIFICATE_COMMIT_LATENCY,
     consensus::BLOCK_LATENCY,
     consensus::BLOCK_LAG,
@@ -58,6 +59,7 @@ pub(super) const HISTOGRAM_NAMES: [&str; 8] = [
 ];
 
 pub mod bft {
+    pub const BATCH_CERTIFICATION_LATENCY: &str = "snarkos_bft_batch_certification_latency_secs";
     pub const COMMIT_LEADER_CERTIFICATE_LATENCY: &str = "snarkos_bft_commit_leader_certificate_latency_secs";
     pub const COMMIT_ROUNDS_LATENCY: &str = "snarkos_bft_commit_rounds_latency_secs"; // <-- This one doesn't even make sense.
     pub const CONNECTED: &str = "snarkos_bft_connected_total";
