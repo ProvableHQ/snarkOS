@@ -128,6 +128,9 @@ pub struct Client<N: Network, C: ConsensusStorage<N>> {
     ping: Arc<Ping<N>>,
     /// The signal handling logic.
     signal_handler: Arc<SignalHandler>,
+    /// The Slipstream plugin service (present when plugins are loaded).
+    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    slipstream_service: Arc<Mutex<Option<snarkvm_slipstream_plugin_manager::slipstream_service::SlipstreamPluginService>>>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
@@ -144,6 +147,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
+        slipstream_configs: &[std::path::PathBuf],
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -154,6 +158,19 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
         }
         .with_context(|| "Failed to initialize the ledger")?;
+
+        // Initialize the Slipstream plugin service (if any config files were provided).
+        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+        let slipstream_service = if !slipstream_configs.is_empty() {
+            let service =
+                snarkvm_slipstream_plugin_manager::slipstream_service::SlipstreamPluginService::new(slipstream_configs)
+                    .context("Failed to initialize Slipstream plugin service")?;
+            ledger.vm().finalize_store().set_slipstream_plugin_manager(service.plugin_manager());
+            tracing::info!("Loaded {} Slipstream plugin(s)", slipstream_configs.len());
+            Some(service)
+        } else {
+            None
+        };
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
@@ -195,6 +212,8 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             num_verifying_executions: Default::default(),
             handles: Default::default(),
             signal_handler: signal_handler.clone(),
+            #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+            slipstream_service: Arc::new(Mutex::new(slipstream_service)),
         };
 
         // Perform sync with CDN (if enabled).
@@ -543,6 +562,12 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
+
+        // Shut down the Slipstream plugin service.
+        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+        if let Some(service) = self.slipstream_service.lock().take() {
+            service.join();
+        }
 
         // Abort the tasks.
         trace!("Shutting down the client...");

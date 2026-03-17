@@ -19,6 +19,8 @@ edition = "2024"
 [features]
 default = [ ]
 async = [ ]
+history = [ "snarkos-node/history" ]
+history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
 locktick = [
   "dep:locktick",
   "snarkos-display/locktick",

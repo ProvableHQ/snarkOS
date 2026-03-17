@@ -137,7 +137,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn build_routes(&self, rest_rps: u32) -> axum::Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
@@ -164,8 +164,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // All the endpoints before the call to `route_layer` are protected with JWT auth.
             .route("/node/address", get(Self::get_node_address))
             .route("/program/{id}/mapping/{name}", get(Self::get_mapping_values))
-            .route("/db_backup", post(Self::db_backup))
-            .route_layer(middleware::from_fn(auth_middleware))
+            .route("/db_backup", post(Self::db_backup));
+
+        // If the `history` or `history-staking-rewards` feature is enabled, enable the Slipstream plugin management endpoints.
+        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+        let routes = routes
+            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
+            .route(
+                "/slipstream/plugins/{name}",
+                axum::routing::delete(Self::slipstream_unload_plugin)
+                    .put(Self::slipstream_reload_plugin),
+            );
+
+        let routes = routes.route_layer(middleware::from_fn(auth_middleware))
 
              // Get ../consensus_version
             .route("/consensus_version", get(Self::get_consensus_version))
