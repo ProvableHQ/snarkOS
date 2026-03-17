@@ -588,8 +588,12 @@ impl<N: Network> BFT<N> {
             let leader_round = leader_certificate.round();
             let last_committed_round = self.dag.read().last_committed_round();
 
+            // Read-lock the DAG.
+            // We need to hold the lock, so we do not later fail to re-acquire it.
+            let dag = self.dag.read();
+
             let mut current_certificate = leader_certificate;
-            for round in (last_committed_round + 2..=leader_round.saturating_sub(2)).rev().step_by(2) {
+            for round in (dag.last_committed_round() + 2..=leader_round.saturating_sub(2)).rev().step_by(2) {
                 // Retrieve the previous committee for the leader round.
                 let previous_committee_lookback =
                     self.ledger().get_committee_lookback_for_round(round).with_context(|| {
@@ -612,12 +616,11 @@ impl<N: Network> BFT<N> {
                     }
                 };
                 // Retrieve the previous leader certificate.
-                let Some(previous_certificate) = self.dag.read().get_certificate_for_round_with_author(round, leader)
-                else {
+                let Some(previous_certificate) = dag.get_certificate_for_round_with_author(round, leader) else {
                     continue;
                 };
                 // Determine if there is a path between the previous certificate and the current certificate.
-                if self.is_linked(previous_certificate.clone(), current_certificate.clone())? {
+                if self.is_linked(&dag, previous_certificate.clone(), current_certificate.clone())? {
                     // Add the previous leader certificate to the list of certificates to commit.
                     leader_certificates.push(previous_certificate.clone());
                     // Update the current certificate to the previous leader certificate.
@@ -855,8 +858,11 @@ impl<N: Network> BFT<N> {
     }
 
     /// Returns `true` if there is a path from the previous certificate to the current certificate.
+    ///
+    /// TOOD: move this method to `impl DAG`.
     fn is_linked(
         &self,
+        dag: &DAG<N>,
         previous_certificate: BatchCertificate<N>,
         current_certificate: BatchCertificate<N>,
     ) -> Result<bool> {
@@ -2032,7 +2038,7 @@ mod tests {
         let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader2).unwrap();
 
         assert!(
-            bft.is_linked(leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
+            bft.is_linked(&bft.dag.read(), leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
             "Leader certificate 1 should be linked to leader certificate 2"
         );
 
@@ -2186,7 +2192,7 @@ mod tests {
         let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader2).unwrap();
 
         assert!(
-            !bft.is_linked(leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
+            !bft.is_linked(&bft.dag.read(), leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
             "Leader certificate 1 should not be linked to leader certificate 2"
         );
         assert_eq!(bft.dag.read().last_committed_round(), 0);
