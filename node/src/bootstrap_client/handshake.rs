@@ -200,7 +200,7 @@ impl<N: Network> BootstrapClient<N> {
         *listener_addr = Some(SocketAddr::new(peer_addr.ip(), peer_port));
 
         // Introduce the peer into the peer pool.
-        self.add_connecting_peer(peer_addr)?;
+        self.add_connecting_peer(listener_addr.unwrap())?;
 
         // Verify the challenge request.
         if !self.verify_challenge_request(peer_addr, &mut framed, &peer_request).await? {
@@ -323,7 +323,7 @@ impl<N: Network> BootstrapClient<N> {
                     self.get_or_update_committee().await.map_err(|_| io_error("Couldn't load the committee"))?
                 {
                     if !current_committee.contains(&msg.address) {
-                        let msg = Event::Disconnect::<N>(events::DisconnectReason::ProtocolViolation.into());
+                        let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
                         send_msg!(msg, framed, peer_addr)?;
                         return Ok(false);
                     }

@@ -50,21 +50,16 @@ pub trait Routing<N: Network>:
     fn initialize_heartbeat(&self) {
         let self_clone = self.clone();
         self.router().spawn(async move {
-            let mut last_update = Instant::now();
-
             loop {
+                let start = Instant::now();
                 // Process a heartbeat in the router.
                 self_clone.heartbeat().await;
+                let took = start.elapsed();
 
-                // The heartbeat itself may take a while (as it is waiting for connection attempts to complete).
-                // Take this time into account when rate-limiting the heartbeat.
-                let now = Instant::now();
-                let elapsed = now.saturating_duration_since(last_update);
-
-                // Sleep for the remaining time.
-                tokio::time::sleep(Self::HEARTBEAT_INTERVAL.saturating_sub(elapsed)).await;
-                // Update the last update time.
-                last_update = now;
+                // The heartbeat may take a while (as it is waiting for connection attempts to complete).
+                // Take this into account when calculating its sleep time.
+                let sleep_time = Self::HEARTBEAT_INTERVAL.saturating_sub(took);
+                tokio::time::sleep(sleep_time).await;
             }
         });
     }
