@@ -677,7 +677,7 @@ impl<N: Network> Gateway<N> {
                         }
                         Err(err) => {
                             warn!("Unable to process block response from '{peer_ip}' - {err}");
-                            Err(err.into())
+                            Ok(true)
                         }
                     }
                 } else {
