@@ -30,7 +30,6 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
-use snarkos_node_sync::InsertBlockResponseError;
 use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
@@ -229,21 +228,32 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
         latest_consensus_version: Option<ConsensusVersion>,
     ) -> bool {
         // We do not need to explicitly sync here because insert_block_response, will wake up the sync task.
-        if let Err(err) = self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
-            warn!("Failed to insert block response from '{peer_ip}' - {err}");
-
-            // If the error indicates the peer missed an upgrade and forked, ban it.
-            if matches!(
-                err,
-                InsertBlockResponseError::ConsensusVersionMismatch { .. }
-                    | InsertBlockResponseError::NoConsensusVersion
-            ) {
-                self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
+        match self.sync.insert_block_responses(peer_ip, blocks, latest_consensus_version) {
+            Ok(_) => true,
+            Err(err) if err.is_benign() => {
+                let err: anyhow::Error = err.into();
+                debug!("{}", flatten_error(err.context(format!("Ignoring block response from peer '{peer_ip}'"))));
+                true
             }
+            Err(err) if err.is_invalid_consensus_version() => {
+                // If the error indicates the peer missed an upgrade and forked, ban it.
+                let err: anyhow::Error = err.into();
+                let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
 
-            false
-        } else {
-            true
+                let msg = flatten_error(&err);
+                error!("{msg}");
+                self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
+
+                false
+            }
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+                let err = err.context(format!("Failed to insert block response from '{peer_ip}'"));
+                warn!("{}", flatten_error(err));
+
+                // TODO(kaimast): This needs more testing to ensure disconnect is the correct action.
+                true
+            }
         }
     }
 

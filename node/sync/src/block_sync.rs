@@ -125,16 +125,6 @@ pub struct BlockRequestsSummary {
 
 #[derive(thiserror::Error, Debug)]
 pub enum InsertBlockResponseError<N: Network> {
-    #[error("The ledger already advanced past height {height}")]
-    LedgerAlreadyAdvanced { height: u32 },
-    #[error("We did not request block {hash} at height {height}")]
-    BlockNotRequested { height: u32, hash: N::BlockHash },
-    #[error("The block hash for candidate block {height} is incorrect: expected {expected_hash}, got {actual_hash}")]
-    BlockHashMismatch { height: u32, expected_hash: N::BlockHash, actual_hash: N::BlockHash },
-    #[error(
-        "The previous block hash for candidate block {height} is incorrect: expected {expected_previous_hash}, got {actual_previous_hash}"
-    )]
-    PreviousBlockHashMismatch { height: u32, expected_previous_hash: N::BlockHash, actual_previous_hash: N::BlockHash },
     #[error("Empty block response")]
     EmptyBlockResponse,
     #[error("The peer did not send a consensus version")]
@@ -143,17 +133,33 @@ pub enum InsertBlockResponseError<N: Network> {
         "The peer's consensus version for height {last_height} does not match ours: expected {expected_version}, got {peer_version}"
     )]
     ConsensusVersionMismatch { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
-    #[error("Candidate block {height} is malformed")]
-    BlockMalformed { height: u32 },
-    /// Handle errors not caused by the peer.
-    #[error("An internal error occurred - {0}")]
-    InternalError(#[from] anyhow::Error),
+    #[error("Block Sync already advanced to block {height}")]
+    BlockSyncAlreadyAdvanced { height: u32 },
+    #[error("No such request for height {height}")]
+    NoSuchRequest { height: u32 },
+    #[error("Invalid block hash for height {height} from '{peer_ip}': expected {expected_hash}, got {actual_hash}")]
+    InvalidBlockHash { height: u32, peer_ip: SocketAddr, expected_hash: N::BlockHash, actual_hash: N::BlockHash },
+    #[error(
+        "The previous block hash in candidate block {height} from '{peer_ip}' is incorrect: expected {expected}, but got {actual}"
+    )]
+    InvalidPreviousBlockHash { height: u32, peer_ip: SocketAddr, expected: N::BlockHash, actual: N::BlockHash },
+    #[error("Candidate block {height} from '{peer_ip}' is malformed")]
+    MalformedBlock { height: u32, peer_ip: SocketAddr },
+    #[error("The sync pool did not request block {height} from '{peer_ip}'")]
+    WrongSyncPeer { height: u32, peer_ip: SocketAddr },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 impl<N: Network> InsertBlockResponseError<N> {
-    /// Returns `true` if the error is benign, and should not generate an error or cause a ban.
+    /// Returns `true` if the error does not indicate malicious or faulty behavior.
     pub fn is_benign(&self) -> bool {
-        matches!(self, Self::LedgerAlreadyAdvanced { .. })
+        matches!(self, Self::NoSuchRequest { .. } | Self::BlockSyncAlreadyAdvanced { .. })
+    }
+
+    // Returns true if the error is about an invalid consensus version.
+    pub fn is_invalid_consensus_version(&self) -> bool {
+        matches!(self, Self::ConsensusVersionMismatch { .. } | Self::NoConsensusVersion)
     }
 }
 
@@ -575,7 +581,7 @@ impl<N: Network> BlockSync<N> {
             };
 
             let expected_consensus_version =
-                N::CONSENSUS_VERSION(last_height).map_err(InsertBlockResponseError::InternalError)?;
+                N::CONSENSUS_VERSION(last_height).map_err(InsertBlockResponseError::Other)?;
 
             // Perform consensus version check, if possible.
             // This check is only enabled after nodes have reached V12.
@@ -1143,11 +1149,11 @@ impl<N: Network> BlockSync<N> {
         let mut requests = self.requests.write();
 
         if self.ledger.contains_block_height(height) {
-            return Err(InsertBlockResponseError::LedgerAlreadyAdvanced { height });
+            return Err(InsertBlockResponseError::BlockSyncAlreadyAdvanced { height });
         }
 
         let Some(entry) = requests.get_mut(&height) else {
-            return Err(InsertBlockResponseError::BlockNotRequested { height, hash: block.hash() });
+            return Err(InsertBlockResponseError::NoSuchRequest { height });
         };
 
         // Retrieve the request entry for the candidate block.
@@ -1156,8 +1162,9 @@ impl<N: Network> BlockSync<N> {
         // Ensure the candidate block hash matches the expected hash.
         if let Some(expected_hash) = expected_hash {
             if block.hash() != *expected_hash {
-                return Err(InsertBlockResponseError::BlockHashMismatch {
+                return Err(InsertBlockResponseError::InvalidBlockHash {
                     height,
+                    peer_ip,
                     expected_hash: *expected_hash,
                     actual_hash: block.hash(),
                 });
@@ -1166,16 +1173,17 @@ impl<N: Network> BlockSync<N> {
         // Ensure the previous block hash matches if it exists.
         if let Some(expected_previous_hash) = expected_previous_hash {
             if block.previous_hash() != *expected_previous_hash {
-                return Err(InsertBlockResponseError::PreviousBlockHashMismatch {
+                return Err(InsertBlockResponseError::InvalidPreviousBlockHash {
                     height,
-                    expected_previous_hash: *expected_previous_hash,
-                    actual_previous_hash: block.previous_hash(),
+                    peer_ip,
+                    expected: *expected_previous_hash,
+                    actual: block.previous_hash(),
                 });
             }
         }
         // Ensure the sync pool requested this block from the given peer.
         if !sync_ips.contains(&peer_ip) {
-            return Err(InsertBlockResponseError::BlockNotRequested { height, hash: block.hash() });
+            return Err(InsertBlockResponseError::WrongSyncPeer { height, peer_ip });
         }
 
         // Remove the peer IP from the request entry.
@@ -1184,7 +1192,7 @@ impl<N: Network> BlockSync<N> {
         if let Some(existing_block) = &entry.response {
             // If the candidate block was already present, ensure it is the same block.
             if block != *existing_block {
-                return Err(InsertBlockResponseError::BlockMalformed { height });
+                return Err(InsertBlockResponseError::MalformedBlock { height, peer_ip });
             }
         } else {
             entry.response = Some(block.clone());
