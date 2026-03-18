@@ -263,7 +263,7 @@ pub struct SyncSender<N: Network> {
         SocketAddr,
         Vec<Block<N>>,
         Option<ConsensusVersion>,
-        oneshot::Sender<Result<(), InsertBlockResponseError>>,
+        oneshot::Sender<Result<(), InsertBlockResponseError<N>>>,
     )>,
     pub tx_block_sync_remove_peer: mpsc::Sender<SocketAddr>,
     pub tx_block_sync_update_peer_locators: mpsc::Sender<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
@@ -291,7 +291,7 @@ impl<N: Network> SyncSender<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<(), InsertBlockResponseError> {
+    ) -> Result<(), InsertBlockResponseError<N>> {
         // Initialize a callback sender and receiver.
         let (callback_sender, callback_receiver) = oneshot::channel();
         // Send the request to advance with sync blocks.
@@ -320,7 +320,7 @@ pub struct SyncReceiver<N: Network> {
         SocketAddr,
         Vec<Block<N>>,
         Option<ConsensusVersion>,
-        oneshot::Sender<Result<(), InsertBlockResponseError>>,
+        oneshot::Sender<Result<(), InsertBlockResponseError<N>>>,
     )>,
     pub rx_block_sync_remove_peer: mpsc::Receiver<SocketAddr>,
     pub rx_block_sync_update_peer_locators: mpsc::Receiver<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,

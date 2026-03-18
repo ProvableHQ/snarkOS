@@ -385,7 +385,7 @@ impl<N: Network> Sync<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<(), InsertBlockResponseError> {
+    ) -> Result<(), InsertBlockResponseError<N>> {
         self.block_sync.insert_block_responses(peer_ip, blocks, latest_consensus_version)
 
         // No need to advance block sync here, as the new response will
