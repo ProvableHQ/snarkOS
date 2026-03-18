@@ -172,8 +172,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
             .route(
                 "/slipstream/plugins/{name}",
-                axum::routing::delete(Self::slipstream_unload_plugin)
-                    .put(Self::slipstream_reload_plugin),
+                axum::routing::delete(Self::slipstream_unload_plugin).put(Self::slipstream_reload_plugin),
             );
 
         let routes = routes.route_layer(middleware::from_fn(auth_middleware))
