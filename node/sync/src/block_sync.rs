@@ -517,6 +517,11 @@ impl<N: Network> BlockSync<N> {
     pub async fn try_issuing_block_requests<C: CommunicationService>(&self, communication: &C) {
         self.handle_block_request_timeouts();
 
+        if self.is_block_synced() {
+            trace!("Node is already synced. Will not issue new block requests");
+            return;
+        }
+
         if !self.sync_state.read().can_issue_new_block_requests() && self.failed_requests.lock().is_empty() {
             trace!("Nothing to sync. Will not issue new block requests");
             return;
