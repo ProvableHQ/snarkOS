@@ -271,8 +271,8 @@ path = "snarkos/main.rs"
 
 [features]
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
-history = [ "snarkos-node/history" ]
-history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
+history = [ "snarkos-node/history", "snarkos-cli/history" ]
+history-staking-rewards = [ "snarkos-node/history-staking-rewards", "snarkos-cli/history-staking-rewards" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",
@@ -304,6 +304,7 @@ serial = [
   "snarkos-node-consensus/serial",
   "snarkos-node-metrics/serial",
   "snarkos-node-rest/serial",
+
   "snarkos-node-router/serial",
   "snarkos-node-sync/serial",
   "snarkvm/serial"
