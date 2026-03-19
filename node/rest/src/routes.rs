@@ -282,25 +282,58 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/transaction/{transactionID}
+    /// GET /<network>/transaction/{transactionID}?metadata={true}
     pub(crate) async fn get_transaction(
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
+        metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
         // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
-        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+        let transaction = rest.ledger.get_transaction(tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
-        })?))
+        })?;
+        // Check if metadata is requested and return the transaction with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the block height for the transaction, if it exists.
+            let block_height = rest
+                .ledger
+                .find_block_hash(&tx_id)
+                .ok()
+                .flatten()
+                .and_then(|block_hash| rest.ledger.get_height(&block_hash).ok());
+            return Ok(ErasedJson::pretty(json!({
+                "transaction": transaction,
+                "block_height": block_height,
+            })));
+        }
+        Ok(ErasedJson::pretty(transaction))
     }
 
     /// GET /<network>/transaction/confirmed/{transactionID}
+    /// GET /<network>/transaction/confirmed/{transactionID}?metadata={true}
     pub(crate) async fn get_confirmed_transaction(
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
+        metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
         // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
-        Ok(ErasedJson::pretty(rest.ledger.get_confirmed_transaction(tx_id).map_err(|err| {
+        let transaction = rest.ledger.get_confirmed_transaction(tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
-        })?))
+        })?;
+        // Check if metadata is requested and return the transaction with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the block height for the confirmed transaction.
+            let block_hash = rest
+                .ledger
+                .find_block_hash(&tx_id)?
+                .ok_or_else(|| anyhow!("Block hash not found for transaction {tx_id}"))?;
+            let block_height = rest.ledger.get_height(&block_hash)?;
+            return Ok(ErasedJson::pretty(json!({
+                "transaction": transaction,
+                "block_height": block_height,
+            })));
+        }
+        Ok(ErasedJson::pretty(transaction))
     }
 
     /// GET /<network>/transaction/unconfirmed/{transactionID}
