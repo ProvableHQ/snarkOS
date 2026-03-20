@@ -56,6 +56,7 @@ default-features = false
 git = "https://github.com/ProvableHQ/snarkVM.git"
 # Latest stream_plugin_testing commit
 rev = "0d50724d180f02cc9973cbb07c1cb8ec0c10212a"
+default-features = false
 
 [workspace.dependencies.anyhow]
 version = "1.0"
