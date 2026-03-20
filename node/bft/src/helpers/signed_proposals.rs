@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,8 +62,7 @@ impl<N: Network> FromBytes for SignedProposals<N> {
         // Read the number of signed proposals.
         let num_signed_proposals = u32::read_le(&mut reader)?;
 
-        let max_certificates = N::LATEST_MAX_CERTIFICATES()
-            .map_err(|e| error(format!("Failed to extract the maximum number of certificates: {e}")))?;
+        let max_certificates = N::LATEST_MAX_CERTIFICATES();
         // Ensure the number of signed proposals is within bounds
         if num_signed_proposals as usize > max_certificates as usize * NUM_RECENT_BLOCKS {
             return Err(error(format!(
@@ -123,7 +122,7 @@ pub(crate) mod tests {
         rng: &mut TestRng,
     ) -> SignedProposals<CurrentNetwork> {
         let mut signed_proposals: HashMap<_, _> = Default::default();
-        for _ in 0..CurrentNetwork::LATEST_MAX_CERTIFICATES().unwrap() {
+        for _ in 0..CurrentNetwork::LATEST_MAX_CERTIFICATES() {
             let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
             let address = Address::try_from(&private_key).unwrap();
 

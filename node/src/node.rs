@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,14 +37,21 @@ use snarkvm::prelude::{
     store::helpers::{memory::ConsensusMemory, rocksdb::ConsensusDB},
 };
 
-use aleo_std::StorageMode;
-use anyhow::Result;
+use aleo_std::{StorageMode, aleo_ledger_dir};
+use anyhow::{Result, bail};
 
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{cmp, collections::HashMap, fs, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use tokio::task;
+
+/// The number of blocks between automatic database checkpoints.
+const CHECKPOINT_BLOCK_FREQUENCY: u32 = 1000;
+
+/// The maximum number of automatic database checkpoints kept at any time.
+const MAX_AUTO_CHECKPOINTS: usize = 5;
 
 #[derive(Clone)]
 pub enum Node<N: Network> {
@@ -73,11 +80,12 @@ impl<N: Network> Node<N> {
         storage_mode: StorageMode,
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
+        auto_db_checkpoints: Option<PathBuf>,
         dev_txs: bool,
         dev: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        Ok(Self::Validator(Arc::new(
+        let validator = Arc::new(
             Validator::new(
                 node_ip,
                 bft_ip,
@@ -96,7 +104,18 @@ impl<N: Network> Node<N> {
                 signal_handler,
             )
             .await?,
-        )))
+        );
+
+        let node = Self::Validator(validator.clone());
+
+        // Perform automatic ledger checkpoints.
+        if let Some(path) = auto_db_checkpoints {
+            if let Some(handle) = node.perform_auto_checkpoints(path)? {
+                validator.handles.lock().push(handle);
+            }
+        }
+
+        Ok(node)
     }
 
     /// Initializes a new prover node.
@@ -137,10 +156,11 @@ impl<N: Network> Node<N> {
         storage_mode: StorageMode,
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
+        auto_db_checkpoints: Option<PathBuf>,
         dev: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        Ok(Self::Client(Arc::new(
+        let client = Arc::new(
             Client::new(
                 node_ip,
                 rest_ip,
@@ -156,7 +176,18 @@ impl<N: Network> Node<N> {
                 signal_handler,
             )
             .await?,
-        )))
+        );
+
+        let node = Self::Client(client.clone());
+
+        // Perform automatic ledger checkpoints.
+        if let Some(path) = auto_db_checkpoints {
+            if let Some(handle) = node.perform_auto_checkpoints(path)? {
+                client.handles.lock().push(handle);
+            }
+        }
+
+        Ok(node)
     }
 
     /// Initializes a new bootstrap client node.
@@ -289,5 +320,127 @@ impl<N: Network> Node<N> {
             Self::Client(node) => node.wait_for_signals(signal_handler).await,
             Self::BootstrapClient(node) => node.wait_for_signals(signal_handler).await,
         }
+    }
+
+    /// Periodically creates automated ledger checkpoints.
+    pub fn perform_auto_checkpoints(&self, auto_checkpoint_path: PathBuf) -> Result<Option<task::JoinHandle<()>>> {
+        // Only perform checkpoints if there's a database involved.
+        let Some(ledger) = self.ledger().cloned() else {
+            return Ok(None);
+        };
+
+        // Ensure that the target path exists as a folder or create it.
+        if !auto_checkpoint_path.exists() {
+            if let Err(e) = fs::create_dir_all(&auto_checkpoint_path) {
+                bail!("Couldn't create the specified path for the automatic ledger checkpoints: {e}");
+            }
+        } else if auto_checkpoint_path.exists() && !auto_checkpoint_path.is_dir() {
+            bail!("The specified path for automatic ledger checkpoints is not a directory");
+        }
+
+        // Spawn a loop that will periodically create the checkpoints.
+        let handle = tokio::spawn(async move {
+            info!("Starting the automatic ledger checkpoint routine...");
+
+            // Prepare some object that will be useful throughout the routine.
+            let mut last_checkpoint_height = None;
+            let mut existing_checkpoints = Vec::with_capacity(MAX_AUTO_CHECKPOINTS + 1);
+            let mut block_tree_path = aleo_ledger_dir(N::ID, ledger.vm().block_store().storage_mode());
+            block_tree_path.push("block_tree");
+
+            loop {
+                // A small delay that's smaller than block time. There are technically situations when
+                // blocks can be inserted one after the other more quickly (syncing, multiple blocks in
+                // a Subdag), those are edge cases unlikely to be encountered under normal conditions.
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                // Skip if we've already created a checkpoint during this run, and the
+                // number of blocks baked since then is lower than the configured threshold.
+                let current_height = ledger.vm().block_store().current_block_height();
+                if last_checkpoint_height.is_some_and(|checkpoint_height| {
+                    current_height.saturating_sub(checkpoint_height) < CHECKPOINT_BLOCK_FREQUENCY
+                }) {
+                    continue;
+                }
+
+                // Create a checkpoint.
+                let mut checkpoint_path = auto_checkpoint_path.clone();
+                checkpoint_path.push(format!("checkpoint_{current_height}"));
+                if let Err(e) = ledger.backup_database(&checkpoint_path) {
+                    warn!("Couldn't automatically store a checkpoint at {}: {e}", checkpoint_path.display());
+                    continue;
+                }
+                last_checkpoint_height = Some(current_height);
+
+                // Immediately procure and copy the applicable block tree in the background.
+                let ledger_clone = ledger.clone();
+                let source_block_tree_path = block_tree_path.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = ledger_clone.cache_block_tree() {
+                        warn!("Couldn't cache the block tree for a ledger checkpoint: {e}");
+                        return;
+                    }
+
+                    // Copy the block tree file to the new checkpoint.
+                    checkpoint_path.push("block_tree");
+                    if let Err(e) = fs::copy(source_block_tree_path, checkpoint_path) {
+                        warn!("Couldn't copy the block tree file to a ledger checkpoint: {e}");
+                    }
+                });
+
+                // Count the existing auto checkpoints.
+                existing_checkpoints.clear();
+                let checkpoint_dir = match auto_checkpoint_path.read_dir() {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        warn!("IO error while accessing the automatic checkpoints: {e}");
+                        continue;
+                    }
+                };
+                for entry in checkpoint_dir {
+                    // Handle possible IO errors.
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(e) => {
+                            warn!("IO error while counting the automatic checkpoints: {e}");
+                            continue;
+                        }
+                    };
+
+                    // Skip non-directories.
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+
+                    // Recognize checkpoints by the "checkpoint_height" name.
+                    let file_name = entry.file_name().into_string().unwrap(); // can't fail - we create Unicode filenames
+                    let mut name_iter = file_name.split("_");
+                    if name_iter.next() != Some("checkpoint") {
+                        continue;
+                    }
+                    let Some(height) = name_iter.next() else {
+                        continue;
+                    };
+                    let Ok(height) = u32::from_str(height) else {
+                        continue;
+                    };
+                    existing_checkpoints.push((path, height));
+                }
+                existing_checkpoints.sort_unstable_by_key(|(_, height)| cmp::Reverse(*height));
+
+                // If we have a sufficient number of checkpoints, delete the oldest one(s).
+                let surplus_checkpoints = existing_checkpoints.len().saturating_sub(MAX_AUTO_CHECKPOINTS);
+                for _ in 0..surplus_checkpoints {
+                    if let Some((checkpoint_path, _)) = existing_checkpoints.pop() {
+                        if let Err(e) = fs::remove_dir_all(checkpoint_path) {
+                            warn!("Couldn't remove an automatic ledger checkpoint: {e}");
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Some(handle))
     }
 }

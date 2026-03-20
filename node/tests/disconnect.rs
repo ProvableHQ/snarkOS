@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,7 +52,7 @@ macro_rules! test_disconnect {
             let peer_addr = peer.node().listening_addr().unwrap();
 
             // Connect the node to the test peer.
-            node.router().connect(peer_addr).unwrap().await.unwrap();
+            node.router().connect(peer_addr).unwrap().await.unwrap().unwrap();
 
             // Check the peer counts.
             let node_clone = node.clone();
@@ -155,7 +155,7 @@ async fn duplicate_disconnect_attempts() {
     let addr2 = node2.tcp().listening_addr().unwrap();
 
     // Connect node1 to node2.
-    assert!(node1.router().connect(addr2).unwrap().await.unwrap());
+    assert!(node1.router().connect(addr2).unwrap().await.unwrap().is_ok());
 
     // Prepare disconnect attempts.
     let node1_clone = node1.clone();

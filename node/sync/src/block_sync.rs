@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -666,7 +666,7 @@ impl<N: Network> BlockSync<N> {
     /// This function does **not** check
     /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: &BlockLocators<N>) -> Result<()> {
-        // Update the locators entry for the given peer IP.
+        // -- First, update the locators entry for the given peer IP. --
         // We perform this update atomically, and drop the lock as soon as we are done with the update.
         match self.locators.write().entry(peer_ip) {
             hash_map::Entry::Occupied(mut e) => {
@@ -688,7 +688,7 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Compute the common ancestor with this node.
+        // -- Second, compute the common ancestor with this node. --
         let new_local_ancestor = {
             let mut ancestor = 0;
             // Attention: Please do not optimize this loop, as it performs fork-detection. In addition,
@@ -699,7 +699,7 @@ impl<N: Network> BlockSync<N> {
                     match ledger_hash == hash {
                         true => ancestor = height,
                         false => {
-                            debug!("Detected fork with peer \"{peer_ip}\" at height {height}");
+                            warn!("Detected fork between this node and peer \"{peer_ip}\" at height {height}");
                             break;
                         }
                     }
@@ -708,7 +708,7 @@ impl<N: Network> BlockSync<N> {
             ancestor
         };
 
-        // Compute the common ancestor with every other peer.
+        // -- Third, compute the common ancestor with every other peer, and determine if this peer is forked from others. --
         // Do not hold write lock to `common_ancestors` here, because this can take a while with many peers.
         let ancestor_updates: Vec<_> = self
             .locators
@@ -739,7 +739,7 @@ impl<N: Network> BlockSync<N> {
             })
             .collect();
 
-        // Update the map of common ancestors.
+        // -- Forth, update the map of common ancestors. --
         // Scope the lock, so it is dropped before locking `sync_state`.
         {
             let mut common_ancestors = self.common_ancestors.write();
@@ -750,14 +750,14 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Update sync state, because the greatest peer height may have decreased.
+        // -- Finally, update sync state and notify the sync loop about the change. --
         if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
             self.sync_state.write().set_greatest_peer_height(greatest_peer_height);
         } else {
             error!("Got new block locators but greatest peer height is zero.");
         }
-
-        // Notify the sync loop that something changed.
+        // Even if the greatest peer height did not change, we still received new block locators
+        // that the sync loop might need to proceed.
         self.peer_notify.notify_one();
 
         Ok(())
@@ -931,16 +931,16 @@ impl<N: Network> BlockSync<N> {
         let (expected_hash, expected_previous_hash, sync_ips) = &entry.request;
 
         // Ensure the candidate block hash matches the expected hash.
-        if let Some(expected_hash) = expected_hash {
-            if block.hash() != *expected_hash {
-                bail!("The block hash for candidate block {height} from '{peer_ip}' is incorrect")
-            }
+        if let Some(expected_hash) = expected_hash
+            && block.hash() != *expected_hash
+        {
+            bail!("The block hash for candidate block {height} from '{peer_ip}' is incorrect")
         }
         // Ensure the previous block hash matches if it exists.
-        if let Some(expected_previous_hash) = expected_previous_hash {
-            if block.previous_hash() != *expected_previous_hash {
-                bail!("The previous block hash in candidate block {height} from '{peer_ip}' is incorrect")
-            }
+        if let Some(expected_previous_hash) = expected_previous_hash
+            && block.previous_hash() != *expected_previous_hash
+        {
+            bail!("The previous block hash in candidate block {height} from '{peer_ip}' is incorrect")
         }
         // Ensure the sync pool requested this block from the given peer.
         if !sync_ips.contains(&peer_ip) {

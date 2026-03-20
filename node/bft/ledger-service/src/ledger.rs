@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +68,11 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
+        // Initialize the block height metric.
+        #[cfg(feature = "metrics")]
+        {
+            metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        }
         Self { ledger, latest_leader: Default::default(), stoppable }
     }
 }
@@ -178,7 +183,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
         // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
         // because committees are updated in even rounds.
-        let previous_round = match round % 2 == 0 {
+        let previous_round = match round.is_multiple_of(2) {
             true => round.saturating_sub(1),
             false => round.saturating_sub(2),
         };
@@ -221,7 +226,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
                 let transaction = match transaction_data.clone() {
                     Data::Object(transaction) => transaction,
-                    Data::Buffer(bytes) => Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?,
+                    Data::Buffer(bytes) => {
+                        Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?
+                    }
                 };
                 // Ensure the transaction ID matches the expected transaction ID.
                 if transaction.id() != expected_transaction_id {
@@ -363,7 +370,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<Block<N>> {
-        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
+        Ok(self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())?)
     }
 
     /// Adds the given block as the next block in the ledger.
@@ -388,7 +395,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             metrics::update_block_metrics(block);
         }
 
-        tracing::info!("\n\nAdvanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
+        tracing::info!("Advanced to block {} at round {} - {}", block.height(), block.round(), block.hash());
         Ok(())
     }
 

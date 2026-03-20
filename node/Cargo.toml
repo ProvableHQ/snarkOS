@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "4.4.0"
+version = "4.5.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -39,6 +39,7 @@ metrics = [
   "snarkos-node-tcp/metrics"
 ]
 history = [ "snarkos-node-rest/history" ]
+history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards" ]
 telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",

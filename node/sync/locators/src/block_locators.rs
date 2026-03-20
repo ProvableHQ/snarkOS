@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -168,18 +168,18 @@ impl<N: Network> BlockLocators<N> {
     ) -> Result<()> {
         // For the overlapping recent blocks, ensure their block hashes match.
         for (height, hash) in new_locators.recents.iter() {
-            if let Some(recent_hash) = old_locators.recents.get(height) {
-                if recent_hash != hash {
-                    bail!("Recent block hash mismatch at height {height}")
-                }
+            if let Some(recent_hash) = old_locators.recents.get(height)
+                && recent_hash != hash
+            {
+                bail!("Recent block hash mismatch at height {height}")
             }
         }
         // For the overlapping block checkpoints, ensure their block hashes match.
         for (height, hash) in new_locators.checkpoints.iter() {
-            if let Some(checkpoint_hash) = old_locators.checkpoints.get(height) {
-                if checkpoint_hash != hash {
-                    bail!("Block checkpoint hash mismatch for height {height}")
-                }
+            if let Some(checkpoint_hash) = old_locators.checkpoints.get(height)
+                && checkpoint_hash != hash
+            {
+                bail!("Block checkpoint hash mismatch for height {height}")
             }
         }
         Ok(())

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -234,7 +234,7 @@ impl<N: Network> FromBytes for Proposal<N> {
         // Read the number of signatures.
         let num_signatures = u32::read_le(&mut reader)?;
         // Ensure the number of signatures is within bounds (this is an early safety check).
-        if num_signatures as usize > Committee::<N>::max_committee_size().map_err(error)? as usize {
+        if num_signatures as usize > Committee::<N>::max_committee_size() as usize {
             return Err(error("Invalid number of signatures in the proposal"));
         }
         // Read the signatures.

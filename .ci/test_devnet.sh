@@ -101,7 +101,6 @@ wait_for_nodes "$total_validators" "$total_clients" "$network_name" 180
 
 # Wait for validators to be fully connected.
 log "ℹ️ Waiting for validators to be fully connected..." 
-SECONDS=0
 for validator_index in $(seq 0 $((total_validators-1))); do
   if ! (wait_for_bft_connections "$validator_index" $((total_validators-1)) "$network_name"); then
     exit 1

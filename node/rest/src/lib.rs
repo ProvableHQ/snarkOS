@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +36,7 @@ use snarkos_node_sync::BlockSync;
 use snarkvm::{
     console::{program::ProgramID, types::Field},
     ledger::narwhal::Data,
-    prelude::{Ledger, Network, cfg_into_iter, store::ConsensusStorage},
+    prelude::{Ledger, Network, VM, cfg_into_iter, store::ConsensusStorage},
 };
 
 use anyhow::{Context, Result};
@@ -53,11 +53,8 @@ use axum_extra::response::ErasedJson;
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicUsize},
-};
-use tokio::{net::TcpListener, task::JoinHandle};
+use std::{net::SocketAddr, sync::Arc};
+use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -87,11 +84,11 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     /// A reference to BlockSync,
     block_sync: Arc<BlockSync<N>>,
     /// The number of ongoing deploy transaction verifications via REST.
-    num_verifying_deploys: Arc<AtomicUsize>,
+    num_verifying_deploys: Arc<Semaphore>,
     /// The number of ongoing execute transaction verifications via REST.
-    num_verifying_executions: Arc<AtomicUsize>,
+    num_verifying_executions: Arc<Semaphore>,
     /// The number of ongoing solution verifications via REST.
-    num_verifying_solutions: Arc<AtomicUsize>,
+    num_verifying_solutions: Arc<Semaphore>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -113,9 +110,9 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             cdn_sync,
             block_sync,
             handles: Default::default(),
-            num_verifying_deploys: Default::default(),
-            num_verifying_executions: Default::default(),
-            num_verifying_solutions: Default::default(),
+            num_verifying_deploys: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS)),
+            num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
+            num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
         };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
@@ -196,14 +193,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/find/blockHash/{tx_id}", get(Self::find_block_hash))
             .route("/find/blockHeight/{state_root}", get(Self::find_block_height_from_state_root))
             .route("/find/transactionID/deployment/{program_id}", get(Self::find_latest_transaction_id_from_program_id))
-            .route("/find/transactionID/deployment/{program_id}/{edition}", get(Self::find_transaction_id_from_program_id_and_edition))
+            .route("/find/transactionID/deployment/{program_id}/{edition}", get(Self::find_latest_transaction_id_from_program_id_and_edition))
+            .route("/find/transactionID/deployment/{program_id}/{edition}/original", get(Self::find_original_deployment_transaction_id))
+            .route("/find/transactionID/deployment/{program_id}/{edition}/{amendment}", get(Self::find_transaction_id_from_program_id_edition_and_amendment))
             .route("/find/transactionID/{transition_id}", get(Self::find_transaction_id_from_transition_id))
             .route("/find/transitionID/{input_or_output_id}", get(Self::find_transition_id))
 
-            // GET ../peers/..
+            // GET ../connections/p2p/.. (with ../peers/.. aliases)
             .route("/peers/count", get(Self::get_peers_count))
             .route("/peers/all", get(Self::get_peers_all))
             .route("/peers/all/metrics", get(Self::get_peers_all_metrics))
+            .route("/connections/p2p/count", get(Self::get_peers_count))
+            .route("/connections/p2p/all", get(Self::get_peers_all))
+            .route("/connections/p2p/all/metrics", get(Self::get_peers_all_metrics))
 
             // GET ../program/..
             .route("/program/{id}", get(Self::get_program))
@@ -211,6 +213,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/program/{id}/{edition}", get(Self::get_program_for_edition))
             .route("/program/{id}/mappings", get(Self::get_mapping_names))
             .route("/program/{id}/mapping/{name}/{key}", get(Self::get_mapping_value))
+            .route("/program/{id}/amendment_count", get(Self::get_program_amendment_count))
+            .route("/program/{id}/{edition}/amendment_count", get(Self::get_program_amendment_count_for_edition))
 
             // GET ../sync/..
             // Note: keeping ../sync_status for compatibility
@@ -235,6 +239,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/committee/{height}", get(Self::get_committee))
             .route("/delegators/{validator}", get(Self::get_delegators_for_validator));
 
+        // If the node is a validator, enable the BFT connections endpoints.
+        let routes = match self.consensus {
+            Some(_) => routes
+                .route("/connections/bft/count", get(Self::get_bft_connections_count))
+                .route("/connections/bft/all", get(Self::get_bft_connections_all)),
+            None => routes,
+        };
+
         // If the node is a validator and `telemetry` features is enabled, enable the additional endpoint.
         #[cfg(feature = "telemetry")]
         let routes = match self.consensus {
@@ -244,7 +256,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         // If the `history` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history")]
-        let routes = routes.route("/block/{blockHeight}/history/{mapping}", get(Self::get_history));
+        let routes = routes.route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history));
+
+        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
+        #[cfg(feature = "history-staking-rewards")]
+        let routes = routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward));
 
         routes
             // Pass in `Rest` to make things convenient.

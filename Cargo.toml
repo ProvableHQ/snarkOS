@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.5.5"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -48,8 +48,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "0bfb56470"
-#version = "=4.4.0"
+rev = "a5f8ba1c5"
+#version = "=4.5.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -95,7 +95,7 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.4"
+version = "0.5"
 
 [workspace.dependencies.lru]
 version = "0.16"
@@ -155,6 +155,9 @@ default-features = false
 [workspace.dependencies.rand_distr]
 version = "0.4"
 
+[workspace.dependencies.smol_str]
+version = "=0.3.2" # Update after Rust >1.88
+
 [workspace.dependencies.tracing]
 version = "0.1"
 default-features = false
@@ -175,84 +178,84 @@ version = "0.2"
 
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.4.0"
+version = "=4.5.1"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.4.0"
+version = "=4.5.1"
 
 [workspace.dependencies.snarkos-utilities]
 path = "utilities"
-version = "=4.2.1"
+version = "=4.5.1"
 
 [[bin]]
 name = "snarkos"
@@ -261,6 +264,7 @@ path = "snarkos/main.rs"
 [features]
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history" ]
+history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",
@@ -306,7 +310,7 @@ workspace = true
 features = [ "derive" ]
 
 [dependencies.locktick]
-version = "0.4"
+workspace = true
 optional = true
 
 [dependencies.snarkos-account]
@@ -356,8 +360,7 @@ workspace = true
 version = "0.11.2"
 
 [build-dependencies.built]
-version = "0.8"
-features = [ "git2" ]
+workspace = true
 
 [build-dependencies.toml]
 version = "0.9"

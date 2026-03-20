@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +46,7 @@ impl<N: Network> FromBytes for ValidatorsResponse<N> {
         // Read the number of validators.
         let num_validators = u16::read_le(&mut reader)?;
 
-        let max_certificates = N::LATEST_MAX_CERTIFICATES()
-            .map_err(|e| error(format!("Failed to extract the maximum number of certificates: {e}")))?;
+        let max_certificates = N::LATEST_MAX_CERTIFICATES();
 
         // Ensure the number of validators is within bounds
         if num_validators > max_certificates {
@@ -94,7 +93,7 @@ pub mod prop_tests {
     }
 
     pub fn any_index_map() -> BoxedStrategy<IndexMap<SocketAddr, Address<CurrentNetwork>>> {
-        let max_certificates = min(CurrentNetwork::LATEST_MAX_CERTIFICATES().unwrap() + 1, 50);
+        let max_certificates = min(CurrentNetwork::LATEST_MAX_CERTIFICATES() + 1, 50);
 
         hash_map(any_valid_socket_addr(), any_valid_address(), 0..(max_certificates as usize))
             .prop_map(|map| map.iter().map(|(k, v)| (*k, *v)).collect())
@@ -119,7 +118,7 @@ pub mod prop_tests {
     fn oversized_validators_response_roundtrip() {
         let mut rng = TestRng::default();
 
-        let num_too_many_certificates = (CurrentNetwork::LATEST_MAX_CERTIFICATES().unwrap() + 1) as usize;
+        let num_too_many_certificates = (CurrentNetwork::LATEST_MAX_CERTIFICATES() + 1) as usize;
 
         let mut too_many_certificates = IndexMap::with_capacity(num_too_many_certificates);
         for i in 0..num_too_many_certificates {

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,12 +29,9 @@ use snarkvm::{
 };
 
 #[cfg(feature = "locktick")]
-use locktick::{
-    parking_lot::{Mutex, RwLock},
-    tokio::Mutex as TMutex,
-};
+use locktick::{parking_lot::RwLock, tokio::Mutex as TMutex};
 #[cfg(not(feature = "locktick"))]
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -45,7 +42,6 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::sync::oneshot;
 
 #[derive(Clone)]
 pub struct BootstrapClient<N: Network>(Arc<InnerBootstrapClient<N>>);
@@ -72,7 +68,6 @@ pub struct InnerBootstrapClient<N: Network> {
     http_client: reqwest::Client,
     latest_committee: TMutex<(HashSet<Address<N>>, Instant)>,
     dev: Option<u16>,
-    shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 impl<N: Network> BootstrapClient<N> {
@@ -104,10 +99,6 @@ impl<N: Network> BootstrapClient<N> {
         // Prepare a placeholder committee, ensuring that it's insta-outdated.
         let latest_committee = TMutex::new((Default::default(), Instant::now() - Self::COMMITTEE_REFRESH_TIME));
 
-        // Prepare the shutdown channel.
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let shutdown_tx = Mutex::new(Some(shutdown_tx));
-
         // Construct and return the bootstrap client.
         let inner = InnerBootstrapClient {
             tcp,
@@ -120,7 +111,6 @@ impl<N: Network> BootstrapClient<N> {
             http_client,
             latest_committee,
             dev,
-            shutdown_tx,
         };
         let node = BootstrapClient(Arc::new(inner));
 
@@ -132,9 +122,6 @@ impl<N: Network> BootstrapClient<N> {
         node.enable_on_connect().await;
         // Enable the TCP listener. Note: This must be called after the above protocols.
         node.tcp().enable_listener().await.expect("Failed to enable the TCP listener");
-
-        // Await the shutdown signal.
-        let _ = shutdown_rx.await;
 
         Ok(node)
     }
@@ -227,11 +214,6 @@ impl<N: Network> BootstrapClient<N> {
 
         // Shut down the low-level network features.
         self.tcp.shut_down().await;
-
-        // Shut down the node.
-        if let Some(shutdown_tx) = self.shutdown_tx.lock().take() {
-            let _ = shutdown_tx.send(());
-        }
     }
 
     /// Blocks until a shutdown signal was received or manual shutdown was triggered.

@@ -78,7 +78,7 @@ wait_for_nodes "$total_validators" 0
 total_wait=0
 while ! check_heights 0 1 "$min_height" "$network_name"; do
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
   total_wait=$((total_wait + poll_interval))
   echo "Waited $total_wait seconds so far..."
 done

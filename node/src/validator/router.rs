@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{PeerPoolHandling, harden_socket};
 use snarkos_node_router::messages::{
     BlockRequest,
     BlockResponse,
@@ -26,11 +26,11 @@ use snarkos_node_router::messages::{
     Pong,
     UnconfirmedTransaction,
 };
-use snarkos_node_tcp::{Connection, ConnectionSide, Tcp};
+use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
-    utilities::{flatten_error, io_error},
+    utilities::flatten_error,
 };
 
 use std::{io, net::SocketAddr};
@@ -45,12 +45,15 @@ impl<N: Network, C: ConsensusStorage<N>> P2P for Validator<N, C> {
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Handshake for Validator<N, C> {
     /// Performs the handshake protocol.
-    async fn perform_handshake(&self, mut connection: Connection) -> io::Result<Connection> {
+    async fn perform_handshake(&self, mut connection: Connection) -> Result<Connection, ConnectError> {
         // Perform the handshake.
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
-        let genesis_header = self.ledger.get_header(0).map_err(io_error)?;
+        // Make the socket more robust.
+        harden_socket(stream)?;
+        //TODO(kaimast): if this fails, the validator must be corrupted. Handle this with higher severity.
+        let genesis_header = self.ledger.get_header(0).map_err(ConnectError::other)?;
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
         self.router.handshake(peer_addr, stream, conn_side, genesis_header, restrictions_id).await?;
 
@@ -65,13 +68,12 @@ where
 {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
-            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
-                if peer.node_type != NodeType::BootstrapClient {
-                    // Send the first `Ping` message to the peer.
-                    self.ping.on_peer_connected(listener_addr);
-                }
-            }
+        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr)
+            && let Some(peer) = self.router().get_connected_peer(listener_addr)
+            && peer.node_type != NodeType::BootstrapClient
+        {
+            // Send the first `Ping` message to the peer.
+            self.ping.on_peer_connected(listener_addr);
         }
     }
 }

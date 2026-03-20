@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use snarkos_node_tcp::ConnectError;
 use snarkvm::prelude::{FromBytes, ToBytes, io_error};
 
-use std::io;
+use std::{io, net::SocketAddr};
 
 /// The reason behind the node disconnecting from a peer.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -48,11 +49,21 @@ pub enum DisconnectReason {
     TooManyPeers,
     /// The peer is a sync node that's behind our node, and it needs to sync itself first.
     YouNeedToSyncFirst,
-    /// The peer's listening port is closed.
+    /// The peer's listening port is closed
     YourPortIsClosed(u16),
+    /// The two peers are the same node.
+    SelfConnect,
+    /// No untrusted external peers are allowed.
+    NoExternalPeersAllowed,
+    /// Already connecting to the same node (through another TCP channel).
+    AlreadyConnecting,
+    /// Already connected to the same node (through another TCP channel).
+    AlreadyConnected,
     /// The disconnect reason is not known. This is used for when the peers sends a disconnect reason that is not known to us.
     UnknownReason,
 }
+
+impl snarkos_node_tcp::ApplicationError for DisconnectReason {}
 
 impl ToBytes for DisconnectReason {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
@@ -75,6 +86,10 @@ impl ToBytes for DisconnectReason {
                 14u8.write_le(&mut writer)?;
                 port.write_le(writer)
             }
+            Self::SelfConnect => 15u8.write_le(writer),
+            Self::NoExternalPeersAllowed => 16u8.write_le(writer),
+            Self::AlreadyConnecting => 17u8.write_le(writer),
+            Self::AlreadyConnected => 18u8.write_le(writer),
             Self::UnknownReason => Err(io_error("Cannot serialize unknown disconnect reason")),
         }
     }
@@ -106,6 +121,10 @@ impl FromBytes for DisconnectReason {
                 let port = u16::read_le(reader)?;
                 Self::YourPortIsClosed(port)
             }
+            15 => Self::SelfConnect,
+            16 => Self::NoExternalPeersAllowed,
+            17 => Self::AlreadyConnecting,
+            18 => Self::AlreadyConnected,
             val => {
                 warn!("Received unknown disconnect reason (id={val})");
                 Self::UnknownReason
@@ -135,6 +154,21 @@ impl std::fmt::Display for DisconnectReason {
             Self::YouNeedToSyncFirst => write!(f, "you need to sync first"),
             Self::YourPortIsClosed(port) => write!(f, "your port is closed ({port})"),
             Self::UnknownReason => write!(f, "unknown reason"),
+            Self::SelfConnect => write!(f, "self connect"),
+            Self::NoExternalPeersAllowed => write!(f, "no external peers allowed"),
+            Self::AlreadyConnecting => write!(f, "already connecting"),
+            Self::AlreadyConnected => write!(f, "already connected"),
+        }
+    }
+}
+
+impl DisconnectReason {
+    pub fn into_connect_error(self, address: SocketAddr) -> ConnectError {
+        match self {
+            DisconnectReason::SelfConnect => ConnectError::SelfConnect { address },
+            DisconnectReason::AlreadyConnected => ConnectError::AlreadyConnected { address },
+            DisconnectReason::AlreadyConnecting => ConnectError::AlreadyConnecting { address },
+            _ => ConnectError::application(self),
         }
     }
 }
