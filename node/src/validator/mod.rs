@@ -74,7 +74,7 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
     /// The Slipstream plugin service (present when plugins are loaded).
-    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    #[cfg(feature = "slipstream-plugins")]
     slipstream_service: Arc<Mutex<Option<snarkvm_slipstream_plugin_manager::slipstream_service::SlipstreamPluginService>>>,
 }
 
@@ -108,13 +108,14 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the Slipstream plugin service (if any config files were provided).
-        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+        #[cfg(feature = "slipstream-plugins")]
         let slipstream_service = if !slipstream_configs.is_empty() {
             let service =
                 snarkvm_slipstream_plugin_manager::slipstream_service::SlipstreamPluginService::new(slipstream_configs)
                     .context("Failed to initialize Slipstream plugin service")?;
             ledger.vm().finalize_store().set_slipstream_plugin_manager(service.plugin_manager());
-            tracing::info!("Loaded {} Slipstream plugin(s)", slipstream_configs.len());
+            let num_plugins = slipstream_configs.len();
+            tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
             Some(service)
         } else {
             None
@@ -166,7 +167,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync: sync.clone(),
             ping,
             handles: Default::default(),
-            #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+            #[cfg(feature = "slipstream-plugins")]
             slipstream_service: Arc::new(Mutex::new(slipstream_service)),
         };
 
@@ -489,7 +490,7 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         trace!("Shutting down the node...");
 
         // Shut down the Slipstream plugin service.
-        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+        #[cfg(feature = "slipstream-plugins")]
         if let Some(service) = self.slipstream_service.lock().take() {
             service.join();
         }

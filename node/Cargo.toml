@@ -38,8 +38,9 @@ metrics = [
   "snarkos-node-router/metrics",
   "snarkos-node-tcp/metrics"
 ]
-history = [ "dep:snarkvm-slipstream-plugin-manager", "snarkos-node-rest/history", "snarkvm/history" ]
-history-staking-rewards = [ "dep:snarkvm-slipstream-plugin-manager", "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
+history = [ "snarkos-node-rest/history", "snarkvm/history" ]
+history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
+slipstream-plugins = [ "dep:snarkvm-slipstream-plugin-manager", "snarkos-node-rest/slipstream-plugins", "snarkvm/slipstream-plugins" ]
 telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",

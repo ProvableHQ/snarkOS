@@ -299,8 +299,8 @@ pub struct Start {
     pub auto_migrate_node_data: bool,
 
     /// Paths to Slipstream plugin config files (JSON5). May be repeated for multiple plugins.
-    /// Requires the node to be compiled with --features history or --features history-staking-rewards.
-    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    /// Requires the node to be compiled with --features slipstream-plugins.
+    #[cfg(feature = "slipstream-plugins")]
     #[clap(long = "slipstream-config", value_name = "PATH", verbatim_doc_comment)]
     pub slipstream_configs: Vec<PathBuf>,
 }
@@ -851,9 +851,9 @@ impl Start {
         let signal_handler = SignalHandler::new();
 
         // Collect slipstream plugin config paths (empty slice when feature is disabled).
-        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+        #[cfg(feature = "slipstream-plugins")]
         let slipstream_configs: &[PathBuf] = &self.slipstream_configs;
-        #[cfg(not(any(feature = "history", feature = "history-staking-rewards")))]
+        #[cfg(not(feature = "slipstream-plugins"))]
         let slipstream_configs: &[PathBuf] = &[];
 
         // Initialize the node.

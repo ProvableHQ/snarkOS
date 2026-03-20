@@ -49,13 +49,13 @@ default-features = false
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
 # Latest stream_plugin_testing commit
-rev = "8edbf9fc4a7bd0092ffa63b7a816ad9a76494440"
+rev = "0d50724d180f02cc9973cbb07c1cb8ec0c10212a"
 default-features = false
 
 [workspace.dependencies.snarkvm-slipstream-plugin-manager]
 git = "https://github.com/ProvableHQ/snarkVM.git"
 # Latest stream_plugin_testing commit
-rev = "8edbf9fc4a7bd0092ffa63b7a816ad9a76494440"
+rev = "0d50724d180f02cc9973cbb07c1cb8ec0c10212a"
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -273,6 +273,7 @@ path = "snarkos/main.rs"
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history", "snarkos-cli/history" ]
 history-staking-rewards = [ "snarkos-node/history-staking-rewards", "snarkos-cli/history-staking-rewards" ]
+slipstream-plugins = [ "snarkos-node/slipstream-plugins", "snarkos-cli/slipstream-plugins" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",

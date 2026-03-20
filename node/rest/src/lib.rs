@@ -166,15 +166,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/program/{id}/mapping/{name}", get(Self::get_mapping_values))
             .route("/db_backup", post(Self::db_backup));
 
-        // If the `history` or `history-staking-rewards` feature is enabled, enable the Slipstream plugin management endpoints.
-        #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
-        let routes = routes
-            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
-            .route(
-                "/slipstream/plugins/{name}",
-                axum::routing::delete(Self::slipstream_unload_plugin).put(Self::slipstream_reload_plugin),
-            );
-
         let routes = routes.route_layer(middleware::from_fn(auth_middleware))
 
              // Get ../consensus_version
@@ -268,6 +259,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // If the `history` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history")]
         let routes = routes.route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history));
+
+        // If the `slipstream-plugins` feature is enabled,
+        // enable the Slipstream plugin management endpoints (no auth required).
+        #[cfg(feature = "slipstream-plugins")]
+        let routes = routes
+            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
+            .route(
+                "/slipstream/plugins/{name}",
+                axum::routing::delete(Self::slipstream_unload_plugin).put(Self::slipstream_reload_plugin),
+            );
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history-staking-rewards")]

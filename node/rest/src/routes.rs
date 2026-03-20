@@ -1095,7 +1095,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /{network}/slipstream/plugins
-    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    #[cfg(feature = "slipstream-plugins")]
     pub(crate) async fn slipstream_list_plugins(
         State(rest): State<Self>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
@@ -1116,7 +1116,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// POST /{network}/slipstream/plugins
-    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    #[cfg(feature = "slipstream-plugins")]
     pub(crate) async fn slipstream_load_plugin(
         State(rest): State<Self>,
         Json(body): Json<serde_json::Value>,
@@ -1155,7 +1155,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// DELETE /{network}/slipstream/plugins/{name}
-    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    #[cfg(feature = "slipstream-plugins")]
     pub(crate) async fn slipstream_unload_plugin(
         State(rest): State<Self>,
         Path(name): Path<String>,
@@ -1189,7 +1189,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// PUT /{network}/slipstream/plugins/{name}
-    #[cfg(any(feature = "history", feature = "history-staking-rewards"))]
+    #[cfg(feature = "slipstream-plugins")]
     pub(crate) async fn slipstream_reload_plugin(
         State(rest): State<Self>,
         Path(name): Path<String>,

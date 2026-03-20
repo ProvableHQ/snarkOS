@@ -21,6 +21,7 @@ default = [ ]
 async = [ ]
 history = [ "snarkos-node/history" ]
 history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
+slipstream-plugins = [ "snarkos-node/slipstream-plugins" ]
 locktick = [
   "dep:locktick",
   "snarkos-display/locktick",

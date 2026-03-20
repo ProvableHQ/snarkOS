@@ -20,6 +20,7 @@ edition = "2024"
 default = [ ]
 history = [ "dep:snarkvm-slipstream-plugin-manager", "snarkvm/history" ]
 history-staking-rewards = [ "dep:snarkvm-slipstream-plugin-manager", "snarkvm/history-staking-rewards" ]
+slipstream-plugins = [ "dep:snarkvm-slipstream-plugin-manager", "snarkvm/slipstream-plugins" ]
 telemetry = [ "snarkos-node-consensus/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
