@@ -118,7 +118,7 @@ pub struct BlockRequestsSummary {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum InsertBlockResponseError {
+pub enum InsertBlockResponseError<N: Network> {
     #[error("Empty block response")]
     EmptyBlockResponse,
     #[error("The peer did not send a consensus version")]
@@ -127,8 +127,34 @@ pub enum InsertBlockResponseError {
         "The peer's consensus version for height {last_height} does not match ours: expected {expected_version}, got {peer_version}"
     )]
     ConsensusVersionMismatch { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
+    #[error("Block Sync already advanced to block {height}")]
+    BlockSyncAlreadyAdvanced { height: u32 },
+    #[error("No such request for height {height}")]
+    NoSuchRequest { height: u32 },
+    #[error("Invalid block hash for height {height} from '{peer_ip}'")]
+    InvalidBlockHash { height: u32, peer_ip: SocketAddr },
+    #[error(
+        "The previous block hash in candidate block {height} from '{peer_ip}' is incorrect: expected {expected}, but got {actual}"
+    )]
+    InvalidPreviousBlockHash { height: u32, peer_ip: SocketAddr, expected: N::BlockHash, actual: N::BlockHash },
+    #[error("Candidate block {height} from '{peer_ip}' is malformed")]
+    MalformedBlock { height: u32, peer_ip: SocketAddr },
+    #[error("The sync pool did not request block {height} from '{peer_ip}'")]
+    WrongSyncPeer { height: u32, peer_ip: SocketAddr },
     #[error("{}", flatten_error(.0))]
     Other(#[from] anyhow::Error),
+}
+
+impl<N: Network> InsertBlockResponseError<N> {
+    /// Returns `true` if the error does not indicate malicious or faulty behavior.
+    pub fn is_benign(&self) -> bool {
+        matches!(self, Self::NoSuchRequest { .. } | Self::BlockSyncAlreadyAdvanced { .. })
+    }
+
+    // Returns true if the error is about an invalid consensus version.
+    pub fn is_invalid_consensus_version(&self) -> bool {
+        matches!(self, Self::ConsensusVersionMismatch { .. } | Self::NoConsensusVersion)
+    }
 }
 
 impl<N: Network> OutstandingRequest<N> {
@@ -473,7 +499,7 @@ impl<N: Network> BlockSync<N> {
         peer_ip: SocketAddr,
         blocks: Vec<Block<N>>,
         latest_consensus_version: Option<ConsensusVersion>,
-    ) -> Result<(), InsertBlockResponseError> {
+    ) -> Result<(), InsertBlockResponseError<N>> {
         // Attempt to insert the block responses, and break if we encounter an error.
         let result = 'outer: {
             let Some(last_height) = blocks.as_slice().last().map(|b| b.height()) else {
@@ -500,9 +526,7 @@ impl<N: Network> BlockSync<N> {
 
             // Insert the candidate blocks into the sync pool.
             for block in blocks {
-                if let Err(error) = self.insert_block_response(peer_ip, block) {
-                    break 'outer Err(error.into());
-                }
+                self.insert_block_response(peer_ip, block)?;
             }
 
             Ok(())
@@ -916,16 +940,18 @@ impl<N: Network> BlockSync<N> {
 
     /// Inserts the given block response, after checking that the request exists and the response is well-formed.
     /// On success, this function removes the peer IP from the request sync peers and inserts the response.
-    fn insert_block_response(&self, peer_ip: SocketAddr, block: Block<N>) -> Result<()> {
+    fn insert_block_response(&self, peer_ip: SocketAddr, block: Block<N>) -> Result<(), InsertBlockResponseError<N>> {
         // Retrieve the block height.
         let height = block.height();
         let mut requests = self.requests.write();
 
         if self.ledger.contains_block_height(height) {
-            bail!("The sync request was removed because we already advanced");
+            return Err(InsertBlockResponseError::BlockSyncAlreadyAdvanced { height });
         }
 
-        let Some(entry) = requests.get_mut(&height) else { bail!("The sync pool did not request block {height}") };
+        let Some(entry) = requests.get_mut(&height) else {
+            return Err(InsertBlockResponseError::NoSuchRequest { height });
+        };
 
         // Retrieve the request entry for the candidate block.
         let (expected_hash, expected_previous_hash, sync_ips) = &entry.request;
@@ -933,18 +959,23 @@ impl<N: Network> BlockSync<N> {
         // Ensure the candidate block hash matches the expected hash.
         if let Some(expected_hash) = expected_hash {
             if block.hash() != *expected_hash {
-                bail!("The block hash for candidate block {height} from '{peer_ip}' is incorrect")
+                return Err(InsertBlockResponseError::InvalidBlockHash { height, peer_ip });
             }
         }
         // Ensure the previous block hash matches if it exists.
         if let Some(expected_previous_hash) = expected_previous_hash {
             if block.previous_hash() != *expected_previous_hash {
-                bail!("The previous block hash in candidate block {height} from '{peer_ip}' is incorrect")
+                return Err(InsertBlockResponseError::InvalidPreviousBlockHash {
+                    height,
+                    peer_ip,
+                    expected: *expected_previous_hash,
+                    actual: block.previous_hash(),
+                });
             }
         }
         // Ensure the sync pool requested this block from the given peer.
         if !sync_ips.contains(&peer_ip) {
-            bail!("The sync pool did not request block {height} from '{peer_ip}'")
+            return Err(InsertBlockResponseError::WrongSyncPeer { height, peer_ip });
         }
 
         // Remove the peer IP from the request entry.
@@ -953,7 +984,7 @@ impl<N: Network> BlockSync<N> {
         if let Some(existing_block) = &entry.response {
             // If the candidate block was already present, ensure it is the same block.
             if block != *existing_block {
-                bail!("Candidate block {height} from '{peer_ip}' is malformed");
+                return Err(InsertBlockResponseError::MalformedBlock { height, peer_ip });
             }
         } else {
             entry.response = Some(block.clone());

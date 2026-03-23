@@ -51,7 +51,7 @@ use snarkos_node_network::{
     get_repo_commit_hash,
     log_repo_sha_comparison,
 };
-use snarkos_node_sync::{InsertBlockResponseError, MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
     Connection,
@@ -68,6 +68,7 @@ use snarkvm::{
         narwhal::{BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::flatten_error,
 };
 
 use colored::Colorize;
@@ -651,15 +652,27 @@ impl<N: Network> Gateway<N> {
                     // Send the blocks to the sync module.
                     match sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await {
                         Ok(_) => Ok(true),
-                        Err(err @ InsertBlockResponseError::EmptyBlockResponse)
-                        | Err(err @ InsertBlockResponseError::NoConsensusVersion)
-                        | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
-                            error!("Peer '{peer_ip}' sent an invalid block response - {err}");
-                            self.ip_ban_peer(peer_ip, Some(&err.to_string()));
-                            Err(err.into())
+                        Err(err) if err.is_benign() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Ignoring block response from peer '{peer_ip}'"));
+                            debug!("{}", flatten_error(err));
+                            Ok(true)
+                        }
+                        Err(err) if err.is_invalid_consensus_version() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
+
+                            let msg = flatten_error(&err);
+                            error!("{msg}");
+                            self.ip_ban_peer(peer_ip, Some(&msg));
+                            Err(err)
                         }
                         Err(err) => {
-                            warn!("Unable to process block response from '{peer_ip}' - {err}");
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Peer '{peer_ip}' sent an invalid block response"));
+                            warn!("{}", flatten_error(err));
+
+                            // TODO(kaimast): This needs more testing to ensure disconnect is the correct action.
                             Ok(true)
                         }
                     }
