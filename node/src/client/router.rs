@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{PeerPoolHandling, harden_socket};
 use snarkos_node_router::{
     Routing,
     messages::{
@@ -55,6 +55,8 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
         let peer_addr = connection.addr();
         let conn_side = connection.side();
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust.
+        harden_socket(stream)?;
         let genesis_header = *self.genesis.header();
         let restrictions_id = self.ledger.vm().restrictions().restrictions_id();
 
@@ -68,15 +70,15 @@ impl<N: Network, C: ConsensusStorage<N>> Handshake for Client<N, C> {
 impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // Resolve the peer address to the listener address.
-        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr) {
-            if let Some(peer) = self.router().get_connected_peer(listener_addr) {
-                // If it's a bootstrap client, only request its peers.
-                if peer.node_type == NodeType::BootstrapClient {
-                    self.router().send(listener_addr, Message::PeerRequest(PeerRequest));
-                } else {
-                    // Send the first `Ping` message to the peer.
-                    self.ping.on_peer_connected(listener_addr);
-                }
+        if let Some(listener_addr) = self.router().resolve_to_listener(peer_addr)
+            && let Some(peer) = self.router().get_connected_peer(listener_addr)
+        {
+            // If it's a bootstrap client, only request its peers.
+            if peer.node_type == NodeType::BootstrapClient {
+                self.router().send(listener_addr, Message::PeerRequest(PeerRequest));
+            } else {
+                // Send the first `Ping` message to the peer.
+                self.ping.on_peer_connected(listener_addr);
             }
         }
     }

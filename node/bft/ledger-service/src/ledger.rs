@@ -183,7 +183,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
         // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
         // because committees are updated in even rounds.
-        let previous_round = match round % 2 == 0 {
+        let previous_round = match round.is_multiple_of(2) {
             true => round.saturating_sub(1),
             false => round.saturating_sub(2),
         };
@@ -370,7 +370,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<Block<N>> {
-        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
+        Ok(self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())?)
     }
 
     /// Adds the given block as the next block in the ledger.
@@ -395,7 +395,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             metrics::update_block_metrics(block);
         }
 
-        tracing::info!("\n\nAdvanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
+        tracing::info!("Advanced to block {} at round {} - {}", block.height(), block.round(), block.hash());
         Ok(())
     }
 

@@ -86,7 +86,7 @@ const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
 ///
 /// Consensus acts as a rate limiter to prevents workers in BFT from being overloaded.
 /// Each worker maintains a ready queue (which is essentially also a mempool), but verifies transactions/solutions
-/// before enquing them.
+/// before enqueuing them.
 /// Consensus only passes more transactions/solutions to the BFT layer if its ready queues are not already full.
 #[derive(Clone)]
 pub struct Consensus<N: Network> {
@@ -531,8 +531,7 @@ impl<N: Network> Consensus<N> {
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if let Err(e) = &result {
-            error!("{}", flatten_error(e));
+        if result.is_err() {
             // On failure, reinsert the transmissions into the memory pool.
             self.reinsert_transmissions(transmissions).await;
         }
@@ -560,9 +559,12 @@ impl<N: Network> Consensus<N> {
         self.ledger.check_next_block(&next_block)?;
         // Advance to the next block.
         self.ledger.advance_to_next_block(&next_block)?;
+
         #[cfg(feature = "telemetry")]
-        // Fetch the latest committee
-        let latest_committee = self.ledger.current_committee()?;
+        // Fetch the latest committee.
+        // Note: Do not abort here if this returns an error, because the committee is only needed for telemetry,
+        // not for block advancement itself.
+        let latest_committee = self.ledger.current_committee();
 
         // If the next block starts a new epoch, clear the existing solutions.
         if next_block.height() % N::NUM_BLOCKS_PER_EPOCH == 0 {
@@ -573,8 +575,13 @@ impl<N: Network> Consensus<N> {
         }
 
         // Notify peers that we have a new block.
-        let locators = self.block_sync.get_block_locators()?;
-        self.ping.update_block_locators(locators);
+        match self.block_sync.get_block_locators() {
+            Ok(locators) => self.ping.update_block_locators(locators),
+            Err(err) => error!(
+                "{}",
+                flatten_error(err.context("Failed to generate new block locators after block advancement"))
+            ),
+        }
 
         // Make block sync aware of the new block.
         self.block_sync.set_sync_height(next_block.height());
@@ -606,21 +613,29 @@ impl<N: Network> Consensus<N> {
             metrics::gauge(metrics::blocks::COINBASE_TARGET, coinbase_target as f64);
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);
 
+            // If telemetry is enabled, update participation scores.
             #[cfg(feature = "telemetry")]
-            {
-                // Retrieve the latest participation scores.
-                let participation_scores =
-                    self.bft().primary().gateway().validator_telemetry().get_participation_scores(&latest_committee);
+            match latest_committee {
+                Ok(latest_committee) => {
+                    // Retrieve the latest participation scores.
+                    let participation_scores = self
+                        .bft()
+                        .primary()
+                        .gateway()
+                        .validator_telemetry()
+                        .get_participation_scores(&latest_committee);
 
-                // Log the participation scores.
-                for (address, participation_score) in participation_scores {
-                    metrics::histogram_label(
-                        metrics::consensus::VALIDATOR_PARTICIPATION,
-                        "validator_address",
-                        address.to_string(),
-                        participation_score,
-                    )
+                    // Log the participation scores.
+                    for (address, participation_score) in participation_scores {
+                        metrics::histogram_label(
+                            metrics::consensus::VALIDATOR_PARTICIPATION,
+                            "validator_address",
+                            address.to_string(),
+                            participation_score,
+                        )
+                    }
                 }
+                Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
             }
         }
         Ok(())

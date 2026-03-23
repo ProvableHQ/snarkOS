@@ -219,7 +219,13 @@ impl<N: Network> Gateway<N> {
             (Some(ip), _) => ip,
         };
         // Initialize the TCP stack.
-        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size()));
+        //
+        // The 10x multiplier allows for more TCP connections than the maximum
+        // committee size to prevent "connection refused" errors when two nodes
+        // simultaneous attempt to connect to each other. Note, that later,
+        // during handshake, the Gateway applies its own limit to the number of
+        // active connections and removes duplicates.
+        let tcp = Tcp::new(Config::new(ip, Committee::<N>::max_committee_size() * 10));
 
         // Prepare the collection of the initial peers.
         let mut initial_peers = HashMap::new();
@@ -283,6 +289,18 @@ impl<N: Network> Gateway<N> {
         self.enable_writing().await;
         self.enable_disconnect().await;
         self.enable_on_connect().await;
+
+        // Spawn a loop for periodic metrics.
+        #[cfg(feature = "metrics")]
+        {
+            let gateway = self.clone();
+            self.spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    gateway.update_metrics();
+                }
+            });
+        }
 
         // Enable the TCP listener. Note: This must be called after the above protocols.
         let listen_addr = self.tcp.enable_listener().await.expect("Failed to enable the TCP listener");
@@ -659,7 +677,7 @@ impl<N: Network> Gateway<N> {
                         }
                         Err(err) => {
                             warn!("Unable to process block response from '{peer_ip}' - {err}");
-                            Err(err.into())
+                            Ok(true)
                         }
                     }
                 } else {
@@ -793,9 +811,6 @@ impl<N: Network> Gateway<N> {
                     self.insert_candidate_peers(valid_addrs);
                 }
 
-                #[cfg(feature = "metrics")]
-                self.update_metrics();
-
                 Ok(true)
             }
             Event::WorkerPing(ping) => {
@@ -829,7 +844,7 @@ impl<N: Network> Gateway<N> {
         let self_clone = self.clone();
         self.spawn(async move {
             // Sleep briefly to ensure the other nodes are ready to connect.
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
             info!("Starting the heartbeat of the gateway...");
             loop {
                 // Process a heartbeat in the gateway.
@@ -1189,16 +1204,16 @@ impl<N: Network> Gateway<N> {
     /// Processes a message received from the network.
     async fn process_message_inner(&self, peer_addr: SocketAddr, message: Event<N>) {
         // Process the message. Disconnect if the peer violated the protocol.
-        if let Err(error) = self.inbound(peer_addr, message).await {
-            if let Some(peer_ip) = self.resolver.read().get_listener(peer_addr) {
-                warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
-                let self_ = self.clone();
-                tokio::spawn(async move {
-                    Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
-                    // Disconnect from this peer.
-                    self_.disconnect(peer_ip);
-                });
-            }
+        if let Err(error) = self.inbound(peer_addr, message).await
+            && let Some(peer_ip) = self.resolver.read().get_listener(peer_addr)
+        {
+            warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
+            let self_ = self.clone();
+            tokio::spawn(async move {
+                Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
+                // Disconnect from this peer.
+                self_.disconnect(peer_ip);
+            });
         }
     }
 
@@ -1368,8 +1383,6 @@ impl<N: Network> Disconnect for Gateway<N> {
             // of members.
             self.cache.clear_outbound_validators_requests(peer_ip);
             self.cache.clear_outbound_block_requests(peer_ip);
-            #[cfg(feature = "metrics")]
-            self.update_metrics();
         }
     }
 }
@@ -1380,6 +1393,7 @@ impl<N: Network> OnConnect for Gateway<N> {
         if let Some(listener_addr) = self.resolve_to_listener(&peer_addr) {
             if let Some(peer) = self.get_connected_peer(listener_addr) {
                 if peer.node_type == NodeType::BootstrapClient {
+                    self.cache.increment_outbound_validators_requests(listener_addr);
                     let _ =
                         <Self as Transport<N>>::send(self, listener_addr, Event::ValidatorsRequest(ValidatorsRequest))
                             .await;
@@ -1459,8 +1473,6 @@ impl<N: Network> Handshake for Gateway<N> {
                             ConnectionMode::Gateway,
                         );
                     }
-                    #[cfg(feature = "metrics")]
-                    self.update_metrics();
                     info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Err(error) => {
@@ -1746,7 +1758,6 @@ mod prop_tests {
         MAX_WORKERS,
         MEMORY_POOL_PORT,
         Worker,
-        gateway::prop_tests::GatewayAddress::{Dev, Prod},
         helpers::{Storage, init_primary_channels, init_worker_channels},
     };
 
@@ -1848,7 +1859,7 @@ mod prop_tests {
                     Just(account_selector.select(validators)),
                     0u8..,
                 )
-                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, Dev(d)))
+                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, GatewayAddress::Dev(d)))
             })
             .boxed()
     }
@@ -1863,7 +1874,7 @@ mod prop_tests {
                     Just(account_selector.select(validators)),
                     any::<Option<SocketAddr>>(),
                 )
-                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, Prod(d)))
+                    .prop_map(|(a, b, c, d)| (a, b, c.private_key, GatewayAddress::Prod(d)))
             })
             .boxed()
     }
@@ -1889,7 +1900,7 @@ mod prop_tests {
         assert_eq!(tcp_config.desired_listening_port, Some(MEMORY_POOL_PORT + dev.port().unwrap()));
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size() * 10);
         assert_eq!(gateway.account().address(), account.address());
     }
 
@@ -1919,7 +1930,7 @@ mod prop_tests {
         }
 
         let tcp_config = gateway.tcp().config();
-        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size());
+        assert_eq!(tcp_config.max_connections, Committee::<CurrentNetwork>::max_committee_size() * 10);
         assert_eq!(gateway.account().address(), account.address());
     }
 

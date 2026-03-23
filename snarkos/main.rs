@@ -14,15 +14,15 @@
 // limitations under the License.
 
 use snarkos_cli::{commands::CLI, helpers::Updater};
-use snarkvm::utilities::display_error;
+use snarkvm::utilities::{display_error, flatten_error};
 
 use clap::Parser;
 #[cfg(feature = "locktick")]
 use locktick::lock_snapshots;
 #[cfg(feature = "locktick")]
 use std::time::Instant;
-use std::{backtrace::Backtrace, env, panic::catch_unwind};
-use tracing::log::logger;
+use std::{backtrace::Backtrace, env, io, io::IsTerminal, panic::catch_unwind};
+use tracing::{log::logger, subscriber::NoSubscriber};
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use tikv_jemallocator::Jemalloc;
@@ -34,17 +34,32 @@ static GLOBAL: Jemalloc = Jemalloc;
 // Obtain information on the build.
 include!(concat!(env!("OUT_DIR"), "/built.rs"));
 
-/// Prints a message using `tracing::error` if logging is enabled, otherwise uses `eprintln`.
+/// True if a real tracing subscriber is set (not the default no-op).
+fn has_tracing_subscriber() -> bool {
+    tracing::dispatcher::get_default(|d| !d.is::<NoSubscriber>())
+}
+
+/// Uses stderr when interactive or when no logger is set; otherwise logs via tracing.
 macro_rules! print_error {
     ($($arg:tt)*) => {
-        if tracing::log::log_enabled!(tracing::log::Level::Error) {
-            tracing::error!($($arg)*);
-        } else {
+        if io::stderr().is_terminal() || !has_tracing_subscriber() {
             eprintln!($($arg)*);
+        } else {
+            tracing::error!($($arg)*);
         }
     };
 }
 
+/// Uses stdout when interactive or when no logger is set; otherwise logs via tracing.
+macro_rules! print_info {
+    ($($arg:tt)*) => {
+        if io::stderr().is_terminal() || !has_tracing_subscriber() {
+            println!($($arg)*);
+        } else {
+            tracing::info!($($arg)*);
+        }
+    };
+}
 /// Stops the process with the given exit code.
 fn exit(exitcode: i32) -> ! {
     tracing::debug!("Stopping process with exitcode {exitcode}");
@@ -130,7 +145,7 @@ fn main() {
         if !cli.noupdater
             && let Some(msg) = Updater::print_cli()
         {
-            println!("{msg}");
+            print_info!("{msg}");
         }
 
         // Run the CLI.
@@ -140,15 +155,18 @@ fn main() {
     // Process any errors (including panics).
     match result {
         Ok(Ok(output)) => {
-            println!("{output}\n");
+            print_info!("{output}");
             exit(0);
         }
         Ok(Err(err)) => {
-            // A regular error occurred.
-            display_error(&err);
-            eprintln!();
-            eprintln!("Use `--help` for instructions on how to use this command");
-
+            // A regular error occurred during startup.
+            if io::stderr().is_terminal() || !has_tracing_subscriber() {
+                display_error(&err);
+                eprintln!();
+                eprintln!("Use `--help` for instructions on how to use this command");
+            } else {
+                tracing::error!("{}", flatten_error(&err));
+            }
             exit(1);
         }
         Err(_) => {
@@ -164,16 +182,16 @@ fn main() {
 
 /// Checks whether the version information was requested and - if so - display it and exit.
 fn check_for_version() {
-    if let Some(first_arg) = env::args().nth(1) {
-        if ["--version", "-V"].contains(&&*first_arg) {
-            let branch = GIT_HEAD_REF.unwrap_or("unknown_branch");
-            let commit = GIT_COMMIT_HASH.unwrap_or("unknown_commit");
-            let mut features = FEATURES_LOWERCASE_STR.to_owned();
-            features.retain(|c| c != ' ');
+    if let Some(first_arg) = env::args().nth(1)
+        && ["--version", "-V"].contains(&&*first_arg)
+    {
+        let branch = GIT_HEAD_REF.unwrap_or("unknown_branch");
+        let commit = GIT_COMMIT_HASH.unwrap_or("unknown_commit");
+        let mut features = FEATURES_LOWERCASE_STR.to_owned();
+        features.retain(|c| c != ' ');
 
-            println!("snarkos {branch} {commit} features=[{features}]");
+        print_info!("snarkos {branch} {commit} features=[{features}]");
 
-            exit(0);
-        }
+        exit(0);
     }
 }

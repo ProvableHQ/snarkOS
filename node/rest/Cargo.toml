@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.4.0"
+version = "4.5.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -18,7 +18,8 @@ edition = "2024"
 
 [features]
 default = [ ]
-history = [ "snarkvm/synthesizer", "snarkvm/history" ]
+history = [ "snarkvm/history" ]
+history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
 telemetry = [ "snarkos-node-consensus/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [

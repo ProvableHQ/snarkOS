@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 
 use std::{
     fs,
+    io::IsTerminal,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -314,6 +315,13 @@ impl Start {
         )
         .with_context(|| "Failed to set up logger")?;
 
+        // When running in a non-interactive session, disallow the use of the terminal UI.
+        if !std::io::stdout().is_terminal() && !self.nodisplay {
+            anyhow::bail!(
+                "snarkOS cannot use the terminal UI in a non-interactive session. Please restart with `--nodisplay`."
+            );
+        }
+
         // Initialize the runtime.
         Self::runtime().block_on(async move {
             // Error messages.
@@ -347,7 +355,7 @@ impl Start {
         }
     }
 
-    /// Returns the CDN to prefetch initial blocks from, from the given configurations.
+    /// Returns the CDN to prefetch initial blocks from, or `None` if fetching from the CDN is disabled.
     fn parse_cdn<N: Network>(&self) -> Result<Option<http::Uri>> {
         // Disable CDN if:
         //  1. The node is in development mode.
@@ -692,7 +700,7 @@ impl Start {
         // Parse the development configurations.
         self.parse_development(&mut trusted_peers, &mut trusted_validators)?;
 
-        // Parse the CDN.
+        // Determine if the node should sync from CDn..
         let cdn = self.parse_cdn::<N>().with_context(|| "Failed to parse given CDN URL")?;
 
         // Parse the genesis block.
@@ -829,7 +837,7 @@ impl Start {
         };
 
         // TODO(kaimast): start the display earlier and show sync progress.
-        if !self.nodisplay && !self.nocdn {
+        if !self.nodisplay && cdn.is_some() {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
 
