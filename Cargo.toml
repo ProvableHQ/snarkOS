@@ -49,13 +49,13 @@ default-features = false
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
 # Latest stream_plugin_testing commit
-rev = "0d50724d180f02cc9973cbb07c1cb8ec0c10212a"
+rev = "68e72e6c68a87425e8a406e078dae1cea46f2bc1"
 default-features = false
 
 [workspace.dependencies.snarkvm-slipstream-plugin-manager]
 git = "https://github.com/ProvableHQ/snarkVM.git"
 # Latest stream_plugin_testing commit
-rev = "0d50724d180f02cc9973cbb07c1cb8ec0c10212a"
+rev = "68e72e6c68a87425e8a406e078dae1cea46f2bc1"
 default-features = false
 
 [workspace.dependencies.anyhow]
