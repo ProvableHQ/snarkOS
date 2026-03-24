@@ -586,7 +586,6 @@ impl<N: Network> BFT<N> {
         {
             // Retrieve the leader round and the latest round we committed.
             let leader_round = leader_certificate.round();
-            let last_committed_round = self.dag.read().last_committed_round();
 
             // Read-lock the DAG.
             // We need to hold the lock, so we do not later fail to re-acquire it.
@@ -620,7 +619,7 @@ impl<N: Network> BFT<N> {
                     continue;
                 };
                 // Determine if there is a path between the previous certificate and the current certificate.
-                if self.is_linked(&dag, previous_certificate.clone(), current_certificate.clone())? {
+                if dag.is_linked(previous_certificate.clone(), current_certificate.clone())? {
                     // Add the previous leader certificate to the list of certificates to commit.
                     leader_certificates.push(previous_certificate.clone());
                     // Update the current certificate to the previous leader certificate.
@@ -855,36 +854,6 @@ impl<N: Network> BFT<N> {
         commit.retain(|round, _| round + self.storage().max_gc_rounds() > self.dag.read().last_committed_round());
         // Return the certificates to commit.
         Ok(commit)
-    }
-
-    /// Returns `true` if there is a path from the previous certificate to the current certificate.
-    ///
-    /// TOOD: move this method to `impl DAG`.
-    fn is_linked(
-        &self,
-        dag: &DAG<N>,
-        previous_certificate: BatchCertificate<N>,
-        current_certificate: BatchCertificate<N>,
-    ) -> Result<bool> {
-        // Initialize the list containing the traversal.
-        let mut traversal = vec![current_certificate.clone()];
-        // Grab a read lock to the DAG.
-        let dag = self.dag.read();
-        // Iterate over the rounds from the current certificate to the previous certificate.
-        for round in (previous_certificate.round()..current_certificate.round()).rev() {
-            // Retrieve all of the certificates for this past round.
-            let Some(certificates) = dag.get_certificates_for_round(round) else {
-                // This is a critical error, as the traversal should have these certificates.
-                // If this error is hit, it is likely that the maximum GC rounds should be increased.
-                bail!("BFT failed to retrieve the certificates for past round {round}");
-            };
-            // Filter the certificates to only include those that are in the traversal.
-            traversal = certificates
-                .into_values()
-                .filter(|p| traversal.iter().any(|c| c.previous_certificate_ids().contains(&p.id())))
-                .collect();
-        }
-        Ok(traversal.contains(&previous_certificate))
     }
 
     /// Shuts down the BFT.
@@ -2038,7 +2007,7 @@ mod tests {
         let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader2).unwrap();
 
         assert!(
-            bft.is_linked(&bft.dag.read(), leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
+            bft.dag.read().is_linked(leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
             "Leader certificate 1 should be linked to leader certificate 2"
         );
 
@@ -2192,7 +2161,7 @@ mod tests {
         let leader_certificate_2 = storage.get_certificate_for_round_with_author(leader_round_2, leader2).unwrap();
 
         assert!(
-            !bft.is_linked(&bft.dag.read(), leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
+            !bft.dag.read().is_linked(leader_certificate_1.clone(), leader_certificate_2.clone()).unwrap(),
             "Leader certificate 1 should not be linked to leader certificate 2"
         );
         assert_eq!(bft.dag.read().last_committed_round(), 0);
