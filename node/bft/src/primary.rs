@@ -13,8 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod proposal_task;
+pub use proposal_task::ProposalTask;
+
 use crate::{
-    CREATE_BATCH_INTERVAL,
     Gateway,
     MAX_BATCH_DELAY,
     MAX_WORKERS,
@@ -149,8 +151,8 @@ pub struct Primary<N: Network> {
     /// The node configuration directory.
     node_data_dir: NodeDataDir,
 
-    /// Allows notifying the proposal taks when a new batch can be proposed.
-    is_ready_notify: Arc<Notify>,
+    /// Manages proposal readiness state and drives the batch proposal loop.
+    proposal_task: ProposalTask<N>,
 
     /// Used to wake up a the dedicated round-increment task, if we may be able to advance to the next round.
     /// This is used, so the timeout for round advancement is reset on every round increment.
@@ -203,7 +205,7 @@ impl<N: Network> Primary<N> {
             latest_proposed_batch: Default::default(),
             signed_proposals: Default::default(),
             handles: Default::default(),
-            is_ready_notify: Default::default(),
+            proposal_task: Default::default(),
             round_increment_notify: Default::default(),
         })
     }
@@ -395,7 +397,21 @@ impl<N: Network> Primary<N> {
     }
 }
 
-impl<N: Network> Primary<N> {
+#[async_trait::async_trait]
+#[async_trait::async_trait]
+impl<N: Network> proposal_task::BatchPropose for Primary<N> {
+    fn current_round(&self) -> u64 {
+        Primary::current_round(self)
+    }
+
+    fn is_synced(&self) -> bool {
+        Primary::is_synced(self)
+    }
+
+    fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
+        self.sync.wait_for_synced_if_syncing()
+    }
+
     /// Proposes the batch for the current round.
     ///
     /// This method performs the following steps:
@@ -408,7 +424,7 @@ impl<N: Network> Primary<N> {
     /// - `Ok(true)` if the batch was proposed.
     /// - `Ok(false)` if the batch was not proposed for a benign reason, e.g., the timestamp is too soon after the previous certificate.
     /// - `Err(err)` if an unexpected error occured.
-    pub async fn propose_batch(&self) -> Result<bool> {
+    async fn propose_batch(&self) -> Result<bool> {
         // Ensure there are not concurrent executions of this function.
         //
         // Note, in the current design, this function is only invoked from the batch proposal task, and it is technically
@@ -751,7 +767,9 @@ impl<N: Network> Primary<N> {
 
         Ok(true)
     }
+}
 
+impl<N: Network> Primary<N> {
     /// Processes a batch propose from a peer.
     ///
     /// This method performs the following steps:
@@ -1379,57 +1397,9 @@ impl<N: Network> Primary<N> {
         });
 
         // Start the batch proposal task.
+        let proposal_task = self.proposal_task.clone();
         let self_ = self.clone();
-        self.spawn(async move {
-            // Each outer loop iteration represents one new proposed batch.
-            loop {
-                let round_start = Instant::now();
-                let current_round = self_.current_round();
-
-                // The inner loop represents multiple attempts to propose a batch within the same round.
-                // Propose a batch within the same round until the timeout is triggered, or the round is advanced by some other means.
-                while self_.current_round() == current_round {
-                    // Assemble a list of conditions that will trigger the primary to attempt batch creation.
-                    let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> = vec![];
-
-                    // Always wait for is_ready
-                    futures.push(Box::pin(self_.is_ready_notify.notified()));
-
-                    // If the maximum batch delay has not been reached, wait for it.
-                    // Otherwise, add a small timeout to avoid busy waiting.
-                    //
-                    // TODO(kaimast): ideally, we do not need the minimum timeout at all after MAX_BATCH_DELAY,
-                    // but that would need more testing to ensure this loop never gets stuck.
-                    let timeout = MAX_BATCH_DELAY.saturating_sub(round_start.elapsed()).max(CREATE_BATCH_INTERVAL);
-                    futures.push(Box::pin(tokio::time::sleep(timeout)));
-
-                    // If the node is not synced yet, wait for block sync to complete.
-                    if let Some(fut) = self_.sync.wait_for_synced_if_syncing() {
-                        futures.push(fut);
-                    }
-
-                    // Wait until one of the conditions is met.
-                    futures::future::select_all(futures).await;
-
-                    // If the primary is not synced, then do not propose a batch.
-                    if !self_.sync.is_synced() {
-                        debug!("Skipping batch proposal for round {current_round} {}", "(node is syncing)".dimmed());
-                        continue;
-                    }
-
-                    // If there is no proposed batch, attempt to propose a batch.
-                    // Note: Do NOT spawn a task around this function call. Proposing a batch is a critical path,
-                    // and only one batch needs to be proposed at a time.
-                    match self_.propose_batch().await {
-                        Ok(true) => break,
-                        Ok(false) => (), // retry
-                        Err(err) => {
-                            warn!("{}", flatten_error(err.context("Cannot propose a batch")));
-                        }
-                    }
-                }
-            }
-        });
+        self.spawn(async move { proposal_task.run(self_).await });
 
         // Start the proposed batch handler.
         let self_ = self.clone();
@@ -1666,7 +1636,7 @@ impl<N: Network> Primary<N> {
             // Notify the proposal task if the new round is ready.
             if is_ready && self.is_synced() {
                 debug!("Primary is ready to propose the next round");
-                self.is_ready_notify.notify_one();
+                self.proposal_task.signal();
             } else {
                 debug!("Primary is not ready to propose the next round");
             }
@@ -2107,7 +2077,8 @@ impl<N: Network> Primary<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{proposal_task::BatchPropose as _, *};
+
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkos_node_sync::{BlockSync, locators::test_helpers::sample_block_locators};
