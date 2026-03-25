@@ -22,7 +22,6 @@ mod tests {
     use snarkos_node_tcp::{Config, P2P, Tcp};
     use snarkvm::{prelude::Rng, utilities::TestRng};
 
-    use parking_lot::RwLock;
     use std::{collections::HashMap, net::SocketAddr, time::Instant};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -47,8 +46,8 @@ mod tests {
     }
 
     impl<N: Network> PeerPoolHandling<N> for MockPeerPool<N> {
-        const OWNER: &str = "MockPeerPool";
         const MAXIMUM_POOL_SIZE: usize = 100;
+        const OWNER: &str = "MockPeerPool";
         const PEER_SLASHING_COUNT: usize = 10;
 
         fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
@@ -72,11 +71,7 @@ mod tests {
         }
     }
 
-    fn make_connected_peer(
-        port: u16,
-        node_type: NodeType,
-        rng: &mut TestRng,
-    ) -> (SocketAddr, Peer<CurrentNetwork>) {
+    fn make_connected_peer(port: u16, node_type: NodeType, rng: &mut TestRng) -> (SocketAddr, Peer<CurrentNetwork>) {
         use snarkvm::prelude::Address;
         let listener_addr = SocketAddr::from(([127, 0, 0, 1], port));
         let connected_addr = SocketAddr::from(([127, 0, 0, 1], port + 10000));
