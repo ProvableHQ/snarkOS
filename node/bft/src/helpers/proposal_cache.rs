@@ -23,12 +23,7 @@ use snarkvm::{
 };
 
 use indexmap::IndexSet;
-use std::{fs, path::PathBuf};
-
-/// Returns the path where a proposal cache file may be stored.
-pub fn proposal_cache_path(node_data_dir: &NodeDataDir) -> PathBuf {
-    node_data_dir.path().join("current-proposal-cache")
-}
+use std::fs;
 
 /// A helper type for the cache of proposal and signed proposals.
 #[derive(Debug, PartialEq, Eq)]
@@ -67,13 +62,13 @@ impl<N: Network> ProposalCache<N> {
 
     /// Returns `true` if a proposal cache exists for the given network and `dev`.
     pub fn exists(node_data_dir: &NodeDataDir) -> bool {
-        proposal_cache_path(node_data_dir).exists()
+        node_data_dir.current_proposal_cache_path().exists()
     }
 
     /// Load the proposal cache from the file system and ensure that the proposal cache is valid.
     pub fn load(expected_signer: Address<N>, node_data_dir: &NodeDataDir) -> Result<Self> {
         // Construct the proposal cache file system path.
-        let path = proposal_cache_path(node_data_dir);
+        let path = node_data_dir.current_proposal_cache_path();
 
         // Deserialize the proposal cache from the file system.
         let proposal_cache = match fs::read(&path) {
@@ -86,7 +81,7 @@ impl<N: Network> ProposalCache<N> {
 
         // Ensure the proposal cache is valid.
         if !proposal_cache.is_valid(expected_signer) {
-            bail!("The proposal cache is invalid for the given address {expected_signer}");
+            bail!("The proposal cache at {} is invalid for the given address {expected_signer}", path.display());
         }
 
         info!("Loaded the proposal cache from {} at round {}", path.display(), proposal_cache.latest_round);
@@ -96,7 +91,7 @@ impl<N: Network> ProposalCache<N> {
 
     /// Store the proposal cache to the file system.
     pub fn store(&self, node_data_dir: &NodeDataDir) -> Result<()> {
-        let path = proposal_cache_path(node_data_dir);
+        let path = node_data_dir.current_proposal_cache_path();
         info!("Storing the proposal cache to {}...", path.display());
 
         // Serialize the proposal cache.

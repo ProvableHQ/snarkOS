@@ -22,7 +22,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Transmission, TransmissionID},
     },
     prelude::{Address, Field, Network, Result, anyhow, bail, ensure},
-    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by, flatten_error},
+    utilities::{cfg_into_iter, cfg_iter, cfg_sorted_by},
 };
 
 use anyhow::Context;
@@ -112,7 +112,7 @@ impl<N: Network> Storage<N> {
         ledger: Arc<dyn LedgerService<N>>,
         transmissions: Arc<dyn StorageService<N>>,
         max_gc_rounds: u64,
-    ) -> Self {
+    ) -> Result<Self> {
         // Retrieve the latest committee bonded in the ledger
         // (genesis committee if the ledger contains only the genesis block).
         let committee = ledger.current_committee().expect("Ledger is missing a committee.");
@@ -134,11 +134,13 @@ impl<N: Network> Storage<N> {
             batch_ids: Default::default(),
             transmissions,
         }));
+
         // Perform GC on the current round.
         // Since there are no certificates yet, this only sets `gc_round`.
-        storage.garbage_collect_certificates(current_round);
+        storage.garbage_collect_certificates(current_round)?;
+
         // Return the storage.
-        storage
+        Ok(storage)
     }
 }
 
@@ -158,6 +160,9 @@ impl<N: Network> Storage<N> {
     }
 
     /// Returns the `round` that garbage collection has occurred **up to** (inclusive).
+    ///
+    /// # Invariants
+    /// The value returned is greater or equal to return values of prior calls to this method.
     pub fn gc_round(&self) -> u64 {
         // Get the GC round.
         self.gc_round.load(Ordering::SeqCst)
@@ -231,13 +236,21 @@ impl<N: Network> Storage<N> {
     }
 
     /// Update the storage by performing garbage collection based on the next round.
-    pub(crate) fn garbage_collect_certificates(&self, next_round: u64) {
+    pub(crate) fn garbage_collect_certificates(&self, next_round: u64) -> Result<()> {
         // Fetch the current GC round.
         let current_gc_round = self.gc_round();
         // Compute the next GC round.
         let next_gc_round = next_round.saturating_sub(self.max_gc_rounds);
         // Check if storage needs to be garbage collected.
         if next_gc_round > current_gc_round {
+            if self
+                .gc_round
+                .compare_exchange(current_gc_round, next_gc_round, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                bail!("Concurrent updates to GC round detected.");
+            }
+
             // Remove the GC round(s) from storage.
             for gc_round in current_gc_round..=next_gc_round {
                 // Iterate over the certificates for the GC round.
@@ -250,7 +263,11 @@ impl<N: Network> Storage<N> {
             }
             // Update the GC round.
             self.gc_round.store(next_gc_round, Ordering::SeqCst);
+        } else if next_gc_round < current_gc_round {
+            bail!("Attempted to decrease GC round from {current_gc_round} to {next_gc_round}");
         }
+
+        Ok(())
     }
 }
 
@@ -284,13 +301,13 @@ impl<N: Network> Storage<N> {
         self.batch_ids.read().contains_key(&batch_id)
     }
 
-    /// Returns `true` if the storage contains the specified `transmission ID`.
+    /// Returns `true` if the storage contains the specified transmission, or it was recorded as aborted.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_transmission(transmission_id.into())
     }
 
     /// Returns the transmission for the given `transmission ID`.
-    /// If the transmission ID does not exist in storage, `None` is returned.
+    /// If the transmission ID does not exist in storage or was aborted, `None` is returned.
     pub fn get_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> Option<Transmission<N>> {
         self.transmissions.get_transmission(transmission_id.into())
     }
@@ -469,7 +486,7 @@ impl<N: Network> Storage<N> {
         // Check the timestamp for liveness.
         check_timestamp_for_liveness(batch_header.timestamp())?;
 
-        // Retrieve the missing transmissions in storage from the given transmissions.
+        // Determine which transmissions in this batch are missing from storage.
         let missing_transmissions = self
             .transmissions
             .find_missing_transmissions(batch_header, transmissions, aborted_transmissions)
@@ -799,7 +816,7 @@ impl<N: Network> Storage<N> {
             info!("Synced to round {next_round}...");
         } else {
             trace!(
-                "Skipping sync to round {next_round} as it is less than the current round ({})",
+                "Skipping sync to round {next_round} as it is less than or equal to the current round ({})",
                 self.current_round()
             );
         }
@@ -811,18 +828,18 @@ impl<N: Network> Storage<N> {
         block: &Block<N>,
         certificate: BatchCertificate<N>,
         unconfirmed_transactions: &HashMap<N::TransactionID, Transaction<N>>,
-    ) {
+    ) -> Result<()> {
         // Skip if the certificate round is below the GC round.
         let gc_round = self.gc_round();
         if certificate.round() <= gc_round {
             trace!("Got certificate for round {} below GC round ({gc_round}). Will not store it.", certificate.round());
-            return;
+            return Ok(());
         }
 
         // If the certificate ID already exists in storage, skip it.
         if self.contains_certificate(certificate.id()) {
             trace!("Got certificate {} for round {} more than once.", certificate.id(), certificate.round());
-            return;
+            return Ok(());
         }
         // Retrieve the transmissions for the certificate.
         let mut missing_transmissions = HashMap::new();
@@ -848,54 +865,42 @@ impl<N: Network> Storage<N> {
             match transmission_id {
                 TransmissionID::Ratification => (),
                 TransmissionID::Solution(solution_id, _) => {
-                    // Retrieve the solution.
-                    match block.get_solution(solution_id) {
-                        // Insert the solution.
-                        Some(solution) => missing_transmissions.insert(*transmission_id, (*solution).into()),
-                        // Otherwise, try to load the solution from the ledger.
-                        None => match self.ledger.get_solution(solution_id) {
-                            // Insert the solution.
-                            Ok(solution) => missing_transmissions.insert(*transmission_id, solution.into()),
-                            // Check if the solution is in the aborted solutions.
-                            Err(_) => {
-                                // Insert the aborted solution if it exists in the block or ledger.
-                                match aborted_solutions.contains(solution_id)
-                                    || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
-                                {
-                                    true => {
-                                        aborted_transmissions.insert(*transmission_id);
-                                    }
-                                    false => error!("Missing solution {solution_id} in block {}", block.height()),
-                                }
-                                continue;
-                            }
-                        },
-                    };
+                    // The solution may exist either in the block itself, or stored in the ledger.
+                    // Note that the ledger does *not* store aborted transmissions, so we need to check if the solution
+                    // was aborted before querying the ledger.
+                    //
+                    // Aborted transmissions only appear in the aborted set of the first block that contains them,
+                    // for subsequent blocks, we can check that `contains_transmission` is true to determine if the transmission was aborted.
+                    if let Some(solution) = block.get_solution(solution_id) {
+                        missing_transmissions.insert(*transmission_id, (*solution).into());
+                    } else if let Ok(Some(solution)) = self.ledger.get_solution(solution_id) {
+                        missing_transmissions.insert(*transmission_id, solution.into());
+                    } else if aborted_solutions.contains(solution_id)
+                        || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
+                    {
+                        aborted_transmissions.insert(*transmission_id);
+                    } else {
+                        bail!("Missing solution {solution_id} for block {}", block.height());
+                    }
                 }
                 TransmissionID::Transaction(transaction_id, _) => {
-                    // Retrieve the transaction.
-                    match unconfirmed_transactions.get(transaction_id) {
-                        // Insert the transaction.
-                        Some(transaction) => missing_transmissions.insert(*transmission_id, transaction.clone().into()),
-                        // Otherwise, try to load the unconfirmed transaction from the ledger.
-                        None => match self.ledger.get_unconfirmed_transaction(*transaction_id) {
-                            // Insert the transaction.
-                            Ok(transaction) => missing_transmissions.insert(*transmission_id, transaction.into()),
-                            // Check if the transaction is in the aborted transactions.
-                            Err(_) => {
-                                // Insert the aborted transaction if it exists in the block or ledger.
-                                match aborted_transactions.contains(transaction_id)
-                                    || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
-                                {
-                                    true => {
-                                        aborted_transmissions.insert(*transmission_id);
-                                    }
-                                    false => warn!("Missing transaction {transaction_id} in block {}", block.height()),
-                                }
-                                continue;
-                            }
-                        },
-                    };
+                    // The transaction may exists either in the block itself, or stored in the ledger.
+                    // Note that the ledger does *not* store aborted transmissions, so we need to check if the transaction
+                    // was aborted before querying the ledger.
+                    //
+                    // Aborted solutions only appear in the aborted set of the first block that contains them,
+                    // for subsequent blocks, we can check that `contains_transmission` is true to determine if the transaction was aborted.
+                    if let Some(transaction) = unconfirmed_transactions.get(transaction_id) {
+                        missing_transmissions.insert(*transmission_id, transaction.clone().into());
+                    } else if let Ok(Some(transaction)) = self.ledger.get_unconfirmed_transaction(*transaction_id) {
+                        missing_transmissions.insert(*transmission_id, transaction.into());
+                    } else if aborted_transactions.contains(transaction_id)
+                        || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
+                    {
+                        aborted_transmissions.insert(*transmission_id);
+                    } else {
+                        bail!("Missing transaction {transaction_id} for block {}", block.height());
+                    }
                 }
             }
         }
@@ -907,12 +912,8 @@ impl<N: Network> Storage<N> {
             certificate.transmission_ids().len()
         );
 
-        if let Err(error) = self
-            .insert_certificate(certificate, missing_transmissions, aborted_transmissions)
+        self.insert_certificate(certificate, missing_transmissions, aborted_transmissions)
             .with_context(|| format!("Failed to insert certificate '{certificate_id}' from block {}", block.height()))
-        {
-            error!("{}", &flatten_error(&error));
-        }
     }
 }
 
@@ -1067,7 +1068,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Ensure the storage is empty.
         assert_storage(&storage, &[], &[], &[], &Default::default());
@@ -1131,7 +1132,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Ensure the storage is empty.
         assert_storage(&storage, &[], &[], &[], &Default::default());
@@ -1176,6 +1177,66 @@ pub(crate) mod tests {
         assert_storage(&storage, &rounds, &certificates, &batch_ids, &transmissions);
     }
 
+    /// Verify that when inserting a certificate with a mix of provided transmissions and aborted
+    /// transmission IDs, storage correctly records both: contains_transmission is true for all
+    /// (including aborted), and aborted IDs are stored so sync can resolve certificate references.
+    #[test]
+    fn test_certificate_insert_with_aborted_transmissions() {
+        use std::collections::HashSet;
+
+        let rng = &mut TestRng::default();
+
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        let certificate = snarkvm::ledger::narwhal::batch_certificate::test_helpers::sample_batch_certificate(rng);
+        let certificate_id = certificate.id();
+        let round = certificate.round();
+        let transmission_ids: Vec<_> = certificate.transmission_ids().iter().copied().collect();
+
+        if transmission_ids.len() < 2 {
+            // Certificate has 0 or 1 transmission; just verify insert without aborted works.
+            let (missing_transmissions, _) = sample_transmissions(&certificate, rng);
+            storage.insert_certificate_atomic(certificate.clone(), HashSet::new(), missing_transmissions);
+            for id in certificate.transmission_ids() {
+                assert!(storage.contains_transmission(*id));
+            }
+            return;
+        }
+
+        let (all_missing, _) = sample_transmissions(&certificate, rng);
+        let aborted_id = transmission_ids[0];
+        let aborted_transmission_ids: HashSet<_> = [aborted_id].into_iter().collect();
+        let mut missing_transmissions = all_missing;
+        missing_transmissions.remove(&aborted_id);
+
+        storage.insert_certificate_atomic(certificate.clone(), aborted_transmission_ids, missing_transmissions);
+
+        assert!(storage.contains_certificate(certificate_id));
+        assert_eq!(storage.get_certificates_for_round(round), indexset! { certificate.clone() });
+
+        // Every transmission ID in the certificate (including aborted) should be resolvable.
+        for id in certificate.transmission_ids() {
+            assert!(
+                storage.contains_transmission(*id),
+                "contains_transmission should be true for all transmission IDs including aborted {id:?}"
+            );
+        }
+
+        // Aborted transmission has no content in storage; others do.
+        assert!(
+            storage.get_transmission(aborted_id).is_none(),
+            "Aborted transmission should not have content in storage"
+        );
+        for id in transmission_ids.iter().skip(1) {
+            assert!(
+                storage.get_transmission(*id).is_some(),
+                "Non-aborted transmission {id:?} should have content in storage"
+            );
+        }
+    }
+
     /// Test that `check_incoming_certificate` does not reject a valid cert.
     #[test]
     fn test_valid_incoming_certificate() {
@@ -1187,7 +1248,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1229,7 +1290,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1285,7 +1346,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1339,7 +1400,7 @@ pub(crate) mod tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee));
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Go through many rounds of valid certificates and ensure they're accepted.
         let mut previous_certs = IndexSet::default();
@@ -1422,7 +1483,7 @@ pub mod prop_tests {
             (any::<CommitteeContext>(), 0..BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64)
                 .prop_map(|(CommitteeContext(committee, _), gc_rounds)| {
                     let ledger = Arc::new(MockLedgerService::new(committee));
-                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds)
+                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds).unwrap()
                 })
                 .boxed()
         }
@@ -1431,7 +1492,7 @@ pub mod prop_tests {
             (Just(context), 0..BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64)
                 .prop_map(|(CommitteeContext(committee, _), gc_rounds)| {
                     let ledger = Arc::new(MockLedgerService::new(committee));
-                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds)
+                    Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), gc_rounds).unwrap()
                 })
                 .boxed()
         }
@@ -1554,7 +1615,7 @@ pub mod prop_tests {
 
         // Initialize the storage.
         let ledger = Arc::new(MockLedgerService::new(committee));
-        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Ensure the storage is empty.
         assert_storage(&storage, &[], &[], &[], &Default::default());
