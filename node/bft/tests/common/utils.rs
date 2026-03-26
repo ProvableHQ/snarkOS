@@ -208,7 +208,7 @@ pub fn sample_ledger(
 
 /// Samples a new storage with the given ledger.
 pub fn sample_storage<N: Network>(ledger: Arc<TranslucentLedgerService<N, ConsensusMemory<N>>>) -> Storage<N> {
-    Storage::new(ledger, Arc::new(BFTMemoryService::new()), BatchHeader::<N>::MAX_GC_ROUNDS as u64)
+    Storage::new(ledger, Arc::new(BFTMemoryService::new()), BatchHeader::<N>::MAX_GC_ROUNDS as u64).unwrap()
 }
 
 /// Samples a new gateway with the given ledger.

@@ -53,7 +53,7 @@ use snarkos_node_network::{
     log_repo_sha_comparison,
     shorten_snarkos_sha,
 };
-use snarkos_node_sync::{InsertBlockResponseError, MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
     ConnectError,
@@ -71,6 +71,7 @@ use snarkvm::{
         narwhal::{BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::flatten_error,
 };
 
 use colored::Colorize;
@@ -478,7 +479,8 @@ impl<N: Network> Gateway<N> {
     /// Updates the connection metrics for the gateway.
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
-        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_peers() as f64);
+        // Ignore the bootstrap clients for this metrics.
+        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_validators() as f64);
         metrics::gauge(metrics::bft::CONNECTING, self.number_of_connecting_peers() as f64);
     }
 
@@ -668,16 +670,27 @@ impl<N: Network> Gateway<N> {
                     // Send the blocks to the sync module.
                     match sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await {
                         Ok(_) => Ok(true),
-                        Err(err @ InsertBlockResponseError::EmptyBlockResponse)
-                        | Err(err @ InsertBlockResponseError::NoConsensusVersion)
-                        | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
-                            error!("Peer '{peer_ip}' sent an invalid block response - {err}");
-                            self.ip_ban_peer(peer_ip, Some(&err.to_string()));
-                            Err(err.into())
+                        Err(err) if err.is_benign() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Ignoring block response from peer '{peer_ip}'"));
+                            debug!("{}", flatten_error(err));
+                            Ok(true)
+                        }
+                        Err(err) if err.is_invalid_consensus_version() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
+
+                            self.ip_ban_peer(peer_ip, Some(&flatten_error(&err)));
+                            Err(err)
                         }
                         Err(err) => {
-                            warn!("Unable to process block response from '{peer_ip}' - {err}");
-                            Ok(true)
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Peer '{peer_ip}' sent an invalid block response"));
+
+                            // TODO(kaimast): investigate if it is save to also ban peers here
+                            //self.ip_ban_peer(peer_ip, Some(&flatten_error(&err)));
+
+                            Err(err)
                         }
                     }
                 } else {
@@ -1080,6 +1093,7 @@ impl<N: Network> Gateway<N> {
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.connect(peer_ip) {
                     Ok(hdl) => {
+                        debug!("{CONTEXT} (Re-)connecting to bootstrap peer at '{peer_ip}'");
                         let result = hdl.await;
                         if let Err(err) = result {
                             warn!("{CONTEXT} Failed to connect to bootstrap peer at '{peer_ip}' - {err}");
@@ -1368,21 +1382,38 @@ impl<N: Network> Disconnect for Gateway<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
-            self.downgrade_peer_to_candidate(peer_ip);
+            // TODO(kaimast): This can, in theory, still lead to race conditions, if we immediately reconnect to the same peer.
+            // In practice, there should always be a significant delay between those two delays, so it is not an immediate issue.
+            //
+            // To properly fix this, we either needk hold a lock here, or add a dedicated "disconnecting" state, so that
+            // a peer is not re-added while the rest of the disconnect logic is running.
+            let was_fully_connected = self.downgrade_peer_to_candidate(peer_ip);
+
             // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-            if let Some(sync_sender) = self.sync_sender.get() {
-                let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                        warn!("{CONTEXT} Unable to remove '{peer_ip}' from the sync module - {err}");
-                    }
-                });
+            if was_fully_connected && let Some(sync_sender) = self.sync_sender.get() {
+                let (tx, rx) = oneshot::channel();
+
+                if let Err(err) = sync_sender.tx_block_sync_remove_peer.send((peer_ip, tx)).await {
+                    let err: anyhow::Error = err.into();
+                    let err =
+                        err.context(format!("Unable to remove disconnecting peer '{peer_ip}' from the sync module"));
+                    warn!("{CONTEXT} {}", flatten_error(err));
+                }
+
+                if let Err(err) = rx.await {
+                    let err: anyhow::Error = err.into();
+                    let err =
+                        err.context(format!("Unable to remove disconnecting peer '{peer_ip}' from the sync module"));
+                    warn!("{CONTEXT} {}", flatten_error(err));
+                }
             }
             // We don't clear this map based on time but only on peer disconnect.
             // This is sufficient to avoid infinite growth as the committee has a fixed number
             // of members.
             self.cache.clear_outbound_validators_requests(peer_ip);
             self.cache.clear_outbound_block_requests(peer_ip);
+        } else {
+            warn!("{CONTEXT} Got disconnect for a peer '{peer_addr}' that is not in the peer pool");
         }
     }
 }
@@ -2016,7 +2047,7 @@ mod prop_tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Initialize the gateway.
         let gateway = Gateway::new(
             account.clone(),

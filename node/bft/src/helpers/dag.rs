@@ -19,6 +19,7 @@ use snarkvm::{
     prelude::Network,
 };
 
+use anyhow::{Result, bail, ensure};
 use indexmap::IndexSet;
 use std::collections::{BTreeMap, HashMap};
 
@@ -163,6 +164,34 @@ impl<N: Network> DAG<N> {
             }
         });
     }
+
+    /// Returns `true` if there is a path from the previous certificate to the current certificate.
+    pub fn is_linked(
+        &self,
+        previous_certificate: BatchCertificate<N>,
+        current_certificate: BatchCertificate<N>,
+    ) -> Result<bool> {
+        ensure!(previous_certificate.round() < current_certificate.round());
+
+        // Initialize the list containing the traversal.
+        let mut traversal = vec![current_certificate.clone()];
+        // Iterate over the rounds from the current certificate to the previous certificate.
+        for round in (previous_certificate.round()..current_certificate.round()).rev() {
+            // Retrieve all of the certificates for this past round.
+            let Some(certificates) = self.get_certificates_for_round(round) else {
+                // This is a critical error, as the traversal should have these certificates.
+                // If this error is hit, it is likely that the maximum GC rounds should be increased.
+                bail!("BFT failed to retrieve the certificates for past round {round}");
+            };
+            // Filter the certificates to only include those that are in the traversal.
+            traversal = certificates
+                .into_values()
+                .filter(|p| traversal.iter().any(|c| c.previous_certificate_ids().contains(&p.id())))
+                .collect();
+        }
+
+        Ok(traversal.contains(&previous_certificate))
+    }
 }
 
 #[cfg(test)]
@@ -181,8 +210,15 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexSet;
     use snarkvm::{
-        prelude::{MainnetV0, narwhal::batch_certificate::test_helpers::sample_batch_certificate_for_round},
+        prelude::{
+            MainnetV0,
+            narwhal::batch_certificate::test_helpers::{
+                sample_batch_certificate_for_round,
+                sample_batch_certificate_for_round_with_previous_certificate_ids,
+            },
+        },
         utilities::TestRng,
     };
 
@@ -260,6 +296,44 @@ mod tests {
         assert!(dag.contains_certificate_in_round(2, lower.id()));
         assert!(dag.contains_certificate_in_round(4, higher.id()));
         assert_eq!(dag.last_committed_round(), 3);
+    }
+
+    #[test]
+    fn test_is_linked_connected() {
+        let rng = &mut TestRng::default();
+        let mut dag = DAG::<MainnetV0>::new();
+
+        // Create cert A at round 2.
+        let cert_a = sample_batch_certificate_for_round(2, rng);
+
+        // Create cert B at round 3 referencing cert A.
+        let cert_b = sample_batch_certificate_for_round_with_previous_certificate_ids(
+            3,
+            IndexSet::from_iter([cert_a.id()]),
+            rng,
+        );
+
+        dag.insert(cert_a.clone());
+        dag.insert(cert_b.clone());
+
+        assert!(dag.is_linked(cert_a, cert_b).unwrap());
+    }
+
+    #[test]
+    fn test_is_linked_not_connected() {
+        let rng = &mut TestRng::default();
+        let mut dag = DAG::<MainnetV0>::new();
+
+        // Create cert A at round 2.
+        let cert_a = sample_batch_certificate_for_round(2, rng);
+
+        // Create cert B at round 3 with random previous IDs (not referencing cert A).
+        let cert_b = sample_batch_certificate_for_round(3, rng);
+
+        dag.insert(cert_a.clone());
+        dag.insert(cert_b.clone());
+
+        assert!(!dag.is_linked(cert_a, cert_b).unwrap());
     }
 
     #[test]

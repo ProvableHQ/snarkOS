@@ -78,6 +78,10 @@ workspace = true
 features = [ "macros", "rt-multi-thread" ]
 optional = true
 
+[dependencies.thiserror]
+workspace = true
+
 [dependencies.tracing]
 workspace = true
 optional = true
+features = [ "log" ]

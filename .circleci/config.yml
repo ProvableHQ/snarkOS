@@ -504,6 +504,14 @@ jobs:
           workspace_member: node/consensus
           cache_key: node-consensus
 
+  node-network:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
+    steps:
+      - run_serial:
+          workspace_member: node/network
+          cache_key: node-network
+
   node-rest:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
@@ -647,6 +655,7 @@ jobs:
           name: Check snarkos-display crate
           no_output_timeout: 10m
           command: cargo check --package=snarkos-node-metrics --all-features
+
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
 
@@ -788,7 +797,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/low_level_tweaks
+                - fix/sync-race-conditions 
                 - canary
                 - testnet
                 - mainnet
@@ -798,7 +807,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/low_level_tweaks
+                - fix/sync-race-conditions 
                 - canary
                 - testnet
                 - mainnet
@@ -810,7 +819,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/low_level_tweaks
+                - fix/sync-race-conditions 
                 - canary
                 - testnet
                 - mainnet

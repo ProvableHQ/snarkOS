@@ -168,7 +168,8 @@ impl TestNetwork {
                 ledger.clone(),
                 Arc::new(BFTMemoryService::new()),
                 BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
-            );
+            )
+            .unwrap();
             // Initialize the block synchronization logic.
             let block_sync = Arc::new(BlockSync::new(ledger.clone()));
             let (primary, bft) = if config.bft {
