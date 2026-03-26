@@ -373,7 +373,7 @@ opt-level = 3
 lto = "thin"
 incremental = true
 
-[profile.locktick]
+[profile.release-locktick]
 inherits = "release"
 debug = "line-tables-only"
 strip = "none"
