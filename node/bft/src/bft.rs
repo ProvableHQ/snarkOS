@@ -42,6 +42,8 @@ use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
+#[cfg(feature = "locktick")]
+use locktick::tokio::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use std::{
@@ -52,6 +54,8 @@ use std::{
         atomic::{AtomicI64, Ordering},
     },
 };
+#[cfg(not(feature = "locktick"))]
+use tokio::sync::Mutex;
 use tokio::sync::{OnceCell, oneshot};
 
 #[derive(Clone)]
@@ -66,6 +70,12 @@ pub struct BFT<N: Network> {
     leader_certificate_timer: Arc<AtomicI64>,
     /// The consensus sender.
     consensus_sender: Arc<OnceCell<ConsensusSender<N>>>,
+    /// Ensures only one call to `commit_leader_certificate` runs at a time.
+    ///
+    /// Without this, a second certificate crossing the availability threshold while the consensus
+    /// callback for a prior commit is still in-flight would re-walk already-committed rounds
+    /// (because `last_committed_round` hasn't been updated yet), causing duplicate subdag commits.
+    commit_lock: Arc<Mutex<()>>,
 }
 
 impl<N: Network> BFT<N> {
@@ -98,6 +108,7 @@ impl<N: Network> BFT<N> {
             leader_certificate: Default::default(),
             leader_certificate_timer: Default::default(),
             consensus_sender: Default::default(),
+            commit_lock: Default::default(),
         })
     }
 
@@ -586,21 +597,32 @@ impl<N: Network> BFT<N> {
         #[cfg(debug_assertions)]
         trace!("Attempting to commit leader certificate for round {}...", leader_certificate.round());
 
+        // Serialize all commits so that `last_committed_round` is up-to-date before the next call
+        // re-walks the DAG, preventing duplicate subdag commits.
+        let _commit_guard = self.commit_lock.lock().await;
+
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
+
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];
         {
-            // Retrieve the leader round and the latest round we committed.
-            let leader_round = leader_certificate.round();
-
             // Read-lock the DAG.
             // We need to hold the lock, so we do not later fail to re-acquire it.
             let dag = self.dag.read();
 
+            // Re-check under the lock: another call may have committed this round while we were waiting.
+            if latest_leader_round <= dag.last_committed_round() {
+                trace!("Skipping already-committed leader round {latest_leader_round}");
+                return Ok(());
+            }
+
+            #[cfg(debug_assertions)]
+            trace!("Attempting to commit leader certificate for round {}...", latest_leader_round);
+
             let mut current_certificate = leader_certificate;
-            for round in (dag.last_committed_round() + 2..=leader_round.saturating_sub(2)).rev().step_by(2) {
+            for round in (dag.last_committed_round() + 2..=latest_leader_round.saturating_sub(2)).rev().step_by(2) {
                 // Retrieve the previous committee for the leader round.
                 let previous_committee_lookback =
                     self.ledger().get_committee_lookback_for_round(round).with_context(|| {
