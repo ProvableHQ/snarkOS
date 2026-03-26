@@ -479,7 +479,8 @@ impl<N: Network> Gateway<N> {
     /// Updates the connection metrics for the gateway.
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
-        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_peers() as f64);
+        // Ignore the bootstrap clients for this metrics.
+        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_validators() as f64);
         metrics::gauge(metrics::bft::CONNECTING, self.number_of_connecting_peers() as f64);
     }
 
