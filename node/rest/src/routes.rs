@@ -90,6 +90,15 @@ pub(crate) struct Commitments {
     commitments: Vec<String>,
 }
 
+/// The return value for a transaction metadata query.
+#[skip_serializing_none]
+#[derive(Serialize)]
+pub(crate) struct TransactionWithMetadata<T: Serialize, N: Network> {
+    transaction: T,
+    block_hash: Option<N::BlockHash>,
+    block_height: Option<u32>,
+}
+
 /// The return value for a `sync_status` query.
 #[skip_serializing_none]
 #[derive(Copy, Clone, Serialize)]
@@ -294,19 +303,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         })?;
         // Check if metadata is requested and return the transaction with metadata if so.
         if metadata.metadata.unwrap_or(false) {
-            // Get the block height for the transaction, if it exists.
-            let block_height = rest
-                .ledger
-                .find_block_hash(&tx_id)
-                .ok()
-                .flatten()
-                .and_then(|block_hash| rest.ledger.get_height(&block_hash).ok());
-            return Ok(ErasedJson::pretty(json!({
-                "transaction": transaction,
-                "block_height": block_height,
-            })));
+            // Get the block hash and height for the transaction, if it exists.
+            let block_hash = rest.ledger.find_block_hash(&tx_id).ok().flatten();
+            let block_height = block_hash.and_then(|hash| rest.ledger.get_height(&hash).ok());
+            Ok(ErasedJson::pretty(TransactionWithMetadata::<_, N> { transaction, block_hash, block_height }))
+        } else {
+            Ok(ErasedJson::pretty(transaction))
         }
-        Ok(ErasedJson::pretty(transaction))
     }
 
     /// GET /<network>/transaction/confirmed/{transactionID}
@@ -322,18 +325,20 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         })?;
         // Check if metadata is requested and return the transaction with metadata if so.
         if metadata.metadata.unwrap_or(false) {
-            // Get the block height for the confirmed transaction.
+            // Get the block hash and height for the confirmed transaction.
             let block_hash = rest
                 .ledger
                 .find_block_hash(&tx_id)?
                 .ok_or_else(|| anyhow!("Block hash not found for transaction {tx_id}"))?;
             let block_height = rest.ledger.get_height(&block_hash)?;
-            return Ok(ErasedJson::pretty(json!({
-                "transaction": transaction,
-                "block_height": block_height,
-            })));
+            Ok(ErasedJson::pretty(TransactionWithMetadata::<_, N> {
+                transaction,
+                block_hash: Some(block_hash),
+                block_height: Some(block_height),
+            }))
+        } else {
+            Ok(ErasedJson::pretty(transaction))
         }
-        Ok(ErasedJson::pretty(transaction))
     }
 
     /// GET /<network>/transaction/unconfirmed/{transactionID}
