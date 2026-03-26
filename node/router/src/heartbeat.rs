@@ -19,7 +19,6 @@ use crate::{
     NodeType,
     Outbound,
     PeerPoolHandling,
-    Router,
     bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
 };
@@ -67,8 +66,6 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         self.safety_check_minimum_number_of_peers();
         self.log_connected_peers();
 
-        // Remove any stale connected peers.
-        self.remove_stale_connected_peers();
         // Remove the oldest connected peer.
         self.remove_oldest_connected_peer();
         // Keep the number of connected peers within the allowed range.
@@ -108,20 +105,6 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             }
             1 => debug!("Connected to 1 peer: {connected_peers_fmt}"),
             num_connected => debug!("Connected to {num_connected} peers {connected_peers_fmt}"),
-        }
-    }
-
-    /// This function removes any connected peers that have not communicated within the predefined time.
-    fn remove_stale_connected_peers(&self) {
-        // Check if any connected peer is stale.
-        for peer in self.router().get_connected_peers() {
-            // Disconnect if the peer has not communicated back within the predefined time.
-            let elapsed = peer.last_seen.elapsed();
-            if elapsed > Router::<N>::MAX_RADIO_SILENCE {
-                warn!("Peer '{}' has not communicated in {elapsed:?}", peer.listener_addr);
-                // Disconnect from this peer.
-                self.router().disconnect(peer.listener_addr);
-            }
         }
     }
 

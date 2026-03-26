@@ -819,7 +819,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/vk-migration
+                - fix/sync-race-conditions 
                 - canary
                 - testnet
                 - mainnet
