@@ -372,9 +372,11 @@ version = "2"
 opt-level = 3
 lto = "thin"
 incremental = true
-# uncomment the 2 lines below when building with the locktick feature
-# debug = "line-tables-only"
-# strip = "none"
+
+[profile.release-locktick]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
 
 [profile.bench]
 opt-level = 3
