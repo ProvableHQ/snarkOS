@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774519662555,
+  "lastUpdate": 1774552065653,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -11052,6 +11052,72 @@ window.BENCHMARK_DATA = {
             "value": 0.48,
             "unit": "blocks/s",
             "extra": "total_wait=518s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.58,
+            "unit": "blocks/s",
+            "extra": "total_wait=158s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3eeaadd73ef7946e42459315c235e2de58af438f",
+          "message": "Merge pull request #4185 from ProvableHQ/locktick-profile\n\nIntroduce locktick profile in Cargo.toml",
+          "timestamp": "2026-03-26T19:29:46+01:00",
+          "tree_id": "ac03346fca4a3ece0b69301b0200dede78721926",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/3eeaadd73ef7946e42459315c235e2de58af438f"
+        },
+        "date": 1774552064679,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.571437861466571,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=86.1537024974823, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7580.013816167265,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.554070472717285, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1037.9808108730138,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7707271575927734, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.59,
+            "unit": "blocks/s",
+            "extra": "total_wait=421s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.271067,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=408, mean_speed=0.557884, max_speed=1.416667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.58,
+            "unit": "blocks/s",
+            "extra": "total_wait=430s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
