@@ -359,3 +359,11 @@ else
   log_client_logs "$log_dir" "$total_validators" "$total_clients"
   exit 1
 fi
+
+# Ensure no errors are generated during the devnet run, as all nodes are
+# expected to operate without failures or interruptions.
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
+  exit 0
+else
+  exit 1
+fi

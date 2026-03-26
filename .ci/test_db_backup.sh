@@ -16,6 +16,7 @@ checkpoint_height=3
 rollback_height=10
 num_checkpoints=0
 remaining_checkpoints=2
+max_warnings=20
 
 # Create log directory
 init_log_dir
@@ -107,7 +108,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
           snarkos clean "--network=$network_id" "--dev=$validator_index" --keep-node-data \
               "--ledger-storage=/tmp/ledger_checkpoint_$suffix"
         fi
-        # Wait until the cleanup concludes
+       # Wait until the cleanup concludes
         sleep 1
 
         # Restart using the checkpoint
@@ -133,8 +134,11 @@ while (( total_wait < 600 )); do  # 10 minutes max
       done
 
       if (( remaining_checkpoints == 0 )); then
-        log "SUCCESS!"
-        exit 0
+        if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+          exit 0
+        else
+          exit 1
+        fi
       fi
 
       remaining_checkpoints=$((remaining_checkpoints-1))
@@ -150,3 +154,4 @@ done
 # The main loop has expired by now
 log "❌ Test failed!"
 exit 1
+
