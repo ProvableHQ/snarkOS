@@ -55,6 +55,11 @@ const MAXIMUM_REQUEST_ATTEMPTS: u8 = 10;
 /// The CDN base url.
 pub const CDN_BASE_URL: &str = "https://cdn.provable.com/v0/blocks";
 
+/// Returns the user-agent string for CDN requests.
+fn cdn_user_agent() -> &'static str {
+    concat!("snarkos/", env!("CARGO_PKG_VERSION"))
+}
+
 /// Updates the metrics during CDN sync.
 #[cfg(feature = "metrics")]
 fn update_block_metrics(height: u32) {
@@ -162,7 +167,7 @@ impl CdnBlockSync {
     }
 
     pub async fn get_cdn_height(&self) -> anyhow::Result<u32> {
-        let client = Client::builder().use_rustls_tls().build()?;
+        let client = Client::builder().use_rustls_tls().user_agent(cdn_user_agent()).build()?;
         cdn_height::<BLOCKS_PER_FILE>(&client, &self.base_url).await
     }
 }
@@ -179,7 +184,7 @@ pub async fn load_blocks<N: Network>(
     process: impl FnMut(Block<N>) -> Result<()> + Clone + Send + Sync + 'static,
 ) -> Result<u32, (u32, anyhow::Error)> {
     // Create a Client to maintain a connection pool throughout the sync.
-    let client = match Client::builder().use_rustls_tls().build() {
+    let client = match Client::builder().use_rustls_tls().user_agent(cdn_user_agent()).build() {
         Ok(client) => client,
         Err(error) => {
             return Err((start_height.saturating_sub(1), anyhow!("Failed to create a CDN request client - {error}")));
