@@ -1134,22 +1134,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .finalize_store()
             .slipstream_plugin_manager()
             .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
-        let name = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-            let mut mgr = manager.write().map_err(|e| anyhow!("Plugin manager lock poisoned: {e}"))?;
-            mgr.load_plugin(&config_file).map_err(|e: SlipstreamPluginManagerError| match e {
-                SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => anyhow!("409: {e}"),
-                other => anyhow!("{other}"),
-            })
+        let name = tokio::task::spawn_blocking(move || -> Result<String, SlipstreamPluginManagerError> {
+            let mut mgr = manager
+                .write()
+                .map_err(|_| SlipstreamPluginManagerError::PluginLoadError("Plugin manager lock poisoned".to_string()))?;
+            mgr.load_plugin(&config_file)
         })
         .await
         .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.starts_with("409: ") {
-                RestError::unprocessable_entity(anyhow!("{}", &msg[5..]))
-            } else {
-                RestError::internal_server_error(e)
+        .map_err(|e| match e {
+            SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => {
+                RestError::unprocessable_entity(anyhow!("{e}"))
             }
+            other => RestError::internal_server_error(anyhow!("{other}")),
         })?;
         Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "loaded": name }))))
     }
