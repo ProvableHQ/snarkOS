@@ -26,3 +26,6 @@ validator-*
 # For release upgrde CI
 .ci/release-snarkos
 .ci/release-snarkos-src
+
+.claude/
+**/CLAUDE.md

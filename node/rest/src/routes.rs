@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,24 +16,30 @@
 use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
+#[cfg(feature = "history-staking-rewards")]
+use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
-    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, VM, block::Transaction},
+    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, block::Transaction},
 };
 
 use axum::{Json, extract::rejection::JsonRejection};
 
+use aleo_std::aleo_ledger_dir;
 use anyhow::{Context, anyhow};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::{collections::HashMap, fs};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 
 use version::VersionInfo;
+
+#[cfg(feature = "history")]
+type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
 
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
@@ -383,7 +389,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn return_program_with_metadata(&self, program: Program<N>, edition: u16) -> Result<ErasedJson, RestError> {
         let id = program.id();
         // Get the transaction ID associated with the program and edition.
-        let tx_id = self.ledger.find_transaction_id_from_program_id_and_edition(id, edition)?;
+        let tx_id = self.ledger.find_latest_transaction_id_from_program_id_and_edition(id, edition)?;
         // Get the optional program owner associated with the program.
         // Note: The owner is only available after `ConsensusVersion::V9`.
         let program_owner = match &tx_id {
@@ -397,11 +403,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 .and_then(|deployment| deployment.program_owner()),
             None => None,
         };
+        // Get the amendment count for this program and edition.
+        let amendment_count =
+            self.ledger.vm().block_store().transaction_store().get_amendment_count(id, edition)?.unwrap_or(0);
         Ok(ErasedJson::pretty(json!({
             "program": program,
             "edition": edition,
             "transaction_id": tx_id,
             "program_owner": program_owner,
+            "amendment_count": amendment_count,
         })))
     }
 
@@ -478,6 +488,40 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Ok(Err(err)) => Err(RestError::internal_server_error(err.context("Unable to read mapping"))),
             Err(err) => Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
         }
+    }
+
+    /// GET /<network>/program/{programID}/amendment_count
+    pub(crate) async fn get_program_amendment_count(
+        State(rest): State<Self>,
+        Path(id): Path<ProgramID<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        // Get the latest edition.
+        let edition = rest.ledger.get_latest_edition_for_program(&id)?;
+        // Get the amendment count for this program and edition.
+        let amendment_count =
+            rest.ledger.vm().block_store().transaction_store().get_amendment_count(&id, edition)?.unwrap_or(0);
+
+        Ok(ErasedJson::pretty(json!({
+            "program_id": id,
+            "edition": edition,
+            "amendment_count": amendment_count,
+        })))
+    }
+
+    /// GET /<network>/program/{programID}/{edition}/amendment_count
+    pub(crate) async fn get_program_amendment_count_for_edition(
+        State(rest): State<Self>,
+        Path((id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        // Get the amendment count for this program and edition.
+        let amendment_count =
+            rest.ledger.vm().block_store().transaction_store().get_amendment_count(&id, edition)?.unwrap_or(0);
+
+        Ok(ErasedJson::pretty(json!({
+            "program_id": id,
+            "edition": edition,
+            "amendment_count": amendment_count,
+        })))
     }
 
     /// GET /<network>/statePath/{commitment}
@@ -565,19 +609,35 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
     }
 
-    /// GET /<network>/peers/count
+    /// GET /<network>/peers/count (alias: /connections/p2p/count)
     pub(crate) async fn get_peers_count(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().number_of_connected_peers())
     }
 
-    /// GET /<network>/peers/all
+    /// GET /<network>/peers/all (alias: /connections/p2p/all)
     pub(crate) async fn get_peers_all(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().connected_peers())
     }
 
-    /// GET /<network>/peers/all/metrics
+    /// GET /<network>/peers/all/metrics (alias: /connections/p2p/all/metrics)
     pub(crate) async fn get_peers_all_metrics(State(rest): State<Self>) -> ErasedJson {
         ErasedJson::pretty(rest.routing.router().connected_metrics())
+    }
+
+    /// GET /<network>/connections/bft/count
+    pub(crate) async fn get_bft_connections_count(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => Ok(ErasedJson::pretty(consensus.bft().primary().gateway().number_of_connected_peers())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
+    }
+
+    /// GET /<network>/connections/bft/all
+    pub(crate) async fn get_bft_connections_all(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
+        match rest.consensus {
+            Some(consensus) => Ok(ErasedJson::pretty(consensus.bft().primary().gateway().connected_peers())),
+            None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
+        }
     }
 
     /// GET /<network>/node/address
@@ -610,11 +670,37 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/find/transactionID/deployment/{programID}/{edition}
-    pub(crate) async fn find_transaction_id_from_program_id_and_edition(
+    pub(crate) async fn find_latest_transaction_id_from_program_id_and_edition(
         State(rest): State<Self>,
         Path((program_id, edition)): Path<(ProgramID<N>, u16)>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id_and_edition(&program_id, edition)?))
+        Ok(ErasedJson::pretty(
+            rest.ledger.find_latest_transaction_id_from_program_id_and_edition(&program_id, edition)?,
+        ))
+    }
+
+    /// GET /<network>/find/transactionID/deployment/{programID}/{edition}/original
+    /// Finds the transaction ID for the original deployment (not an amendment).
+    pub(crate) async fn find_original_deployment_transaction_id(
+        State(rest): State<Self>,
+        Path((program_id, edition)): Path<(ProgramID<N>, u16)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(
+            rest.ledger.find_original_transaction_id_from_program_id_and_edition(&program_id, edition)?,
+        ))
+    }
+
+    /// GET /<network>/find/transactionID/deployment/{programID}/{edition}/{amendment}
+    /// Finds the transaction ID for an amendment deployment at the specified index.
+    pub(crate) async fn find_transaction_id_from_program_id_edition_and_amendment(
+        State(rest): State<Self>,
+        Path((program_id, edition, amendment)): Path<(ProgramID<N>, u16, u64)>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(rest.ledger.find_transaction_id_from_program_id_edition_and_amendment(
+            &program_id,
+            edition,
+            amendment,
+        )?))
     }
 
     /// GET /<network>/find/transactionID/{transitionID}
@@ -676,7 +762,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // most transactions will be smaller and this reduces unnecessary allocations.
         // TODO: Should this be a blocking task?
         let buffer = Vec::with_capacity(3000);
-        if tx.write_le(LimitedWriter::new(buffer, N::MAX_TRANSACTION_SIZE)).is_err() {
+        if tx.write_le(LimitedWriter::new(buffer, N::LATEST_MAX_TRANSACTION_SIZE())).is_err() {
             return Err(RestError::bad_request(anyhow!("Transaction size exceeds the byte limit")));
         }
 
@@ -694,32 +780,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
         if check_transaction {
-            // Select counter and limit based on transaction type.
-            let (counter, limit, err_msg) = if tx.is_execute() {
-                (
-                    &rest.num_verifying_executions,
-                    VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
-                    "Too many execution verifications in progress",
-                )
+            // Select the semaphore based on the transaction type.
+            let (slot, err_msg) = if tx.is_execute() {
+                (rest.num_verifying_executions.acquire().await, "Too many execution verifications in progress")
             } else {
-                (
-                    &rest.num_verifying_deploys,
-                    VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
-                    "Too many deploy verifications in progress",
-                )
+                (rest.num_verifying_deploys.acquire().await, "Too many deploy verifications in progress")
             };
 
-            // Try to acquire a slot.
-            if counter
-                .fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |val| {
-                        if val < limit { Some(val + 1) } else { None }
-                    },
-                )
-                .is_err()
-            {
+            if slot.is_err() {
                 return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
             }
 
@@ -734,8 +802,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                     }
                 }
             });
-            // Release the slot.
-            counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
             res?;
         }
@@ -793,22 +859,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_solution = check_solution.check_solution.unwrap_or(false);
 
         if check_solution {
-            // Select counter and limit.
-            let (counter, limit, err_msg) =
-                (&rest.num_verifying_solutions, N::MAX_SOLUTIONS, "Too many solution verifications in progress");
-
             // Try to acquire a slot.
-            if counter
-                .fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |val| {
-                        if val < limit { Some(val + 1) } else { None }
-                    },
-                )
-                .is_err()
-            {
-                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
+            let slot = rest.num_verifying_solutions.acquire().await;
+            if slot.is_err() {
+                return Err(RestError::too_many_requests(anyhow!("Too many solution verifications in progress")));
             }
 
             // Compute the current epoch hash.
@@ -850,8 +904,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                         return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
                     }
                 };
-            // Release the slot.
-            counter.fetch_sub(1, Ordering::Relaxed);
             // Propagate error if any.
             res?;
         }
@@ -884,24 +936,59 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         backup_path: Query<BackupPath>,
     ) -> Result<ErasedJson, RestError> {
-        rest.ledger.backup_database(&backup_path.path)?;
+        // Create a checkpoint at the given location.
+        let mut backup_path = backup_path.path.clone();
+        rest.ledger.backup_database(&backup_path)?;
 
-        Ok(ErasedJson::pretty(()))
+        // Dump the block tree.
+        let ret = ErasedJson::pretty(());
+        if let Err(e) = rest.ledger.cache_block_tree() {
+            warn!("Couldn't cache the block tree for a ledger checkpoint: {e}");
+            return Ok(ret);
+        }
+
+        // Copy the block tree file to the new checkpoint.
+        let mut block_tree_path = aleo_ledger_dir(N::ID, rest.ledger.vm().block_store().storage_mode());
+        block_tree_path.push("block_tree");
+        backup_path.push("block_tree");
+        if let Err(e) = fs::copy(block_tree_path, backup_path) {
+            warn!("Couldn't copy the block tree file to a ledger checkpoint: {e}");
+        }
+
+        Ok(ret)
     }
 
-    /// GET /{network}/block/{blockHeight}/history/{mapping}
+    /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
     #[cfg(feature = "history")]
     pub(crate) async fn get_history(
         State(rest): State<Self>,
-        Path((height, mapping)): Path<(u32, snarkvm::synthesizer::MappingName)>,
+        Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         // Retrieve the history for the given block height and variant.
-        let history = snarkvm::synthesizer::History::new(N::ID, rest.ledger.vm().finalize_store().storage_mode());
-        let result = history.load_mapping(height, mapping).map_err(|err| {
-            RestError::not_found(err.context(format!("Could not load mapping '{mapping}' from block '{height}'")))
-        })?;
+        let value = rest.ledger.vm().finalize_store().get_historical_mapping_value(program_id, mapping_name, mapping_key.clone(), height)
+            .map_err(|err| {
+                RestError::not_found(err.context(format!("Could not load mapping '{mapping_name}/{mapping_key}' for program '{program_id}' from block '{height}'")))
+            })?;
 
-        Ok((StatusCode::OK, [(CONTENT_TYPE, "application/json")], result))
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
+    }
+
+    /// GET /{network}/staking/rewards/{address}/{height}
+    #[cfg(feature = "history-staking-rewards")]
+    pub(crate) async fn get_staking_reward(
+        State(rest): State<Self>,
+        Path((address, height)): Path<(Address<N>, u32)>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Retrieve the history for the given block height and variant.
+        let value = rest.ledger.vm().finalize_store().staking_rewards_map().get_confirmed(&(address, height)).map_err(
+            |err| {
+                RestError::not_found(
+                    err.context(format!("Could not load the staking reward for {address} from block '{height}'")),
+                )
+            },
+        )?;
+
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
 
     /// GET /{network}/validators/participation

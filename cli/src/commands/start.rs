@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +40,7 @@ use snarkvm::{
         committee::{Committee, MIN_DELEGATOR_STAKE, MIN_VALIDATOR_STAKE},
         store::{ConsensusStore, helpers::memory::ConsensusMemory},
     },
-    prelude::{FromBytes, ToBits, ToBytes},
+    prelude::{FromBytes, Itertools, ToBits, ToBytes},
     synthesizer::VM,
     utilities::to_bytes_le,
 };
@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 
 use std::{
     fs,
+    io::IsTerminal,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -252,6 +253,10 @@ pub struct Start {
     #[clap(long, verbatim_doc_comment)]
     pub node_data_storage: Option<PathBuf>,
 
+    /// If specified, the node will automatically save database checkpoints.
+    #[clap(long)]
+    pub auto_db_checkpoints: Option<PathBuf>,
+
     /// Enables the node to prefetch initial blocks from a CDN
     #[clap(long, conflicts_with = "nocdn")]
     pub cdn: Option<http::Uri>,
@@ -310,6 +315,13 @@ impl Start {
         )
         .with_context(|| "Failed to set up logger")?;
 
+        // When running in a non-interactive session, disallow the use of the terminal UI.
+        if !std::io::stdout().is_terminal() && !self.nodisplay {
+            anyhow::bail!(
+                "snarkOS cannot use the terminal UI in a non-interactive session. Please restart with `--nodisplay`."
+            );
+        }
+
         // Initialize the runtime.
         Self::runtime().block_on(async move {
             // Error messages.
@@ -343,17 +355,18 @@ impl Start {
         }
     }
 
-    /// Returns the CDN to prefetch initial blocks from, from the given configurations.
+    /// Returns the CDN to prefetch initial blocks from, or `None` if fetching from the CDN is disabled.
     fn parse_cdn<N: Network>(&self) -> Result<Option<http::Uri>> {
-        // Determine if the node type is not declared.
-        let is_no_node_type = !(self.validator || self.prover || self.client);
-
         // Disable CDN if:
         //  1. The node is in development mode.
         //  2. The user has explicitly disabled CDN.
         //  3. The node is a prover (no need to sync).
-        //  4. The node type is not declared (defaults to client) (no need to sync).
-        if self.dev.is_some() || self.nocdn || self.prover || is_no_node_type {
+        let no_cdn_reasons = [("--dev", self.dev.is_some()), ("--nocdn", self.nocdn), ("--prover", self.prover)]
+            .into_iter()
+            .filter_map(|(reason, flag_set)| flag_set.then_some(reason))
+            .join(" and ");
+        if !no_cdn_reasons.is_empty() {
+            info!("CDN disabled because the following flags are set: {no_cdn_reasons}.");
             Ok(None)
         }
         // Enable the CDN otherwise.
@@ -687,7 +700,7 @@ impl Start {
         // Parse the development configurations.
         self.parse_development(&mut trusted_peers, &mut trusted_validators)?;
 
-        // Parse the CDN.
+        // Determine if the node should sync from CDn..
         let cdn = self.parse_cdn::<N>().with_context(|| "Failed to parse given CDN URL")?;
 
         // Parse the genesis block.
@@ -824,7 +837,7 @@ impl Start {
         };
 
         // TODO(kaimast): start the display earlier and show sync progress.
-        if !self.nodisplay && !self.nocdn {
+        if !self.nodisplay && cdn.is_some() {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
 
@@ -833,9 +846,9 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
@@ -1240,9 +1253,9 @@ mod tests {
 
         // Default (Prod)
         let config = Start::try_parse_from(["snarkos"].iter()).unwrap();
-        assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
+        assert!(config.parse_cdn::<CurrentNetwork>()?.is_some());
         let config = Start::try_parse_from(["snarkos", "--cdn", "url"].iter()).unwrap();
-        assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
+        assert!(config.parse_cdn::<CurrentNetwork>()?.is_some());
         let config = Start::try_parse_from(["snarkos", "--nocdn"].iter()).unwrap();
         assert!(config.parse_cdn::<CurrentNetwork>()?.is_none());
 

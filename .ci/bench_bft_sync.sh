@@ -91,7 +91,7 @@ done
 # Block until nodes are running and connected to each other.
 wait_for_nodes $((num_nodes+1)) 0 "$network_name"
 
-SECONDS=0
+start=$(now)
 
 # Wait for all validators to be connected to each other via the gateway.
 for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
@@ -100,18 +100,18 @@ for ((node_index = 0; node_index < num_nodes+1; node_index++)); do
   fi
 done
 
-connect_time=$SECONDS
+connect_time=$(elapsed_since "$start")
 log "ℹ️ Nodes are fully connected (took $connect_time secs). Starting block sync measurement."
 
 # Check heights periodically with a timeout
-SECONDS=0
-while (( SECONDS < max_wait )); do
+start=$(now)
+while (( $(elapsed_since "$start") < max_wait )); do
   # The last block cannot be fully applied to the ledger yet as there is no next block to confirm it.
   # However, we know that the sync height of a node is always at least one more than the ledger height.
   expected_height=$((min_height-1))
+  total_wait=$(elapsed_since "$start")
   
-  if check_heights 1 $((num_nodes+1)) $expected_height "$network_name" "$SECONDS"; then
-    total_wait=$SECONDS
+  if check_heights 1 $((num_nodes+1)) $expected_height "$network_name" "$total_wait"; then
     throughput=$(compute_throughput "$min_height" "$total_wait")
 
     log "🎉 BFT sync benchmark done! Waited $total_wait seconds for $min_height blocks. Throughput was $throughput blocks/s."
@@ -123,7 +123,7 @@ while (( SECONDS < max_wait )); do
   fi
   
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
 done
 
 log "❌ Benchmark failed! Validators did not sync within 30 minutes."

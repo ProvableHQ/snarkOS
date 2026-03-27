@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -82,12 +82,11 @@ impl<N: Network> OnConnect for BootstrapClient<N> {
     async fn on_connect(&self, peer_addr: SocketAddr) {
         // If the peer is connected in validator (Gateway) mode, save it to the collection
         // of known validators.
-        if let Some(listener_addr) = self.resolve_to_listener(peer_addr) {
-            if let Some(peer) = self.get_connected_peer(listener_addr) {
-                if peer.node_type == NodeType::Validator {
-                    self.known_validators.write().insert(listener_addr, (peer.aleo_addr, peer.connection_mode));
-                }
-            }
+        if let Some(listener_addr) = self.resolve_to_listener(peer_addr)
+            && let Some(peer) = self.get_connected_peer(listener_addr)
+            && peer.node_type == NodeType::Validator
+        {
+            self.known_validators.write().insert(listener_addr, (peer.aleo_addr, peer.connection_mode));
         }
         // The peers should only ask us for the peer list; spawn a task that will
         // terminate the connection after a while.

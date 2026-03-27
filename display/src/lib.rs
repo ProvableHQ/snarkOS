@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -112,17 +112,17 @@ impl<N: Network> Display<N> {
             // Determine how long to wait for an input event, before we redraw.
             let timeout = self.tick_rate.saturating_sub(last_tick.elapsed());
 
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Esc => {
-                            stoppable.stop();
-                            return Ok(());
-                        }
-                        KeyCode::Left => self.tabs.previous(),
-                        KeyCode::Right => self.tabs.next(),
-                        _ => {}
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()?
+            {
+                match key.code {
+                    KeyCode::Esc => {
+                        stoppable.stop();
+                        return Ok(());
                     }
+                    KeyCode::Left => self.tabs.previous(),
+                    KeyCode::Right => self.tabs.next(),
+                    _ => {}
                 }
             }
 

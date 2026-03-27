@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,18 +33,20 @@ use snarkos_node_router::{
     },
 };
 use snarkos_node_tcp::{
+    ConnectError,
     Connection,
     ConnectionSide,
     P2P,
     Tcp,
     protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
 };
-use snarkvm::prelude::{
-    ConsensusVersion,
-    Field,
-    Network,
-    block::{Block, Header, Transaction},
-    puzzle::Solution,
+use snarkvm::{
+    console::network::{ConsensusVersion, Network},
+    ledger::{
+        block::{Block, Header, Transaction},
+        puzzle::Solution,
+    },
+    prelude::Field,
 };
 
 use async_trait::async_trait;
@@ -108,7 +110,7 @@ impl<N: Network> PeerPoolHandling<N> for TestRouter<N> {
 #[async_trait]
 impl<N: Network> Handshake for TestRouter<N> {
     /// Performs the handshake protocol.
-    async fn perform_handshake(&self, mut connection: Connection) -> io::Result<Connection> {
+    async fn perform_handshake(&self, mut connection: Connection) -> Result<Connection, ConnectError> {
         // Perform the handshake.
         let peer_addr = connection.addr();
         let conn_side = connection.side();

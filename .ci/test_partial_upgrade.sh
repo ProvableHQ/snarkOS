@@ -62,8 +62,10 @@ function wait_for_no_sync() {
   local max_height=$3
   local wait_time=$4  # seconds to wait
 
-  SECONDS=0
-  while (( SECONDS < wait_time )); do
+  local start
+  start=$(now)
+  
+  while (( $(elapsed_since "$start") < wait_time )); do
     height=$(get_block_height "$node_index" "$network_name" 2>/dev/null || echo 0)
     if (is_integer "$height") && (( height > max_height )); then
       log "Node #$node_index unexpectedly synced to height $height (expected to stay below $max_height)"
@@ -166,8 +168,10 @@ function wait_for_node_height() {
   local network_name=$2
   local target_height=$3
 
-  SECONDS=0
-  while (( SECONDS < 300 )); do  #5 minutes max
+  local start
+  start=$(now)
+
+  while (( $(elapsed_since "$start") < 300 )); do  #5 minutes max
       height=$(get_block_height "$node_index" "$network_name" || echo 0)
       if (is_integer "$height") && (( height >= target_height )); then
         return 0

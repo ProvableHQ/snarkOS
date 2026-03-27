@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -329,14 +329,13 @@ impl<N: Network> Worker<N> {
         // This takes heavy transaction verification out of the hot path during block generation.
         if let (TransmissionID::Transaction(tx_id, _), Transmission::Transaction(Data::Object(tx))) =
             (transmission_id, &transmission)
+            && tx.is_execute()
         {
-            if tx.is_execute() {
-                let self_ = self.clone();
-                let tx_ = tx.clone();
-                tokio::spawn(async move {
-                    let _ = self_.ledger.check_transaction_basic(tx_id, tx_).await;
-                });
-            }
+            let self_ = self.clone();
+            let tx_ = tx.clone();
+            tokio::spawn(async move {
+                let _ = self_.ledger.check_transaction_basic(tx_id, tx_).await;
+            });
         }
         // If the transmission ID and transmission type matches, then insert the transmission into the ready queue.
         if is_well_formed && self.ready.write().insert(transmission_id, transmission) {
@@ -412,7 +411,9 @@ impl<N: Network> Worker<N> {
         let transaction = spawn_blocking!({
             match transaction {
                 Data::Object(transaction) => Ok(transaction),
-                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(&mut bytes.take(N::MAX_TRANSACTION_SIZE as u64))?),
+                Data::Buffer(bytes) => {
+                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?)
+                }
             }
         })?;
 

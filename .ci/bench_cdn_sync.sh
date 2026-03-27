@@ -54,10 +54,10 @@ PIDS[0]=$!
 wait_for_nodes 0 1 "$network_name"
 
 # Check heights periodically with a timeout
-SECONDS=0
-while (( SECONDS < max_wait )); do
-  if check_heights 0 1 $min_height "$network_name" "$SECONDS"; then
-    total_wait=$SECONDS
+start=$(now)
+while (( $(elapsed_since "$start") < max_wait )); do
+  total_wait=$(elapsed_since "$start")
+  if check_heights 0 1 $min_height "$network_name" "$total_wait"; then
     throughput=$(compute_throughput "$min_height" "$total_wait")
 
     log "🎉 Benchmark done! Waited ${total_wait}s for $min_height blocks. Throughput was $throughput blocks/s."
@@ -69,7 +69,7 @@ while (( SECONDS < max_wait )); do
   fi
   
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
 done
 
 log "❌ Benchmark failed! Client did not sync within 30 minutes."

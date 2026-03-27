@@ -104,7 +104,7 @@ commands:
             # it causes longer build times and causes some builds to fail
 
             # echo 'export "RUSTC_WRAPPER"="$HOME/.bin/sccache"' >> $BASH_ENV
-            # echo 'export "SCCACHE_CACHE_SIZE"="20000M"' >> $BASH_ENV
+            # echo 'export "SCCACHE_CACHE_SIZE"="2000M"' >> $BASH_ENV
             # Disable incremental builds so that sccache works as expected
             # echo 'export CARGO_INCREMENTAL=0' >> "$BASH_ENV"
       - run:
@@ -590,12 +590,12 @@ jobs:
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
-          timeout: 5m 
+          no_output_timeout: 5m 
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
         name: "Run Reset Minority Devnet Test"
-        timeout: 20m  # Allow 20 minutes total
+        no_output_timeout: 5m 
         command: |
           ./.ci/test_reset_minority.sh 7 0 50 250 3
      - clear_environment:
@@ -612,7 +612,7 @@ jobs:
      - install_snarkos
      - run:
           name: "Enable emulation of network latency spikes"
-          timeout: 5m 
+          no_output_timeout: 5m 
           command: |
             sudo ./scripts/delay-network.sh spikes 5000-5100
      - run:
@@ -788,7 +788,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/mainnet-syncing-when-synced
+                - mainnet-release-v460
                 - canary
                 - testnet
                 - mainnet
@@ -798,7 +798,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/mainnet-syncing-when-synced
+                - mainnet-release-v460
                 - canary
                 - testnet
                 - mainnet
@@ -810,7 +810,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/mainnet-syncing-when-synced
+                - mainnet-release-v460
                 - canary
                 - testnet
                 - mainnet

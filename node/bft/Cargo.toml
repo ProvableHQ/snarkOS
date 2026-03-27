@@ -25,6 +25,7 @@ locktick = [
   "snarkos-node-bft-storage-service/locktick",
   "snarkos-node-sync/locktick",
   "snarkos-node-tcp/locktick",
+  "snarkos-node-metrics/locktick",
   "snarkos-utilities/locktick",
   "snarkvm/locktick"
 ]
@@ -100,6 +101,9 @@ workspace = true
 [dependencies.sha2]
 version = "0.10"
 default-features = false
+
+[dependencies.smol_str]
+workspace = true
 
 [dependencies.snarkos-account]
 workspace = true

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@ pub use helpers::*;
 pub mod protocols;
 
 mod tcp;
-pub use tcp::{ConnectError, Tcp};
+pub use tcp::{ApplicationError, ConnectError, Tcp};
 
 use std::net::IpAddr;
 
