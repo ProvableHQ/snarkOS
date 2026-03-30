@@ -50,7 +50,7 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use tokio::{sync::oneshot, task::JoinHandle, time::sleep};
 use tracing::*;
 use tracing_subscriber::{
@@ -105,7 +105,7 @@ pub fn fire_unconfirmed_solutions(
         // A closure to generate a solution ID and solution.
         async fn sample(mut rng: impl Rng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
             // Sample a random fake solution ID.
-            let solution_id = rng.r#gen::<u64>().into();
+            let solution_id = rng.random::<u64>().into();
             // Sample random fake solution bytes.
             let mut vec = vec![0u8; 1024];
             rng.fill_bytes(&mut vec);

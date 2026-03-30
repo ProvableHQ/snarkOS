@@ -424,7 +424,7 @@ impl<N: Network> BlockSync<N> {
 
         // Use a randomly sampled subset of the sync IPs.
         let sync_ips: IndexSet<_> =
-            sync_peers.keys().copied().choose_multiple(&mut rand::thread_rng(), max_num_sync_ips).into_iter().collect();
+            sync_peers.keys().copied().sample(&mut rand::rng(), max_num_sync_ips).into_iter().collect();
 
         // Calculate the end height.
         let end_height = start_height.saturating_add(requests.len() as u32);
@@ -1446,7 +1446,7 @@ impl<N: Network> BlockSync<N> {
             if min_common_ancestor > latest_ledger_height && sync_peers.len() >= threshold_to_request {
                 // Shuffle the sync peers prior to returning. This ensures the rest of the stack
                 // does not rely on the order of the sync peers, and that the sync peers are not biased.
-                sync_peers.shuffle(&mut rand::thread_rng());
+                sync_peers.shuffle(&mut rand::rng());
 
                 // Collect into an IndexMap and return.
                 return Some((sync_peers.into_iter().collect(), min_common_ancestor));
@@ -1636,7 +1636,7 @@ mod tests {
     use locktick::parking_lot::RwLock;
     #[cfg(not(feature = "locktick"))]
     use parking_lot::RwLock;
-    use rand::Rng;
+    use rand::RngExt;
     use std::net::{IpAddr, Ipv4Addr};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -1672,7 +1672,7 @@ mod tests {
 
         let mut rng = TestRng::default();
 
-        let mut heights: Vec<u32> = (0..(max_height - 1)).choose_multiple(&mut rng, num_values);
+        let mut heights: Vec<u32> = (0..(max_height - 1)).sample(&mut rng, num_values);
 
         heights.push(max_height);
 
@@ -1736,8 +1736,7 @@ mod tests {
 
         for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
@@ -1885,8 +1884,7 @@ mod tests {
         // Check the requests.
         for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
@@ -1933,8 +1931,7 @@ mod tests {
         // Check the requests.
         for (idx, (height, (hash, previous_hash, num_sync_ips))) in requests.into_iter().enumerate() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             assert_eq!(height, 1 + idx as u32);
             assert_eq!(hash, Some((Field::<CurrentNetwork>::from_u32(height)).into()));
             assert_eq!(previous_hash, Some((Field::<CurrentNetwork>::from_u32(height - 1)).into()));
@@ -1957,8 +1954,7 @@ mod tests {
 
         for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
@@ -1968,8 +1964,7 @@ mod tests {
 
         for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             // Check that the block requests are still inserted.
             assert_eq!(sync.get_block_request(height), Some((hash, previous_hash, sync_ips)));
             assert!(sync.get_block_request_timestamp(height).is_some());
@@ -1977,8 +1972,7 @@ mod tests {
 
         for (height, (hash, previous_hash, num_sync_ips)) in requests {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             // Ensure that the block requests cannot be inserted twice.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap_err();
             // Check that the block requests are still inserted.
@@ -2084,8 +2078,7 @@ mod tests {
 
         for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
@@ -2115,8 +2108,7 @@ mod tests {
 
         for (height, (hash, previous_hash, num_sync_ips)) in requests {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
@@ -2130,7 +2122,7 @@ mod tests {
         let rng = &mut TestRng::default();
         let sync = sample_sync_at_height(0);
 
-        let locator_height = rng.gen_range(0..50);
+        let locator_height = rng.random_range(0..50);
 
         // Add a peer.
         let locators = sample_block_locators(locator_height);
@@ -2143,8 +2135,7 @@ mod tests {
         // Add the block requests to the sync module.
         for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
             // Construct the sync IPs.
-            let sync_ips: IndexSet<_> =
-                sync_peers.keys().choose_multiple(rng, num_sync_ips).into_iter().copied().collect();
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
             // Insert the block request.
             sync.insert_block_request(height, (hash, previous_hash, sync_ips.clone())).unwrap();
             // Check that the block requests were inserted.
@@ -2155,7 +2146,7 @@ mod tests {
         // Duplicate a new sync module with a different height to simulate block advancement.
         // This range needs to be inclusive, so that the range is never empty,
         // even with a locator height of 0.
-        let ledger_height = rng.gen_range(0..=locator_height);
+        let ledger_height = rng.random_range(0..=locator_height);
         let new_sync = duplicate_sync_at_new_height(&sync, ledger_height);
 
         // Check that the number of requests is the same.

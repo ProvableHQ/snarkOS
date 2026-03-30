@@ -15,13 +15,14 @@
 
 mod common;
 use common::*;
+use rand::RngExt;
 
 use deadline::deadline;
 use peak_alloc::PeakAlloc;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::{Outbound, Routing};
 use snarkos_node_tcp::protocols::{Disconnect, Handshake, OnConnect};
-use snarkvm::{prelude::Rng, utilities::TestRng};
+use snarkvm::utilities::TestRng;
 
 use core::time::Duration;
 
@@ -39,7 +40,7 @@ async fn test_connection_cleanups() {
     // Create 2 routers of random types.
     let mut nodes = Vec::with_capacity(2);
     for _ in 0..2 {
-        let node = match rng.gen_range(0..=1) {
+        let node = match rng.random_range(0..=1) {
             0 => client(0, 1, &mut rng).await,
             1 => prover(0, 1, &mut rng).await,
             // TODO => validator(0, 1, &[], false, &mut rng).await,

@@ -249,11 +249,9 @@ impl<T: Copy + Clone + PartialEq + Eq + Hash, V: Clone> Pending<T, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snarkvm::{
-        ledger::narwhal::TransmissionID,
-        prelude::{Rng, TestRng},
-    };
+    use snarkvm::{ledger::narwhal::TransmissionID, prelude::TestRng};
 
+    use rand::RngExt;
     use std::{thread, time::Duration};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -273,20 +271,20 @@ mod tests {
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_3 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_4 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the SocketAddrs.
@@ -327,8 +325,8 @@ mod tests {
         assert!(!pending.contains_peer_with_sent_request(solution_id_4, addr_4));
 
         let unknown_id = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         assert!(!pending.contains(unknown_id));
 
@@ -363,8 +361,8 @@ mod tests {
 
         // Initialize the solution ID.
         let solution_id_1 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the SocketAddrs.
@@ -412,8 +410,8 @@ mod tests {
         for _ in 0..ITERATIONS {
             // Generate a solution ID.
             let solution_id = TransmissionID::Solution(
-                rng.r#gen::<u64>().into(),
-                rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+                rng.random::<u64>().into(),
+                rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
             );
             // Check if the number of sent requests is correct.
             let mut expected_num_sent_requests = 0;
@@ -423,7 +421,7 @@ mod tests {
                 // Initialize a callback.
                 let (callback_sender, _) = oneshot::channel();
                 // Randomly determine if the callback is associated with a sent request.
-                let is_sent_request = rng.r#gen();
+                let is_sent_request = rng.random();
                 // Increment the expected number of sent requests.
                 if is_sent_request {
                     expected_num_sent_requests += 1;
@@ -449,12 +447,12 @@ mod tests {
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the SocketAddrs.

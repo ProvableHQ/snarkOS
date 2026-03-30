@@ -719,7 +719,7 @@ impl<N: Network> Primary<N> {
             committee_id,
             transmission_ids,
             previous_certificate_ids,
-            &mut rand::thread_rng()
+            &mut rand::rng()
         ))
         .and_then(|batch_header| {
             Proposal::new(committee_lookback, batch_header.clone(), transmissions.clone())
@@ -998,7 +998,7 @@ impl<N: Network> Primary<N> {
         let batch_id = batch_header.batch_id();
         // Sign the batch ID.
         let account = self.gateway.account().clone();
-        let signature = spawn_blocking!(account.sign(&[batch_id], &mut rand::thread_rng()))?;
+        let signature = spawn_blocking!(account.sign(&[batch_id], &mut rand::rng()))?;
 
         // Ensure the proposal has not already been signed.
         //
@@ -2049,7 +2049,7 @@ mod tests {
 
     use bytes::Bytes;
     use indexmap::IndexSet;
-    use rand::RngCore;
+    use rand::RngExt;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
@@ -2063,7 +2063,7 @@ mod tests {
             let socket_addr = format!("127.0.0.1:{}", 5000 + i).parse().unwrap();
             let account = Account::new(rng).unwrap();
 
-            members.insert(account.address(), (MIN_VALIDATOR_STAKE, true, rng.gen_range(0..100)));
+            members.insert(account.address(), (MIN_VALIDATOR_STAKE, true, rng.random_range(0..100)));
             accounts.push((socket_addr, account));
         }
 
@@ -2121,12 +2121,11 @@ mod tests {
     // Creates a mock solution.
     fn sample_unconfirmed_solution(rng: &mut TestRng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
         // Sample a random fake solution ID.
-        let solution_id = rng.r#gen::<u64>().into();
+        let solution_id = rng.random::<u64>().into();
         // Vary the size of the solutions.
-        let size = rng.gen_range(1024..10 * 1024);
+        let size = rng.random_range(1024..10 * 1024);
         // Sample random fake solution bytes.
-        let mut vec = vec![0u8; size];
-        rng.fill_bytes(&mut vec);
+        let vec: Vec<u8> = (0..size).map(|_| rng.random::<u8>()).collect();
         let solution = Data::Buffer(Bytes::from(vec));
         // Return the solution ID and solution.
         (solution_id, solution)
@@ -3045,7 +3044,7 @@ mod tests {
         let mut aborted_transmissions = HashSet::new();
         let mut transmissions_without_aborted = HashMap::new();
         for (transmission_id, transmission) in transmissions.clone() {
-            match rng.r#gen::<bool>() || aborted_transmissions.is_empty() {
+            match rng.random::<bool>() || aborted_transmissions.is_empty() {
                 true => {
                     // Insert the aborted transmission.
                     aborted_transmissions.insert(transmission_id);

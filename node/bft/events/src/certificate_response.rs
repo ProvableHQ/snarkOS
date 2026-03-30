@@ -59,16 +59,18 @@ impl<N: Network> FromBytes for CertificateResponse<N> {
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::{CertificateResponse, prop_tests::now, transmission_response::prop_tests::any_transmission};
+    use crate::{
+        CertificateResponse,
+        committee_prop_tests::{CommitteeContext, ValidatorSet},
+        prop_tests::now,
+        transmission_response::prop_tests::any_transmission,
+    };
     use snarkvm::{
         console::{
             account::Signature,
             prelude::{FromBytes, ToBytes},
         },
-        ledger::{
-            committee::prop_tests::{CommitteeContext, ValidatorSet},
-            narwhal::{BatchCertificate, BatchHeader},
-        },
+        ledger::narwhal::{BatchCertificate, BatchHeader},
         prelude::TestRng,
     };
 

@@ -148,7 +148,7 @@ impl Execute {
         // Generate the execution transaction.
         let transaction = {
             // Initialize an RNG.
-            let rng = &mut rand::thread_rng();
+            let rng = &mut rand::rng();
 
             // Initialize the storage.
             let store = ConsensusStore::<N, ConsensusMemory<N>>::open(StorageMode::Production)?;

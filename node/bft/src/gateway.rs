@@ -81,10 +81,7 @@ use indexmap::IndexMap;
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::{
-    rngs::OsRng,
-    seq::{IteratorRandom, SliceRandom},
-};
+use rand::seq::{IteratorRandom, SliceRandom};
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -779,7 +776,7 @@ impl<N: Network> Gateway<N> {
             }
             Event::ValidatorsRequest(_) => {
                 let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
-                connected_peers.shuffle(&mut rand::thread_rng());
+                connected_peers.shuffle(&mut rand::rng());
 
                 let self_ = self.clone();
                 tokio::spawn(async move {
@@ -1088,10 +1085,9 @@ impl<N: Network> Gateway<N> {
         }
         // If there are not enough connected bootstrap peers, connect to more.
         if connected_bootstrap.is_empty() {
-            // Initialize an RNG.
-            let rng = &mut OsRng;
-            // Attempt to connect to a bootstrap peer.
-            if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
+            // Sample a random bootstrap peer to connect to (drop rng before any await).
+            let peer_to_connect = candidate_bootstrap.into_iter().choose(&mut rand::rng());
+            if let Some(peer_ip) = peer_to_connect {
                 match self.connect(peer_ip) {
                     Ok(hdl) => {
                         debug!("{CONTEXT} (Re-)connecting to bootstrap peer at '{peer_ip}'");
@@ -1110,10 +1106,9 @@ impl<N: Network> Gateway<N> {
         // Determine if the node is connected to more bootstrap peers than allowed.
         let num_surplus = connected_bootstrap.len().saturating_sub(1);
         if num_surplus > 0 {
-            // Initialize an RNG.
-            let rng = &mut OsRng;
-            // Proceed to send disconnect requests to these bootstrap peers.
-            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+            // Sample peers to disconnect (drop rng before any await).
+            let peers_to_disconnect = connected_bootstrap.into_iter().sample(&mut rand::rng(), num_surplus);
+            for peer in peers_to_disconnect {
                 info!("{CONTEXT} Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
                 <Self as Transport<N>>::send(
                     self,
@@ -1204,7 +1199,7 @@ impl<N: Network> Gateway<N> {
                 return;
             }
             // Select a random validator IP.
-            if let Some(validator_ip) = validators.into_iter().choose(&mut rand::thread_rng()) {
+            if let Some(validator_ip) = validators.into_iter().choose(&mut rand::rng()) {
                 let self_ = self.clone();
                 tokio::spawn(async move {
                     // Increment the number of outbound validators requests for this validator.
@@ -1575,13 +1570,10 @@ impl<N: Network> Gateway<N> {
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
 
-        // Initialize an RNG.
-        let rng = &mut rand::rngs::OsRng;
-
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
-        let our_nonce = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
@@ -1619,9 +1611,9 @@ impl<N: Network> Gateway<N> {
         /* Step 3: Send the challenge response. */
 
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
         };
         // Send the challenge response.
@@ -1674,13 +1666,10 @@ impl<N: Network> Gateway<N> {
 
         /* Step 2: Send the challenge response followed by own challenge request. */
 
-        // Initialize an RNG.
-        let rng = &mut rand::rngs::OsRng;
-
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
         };
         // Send the challenge response.
@@ -1689,7 +1678,7 @@ impl<N: Network> Gateway<N> {
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
         // Sample a random nonce.
-        let our_nonce = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
@@ -1800,13 +1789,10 @@ mod prop_tests {
     use snarkos_node_tcp::P2P;
     use snarkos_utilities::NodeDataDir;
 
+    use snarkos_node_bft_events::committee_prop_tests::{CommitteeContext, ValidatorSet};
     use snarkvm::{
         ledger::{
-            committee::{
-                Committee,
-                prop_tests::{CommitteeContext, ValidatorSet},
-                test_helpers::sample_committee_for_round_and_members,
-            },
+            committee::{Committee, test_helpers::sample_committee_for_round_and_members},
             narwhal::{BatchHeader, batch_certificate::test_helpers::sample_batch_certificate_for_round},
         },
         prelude::{MainnetV0, PrivateKey},

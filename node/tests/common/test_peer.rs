@@ -42,7 +42,7 @@ use pea2pea::{
     Pea2Pea,
     protocols::{Handshake, OnDisconnect, Reading, Writing},
 };
-use rand::Rng;
+use rand::RngExt;
 use tokio_util::codec::Framed;
 use tracing::*;
 
@@ -148,7 +148,7 @@ impl TestPeer {
             ConnectionSide::Initiator => {
                 // Send a challenge request to the peer.
                 let our_request =
-                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen(), None);
+                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.random(), None);
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Receive the peer's challenge bundle.
@@ -156,7 +156,7 @@ impl TestPeer {
                 let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
 
                 // Sign the nonce.
-                let response_nonce: u64 = rng.r#gen();
+                let response_nonce: u64 = rng.random();
                 let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
                 let signature = self.account().sign_bytes(&data, rng).unwrap();
 
@@ -174,7 +174,7 @@ impl TestPeer {
                 let peer_request = expect_message!(Message::ChallengeRequest, framed, peer_addr);
 
                 // Sign the nonce.
-                let response_nonce: u64 = rng.r#gen();
+                let response_nonce: u64 = rng.random();
                 let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
                 let signature = self.account().sign_bytes(&data, rng).unwrap();
 
@@ -187,7 +187,7 @@ impl TestPeer {
                 };
                 framed.send(Message::ChallengeResponse(our_response)).await?;
                 let our_request =
-                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.r#gen(), None);
+                    ChallengeRequest::new(local_ip.port(), self.node_type(), self.address(), rng.random(), None);
                 framed.send(Message::ChallengeRequest(our_request)).await?;
 
                 // Listen for the challenge response.

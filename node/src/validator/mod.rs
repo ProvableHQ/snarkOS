@@ -330,7 +330,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     //                 inputs,
     //                 None,
     //                 None,
-    //                 &mut rand::thread_rng(),
+    //                 &mut rand::rng(),
     //             ) {
     //                 Ok(transaction) => transaction,
     //                 Err(error) => {
@@ -423,7 +423,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                         None,
                         10_000,
                         None,
-                        &mut rand::thread_rng(),
+                        &mut rand::rng(),
                     )
                 })
                 .await

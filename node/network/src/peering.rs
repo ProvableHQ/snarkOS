@@ -81,7 +81,7 @@ mod tests {
             connected_addr,
             connection_mode: ConnectionMode::Router,
             trusted: false,
-            aleo_addr: Address::<CurrentNetwork>::new(rng.r#gen()),
+            aleo_addr: Address::<CurrentNetwork>::new(rng.random()),
             node_type,
             version: 1,
             snarkos_sha: None,
@@ -101,7 +101,7 @@ mod tests {
 
         let listener_addr = SocketAddr::from(([192, 0, 2, 1], 4000));
         let connected_addr = SocketAddr::from(([192, 0, 2, 1], 14000));
-        let aleo_addr = Address::<CurrentNetwork>::new(rng.r#gen());
+        let aleo_addr = Address::<CurrentNetwork>::new(rng.random());
 
         // Step 1: insert as a candidate.
         pool.peer_pool().write().insert(listener_addr, Peer::new_candidate(listener_addr, false));

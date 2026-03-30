@@ -259,7 +259,7 @@ mod tests {
         utilities::TestRng,
     };
 
-    use rand::Rng;
+    use rand::RngExt;
 
     type CurrentNetwork = MainnetV0;
 
@@ -354,13 +354,13 @@ mod tests {
 
         // Sample the certificates for round `current_round`
         let mut certificates = IndexSet::new();
-        let num_initial_certificates = rng.gen_range(1..10);
+        let num_initial_certificates = rng.random_range(1..10);
         for _ in 0..num_initial_certificates {
             certificates.insert(sample_batch_certificate_for_round(current_round, rng));
         }
 
         // Sample the certificates for round `next_round`
-        let num_new_certificates = rng.gen_range(1..10);
+        let num_new_certificates = rng.random_range(1..10);
         for _ in 0..num_new_certificates {
             certificates.insert(sample_batch_certificate_for_round(next_round, rng));
         }

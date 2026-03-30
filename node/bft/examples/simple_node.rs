@@ -60,7 +60,7 @@ use axum::{
 use axum_extra::response::ErasedJson;
 use clap::{Parser, ValueEnum};
 use indexmap::IndexMap;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::{CryptoRng, Rng, RngExt, SeedableRng};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -249,7 +249,7 @@ fn genesis_block(
     genesis_private_key: PrivateKey<CurrentNetwork>,
     committee: Committee<CurrentNetwork>,
     public_balances: IndexMap<Address<CurrentNetwork>, u64>,
-    rng: &mut (impl Rng + CryptoRng),
+    rng: &mut impl CryptoRng,
 ) -> Block<CurrentNetwork> {
     // Initialize the store.
     let store = ConsensusStore::<_, ConsensusMemory<_>>::open(StorageMode::new_test(None)).unwrap();
@@ -266,7 +266,7 @@ fn genesis_ledger(
     committee: Committee<CurrentNetwork>,
     public_balances: IndexMap<Address<CurrentNetwork>, u64>,
     node_id: u16,
-    rng: &mut (impl Rng + CryptoRng),
+    rng: &mut impl CryptoRng,
 ) -> CurrentLedger {
     let cache_key =
         to_bytes_le![genesis_private_key, committee, public_balances.iter().collect::<Vec<(_, _)>>()].unwrap();
@@ -392,9 +392,9 @@ fn fire_unconfirmed_solutions(sender: &PrimarySender<CurrentNetwork>, node_id: u
         // A closure to generate a solution ID and solution.
         fn sample(mut rng: impl Rng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
             // Sample a random fake solution ID.
-            let solution_id = rng.r#gen::<u64>().into();
+            let solution_id = rng.random::<u64>().into();
             // Sample random fake solution bytes.
-            let solution = Data::Buffer(Bytes::from((0..1024).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+            let solution = Data::Buffer(Bytes::from((0..1024).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
             // Return the ID and solution.
             (solution_id, solution)
         }
@@ -437,7 +437,7 @@ fn fire_unconfirmed_transactions(sender: &PrimarySender<CurrentNetwork>, node_id
             // Sample a random fake transaction ID.
             let id = Field::<CurrentNetwork>::rand(&mut rng).into();
             // Sample random fake transaction bytes.
-            let transaction = Data::Buffer(Bytes::from((0..1024).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+            let transaction = Data::Buffer(Bytes::from((0..1024).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
             // Return the ID and transaction.
             (id, transaction)
         }

@@ -437,7 +437,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                             // Also skip the `check_transaction_basic` call if it is already propagated.
                         }
                         // Check the deployment.
-                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::rng()) {
                             Ok(_) => {
                                 // Propagate the `UnconfirmedTransaction`.
                                 _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
@@ -508,7 +508,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                             }
                         }
                         // Check the execution.
-                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::rng()) {
                             Ok(_) => {
                                 // Propagate the `UnconfirmedTransaction`.
                                 _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);

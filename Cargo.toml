@@ -47,9 +47,10 @@ default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-#git = "https://github.com/ProvableHQ/snarkVM.git"
-#rev = "2a5e6e2"
-version = "=4.6.0"
+git = "https://github.com/ProvableHQ/snarkVM.git"
+branch = "fix/prop-tests"
+#rev = "f7abfceee0"
+#version = "=4.6.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -107,7 +108,7 @@ version = "1"
 version = "1"
 
 [workspace.dependencies.proptest]
-version = "=1.6.0" # Remove this once we upgrade to rand 0.9
+version = "1.11"
 
 [workspace.dependencies.rayon]
 version = "1"
@@ -145,15 +146,15 @@ version = "1"
 version = "0.12"
 
 [workspace.dependencies.rand]
-version = "0.8"
+version = "0.10"
 default-features = false
 
 [workspace.dependencies.rand_chacha]
-version = "0.3"
+version = "0.10"
 default-features = false
 
 [workspace.dependencies.rand_distr]
-version = "0.4"
+version = "0.6"
 
 [workspace.dependencies.smol_str]
 version = "=0.3.2" # Update after Rust >1.88

@@ -40,6 +40,7 @@ use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
 use rand::seq::IteratorRandom;
+
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
@@ -254,7 +255,7 @@ impl<N: Network> Worker<N> {
             .read()
             .transmission_ids()
             .into_iter()
-            .choose_multiple(&mut rand::thread_rng(), Self::MAX_TRANSMISSIONS_PER_WORKER_PING)
+            .sample(&mut rand::rng(), Self::MAX_TRANSMISSIONS_PER_WORKER_PING)
             .into_iter()
             .collect::<IndexSet<_>>();
 
@@ -603,6 +604,7 @@ mod tests {
 
     use bytes::Bytes;
     use mockall::mock;
+    use rand::RngExt;
     use std::{io, ops::Range};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -705,10 +707,10 @@ mod tests {
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
         let data =
-            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
         let transmission_id = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let peer_ip = SocketAddr::from(([127, 0, 0, 1], 1234));
         let transmission = Transmission::Solution(data(rng));
@@ -746,8 +748,8 @@ mod tests {
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
         let transmission_id = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let worker_ = worker.clone();
         let peer_ip = SocketAddr::from(([127, 0, 0, 1], 1234));
@@ -786,8 +788,8 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
-        let solution_id = rng.r#gen::<u64>().into();
+        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
+        let solution_id = rng.random::<u64>().into();
         let solution_checksum = solution.to_checksum::<CurrentNetwork>().unwrap();
         let transmission_id = TransmissionID::Solution(solution_id, solution_checksum);
         let worker_ = worker.clone();
@@ -823,8 +825,8 @@ mod tests {
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
-        let solution_id = rng.r#gen::<u64>().into();
-        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+        let solution_id = rng.random::<u64>().into();
+        let solution = Data::Buffer(Bytes::from((0..512).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
         let checksum = solution.to_checksum::<CurrentNetwork>().unwrap();
         let transmission_id = TransmissionID::Solution(solution_id, checksum);
         let worker_ = worker.clone();
@@ -899,7 +901,7 @@ mod tests {
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
         let transaction_id: <CurrentNetwork as Network>::TransactionID = Field::<CurrentNetwork>::rand(&mut rng).into();
-        let transaction = Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+        let transaction = Data::Buffer(Bytes::from((0..512).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
         let checksum = transaction.to_checksum::<CurrentNetwork>().unwrap();
         let transmission_id = TransmissionID::Transaction(transaction_id, checksum);
         let worker_ = worker.clone();
@@ -999,8 +1001,8 @@ mod tests {
 
         for _ in 0..ITERATIONS {
             // Mock the ledger round.
-            let max_gc_rounds = rng.gen_range(50..=100);
-            let latest_ledger_round = rng.gen_range((max_gc_rounds + 1)..1000);
+            let max_gc_rounds = rng.random_range(50..=100);
+            let latest_ledger_round = rng.random_range((max_gc_rounds + 1)..1000);
             let expected_gc_round = latest_ledger_round - max_gc_rounds;
 
             // Sample a committee.
@@ -1033,6 +1035,7 @@ mod prop_tests {
         ledger::committee::{Committee, MIN_VALIDATOR_STAKE},
     };
 
+    use rand::RngExt;
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -1043,9 +1046,9 @@ mod prop_tests {
         for i in 0..n {
             // Sample the address.
             let rng = &mut TestRng::fixed(i as u64);
-            let address = Address::new(rng.r#gen());
+            let address = Address::new(rng.random());
             info!("Validator {i}: {address}");
-            members.insert(address, (MIN_VALIDATOR_STAKE, false, rng.gen_range(0..100)));
+            members.insert(address, (MIN_VALIDATOR_STAKE, false, rng.random_range(0..100)));
         }
         // Initialize the committee.
         Committee::<CurrentNetwork>::new(1u64, members).unwrap()
