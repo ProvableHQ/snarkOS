@@ -607,16 +607,24 @@ impl<N: Network> BFT<N> {
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];
+        // Whether the consensus callback should be skipped (true when the round is already committed).
+        // When `latest_leader_round == last_committed_round` the round was already committed by a
+        // concurrent call that beat us to the lock, or by a prior session whose DAG state was
+        // reconstructed without populating `recently_committed`.  In both cases we still re-run
+        // DFS + GC to ensure `recently_committed` and `gc_round` are populated, but we must NOT
+        // send a duplicate subdag to the consensus callback.
+        let skip_consensus;
         {
             // Read-lock the DAG.
             // We need to hold the lock, so we do not later fail to re-acquire it.
             let dag = self.dag.read();
 
             // Re-check under the lock: another call may have committed this round while we were waiting.
-            if latest_leader_round <= dag.last_committed_round() {
+            if latest_leader_round < dag.last_committed_round() {
                 trace!("Skipping already-committed leader round {latest_leader_round}");
                 return Ok(());
             }
+            skip_consensus = latest_leader_round == dag.last_committed_round();
 
             #[cfg(debug_assertions)]
             trace!("Attempting to commit leader certificate for round {}...", latest_leader_round);
@@ -749,25 +757,28 @@ impl<N: Network> BFT<N> {
                 "BFT failed to commit - the subdag anchor round {anchor_round} does not match the leader round {leader_round}",
             );
 
-            // Trigger consensus.
-            if let Some(consensus_sender) = self.consensus_sender.get() {
-                // Initialize a callback sender and receiver.
-                let (callback_sender, callback_receiver) = oneshot::channel();
-                // Send the subdag and transmissions to consensus.
-                consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
-                // Await the callback to continue.
-                match callback_receiver.await {
-                    Ok(Ok(_)) => (),
-                    Ok(Err(err)) => {
-                        let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
-                        error!("{}", &flatten_error(err));
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        let err: anyhow::Error = err.into();
-                        let err = err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
-                        error!("{}", flatten_error(err));
-                        return Ok(());
+            // Trigger consensus (skipped if the round was already committed by a prior call).
+            if !skip_consensus {
+                if let Some(consensus_sender) = self.consensus_sender.get() {
+                    // Initialize a callback sender and receiver.
+                    let (callback_sender, callback_receiver) = oneshot::channel();
+                    // Send the subdag and transmissions to consensus.
+                    consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
+                    // Await the callback to continue.
+                    match callback_receiver.await {
+                        Ok(Ok(_)) => (),
+                        Ok(Err(err)) => {
+                            let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
+                            error!("{}", &flatten_error(err));
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            let err: anyhow::Error = err.into();
+                            let err =
+                                err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
+                            error!("{}", flatten_error(err));
+                            return Ok(());
+                        }
                     }
                 }
             }
