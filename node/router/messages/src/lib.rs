@@ -120,7 +120,7 @@ impl<N: Network> Message<N> {
         // increment the message version before the canary release, so canary
         // nodes need to jump from 23 to 25, whereas for testnet/mainnet we can
         // then jump from 24 to 25 as usual.
-        (ConsensusVersion::V13, 23),
+        (ConsensusVersion::V13, 24),
         (ConsensusVersion::V14, 25),
     ];
 

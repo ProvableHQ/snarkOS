@@ -575,6 +575,8 @@ impl<N: Network> BFT<N> {
 impl<N: Network> BFT<N> {
     /// Commits the leader certificate, and all previous leader certificates since the last committed round.
     async fn commit_leader_certificate(&self, leader_certificate: BatchCertificate<N>) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         #[cfg(debug_assertions)]
         trace!("Attempting to commit leader certificate for round {}...", leader_certificate.round());
 
@@ -782,6 +784,8 @@ impl<N: Network> BFT<N> {
             .garbage_collect_certificates(latest_leader_round)
             .with_context(|| "BFT failed to garbage collect certificates")?;
 
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::bft::COMMIT_LEADER_CERTIFICATE_LATENCY, start.elapsed().as_secs_f64());
         Ok(())
     }
 
