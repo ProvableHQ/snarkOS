@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-consensus"
-version = "4.5.4"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node consensus for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -23,6 +23,7 @@ locktick = [
   "snarkos-node-bft/locktick",
   "snarkos-node-bft-ledger-service/locktick",
   "snarkos-node-bft-storage-service/locktick",
+  "snarkos-node-metrics/locktick",
   "snarkvm/locktick"
 ]
 metrics = [ "dep:snarkos-node-metrics" ]

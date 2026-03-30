@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-metrics"
-version = "4.5.4"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -30,6 +30,9 @@ workspace = true
 features = [ "parking_lot" ]
 optional = true
 
+[dependencies.metrics]
+version = "0.22"
+
 [dependencies.metrics-exporter-prometheus]
 version = "0.13"
 
@@ -44,4 +47,7 @@ workspace = true
 features = [ "console", "ledger", "metrics" ]
 
 [dependencies.time]
+workspace = true
+
+[build-dependencies.built]
 workspace = true

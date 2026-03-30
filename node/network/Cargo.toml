@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-network"
-version = "4.5.4"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Network-related objects and traits for nodes"
 homepage = "https://aleo.org"
@@ -37,12 +37,18 @@ workspace = true
 [dependencies.serde]
 workspace = true
 
+[dependencies.smol_str]
+workspace = true
+
 [dependencies.snarkos-node-tcp]
 workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "console" ]
+features = [ "console", "utilities" ]
+
+[dependencies.socket2]
+version = "0.6.2"
 
 [dependencies.tokio]
 workspace = true

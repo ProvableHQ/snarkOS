@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 use once_cell::sync::OnceCell;
@@ -64,6 +65,9 @@ impl Deref for Tcp {
     }
 }
 
+/// A custom application error that can be returned by the `Tcp` stack.
+pub trait ApplicationError: Send + Sync + std::fmt::Debug + std::fmt::Display + 'static {}
+
 /// Error types for the `Tcp::connect` function.
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
@@ -76,13 +80,54 @@ pub enum ConnectError {
     AlreadyConnected { address: SocketAddr },
     #[error("attempt to self-connect (at address {address:?}")]
     SelfConnect { address: SocketAddr },
-    #[error("I/O error: {0}")]
+    #[error("rejected a connection attempt from a banned IP '{ip}'")]
+    BannedIp { ip: IpAddr },
+    // Socket errors, such as "connection refused".
+    #[error(transparent)]
     IoError(std::io::Error),
+    // An application-specific reason to reject the connection or abort the handshake.
+    // For snarkOS, this is either a `DisconnectReason` or a `PeeringError`, which do not fully implement `std::error::Error`.
+    #[error("{0}")]
+    ApplicationError(Box<dyn ApplicationError>),
+    /// An unexpected error at the application layer and certain deserialization errors.
+    /// TODO(kaimast): (some of) these should be treated with higher severity, as they indicate a bug or corrupted state,
+    ///                and deserialization errors should not be included in this "other" category.
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl ConnectError {
+    /// Pass an application-level error to the `Tcp` stack.
+    pub fn application<E: ApplicationError>(err: E) -> Self {
+        Self::ApplicationError(Box::new(err))
+    }
+
+    /// A generic error that can be returned by the `Tcp` stack.
+    pub fn other<E: Into<Box<dyn std::error::Error + Send + Sync>>>(err: E) -> Self {
+        Self::Other(err.into())
+    }
+}
+
+impl From<ConnectError> for std::io::Error {
+    fn from(err: ConnectError) -> Self {
+        match err {
+            ConnectError::IoError(err) => err,
+            ConnectError::Other(err) => std::io::Error::other(err),
+            err => std::io::Error::other(err.to_string()),
+        }
+    }
 }
 
 impl From<std::io::Error> for ConnectError {
-    fn from(inner: std::io::Error) -> Self {
-        Self::IoError(inner)
+    fn from(err: std::io::Error) -> Self {
+        // Other error are usually checks that fail when snarkVM deserializes a message.
+        if err.kind() == std::io::ErrorKind::Other {
+            // This unwrap should always succeed.
+            let inner = err.into_inner().unwrap_or_else(|| anyhow!("Unknown error").into());
+            ConnectError::other(inner)
+        } else {
+            ConnectError::IoError(err)
+        }
     }
 }
 
@@ -138,6 +183,11 @@ impl Tcp {
         debug!(parent: tcp.span(), "The node is ready");
 
         tcp
+    }
+
+    /// How long has this node accepting connections?
+    pub fn uptime(&self) -> Duration {
+        self.stats.timestamp().elapsed()
     }
 
     /// Returns the name assigned.
@@ -252,12 +302,12 @@ impl Tcp {
         }
 
         if self.is_connected(addr) {
-            warn!(parent: self.span(), "Already connected to {addr}");
+            trace!(parent: self.span(), "Already connected to {addr}");
             return Err(ConnectError::AlreadyConnected { address: addr });
         }
 
         if !self.connecting.lock().insert(addr) {
-            warn!(parent: self.span(), "Already connecting to {addr}");
+            debug!(parent: self.span(), "Already connecting to {addr}");
             return Err(ConnectError::AlreadyConnecting { address: addr });
         }
 

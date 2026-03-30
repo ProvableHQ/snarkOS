@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -324,6 +324,13 @@ pub mod prop_tests {
                     DisconnectReason::NoReasonGiven,
                     DisconnectReason::InvalidChallengeResponse,
                     DisconnectReason::OutdatedClientVersion,
+                    DisconnectReason::SelfConnect,
+                    DisconnectReason::NoExternalPeersAllowed,
+                    DisconnectReason::AlreadyConnecting,
+                    DisconnectReason::AlreadyConnected,
+                    DisconnectReason::AlreadyConnectedToAleoAddress,
+                    DisconnectReason::InvalidChallengeRequest,
+                    DisconnectReason::UnauthorizedValidator,
                 ]),
                 any::<Selector>()
             )

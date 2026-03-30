@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -235,7 +235,7 @@ mod tests {
         /* Deployments */
 
         // Test low-priority deployment transaction.
-        let deployment_transaction = sample_deployment_transaction(2, 0, false, &mut rng);
+        let deployment_transaction = sample_deployment_transaction(2, 0, false, false, &mut rng);
         let deployment_id = deployment_transaction.id();
 
         assert!(!transactions_queue.contains(&deployment_id));
@@ -282,7 +282,7 @@ mod tests {
         /* Deployments */
 
         // Test high-priority deployment transaction.
-        let deployment_transaction = sample_deployment_transaction(2, 0, false, &mut rng);
+        let deployment_transaction = sample_deployment_transaction(2, 0, false, false, &mut rng);
         let deployment_id = deployment_transaction.id();
 
         assert!(!transactions_queue.contains(&deployment_id));

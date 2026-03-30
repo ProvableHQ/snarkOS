@@ -157,7 +157,7 @@ while (( SECONDS < 30 )); do
     break
   fi
 
-  sleep $poll_interval
+  sleep "$poll_interval"
 done
 
 if ! $has_blocks; then
@@ -199,7 +199,7 @@ while (( SECONDS < max_wait )); do
   fi
   
   # Continue waiting
-  sleep $poll_interval
+  sleep "$poll_interval"
 done
 
 log "❌ Benchmark failed! Clients did not sync within 40 minutes."

@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2025 Provable Inc.
+// Copyright (c) 2019-2026 Provable Inc.
 // This file is part of the snarkOS library.
 
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +50,7 @@ use crate::messages::{BlockRequest, Message, MessageCodec};
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::{
+    CandidatePeer,
     ConnectedPeer,
     ConnectionMode,
     NodeType,
