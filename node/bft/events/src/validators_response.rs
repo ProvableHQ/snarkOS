@@ -45,7 +45,6 @@ impl<N: Network> FromBytes for ValidatorsResponse<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
         // Read the number of validators.
         let num_validators = u16::read_le(&mut reader)?;
-
         let max_certificates = N::LATEST_MAX_CERTIFICATES();
 
         // Ensure the number of validators is within bounds

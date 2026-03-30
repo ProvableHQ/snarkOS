@@ -210,4 +210,20 @@ impl<N: Network> Peer<N> {
             *last_seen = Instant::now();
         }
     }
+
+    /// Returns a reference to the underlying `ConnectedPeer` if it is connedcted,
+    /// otherwise `None`.
+    pub fn as_connected(&self) -> Option<&ConnectedPeer<N>> {
+        match self {
+            Self::Connected(peer) => Some(peer),
+            _ => None,
+        }
+    }
+}
+
+impl<N: Network> ConnectedPeer<N> {
+    /// Returns `true` if this peer is validator.
+    pub fn is_validator(&self) -> bool {
+        self.node_type == NodeType::Validator
+    }
 }

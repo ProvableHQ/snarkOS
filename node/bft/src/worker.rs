@@ -586,7 +586,7 @@ impl<N: Network> Worker<N> {
 mod tests {
     use super::*;
     use crate::helpers::CALLBACK_EXPIRATION_IN_SECS;
-    use snarkos_node_bft_ledger_service::LedgerService;
+    use snarkos_node_bft_ledger_service::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService};
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
         console::{network::Network, types::Field},
@@ -595,14 +595,13 @@ mod tests {
             CheckBlockError,
             PendingBlock,
             committee::Committee,
-            narwhal::{BatchCertificate, Subdag, Transmission, TransmissionID},
+            narwhal::{BatchCertificate, Transmission, TransmissionID},
             test_helpers::sample_execution_transaction_with_fee,
         },
         prelude::Address,
     };
 
     use bytes::Bytes;
-    use indexmap::IndexMap;
     use mockall::mock;
     use std::{io, ops::Range};
 
@@ -636,8 +635,8 @@ mod tests {
             fn get_block_round(&self, height: u32) -> Result<u64>;
             fn get_block(&self, height: u32) -> Result<Block<N>>;
             fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>>;
-            fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>>;
-            fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>>;
+            fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>>;
+            fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>>;
             fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
             fn current_committee(&self) -> Result<Committee<N>>;
             fn get_committee_for_round(&self, round: u64) -> Result<Committee<N>>;
@@ -659,15 +658,8 @@ mod tests {
                 transaction_id: N::TransactionID,
                 transaction: Transaction<N>,
             ) -> Result<()>;
-            fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>>;
-            fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>>;
-            fn check_next_block(&self, block: &Block<N>) -> Result<()>;
-            fn prepare_advance_to_next_quorum_block(
-                &self,
-                subdag: Subdag<N>,
-                transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-            ) -> Result<Block<N>>;
-            fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
+            fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>, CheckBlockError<N>>;
+            fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError>;
             fn transaction_spend_in_microcredits(&self, transaction: &Transaction<N>, consensus_version: ConsensusVersion) -> Result<u64>;
         }
     }
@@ -708,7 +700,7 @@ mod tests {
         mock_ledger.expect_check_solution_basic().returning(|_, _| Ok(()));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -749,7 +741,7 @@ mod tests {
         mock_ledger.expect_ensure_transmission_is_well_formed().returning(|_, _| Ok(()));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -790,7 +782,7 @@ mod tests {
         mock_ledger.expect_check_solution_basic().returning(|_, _| Ok(()));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -827,7 +819,7 @@ mod tests {
         mock_ledger.expect_check_solution_basic().returning(|_, _| Err(anyhow!("")));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -864,7 +856,7 @@ mod tests {
         mock_ledger.expect_check_transaction_basic().returning(|_, _| Ok(()));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -902,7 +894,7 @@ mod tests {
         mock_ledger.expect_check_transaction_basic().returning(|_, _| Err(anyhow!("")));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -939,7 +931,7 @@ mod tests {
         mock_ledger.expect_check_transaction_basic().returning(|_, _| Ok(()));
         let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
         // Initialize the storage.
-        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1);
+        let storage = Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 1).unwrap();
 
         // Create the Worker.
         let worker = Worker::new(0, Arc::new(gateway), storage, ledger, Default::default()).unwrap();
@@ -1022,7 +1014,8 @@ mod tests {
             let ledger: Arc<dyn LedgerService<CurrentNetwork>> = Arc::new(mock_ledger);
             // Initialize the storage.
             let storage =
-                Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+                Storage::<CurrentNetwork>::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds)
+                    .unwrap();
 
             // Ensure that the storage GC round is correct.
             assert_eq!(storage.gc_round(), expected_gc_round);

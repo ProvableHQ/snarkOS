@@ -137,3 +137,11 @@ impl Not for ConnectionSide {
         }
     }
 }
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        for task in self.tasks.iter().rev() {
+            task.abort();
+        }
+    }
+}

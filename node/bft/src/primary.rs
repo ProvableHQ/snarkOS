@@ -99,7 +99,7 @@ pub trait PrimaryCallback<N: Network>: Send + std::marker::Sync {
     /// Notifies that a new round has started.
     fn update_to_next_round(&self, current_round: u64) -> bool;
 
-    /// Sends a new certificate.
+    /// Add a certificated that was created by the primary or received from a peer.
     async fn add_new_certificate(&self, certificate: BatchCertificate<N>) -> Result<()>;
 }
 
@@ -131,7 +131,7 @@ pub struct Primary<N: Network> {
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
     /// The handles for all background tasks spawned by this primary.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// The lock for propose_batch.
+    /// The lock for propose_batch. It holds the most recent round that was proposed for.
     propose_lock: Arc<TMutex<u64>>,
     /// The node configuration directory.
     node_data_dir: NodeDataDir,
@@ -290,7 +290,7 @@ impl<N: Network> Primary<N> {
         // First, initialize the sync channels.
         let (sync_sender, sync_receiver) = init_sync_channels();
         // Next, initialize the sync module and sync the storage from ledger.
-        self.sync.initialize(sync_callback).await?;
+        self.sync.initialize(sync_callback)?;
         // Next, load and process the proposal cache before running the sync module.
         self.load_proposal_cache().await?;
         // Next, run the sync module.
@@ -1415,8 +1415,9 @@ impl<N: Network> Primary<N> {
                 tokio::spawn(async move {
                     // Process the batch proposal.
                     let round = batch_propose.round;
-                    if let Err(e) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
-                        warn!("Cannot sign a batch at round {round} from '{peer_ip}' - {e}");
+                    if let Err(err) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
+                        let err = err.context(format!("Cannot sign a batch at round {round} from '{peer_ip}'"));
+                        warn!("{}", flatten_error(err));
                     }
                 });
             }
@@ -2077,7 +2078,7 @@ mod tests {
         height: u32,
     ) -> Primary<CurrentNetwork> {
         let ledger = Arc::new(MockLedgerService::new_at_height(committee, height));
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), 10).unwrap();
 
         // Initialize the primary.
         let account = accounts[account_index].1.clone();
@@ -2507,8 +2508,8 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should succeed.
         assert!(
@@ -2586,8 +2587,8 @@ mod tests {
 
         // The primary will only consider itself synced if we received
         // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should succeed.
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
@@ -2621,7 +2622,8 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2666,7 +2668,8 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2722,7 +2725,8 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
         // The primary must be considered synced.
-        primary.sync.testing_only_try_block_sync_testing_only().await;
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2772,11 +2776,11 @@ mod tests {
 
         // primary v4 must be considered synced.
         primary_v4.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary_v4.sync.testing_only_try_block_sync_testing_only().await;
+        primary_v4.sync.testing_only_set_sync_height_testing_only(0);
 
         // primary v5 must be ocnsidered synced.
         primary_v5.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary_v5.sync.testing_only_try_block_sync_testing_only().await;
+        primary_v5.sync.testing_only_set_sync_height_testing_only(0);
 
         // Check the spend limit is enforced from V5 onwards.
         assert!(

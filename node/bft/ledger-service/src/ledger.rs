@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{LedgerService, fmt_id, spawn_blocking};
+use crate::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService, fmt_id, spawn_blocking};
 
 use snarkos_utilities::Stoppable;
 
@@ -49,9 +49,13 @@ use snarkvm::{
 use anyhow::ensure;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::RwLock;
+use locktick::{
+    LockGuard,
+    parking_lot::{Mutex, RwLock},
+};
+use parking_lot::MutexGuard;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 
@@ -63,6 +67,68 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
     stoppable: Arc<dyn Stoppable>,
+    update_lock: Arc<Mutex<()>>,
+}
+
+/// A transactional update to the ledger.
+#[cfg(feature = "ledger-write")]
+pub struct LedgerUpdate<'a, N: Network, C: ConsensusStorage<N>> {
+    ledger: Ledger<N, C>,
+    #[cfg(feature = "locktick")]
+    _lock: LockGuard<MutexGuard<'a, ()>>,
+    #[cfg(not(feature = "locktick"))]
+    _lock: MutexGuard<'a, ()>,
+}
+
+#[cfg(feature = "ledger-write")]
+impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUpdate<'a, N, C> {
+    fn check_block_subdag(
+        &self,
+        block: Block<N>,
+        prefix: &[PendingBlock<N>],
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>> {
+        self.ledger.check_block_subdag(block, prefix)
+    }
+
+    fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>> {
+        self.ledger.check_block_content(block, &mut rand::thread_rng())
+    }
+
+    /// Checks the given block is valid next block.
+    fn check_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>> {
+        let pending = self.ledger.check_block_subdag(block, &[])?;
+        self.check_block_content(pending)
+    }
+
+    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
+    fn prepare_advance_to_next_quorum_block(
+        &self,
+        subdag: Subdag<N>,
+        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+    ) -> Result<Block<N>, CheckBlockError<N>> {
+        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
+    }
+
+    /// Adds the given block as the next block in the ledger.
+    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
+        // Advance to the next block.
+        self.ledger.advance_to_next_block(block)?;
+        // Update BFT metrics.
+        #[cfg(feature = "metrics")]
+        {
+            let num_sol = block.solutions().len();
+            let num_tx = block.transactions().len();
+
+            metrics::gauge(metrics::bft::HEIGHT, block.height() as f64);
+            metrics::gauge(metrics::bft::LAST_COMMITTED_ROUND, block.round() as f64);
+            metrics::increment_gauge(metrics::blocks::SOLUTIONS, num_sol as f64);
+            metrics::increment_gauge(metrics::blocks::TRANSACTIONS, num_tx as f64);
+            metrics::update_block_metrics(block);
+        }
+
+        tracing::info!("Advanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
+        Ok(())
+    }
 }
 
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
@@ -73,7 +139,7 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
         {
             metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
         }
-        Self { ledger, latest_leader: Default::default(), stoppable }
+        Self { ledger, latest_leader: Default::default(), stoppable, update_lock: Default::default() }
     }
 }
 
@@ -148,13 +214,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
-        self.ledger.get_solution(solution_id)
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
+        self.ledger.try_get_solution(solution_id)
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
-        self.ledger.get_unconfirmed_transaction(&transaction_id)
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
+        self.ledger.try_get_unconfirmed_transaction(&transaction_id)
     }
 
     /// Returns the batch certificate for the given batch certificate ID.
@@ -354,69 +420,18 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         self.ledger.check_block_subdag(block, prefix)
     }
 
-    fn check_block_content(&self, block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>> {
-        self.ledger.check_block_content(block, &mut rand::thread_rng())
-    }
-
-    /// Checks the given block is valid next block.
-    fn check_next_block(&self, block: &Block<N>) -> Result<()> {
-        #[cfg(feature = "metrics")]
-        let start = std::time::Instant::now();
-        let result = self.ledger.check_next_block(block, &mut rand::thread_rng());
-        #[cfg(feature = "metrics")]
-        if result.is_ok() {
-            metrics::histogram(metrics::consensus::CHECK_NEXT_BLOCK_LATENCY, start.elapsed().as_secs_f64());
-        }
-        result
-    }
-
-    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
-    #[cfg(feature = "ledger-write")]
-    fn prepare_advance_to_next_quorum_block(
-        &self,
-        subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
-        #[cfg(feature = "metrics")]
-        let start = std::time::Instant::now();
-        let result = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng());
-        #[cfg(feature = "metrics")]
-        if result.is_ok() {
-            metrics::histogram(
-                metrics::consensus::PREPARE_ADVANCE_TO_NEXT_QUORUM_BLOCK_LATENCY,
-                start.elapsed().as_secs_f64(),
-            );
-        }
-        Ok(result?)
-    }
-
-    /// Adds the given block as the next block in the ledger.
-    #[cfg(feature = "ledger-write")]
-    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
-        #[cfg(feature = "metrics")]
-        let start = std::time::Instant::now();
-        // If the Ctrl-C handler registered the signal, then skip advancing to the next block.
+    /// Begins a ledger update.
+    ///
+    /// # Returns
+    /// - `Ok(Some(LedgerUpdate<N, C>))` if the ledger update was successfully started.
+    /// - `Ok(None)` if the node is stopped.
+    /// - `Err(anyhow::Error)` if we failed to acquire the update lock.
+    fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError> {
         if self.stoppable.is_stopped() {
-            bail!("Skipping advancing to block {} - The node is shutting down", block.height());
-        }
-        // Advance to the next block.
-        self.ledger.advance_to_next_block(block)?;
-        // Update BFT metrics.
-        #[cfg(feature = "metrics")]
-        {
-            metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_LATENCY, start.elapsed().as_secs_f64());
-            let num_sol = block.solutions().len();
-            let num_tx = block.transactions().len();
-
-            metrics::gauge(metrics::bft::HEIGHT, block.height() as f64);
-            metrics::gauge(metrics::bft::LAST_COMMITTED_ROUND, block.round() as f64);
-            metrics::increment_gauge(metrics::blocks::SOLUTIONS, num_sol as f64);
-            metrics::increment_gauge(metrics::blocks::TRANSACTIONS, num_tx as f64);
-            metrics::update_block_metrics(block);
+            return Err(BeginLedgerUpdateError::ShuttingDown);
         }
 
-        tracing::info!("Advanced to block {} at round {} - {}", block.height(), block.round(), block.hash());
-        Ok(())
+        Ok(Box::new(LedgerUpdate { ledger: self.ledger.clone(), _lock: self.update_lock.lock() }))
     }
 
     /// Returns the spend for a transaction in microcredits.

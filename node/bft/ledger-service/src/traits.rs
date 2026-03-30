@@ -27,10 +27,42 @@ use snarkvm::{
 };
 
 use indexmap::IndexMap;
-use std::{fmt::Debug, ops::Range};
+use std::ops::Range;
+
+/// Errors that can occur when attempting to start a ledger update.
+#[derive(Debug, thiserror::Error)]
+pub enum BeginLedgerUpdateError {
+    #[error("Node is shutting down.")]
+    ShuttingDown,
+    #[error("Not supported for prover.")]
+    NotSupportedForProver,
+}
+
+/// Allows performing updates to the ledger and prevents concurrent updates while the object is alive.
+#[cfg(feature = "ledger-write")]
+pub trait LedgerUpdateService<N: Network> {
+    /// Checks the given block is valid subdag.
+    fn check_block_subdag(
+        &self,
+        block: Block<N>,
+        prefix: &[PendingBlock<N>],
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>>;
+    /// Checks the given pending block has valid content and can be appended to the ledger.
+    fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>>;
+    /// Checks the given block is a valid next block for the ledger.
+    fn check_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>>;
+    /// Prepares the next block in the ledger, using a committed subdag and its transmissions.
+    fn prepare_advance_to_next_quorum_block(
+        &self,
+        subdag: Subdag<N>,
+        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+    ) -> Result<Block<N>, CheckBlockError<N>>;
+    /// Advances the ledger to the next block.
+    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
+}
 
 #[async_trait]
-pub trait LedgerService<N: Network>: Debug + Send + Sync {
+pub trait LedgerService<N: Network>: std::fmt::Debug + Send + Sync {
     /// Returns the latest round in the ledger.
     fn latest_round(&self) -> u64;
 
@@ -68,11 +100,11 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     /// The range is inclusive of the start and exclusive of the end.
     fn get_blocks(&self, heights: Range<u32>) -> Result<Vec<Block<N>>>;
 
-    /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>>;
+    /// Returns the solution for the given solution ID, or `None` if no such solution exists.
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>>;
 
-    /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>>;
+    /// Returns the unconfirmed transaction for the given transaction ID, or `None` if no such transaction exists.
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>>;
 
     /// Returns the batch certificate for the given batch certificate ID.
     fn get_batch_certificate(&self, certificate_id: &Field<N>) -> Result<BatchCertificate<N>>;
@@ -109,30 +141,18 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
         transaction: Transaction<N>,
     ) -> Result<()>;
 
+    /// Start a transactional update to the ledger.
+    ///
+    /// Note: This may block and should only be called from a blocking task.
+    #[cfg(feature = "ledger-write")]
+    fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError>;
+
     /// Checks that the subDAG in a given block is valid, but does not fully verify the block.
     fn check_block_subdag(
         &self,
         block: Block<N>,
         prefix: &[PendingBlock<N>],
     ) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>>;
-
-    /// Takes a pending block and performs the remaining checks to full verify it.
-    fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>>;
-
-    /// Checks the given block is valid next block.
-    fn check_next_block(&self, block: &Block<N>) -> Result<()>;
-
-    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
-    #[cfg(feature = "ledger-write")]
-    fn prepare_advance_to_next_quorum_block(
-        &self,
-        subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>>;
-
-    /// Adds the given block as the next block in the ledger.
-    #[cfg(feature = "ledger-write")]
-    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
 
     /// Returns the spent cost for a transaction in microcredits.
     fn transaction_spend_in_microcredits(
