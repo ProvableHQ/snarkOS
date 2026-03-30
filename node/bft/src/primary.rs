@@ -19,6 +19,7 @@ pub use proposal_task::ProposalTask;
 use crate::{
     Gateway,
     MAX_BATCH_DELAY,
+    MAX_LEADER_CERTIFICATE_DELAY,
     MAX_WORKERS,
     MIN_BATCH_DELAY,
     PRIMARY_PING_INTERVAL,
@@ -1496,6 +1497,11 @@ impl<N: Network> Primary<N> {
                     {
                         futures.push(Box::pin(tokio::time::sleep(remaining_delay)));
                     }
+                    // Always ensure a wakeup no later than MAX_LEADER_CERTIFICATE_DELAY so that
+                    // try_advance_to_next_round is called after the leader-certificate timer
+                    // expires, even when no further certificates arrive (e.g. an even round where
+                    // the elected leader was absent and quorum was reached without their cert).
+                    futures.push(Box::pin(tokio::time::sleep(MAX_LEADER_CERTIFICATE_DELAY)));
                     if !self_.sync.is_synced() {
                         futures.push(Box::pin(self_.sync.wait_for_synced()));
                     }

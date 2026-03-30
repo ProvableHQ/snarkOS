@@ -171,8 +171,12 @@ impl<N: Network> ProposalTask<N> {
                     let timeout = MAX_BATCH_DELAY.saturating_sub(round_start.elapsed());
                     futures.push(tokio::time::sleep(timeout).boxed());
 
-                    // All conditions must hold for us to advance.
-                    futures::future::join_all(futures).await;
+                    // Any condition completing is sufficient to attempt a proposal.
+                    // Using select_all (not join_all) ensures that once MAX_BATCH_DELAY elapses
+                    // we call propose_batch() even if signal() was never fired — which happens
+                    // when an even round has no leader cert. propose_batch() calls
+                    // try_advance_to_next_round, which checks the leader-certificate timer.
+                    futures::future::select_all(futures).await;
                     reached_min_batch_delay = true;
                 }
 
@@ -369,6 +373,71 @@ mod tests {
         tokio::task::yield_now().await;
 
         assert_eq!(propose_count.load(Ordering::SeqCst), 0, "propose_batch called despite round advancement");
+    }
+
+    /// Tests the following scenario
+    ///
+    ///   1. A batch was already certified for the current round, so `is_proposal_ready` is `false`.
+    ///   2. `signal()` is **never** called externally — the BFT cannot advance the round until
+    ///      `propose_batch()` is called (which internally checks the leader-certificate timer).
+    #[test_log::test(tokio::test)]
+    async fn test_proposal_task_advances_without_leader_cert() {
+        // Start NOT ready: simulates a batch that was already certified for the round but the
+        // round has not yet advanced (the even-round leader cert was missing — e.g. the elected
+        // leader was one of the freshly-reset minority validators).
+        let task = ProposalTask::<MainnetV0> {
+            inner: Arc::new(ProposalTaskInner {
+                is_proposal_ready: RwLock::new(false),
+                is_ready_notify: Notify::new(),
+            }),
+            _phantom: PhantomData,
+        };
+
+        let proposed_notify = Arc::new(Notify::new());
+        let propose_count = Arc::new(AtomicU32::new(0));
+
+        // A proposer that stays on round 1 and returns Ok(true) on every call to
+        // propose_batch(), simulating try_advance_to_next_round finding the leader-certificate
+        // timer expired and advancing the round without an external signal().
+        struct NoSignalProposer {
+            propose_count: Arc<AtomicU32>,
+            proposed_notify: Arc<Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl BatchPropose for NoSignalProposer {
+            fn current_round(&self) -> u64 {
+                1
+            }
+
+            fn is_synced(&self) -> bool {
+                true
+            }
+
+            fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
+                None
+            }
+
+            async fn propose_batch(&self) -> Result<bool> {
+                self.propose_count.fetch_add(1, Ordering::SeqCst);
+                self.proposed_notify.notify_one();
+                Ok(true)
+            }
+        }
+
+        let proposer =
+            NoSignalProposer { propose_count: propose_count.clone(), proposed_notify: proposed_notify.clone() };
+
+        // signal() is intentionally never called — the task must retry on its own.
+        tokio::spawn(task.run(proposer));
+
+        // Allow enough time for MAX_BATCH_DELAY (2.5 s) to elapse plus the CREATE_BATCH_INTERVAL
+        // (250 ms) retry window. Use 10 s to give generous headroom on slow CI machines.
+        tokio::time::timeout(std::time::Duration::from_secs(10), proposed_notify.notified())
+            .await
+            .expect("propose_batch was not called");
+
+        assert!(propose_count.load(Ordering::SeqCst) >= 1, "propose_batch should have been called at least once");
     }
 
     /// When `propose_batch` returns `Ok(false)`, the task retries within the same round until
