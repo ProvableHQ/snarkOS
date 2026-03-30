@@ -797,7 +797,7 @@ workflows:
           filters:
             branches:
               only:
-                - mainnet-release-v460
+                - ci/reenable-check-logs
                 - canary
                 - testnet
                 - mainnet
@@ -807,7 +807,7 @@ workflows:
           filters:
             branches:
               only:
-                - mainnet-release-v460
+                - ci/reenable-check-logs
                 - canary
                 - testnet
                 - mainnet

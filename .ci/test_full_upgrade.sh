@@ -379,4 +379,8 @@ done
 
 log "Upgrade test passed: network reached highest consensus version with release, all nodes upgraded to PR snarkos, and consensus version remained correct."
 
-exit 0
+if check_logs "$log_dir" "$total_validators" "$total_clients" 20; then
+  exit 0
+else
+  exit 1
+fi

@@ -291,4 +291,9 @@ if ! wait_for_node_height "$last_node" "$network_name" "$new_consensus_height"; 
 fi
 
 log "🎉 Test passed! Node synced to new consensus height ($new_consensus_height) after another node was upgraded."
-exit 0
+
+if check_logs "$log_dir" "$total_validators" 0 20; then
+  exit 0
+else
+  exit 1
+fi

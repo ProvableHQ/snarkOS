@@ -298,12 +298,12 @@ function check_logs() {
   # The maximum number of warnings allow in each node's log file.
   # Nodes may create some warnings at startup because they cannot connect to each other yet.
   local max_warnings=$4
-
  
   local all_reached=true
   local highest_height=0
 
-  for validator_index in $(seq 0 $((total_validators-1))); do 
+  # Don't use `seq` here as `total_validators` can be 0.
+  for ((validator_index = 0; validator_index < validator_index; validator_index++)); do
     if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
       log "❌ Test failed! Validator #${validator_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -324,7 +324,8 @@ function check_logs() {
     fi
   done
 
-  for client_index in $(seq 0 $((total_clients-1))); do
+  # Don't use `seq` here as `total_clients` can be 0.
+  for ((client_index = 0; client_index < total_clients; client_index++)); do
     if [ ! -s "$log_dir/client-${client_index}.log" ]; then
       log "❌ Test failed! Client #${client_index} did not create any logs in \"$log_dir\"."
       return 1

@@ -95,10 +95,15 @@ for iter in $(seq 1 "$num_resets"); do
   done
 done
 
-if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
-  log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
+if ! wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
+  log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
+  exit 1
+fi
+
+log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
+
+if check_logs "$log_dir" "$total_validators" 0 40; then
   exit 0
 else
-  log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
   exit 1
 fi
