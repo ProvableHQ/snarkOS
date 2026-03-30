@@ -147,7 +147,7 @@ pub enum InsertBlockResponseError<N: Network> {
     MalformedBlock { height: u32, peer_ip: SocketAddr },
     #[error("The sync pool did not request block {height} from '{peer_ip}'")]
     WrongSyncPeer { height: u32, peer_ip: SocketAddr },
-    #[error(transparent)]
+    #[error("{}", flatten_error(.0))]
     Other(#[from] anyhow::Error),
 }
 
@@ -1160,26 +1160,26 @@ impl<N: Network> BlockSync<N> {
         let (expected_hash, expected_previous_hash, sync_ips) = &entry.request;
 
         // Ensure the candidate block hash matches the expected hash.
-        if let Some(expected_hash) = expected_hash {
-            if block.hash() != *expected_hash {
-                return Err(InsertBlockResponseError::InvalidBlockHash {
-                    height,
-                    peer_ip,
-                    expected_hash: *expected_hash,
-                    actual_hash: block.hash(),
-                });
-            }
+        if let Some(expected_hash) = expected_hash
+            && block.hash() != *expected_hash
+        {
+            return Err(InsertBlockResponseError::InvalidBlockHash {
+                height,
+                peer_ip,
+                expected_hash: *expected_hash,
+                actual_hash: block.hash(),
+            });
         }
         // Ensure the previous block hash matches if it exists.
-        if let Some(expected_previous_hash) = expected_previous_hash {
-            if block.previous_hash() != *expected_previous_hash {
-                return Err(InsertBlockResponseError::InvalidPreviousBlockHash {
-                    height,
-                    peer_ip,
-                    expected: *expected_previous_hash,
-                    actual: block.previous_hash(),
-                });
-            }
+        if let Some(expected_previous_hash) = expected_previous_hash
+            && block.previous_hash() != *expected_previous_hash
+        {
+            return Err(InsertBlockResponseError::InvalidPreviousBlockHash {
+                height,
+                peer_ip,
+                expected: *expected_previous_hash,
+                actual: block.previous_hash(),
+            });
         }
         // Ensure the sync pool requested this block from the given peer.
         if !sync_ips.contains(&peer_ip) {

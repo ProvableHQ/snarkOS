@@ -680,17 +680,18 @@ impl<N: Network> Gateway<N> {
                             let err: anyhow::Error = err.into();
                             let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
 
-                            self.ip_ban_peer(peer_ip, Some(&flatten_error(&err)));
+                            let msg = flatten_error(&err);
+                            error!("{msg}");
+                            self.ip_ban_peer(peer_ip, Some(&msg));
                             Err(err)
                         }
                         Err(err) => {
                             let err: anyhow::Error = err.into();
                             let err = err.context(format!("Peer '{peer_ip}' sent an invalid block response"));
+                            warn!("{}", flatten_error(err));
 
-                            // TODO(kaimast): investigate if it is save to also ban peers here
-                            //self.ip_ban_peer(peer_ip, Some(&flatten_error(&err)));
-
-                            Err(err)
+                            // TODO(kaimast): This needs more testing to ensure disconnect is the correct action.
+                            Ok(true)
                         }
                     }
                 } else {

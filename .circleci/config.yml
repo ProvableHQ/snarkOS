@@ -797,7 +797,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/sync-race-conditions 
+                - mainnet-release-v460
                 - canary
                 - testnet
                 - mainnet
@@ -807,7 +807,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/sync-race-conditions 
+                - mainnet-release-v460
                 - canary
                 - testnet
                 - mainnet
@@ -819,7 +819,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/sync-race-conditions 
+                - mainnet-release-v460
                 - canary
                 - testnet
                 - mainnet
