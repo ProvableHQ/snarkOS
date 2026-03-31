@@ -840,7 +840,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
 
             // Perform the check.
-            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::thread_rng()).map_err(|err| {
+            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map_err(|err| {
                 match is_within_sync_leniency {
                     // The transaction failed to verify.
                     true => RestError::unprocessable_entity(err.context("Invalid transaction")),

@@ -52,7 +52,7 @@ use clap::Parser;
 use colored::Colorize;
 use core::str::FromStr;
 use indexmap::IndexMap;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaChaRng;
 use serde::{Deserialize, Serialize};
 
@@ -401,7 +401,7 @@ impl Start {
                 }
                 // Ensure the private key is provided to the CLI, except for clients or nodes in development mode.
                 (None, None) => match self.client {
-                    true => Account::new(&mut rand::thread_rng()),
+                    true => Account::new(&mut rand::rng()),
                     false => bail!("Missing the '--private-key' or '--private-key-file' argument"),
                 },
                 // Ensure only one private key flag is provided to the CLI.
@@ -575,7 +575,7 @@ impl Start {
                         members.entry(*validator_address).and_modify(|(stake, _, _)| *stake += amount).or_insert((
                             *amount,
                             true,
-                            rng.gen_range(0..100),
+                            rng.random_range(0..100),
                         ));
                     }
                     // Construct the committee.
@@ -591,7 +591,7 @@ impl Start {
                     // Construct the committee members and distribute stakes evenly among committee members.
                     let members = development_addresses
                         .iter()
-                        .map(|address| (*address, (stake_per_member, true, rng.gen_range(0..100))))
+                        .map(|address| (*address, (stake_per_member, true, rng.random_range(0..100))))
                         .collect::<IndexMap<_, _>>();
 
                     // Construct the bonded balances.

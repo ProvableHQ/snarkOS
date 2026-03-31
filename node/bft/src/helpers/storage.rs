@@ -1019,11 +1019,12 @@ pub(crate) mod tests {
     /// Samples a random transmission.
     fn sample_transmission(rng: &mut TestRng) -> Transmission<CurrentNetwork> {
         // Sample random fake solution bytes.
-        let s = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+        let s = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..512).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
         // Sample random fake transaction bytes.
-        let t = |rng: &mut TestRng| Data::Buffer(Bytes::from((0..2048).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+        let t =
+            |rng: &mut TestRng| Data::Buffer(Bytes::from((0..2048).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
         // Sample a random transmission.
-        match rng.r#gen::<bool>() {
+        match rng.random::<bool>() {
             true => Transmission::Solution(s(rng)),
             false => Transmission::Transaction(t(rng)),
         }
@@ -1449,11 +1450,11 @@ pub(crate) mod tests {
 pub mod prop_tests {
     use super::*;
     use crate::helpers::{now, storage::tests::assert_storage};
+    use snarkos_node_bft_events::committee_prop_tests::{CommitteeContext, ValidatorSet};
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
         ledger::{
-            committee::prop_tests::{CommitteeContext, ValidatorSet},
             narwhal::{BatchHeader, Data},
             puzzle::SolutionID,
         },
@@ -1467,9 +1468,9 @@ pub mod prop_tests {
         prelude::{Arbitrary, BoxedStrategy, Just, Strategy, any},
         prop_oneof,
         sample::{Selector, size_range},
-        test_runner::TestRng,
     };
-    use rand::{CryptoRng, Error, Rng, RngCore};
+    use rand::{CryptoRng, SeedableRng, TryCryptoRng, TryRng};
+    use rand_chacha::ChaChaRng;
     use std::fmt::Debug;
     use test_strategy::proptest;
 
@@ -1499,36 +1500,37 @@ pub mod prop_tests {
     }
 
     // The `proptest::TestRng` doesn't implement `rand_core::CryptoRng` trait which is required in snarkVM, so we use a wrapper
+    // We wrap a `ChaChaRng` (rand 0.10 compatible) seeded from the proptest RNG.
     #[derive(Debug)]
-    pub struct CryptoTestRng(TestRng);
+    pub struct CryptoTestRng(ChaChaRng);
 
     impl Arbitrary for CryptoTestRng {
         type Parameters = ();
         type Strategy = BoxedStrategy<CryptoTestRng>;
 
         fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-            Just(0).prop_perturb(|_, rng| CryptoTestRng(rng)).boxed()
-        }
-    }
-    impl RngCore for CryptoTestRng {
-        fn next_u32(&mut self) -> u32 {
-            self.0.next_u32()
-        }
-
-        fn next_u64(&mut self) -> u64 {
-            self.0.next_u64()
-        }
-
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
-            self.0.fill_bytes(dest);
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), Error> {
-            self.0.try_fill_bytes(dest)
+            use proptest::prelude::RngCore as ProptestRngCore;
+            Just(0).prop_perturb(|_, mut rng| CryptoTestRng(ChaChaRng::seed_from_u64(rng.next_u64()))).boxed()
         }
     }
 
-    impl CryptoRng for CryptoTestRng {}
+    impl TryRng for CryptoTestRng {
+        type Error = core::convert::Infallible;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            TryRng::try_next_u32(&mut self.0)
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            TryRng::try_next_u64(&mut self.0)
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+            TryRng::try_fill_bytes(&mut self.0, dest)
+        }
+    }
+
+    impl TryCryptoRng for CryptoTestRng {}
 
     #[derive(Debug, Clone)]
     pub struct AnyTransmission(pub Transmission<CurrentNetwork>);
@@ -1565,32 +1567,29 @@ pub mod prop_tests {
     }
 
     pub fn any_solution_id() -> BoxedStrategy<SolutionID<CurrentNetwork>> {
-        Just(0).prop_perturb(|_, rng| CryptoTestRng(rng).r#gen::<u64>().into()).boxed()
+        any::<u64>().prop_map(|x| x.into()).boxed()
     }
 
     pub fn any_transaction_id() -> BoxedStrategy<<CurrentNetwork as Network>::TransactionID> {
-        Just(0)
-            .prop_perturb(|_, rng| {
-                <CurrentNetwork as Network>::TransactionID::from(Field::rand(&mut CryptoTestRng(rng)))
+        any::<u64>()
+            .prop_map(|seed| {
+                let rng = &mut ChaChaRng::seed_from_u64(seed);
+                <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng))
             })
             .boxed()
     }
 
     pub fn any_transmission_id() -> BoxedStrategy<TransmissionID<CurrentNetwork>> {
         prop_oneof![
-            any_transaction_id().prop_perturb(|id, mut rng| TransmissionID::Transaction(
-                id,
-                rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
-            )),
-            any_solution_id().prop_perturb(|id, mut rng| TransmissionID::Solution(
-                id,
-                rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>()
-            )),
+            (any_transaction_id(), any::<<CurrentNetwork as Network>::TransmissionChecksum>())
+                .prop_map(|(id, cs)| TransmissionID::Transaction(id, cs)),
+            (any_solution_id(), any::<<CurrentNetwork as Network>::TransmissionChecksum>())
+                .prop_map(|(id, cs)| TransmissionID::Solution(id, cs)),
         ]
         .boxed()
     }
 
-    pub fn sign_batch_header<R: Rng + CryptoRng>(
+    pub fn sign_batch_header<R: CryptoRng>(
         validator_set: &ValidatorSet,
         batch_header: &BatchHeader<CurrentNetwork>,
         rng: &mut R,

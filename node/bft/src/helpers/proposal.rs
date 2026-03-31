@@ -300,10 +300,8 @@ mod prop_tests {
         now,
         storage::prop_tests::{AnyTransmission, AnyTransmissionID, CryptoTestRng},
     };
-    use snarkvm::ledger::{
-        committee::prop_tests::{CommitteeContext, ValidatorSet},
-        narwhal::BatchHeader,
-    };
+    use snarkos_node_bft_events::committee_prop_tests::{CommitteeContext, ValidatorSet};
+    use snarkvm::ledger::narwhal::BatchHeader;
 
     use indexmap::IndexMap;
     use proptest::sample::{Selector, size_range};

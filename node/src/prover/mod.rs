@@ -55,7 +55,7 @@ use core::{marker::PhantomData, time::Duration};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::{CryptoRng, Rng, rngs::OsRng};
+use rand::{CryptoRng, Rng, RngExt};
 use snarkos_node_bft::helpers::fmt_id;
 use std::{
     net::SocketAddr,
@@ -225,7 +225,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
                 // Execute the puzzle.
                 let prover = self.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    prover.puzzle_iteration(epoch_hash, coinbase_target, proof_target, &mut OsRng)
+                    prover.puzzle_iteration(epoch_hash, coinbase_target, proof_target, &mut rand::rng())
                 })
                 .await;
 
@@ -267,7 +267,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
 
         // Compute the solution.
         let result =
-            self.puzzle.prove(epoch_hash, self.address(), rng.r#gen(), Some(proof_target)).ok().and_then(|solution| {
+            self.puzzle.prove(epoch_hash, self.address(), rng.random(), Some(proof_target)).ok().and_then(|solution| {
                 self.puzzle.get_proof_target(&solution).ok().map(|solution_target| (solution_target, solution))
             });
 

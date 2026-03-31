@@ -156,7 +156,7 @@ impl Account {
     /// Generates a new Aleo account with the given vanity string.
     fn new_vanity<N: Network>(vanity: &str, discreet: bool) -> Result<String> {
         // A closure to generate a new Aleo account.
-        let sample_account = || snarkos_account::Account::<N>::new(&mut rand::thread_rng());
+        let sample_account = || snarkos_account::Account::<N>::new(&mut rand::rng());
 
         const ITERATIONS: u128 = u16::MAX as u128;
         const ITERATIONS_STR: &str = "65,535";
@@ -235,7 +235,7 @@ impl Account {
                 Field::new(<N as Environment>::Field::from_str(&seed).map_err(|e| anyhow!("Invalid seed - {e}"))?)
             }
             // Sample a random field element.
-            None => Field::rand(&mut ChaChaRng::from_entropy()),
+            None => Field::rand(&mut ChaChaRng::from_rng(&mut rand::rng())),
         };
         // Recover the private key from the seed as a field element.
         let private_key =

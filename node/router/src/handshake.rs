@@ -29,7 +29,7 @@ use snarkvm::{
 
 use anyhow::{Result, anyhow};
 use futures::SinkExt;
-use rand::{Rng, rngs::OsRng};
+
 use std::{io, net::SocketAddr};
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
@@ -180,9 +180,6 @@ impl<N: Network> Router<N> {
         // Construct the stream.
         let mut framed = Framed::new(stream, MessageCodec::<N>::handshake());
 
-        // Initialize an RNG.
-        let rng = &mut OsRng;
-
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
@@ -194,7 +191,7 @@ impl<N: Network> Router<N> {
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
-        let our_nonce = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Send a challenge request to the peer.
         let our_request =
             ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);
@@ -232,10 +229,10 @@ impl<N: Network> Router<N> {
 
         /* Step 3: Send the challenge response. */
 
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
         // Sign the counterparty nonce.
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
         };
         // Send the challenge response.
@@ -296,13 +293,10 @@ impl<N: Network> Router<N> {
 
         /* Step 2: Send the challenge response followed by own challenge request. */
 
-        // Initialize an RNG.
-        let rng = &mut OsRng;
-
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::Other(
                 anyhow!("Failed to sign the challenge request nonce from '{peer_addr}'").into(),
             ));
@@ -317,7 +311,7 @@ impl<N: Network> Router<N> {
         send(&mut framed, peer_addr, Message::ChallengeResponse(our_response)).await?;
 
         // Sample a random nonce.
-        let our_nonce = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Send the challenge request.
         let our_request =
             ChallengeRequest::new(self.local_ip().port(), self.node_type, self.address(), our_nonce, snarkos_sha);

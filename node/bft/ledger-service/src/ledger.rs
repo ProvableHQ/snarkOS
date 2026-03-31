@@ -91,7 +91,7 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
     }
 
     fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>> {
-        self.ledger.check_block_content(block, &mut rand::thread_rng())
+        self.ledger.check_block_content(block, &mut rand::rng())
     }
 
     /// Checks the given block is valid next block.
@@ -106,7 +106,7 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<Block<N>, CheckBlockError<N>> {
-        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())
+        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::rng())
     }
 
     /// Adds the given block as the next block in the ledger.
@@ -409,7 +409,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         }
         // Check the transaction is well-formed.
         let ledger = self.ledger.clone();
-        spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()))
+        spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::rng()))
     }
 
     fn check_block_subdag(

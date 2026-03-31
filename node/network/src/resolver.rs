@@ -92,7 +92,7 @@ mod tests {
         let listener_ip = SocketAddr::from(([127, 0, 0, 1], 1234));
         let peer_addr = SocketAddr::from(([127, 0, 0, 1], 4321));
         let mut rng = TestRng::default();
-        let address = Address::<CurrentNetwork>::new(rng.r#gen());
+        let address = Address::<CurrentNetwork>::new(rng.random());
 
         assert!(resolver.get_listener(peer_addr).is_none());
         assert!(resolver.get_peer_ip_for_address(address).is_none());

@@ -1117,7 +1117,7 @@ mod tests {
 
     use aleo_std::StorageMode;
     use indexmap::IndexSet;
-    use rand::Rng;
+    use rand::RngExt;
     use std::{collections::BTreeMap, sync::OnceLock};
 
     type CurrentNetwork = MainnetV0;
@@ -1151,7 +1151,7 @@ mod tests {
         let account: Account<CurrentNetwork> = Account::new(rng).unwrap();
 
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
-        let seed: u64 = rng.r#gen();
+        let seed: u64 = rng.random();
         let vm = VM::from(store).unwrap();
         let genesis_pk = *account.private_key();
         let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
@@ -1735,7 +1735,7 @@ mod tests {
         let account: Account<CurrentNetwork> = Account::new(rng)?;
 
         // Create a genesis block with a seeded RNG to reproduce the same genesis private keys.
-        let seed: u64 = rng.r#gen();
+        let seed: u64 = rng.random();
         let vm = VM::from(store).unwrap();
         let genesis_pk = *account.private_key();
         let genesis = spawn_blocking!(vm.genesis_beacon(&genesis_pk, &mut TestRng::from_seed(seed))).unwrap();
