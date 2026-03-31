@@ -56,7 +56,7 @@ const MAXIMUM_REQUEST_ATTEMPTS: u8 = 10;
 pub const CDN_BASE_URL: &str = "https://cdn.provable.com/v0/blocks";
 
 /// Returns the user-agent string for CDN requests.
-fn cdn_user_agent() -> &'static str {
+const fn cdn_user_agent() -> &'static str {
     concat!("snarkos/", env!("CARGO_PKG_VERSION"))
 }
 
@@ -667,5 +667,16 @@ mod tests {
         log_progress::<10>(timer, 80, cdn_start, cdn_end, object_name);
         log_progress::<10>(timer, 90, cdn_start, cdn_end, object_name);
         log_progress::<10>(timer, 100, cdn_start, cdn_end, object_name);
+    }
+
+    #[test]
+    fn test_cdn_user_agent() {
+        use super::cdn_user_agent;
+        let ua = cdn_user_agent();
+        // Must start with the "snarkos/" prefix.
+        assert!(ua.starts_with("snarkos/"), "user-agent must start with 'snarkos/': got {ua}");
+        // The version part must not be empty.
+        let version = ua.strip_prefix("snarkos/").unwrap();
+        assert!(!version.is_empty(), "user-agent version must not be empty");
     }
 }
