@@ -594,10 +594,10 @@ impl<N: Network> Consensus<N> {
         ledger_update.advance_to_next_block(&block)?;
 
         #[cfg(feature = "telemetry")]
-        // Fetch the latest committee.
+        // Fetch the committee lookback for the latest round.
         // Note: Do not abort here if this returns an error, because the committee is only needed for telemetry,
         // not for block advancement itself.
-        let latest_committee = self.ledger.current_committee();
+        let latest_committee = self.ledger.get_committee_lookback_for_round(self.ledger.latest_round());
 
         // If the next block starts a new epoch, clear the existing solutions.
         if block_height.is_multiple_of(N::NUM_BLOCKS_PER_EPOCH) {

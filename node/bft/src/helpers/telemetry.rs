@@ -84,7 +84,6 @@ impl<N: Network> Telemetry<N> {
         }
     }
 
-    // TODO (raychu86): Consider using committee lookback here.
     /// Fetch the certificate and signature participation scores for each validator in the committee set.
     /// Returns a map of `address` to `(certificate_score, signature_score)`.
     pub fn get_participation_scores(&self, committee: &Committee<N>) -> IndexMap<Address<N>, (f64, f64)> {

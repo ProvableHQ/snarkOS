@@ -1031,9 +1031,9 @@ impl<N: Network> Gateway<N> {
     // Logs the validator participation scores.
     #[cfg(feature = "telemetry")]
     fn log_participation_scores(&self) {
-        if let Ok(current_committee) = self.ledger.current_committee() {
+        if let Ok(committee_lookback) = self.ledger.get_committee_lookback_for_round(self.storage.current_round()) {
             // Retrieve the participation scores.
-            let participation_scores = self.validator_telemetry().get_participation_scores(&current_committee);
+            let participation_scores = self.validator_telemetry().get_participation_scores(&committee_lookback);
 
             // Log the participation scores.
             debug!("Participation Scores (in the last {} rounds):", self.storage.max_gc_rounds());
