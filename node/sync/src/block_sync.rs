@@ -2122,7 +2122,10 @@ mod tests {
         let rng = &mut TestRng::default();
         let sync = sample_sync_at_height(0);
 
-        let locator_height = rng.random_range(0..50);
+        // Ensure the locator always includes at least one block,
+        // that is not the genesis block.
+        // Otherwise there are no block requests to construct.
+        let locator_height = rng.random_range(1..50);
 
         // Add a peer.
         let locators = sample_block_locators(locator_height);
