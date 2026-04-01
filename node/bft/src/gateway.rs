@@ -1034,10 +1034,14 @@ impl<N: Network> Gateway<N> {
         if let Ok(current_committee) = self.ledger.current_committee() {
             // Retrieve the participation scores.
             let participation_scores = self.validator_telemetry().get_participation_scores(&current_committee);
+
             // Log the participation scores.
             debug!("Participation Scores (in the last {} rounds):", self.storage.max_gc_rounds());
-            for (address, score) in participation_scores {
-                debug!("{}", format!("  {address} - {score:.2}%").dimmed());
+            for (address, (cert_score, sig_score)) in participation_scores {
+                debug!(
+                    "{}",
+                    format!("  {address} - certificates: {cert_score:.2}%  signatures: {sig_score:.2}%").dimmed()
+                );
             }
         }
     }

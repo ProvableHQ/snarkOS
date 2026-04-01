@@ -650,7 +650,7 @@ impl<N: Network> Consensus<N> {
             #[cfg(feature = "telemetry")]
             match latest_committee {
                 Ok(latest_committee) => {
-                    // Retrieve the latest participation scores.
+                    // Retrieve the individual participation scores.
                     let participation_scores = self
                         .bft()
                         .primary()
@@ -658,14 +658,21 @@ impl<N: Network> Consensus<N> {
                         .validator_telemetry()
                         .get_participation_scores(&latest_committee);
 
-                    // Log the participation scores.
-                    for (address, participation_score) in participation_scores {
-                        metrics::histogram_label(
-                            metrics::consensus::VALIDATOR_PARTICIPATION,
+                    // Export the certificate and signature participation scores as individual gauges.
+                    for (address, (certificate_score, signature_score)) in participation_scores {
+                        let address_str = address.to_string();
+                        metrics::gauge_label(
+                            metrics::consensus::VALIDATOR_CERTIFICATE_PARTICIPATION,
                             "validator_address",
-                            address.to_string(),
-                            participation_score,
-                        )
+                            address_str.clone(),
+                            certificate_score,
+                        );
+                        metrics::gauge_label(
+                            metrics::consensus::VALIDATOR_SIGNATURE_PARTICIPATION,
+                            "validator_address",
+                            address_str,
+                            signature_score,
+                        );
                     }
                 }
                 Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),

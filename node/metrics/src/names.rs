@@ -104,7 +104,8 @@ pub mod consensus {
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";
     pub const STALE_UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_stale_unconfirmed_transactions";
     pub const STALE_UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_stale_unconfirmed_solutions";
-    pub const VALIDATOR_PARTICIPATION: &str = "snarkos_consensus_validator_participation";
+    pub const VALIDATOR_CERTIFICATE_PARTICIPATION: &str = "snarkos_consensus_validator_certificate_participation";
+    pub const VALIDATOR_SIGNATURE_PARTICIPATION: &str = "snarkos_consensus_validator_signature_participation";
 }
 
 pub mod router {

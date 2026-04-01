@@ -1050,13 +1050,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Some(consensus) => {
                 // Retrieve the latest committee.
                 let latest_committee = rest.ledger.latest_committee()?;
-                // Retrieve the latest participation scores.
-                let participation_scores = consensus
+                // Retrieve the latest participation scores, combining certificate and signature scores.
+                let participation_scores: IndexMap<_, _> = consensus
                     .bft()
                     .primary()
                     .gateway()
                     .validator_telemetry()
-                    .get_participation_scores(&latest_committee);
+                    .get_participation_scores(&latest_committee)
+                    .into_iter()
+                    .map(|(address, (cert_score, sig_score))| {
+                        let combined = ((0.9 * cert_score + 0.1 * sig_score) * 100.0).round() / 100.0;
+                        (address, combined)
+                    })
+                    .collect();
 
                 // Check if metadata is requested and return the participation scores with metadata if so.
                 if metadata.metadata.unwrap_or(false) {
