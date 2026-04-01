@@ -1185,43 +1185,5 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "unloaded": true }))))
     }
 
-    /// PUT /{network}/slipstream/plugins/{name}
-    #[cfg(feature = "slipstream-plugins")]
-    pub(crate) async fn slipstream_reload_plugin(
-        State(rest): State<Self>,
-        Path(name): Path<String>,
-        Json(body): Json<serde_json::Value>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm_slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
-
-        let config_file = body
-            .get("config_file")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RestError::bad_request(anyhow!("Missing required field: config_file")))?
-            .to_owned();
-        let manager = rest
-            .ledger
-            .vm()
-            .finalize_store()
-            .slipstream_plugin_manager()
-            .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let mut mgr = manager.write().map_err(|e| anyhow!("Plugin manager lock poisoned: {e}"))?;
-            mgr.reload_plugin(&name, &config_file).map_err(|e: SlipstreamPluginManagerError| match e {
-                SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
-                other => anyhow!("{other}"),
-            })
-        })
-        .await
-        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.starts_with("404: ") {
-                RestError::not_found(anyhow!("{}", &msg[5..]))
-            } else {
-                RestError::internal_server_error(e)
-            }
-        })?;
-        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "reloaded": true }))))
-    }
+    // TODO: PUT /{network}/slipstream/plugins/{name} (reload) is not yet implemented.
 }

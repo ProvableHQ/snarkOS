@@ -73,10 +73,15 @@ absolute or relative to the config file's directory.
 
 ## Starting a Node with Plugins
 
-Compile snarkOS with the `history` feature (or `history-staking-rewards` for staking data):
+Compile snarkOS with the `slipstream-plugins` feature. Add `history` if you need mapping update
+history, or `history-staking-rewards` if you also want staking reward notifications:
 
 ```bash
-cargo build --features history -p snarkos
+# Mapping updates only
+cargo build --features slipstream-plugins
+
+# Mapping updates + staking rewards
+cargo build --features slipstream-plugins,history-staking-rewards
 ```
 
 Pass one or more `--slipstream-config` flags at startup:
@@ -141,21 +146,10 @@ Response (200):
 
 Returns **404 Not Found** if no plugin with that name is loaded.
 
-### Reload a plugin (unload + load from new config)
+### Reload a plugin (not yet implemented)
 
-```
-PUT /{network}/slipstream/plugins/{name}
-Content-Type: application/json
-
-{ "config_file": "/path/to/new_plugin.json5" }
-```
-
-Response (200):
-```json
-{ "reloaded": true }
-```
-
-Returns **404 Not Found** if no plugin with that name is currently loaded.
+`PUT /{network}/slipstream/plugins/{name}` is not currently available. To update a plugin's
+config during runtime, unload it with DELETE and reload it with POST. Otherwise, stop the snarkos service, update the config, and restart it, pointing at the new config.
 
 ---
 
@@ -176,12 +170,6 @@ curl -X POST -H "Authorization: Bearer $JWT" \
 
 # Unload
 curl -X DELETE -H "Authorization: Bearer $JWT" \
-  "$BASE/slipstream/plugins/postgres"
-
-# Reload
-curl -X PUT -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"config_file":"/path/to/new_plugin.json5"}' \
   "$BASE/slipstream/plugins/postgres"
 ```
 

@@ -137,7 +137,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn build_routes(&self, rest_rps: u32) -> axum::Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
@@ -267,7 +267,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
             .route(
                 "/slipstream/plugins/{name}",
-                axum::routing::delete(Self::slipstream_unload_plugin).put(Self::slipstream_reload_plugin),
+                // TODO: PUT (reload) is not yet implemented.
+                axum::routing::delete(Self::slipstream_unload_plugin),
             );
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
