@@ -1048,15 +1048,25 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         match rest.consensus {
             Some(consensus) => {
-                // Retrieve the latest committee.
-                let latest_committee = rest.ledger.latest_committee()?;
-                // Retrieve the latest participation scores.
-                let participation_scores = consensus
+                // Retrieve the committee lookback for the latest round.
+                let latest_round = rest.ledger.latest_round();
+                let committee_lookback = rest
+                    .ledger
+                    .get_committee_lookback_for_round(latest_round)?
+                    .ok_or_else(|| RestError::not_found(anyhow!("No committee found for round {latest_round}")))?;
+                // Retrieve the latest participation scores, combining certificate and signature scores.
+                let participation_scores: IndexMap<_, _> = consensus
                     .bft()
                     .primary()
                     .gateway()
                     .validator_telemetry()
-                    .get_participation_scores(&latest_committee);
+                    .get_participation_scores(&committee_lookback)
+                    .into_iter()
+                    .map(|(address, (cert_score, sig_score))| {
+                        let combined = ((0.9 * cert_score + 0.1 * sig_score) * 100.0).round() / 100.0;
+                        (address, combined)
+                    })
+                    .collect();
 
                 // Check if metadata is requested and return the participation scores with metadata if so.
                 if metadata.metadata.unwrap_or(false) {
