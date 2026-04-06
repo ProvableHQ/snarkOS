@@ -84,19 +84,21 @@ impl<N: Network> Telemetry<N> {
         }
     }
 
-    // TODO (raychu86): Consider using committee lookback here.
-    /// Fetch the participation scores for each validator in the committee set.
-    pub fn get_participation_scores(&self, committee: &Committee<N>) -> IndexMap<Address<N>, f64> {
+    /// Fetch the certificate and signature participation scores for each validator in the committee set.
+    /// Returns a map of `address` to `(certificate_score, signature_score)`.
+    pub fn get_participation_scores(&self, committee: &Committee<N>) -> IndexMap<Address<N>, (f64, f64)> {
         // Fetch the participation scores.
         let participation_scores = self.participation_scores.read();
-        // Calculate the weighted score for each validator.
+        // Return the individual scores for each validator.
         committee
             .members()
             .iter()
             .map(|(address, _)| {
-                let score =
-                    participation_scores.get(address).map(|(_, _, combined_score)| *combined_score).unwrap_or(0.0);
-                (*address, score)
+                let scores = participation_scores
+                    .get(address)
+                    .map(|(cert_score, sig_score, _)| (*cert_score, *sig_score))
+                    .unwrap_or((0.0, 0.0));
+                (*address, scores)
             })
             .collect()
     }
@@ -326,7 +328,7 @@ mod tests {
         let participation_scores = telemetry.get_participation_scores(&committee);
         assert_eq!(participation_scores.len(), committee.members().len());
         for (address, _) in committee.members() {
-            assert_eq!(*participation_scores.get(address).unwrap(), 0.0);
+            assert_eq!(*participation_scores.get(address).unwrap(), (0.0, 0.0));
         }
 
         // Calculate the participation scores.
@@ -335,7 +337,8 @@ mod tests {
         // Ensure that the participation scores are updated.
         let participation_scores = telemetry.get_participation_scores(&committee);
         for (address, _) in committee.members() {
-            assert!(*participation_scores.get(address).unwrap() > 0.0);
+            let (cert_score, sig_score) = *participation_scores.get(address).unwrap();
+            assert!(cert_score > 0.0 || sig_score > 0.0);
         }
 
         println!("{participation_scores:?}");

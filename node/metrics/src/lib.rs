@@ -164,6 +164,10 @@ pub fn add_transmission_latency_metric<N: Network>(
     }
 }
 
+pub fn gauge_label<V: Into<f64>>(name: &'static str, label_key: &'static str, label_value: String, value: V) {
+    ::metrics::gauge!(name, label_key => label_value).set(value.into());
+}
+
 // Include the generated build information
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
