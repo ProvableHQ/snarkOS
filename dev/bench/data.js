@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775031998451,
+  "lastUpdate": 1775498080197,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -11520,6 +11520,72 @@ window.BENCHMARK_DATA = {
             "value": 1.58,
             "unit": "blocks/s",
             "extra": "total_wait=158s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "efdc0a6debd85e2b2e26b12320ec3d888dbadf78",
+          "message": "Merge pull request #4203 from ProvableHQ/fix/tcp-tasks-metrics\n\n[Fix] Ensure `TCP_TASKS` is always decremented properly",
+          "timestamp": "2026-04-06T10:16:38-07:00",
+          "tree_id": "c618c9cb73a4be95e8ff41f3c00b9ce7eff2cb9a",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/efdc0a6debd85e2b2e26b12320ec3d888dbadf78"
+        },
+        "date": 1775498079689,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.682037710470947,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=84.47673606872559, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7086.062215644634,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.28976821899414, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1038.8050644887355,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7701156139373779, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.64,
+            "unit": "blocks/s",
+            "extra": "total_wait=385s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.237044,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=372, mean_speed=0.388978, max_speed=1.983333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.66,
+            "unit": "blocks/s",
+            "extra": "total_wait=376s, target_height=250, connect_time=2, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.56,
+            "unit": "blocks/s",
+            "extra": "total_wait=160s, target_height=250"
           }
         ]
       }
