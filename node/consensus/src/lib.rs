@@ -510,6 +510,8 @@ impl<N: Network> Consensus<N> {
         // This loop wakes up either when a block is committed (signaled via notify) or after a timeout.
         // When a block is committed, the BFT workers have freed capacity for more transmissions.
         // The timeout serves as a fallback for startup or idle periods when blocks are not being produced.
+        //
+        // TODO(kaimast): wake up the loop after a proposal is created, not only when a block commits.
         let self_ = self.clone();
         self.spawn(async move {
             loop {

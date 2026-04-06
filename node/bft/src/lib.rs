@@ -62,7 +62,7 @@ pub const MIN_BATCH_DELAY: Duration = Duration::from_secs(1);
 
 /// The time a primary waits between attempts to create a new batch (only relevant after `MIN_BATCH_DELAY` has passed).
 /// This only serves as a failsafe in case the task does not get woken up through other means.
-/// eowering it too much will most likely waste
+/// Lowering it too much would be wasteful.
 pub const CREATE_BATCH_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The maximum time to wait before timing out on a fetch.
