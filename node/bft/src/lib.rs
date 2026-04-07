@@ -66,21 +66,27 @@ pub const MIN_BATCH_DELAY: Duration = Duration::from_secs(1);
 pub const CREATE_BATCH_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The maximum time to wait before timing out on a fetch.
-pub const MAX_FETCH_TIMEOUT: Duration = Duration::from_secs(3 * MAX_BATCH_DELAY.as_secs());
+/// TODO(kaimast): directy multiply by constant once the `const_trait_impl` feature is stable.
+pub const MAX_FETCH_TIMEOUT: Duration = Duration::from_millis(3 * (MAX_BATCH_DELAY.as_millis() as u64));
+
 /// The maximum time allowed for the leader to send their certificate.
 /// After this time, the node will consider the leader as failed and try to advance the round without it.
-pub const MAX_LEADER_CERTIFICATE_DELAY: Duration = Duration::from_secs(2 * MAX_BATCH_DELAY.as_secs());
+pub const MAX_LEADER_CERTIFICATE_DELAY: Duration = Duration::from_millis(2 * (MAX_BATCH_DELAY.as_millis() as u64));
+
 /// The maximum difference allowed between our local time and a certificate's timestamp, for the node to sign the certificate.
 /// This prevents malicious actors from proposing certificates with timestamps that are too log or too far in the future)
+/// w
 pub const MAX_TIMESTAMP_DELTA: Duration = Duration::from_secs(10);
+
 /// The maximum number of workers that can be spawned.
 pub const MAX_WORKERS: u8 = 1; // worker(s)
 
 /// The interval at which each primary broadcasts a ping to every other node.
 /// Note: If this is updated, be sure to update `MAX_BLOCKS_BEHIND` to correspond properly.
-pub const PRIMARY_PING_INTERVAL: Duration = Duration::from_secs(2 * MAX_BATCH_DELAY.as_secs());
+pub const PRIMARY_PING_INTERVAL: Duration = Duration::from_millis(2 * (MAX_BATCH_DELAY.as_millis() as u64));
+
 /// The interval at which each worker broadcasts a ping to every other node.
-pub const WORKER_PING_INTERVAL: Duration = Duration::from_secs(4 * MAX_BATCH_DELAY.as_secs());
+pub const WORKER_PING_INTERVAL: Duration = Duration::from_millis(4 * (MAX_BATCH_DELAY.as_millis() as u64));
 
 /// A helper macro to spawn a blocking task.
 #[macro_export]
