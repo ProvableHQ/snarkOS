@@ -21,7 +21,7 @@ use snarkos_account::Account;
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
-use snarkos_node_network::{NodeType, PeerPoolHandling};
+use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -121,7 +121,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         .await?;
 
         // Initialize the block synchronization logic.
-        let sync = Arc::new(BlockSync::new(ledger_service.clone()));
+        let sync = Arc::new(BlockSync::new(ledger_service.clone(), ConnectionMode::Gateway));
         let locators = sync.get_block_locators()?;
         let ping = Arc::new(Ping::new(router.clone(), locators));
 

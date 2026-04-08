@@ -17,7 +17,7 @@ use crate::NodeType;
 use snarkvm::prelude::{Address, Network};
 use tracing::*;
 
-use std::{net::SocketAddr, time::Instant};
+use std::{fmt, net::SocketAddr, time::Instant};
 
 /// A peer of any connection status.
 #[derive(Clone, Debug)]
@@ -87,6 +87,15 @@ pub struct ConnectedPeer<N: Network> {
 pub enum ConnectionMode {
     Gateway,
     Router,
+}
+
+impl fmt::Display for ConnectionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectionMode::Gateway => write!(f, "Gateway"),
+            ConnectionMode::Router => write!(f, "Router"),
+        }
+    }
 }
 
 impl<N: Network> Peer<N> {
