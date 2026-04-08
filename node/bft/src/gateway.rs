@@ -373,6 +373,11 @@ impl<N: Network> Gateway<N> {
         self.dev
     }
 
+    /// Returns a reference to the ledger.
+    pub fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
+        &self.ledger
+    }
+
     /// Returns the resolver.
     pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
