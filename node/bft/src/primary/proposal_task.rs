@@ -24,7 +24,10 @@ use locktick::parking_lot::RwLock;
 use parking_lot::RwLock;
 use snarkvm::{prelude::Network, utilities::flatten_error};
 use std::{marker::PhantomData, sync::Arc, time::Instant};
-use tokio::sync::Notify;
+use tokio::{
+    sync::Notify,
+    time::{sleep, timeout},
+};
 use tracing::{debug, warn};
 
 /// Abstracts over batch-proposal operations, allowing the proposal loop to be tested without a
@@ -163,13 +166,17 @@ impl<N: Network> ProposalTask<N> {
 
                 // If the maximum batch delay has not been reached, wait for it.
                 // Otherwise, add a small timeout to avoid busy waiting.
-                if reached_min_batch_delay {
+                if reached_min_batch_delay && futures.is_empty() {
+                    // If there are no futures to await on, sleep on `CREATE_BATCH_INTERVAL`
+                    // to avoid busy waiting.
+                    sleep(CREATE_BATCH_INTERVAL).await;
+                } else if reached_min_batch_delay {
                     // Add a timeout to prevent nodes from getting stuck
                     // (removing this would require more testing)
-                    let _ = tokio::time::timeout(CREATE_BATCH_INTERVAL, futures::future::join_all(futures)).await;
+                    let _ = timeout(CREATE_BATCH_INTERVAL, futures::future::join_all(futures)).await;
                 } else {
                     let timeout = MAX_BATCH_DELAY.saturating_sub(round_start.elapsed());
-                    futures.push(tokio::time::sleep(timeout).boxed());
+                    futures.push(sleep(timeout).boxed());
 
                     // Any condition completing is sufficient to attempt a proposal.
                     // Using select_all (not join_all) ensures that once MAX_BATCH_DELAY elapses
@@ -210,9 +217,12 @@ mod tests {
     use super::*;
 
     use snarkvm::prelude::MainnetV0;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        },
+        time::Duration,
     };
 
     /// A minimal [`BatchPropose`] implementation for testing.
@@ -331,7 +341,7 @@ mod tests {
         tokio::spawn(task_for_spawn.run(proposer));
 
         // Before signalling, propose_batch should not have been called.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(50)).await;
         assert_eq!(propose_count.load(Ordering::SeqCst), 0, "propose_batch called before signal");
 
         // Signal readiness — the proposal loop should wake up and call propose_batch.

@@ -399,7 +399,6 @@ impl<N: Network> Primary<N> {
 }
 
 #[async_trait::async_trait]
-#[async_trait::async_trait]
 impl<N: Network> proposal_task::BatchPropose for Primary<N> {
     fn current_round(&self) -> u64 {
         Primary::current_round(self)
