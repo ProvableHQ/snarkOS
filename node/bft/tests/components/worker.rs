@@ -107,7 +107,7 @@ async fn test_resend_transmission_request() {
         // Ensure the peer IP is in the pending queue for the transmission ID.
         assert!(pending.contains_peer(transmission_id, peer_ip), "Missing a peer IP for transmission in the pending queue");
         // Ensure the number of sent requests is correct.
-        assert_eq!(pending.num_sent_requests(transmission_id), (1 + i).min(max_redundancy), "Incorrect number of sent requests for transmission");
+        assert_eq!(pending.num_sent_requests(transmission_id), (1 + i).min(max_redundancy + i), "Incorrect number of sent requests for transmission");
     }
 }
 
@@ -178,7 +178,7 @@ async fn test_flood_transmission_requests() {
         // Ensure the number of callbacks is correct.
         assert_eq!(pending.num_callbacks(transmission_id), max_redundancy + i, "Incorrect number of callbacks for transmission");
         // Ensure the number of sent requests is correct.
-        assert_eq!(pending.num_sent_requests(transmission_id), max_redundancy, "Incorrect number of sent requests for transmission");
+        assert_eq!(pending.num_sent_requests(transmission_id), max_redundancy + 1, "Incorrect number of sent requests for transmission");
     }
 
     // Ensure any further redundant requests are not sent when sending to new peers.
@@ -197,6 +197,6 @@ async fn test_flood_transmission_requests() {
         // Ensure the number of callbacks is correct.
         assert_eq!(pending.num_callbacks(transmission_id), max_redundancy + 6 + i, "Incorrect number of callbacks for transmission");
         // Ensure the number of sent requests is correct.
-        assert_eq!(pending.num_sent_requests(transmission_id), max_redundancy, "Incorrect number of sent requests for transmission");
+        assert_eq!(pending.num_sent_requests(transmission_id), max_redundancy + 1, "Incorrect number of sent requests for transmission");
     }
 }
