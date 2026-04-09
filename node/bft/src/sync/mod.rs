@@ -1099,6 +1099,7 @@ mod tests {
     use crate::{BFT, helpers::now, ledger_service::CoreLedgerService, storage_service::BFTMemoryService};
 
     use snarkos_account::Account;
+    use snarkos_node_network::ConnectionMode;
     use snarkos_node_sync::BlockSync;
     use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
@@ -1356,7 +1357,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1425,7 +1426,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1516,7 +1517,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1601,7 +1602,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1683,7 +1684,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(

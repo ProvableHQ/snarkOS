@@ -22,7 +22,7 @@ use crate::{
 };
 
 use snarkos_account::Account;
-use snarkos_node_network::{NodeType, PeerPoolHandling};
+use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
@@ -125,7 +125,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         .await?;
 
         // Initialize the sync module.
-        let sync = BlockSync::new(ledger_service.clone());
+        let sync = BlockSync::new(ledger_service.clone(), ConnectionMode::Router);
 
         // Set up the ping logic.
         let ping = Arc::new(Ping::new_nosync(router.clone()));
