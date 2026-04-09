@@ -155,7 +155,7 @@ pub struct Start {
     #[clap(long, requires = "validator")]
     pub bft: Option<SocketAddr>,
 
-    /// Specify the IP address and port of the peer(s) to connect to (as a comma-separated list).
+    /// Specify the host:port address pairs of the peer(s) to connect to (as a comma-separated list).
     ///
     /// These peers will be set as "trusted", which means the node will not disconnect from them when performing peer rotation.
     ///
@@ -163,7 +163,7 @@ pub struct Start {
     #[clap(long, verbatim_doc_comment)]
     pub peers: Option<String>,
 
-    /// Specify the IP address and port of the validator(s) to connect to.
+    /// Specify the host:port address pairs of the validator(s) to connect to.
     #[clap(long)]
     pub validators: Option<String>,
 
@@ -1101,14 +1101,24 @@ fn load_or_compute_genesis<N: Network>(
     Ok(block)
 }
 
+// Resolve socket addresses (not URLs) in a host:port format compliant with C::getaddrinfo.
 fn resolve_potential_hostnames(ip_or_hostname: &str) -> Result<SocketAddr> {
     let trimmed = ip_or_hostname.trim();
+    // Perform some basic validity checks.
+    if !trimmed.contains(':') {
+        bail!(
+            "The supplied trusted hostname or IP ('{trimmed}') is malformed: missing colon separating the host from the port"
+        );
+    }
+    if trimmed.contains("://") {
+        bail!("The supplied trusted hostname or IP ('{trimmed}') is malformed: URLs are not supported");
+    }
     match trimmed.to_socket_addrs() {
         Ok(mut ip_iter) => {
             // A hostname might resolve to multiple IP addresses. We will use only the first one,
             // assuming this aligns with the user's expectations.
             let Some(ip) = ip_iter.next() else {
-                return Err(anyhow!("The supplied trusted hostname ('{trimmed}') does not reference any ip."));
+                bail!("The supplied trusted hostname ('{trimmed}') does not reference any ip.");
             };
             Ok(ip)
         }

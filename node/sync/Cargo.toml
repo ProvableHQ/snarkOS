@@ -70,6 +70,9 @@ features = [ "ledger-write" ]
 workspace = true
 optional = true
 
+[dependencies.snarkos-node-network]
+workspace = true
+
 [dependencies.snarkos-node-router]
 workspace = true
 
