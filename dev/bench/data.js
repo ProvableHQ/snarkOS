@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775643641119,
+  "lastUpdate": 1775837822716,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -11718,6 +11718,72 @@ window.BENCHMARK_DATA = {
             "value": 1.54,
             "unit": "blocks/s",
             "extra": "total_wait=162s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d151f2325342519a09ae2b74bdb0b8dd0a2eb54f",
+          "message": "Merge pull request #4211 from ProvableHQ/copilot/fix-benchmarks-compilation-error\n\nFix benchmarks CI: add `rust-std` to `rust-toolchain.toml` components",
+          "timestamp": "2026-04-10T17:40:35+02:00",
+          "tree_id": "182586376df0d258bc9a35de51eb73aae8498734",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/d151f2325342519a09ae2b74bdb0b8dd0a2eb54f"
+        },
+        "date": 1775837822023,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.205812742434909,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=92.20462274551392, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7571.89387272337,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.565388441085815, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1045.4579217483854,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7652149200439453, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.71,
+            "unit": "blocks/s",
+            "extra": "total_wait=350s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.489151,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=339, mean_speed=0.596411, max_speed=2.250000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.56,
+            "unit": "blocks/s",
+            "extra": "total_wait=443s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.56,
+            "unit": "blocks/s",
+            "extra": "total_wait=160s, target_height=250"
           }
         ]
       }
