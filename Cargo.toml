@@ -155,6 +155,9 @@ default-features = false
 [workspace.dependencies.rand_distr]
 version = "0.6"
 
+[workspace.dependencies.reqwest]
+version = "0.12"
+
 [workspace.dependencies.smol_str]
 version = "=0.3.2" # Update after Rust >1.88
 
