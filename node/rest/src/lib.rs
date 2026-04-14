@@ -186,7 +186,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/transaction/unconfirmed/{id}", get(Self::get_unconfirmed_transaction))
             .route("/transaction/broadcast", post(Self::transaction_broadcast))
 
-            // POST ../solution/broadcast
+            // GET and POST ../solution/..
+            .route("/solution/limits/{prover_address}", get(Self::get_solution_limits_for_prover))
             .route("/solution/broadcast", post(Self::solution_broadcast))
 
             // GET ../find/..
