@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(not(test))]
+use crate::Gateway;
 use crate::{
     MAX_FETCH_TIMEOUT_IN_MS,
     MAX_WORKERS,
@@ -51,6 +53,9 @@ pub struct Worker<N: Network> {
     /// The worker ID.
     id: u8,
     /// The gateway.
+    #[cfg(not(test))]
+    gateway: Arc<Gateway<N>>,
+    #[cfg(test)]
     gateway: Arc<dyn Transport<N>>,
     /// The storage.
     storage: Storage<N>,
@@ -70,7 +75,8 @@ impl<N: Network> Worker<N> {
     /// Initializes a new worker instance.
     pub fn new(
         id: u8,
-        gateway: Arc<dyn Transport<N>>,
+        #[cfg(not(test))] gateway: Arc<Gateway<N>>,
+        #[cfg(test)] gateway: Arc<dyn Transport<N>>,
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
         proposed_batch: Arc<ProposedBatch<N>>,
@@ -497,9 +503,16 @@ impl<N: Network> Worker<N> {
         let contains_peer_with_sent_request = self.pending.contains_peer_with_sent_request(transmission_id, peer_ip);
         // Determine the maximum number of redundant requests.
         let num_redundant_requests = max_redundant_requests(self.ledger.clone(), self.storage.current_round())?;
+        // Establish whether the peers who already got the request collectively hold sufficient stake.
+        #[cfg(test)]
+        let stake_redundancy_reached = || Ok::<_, anyhow::Error>(true);
+        #[cfg(not(test))]
+        let stake_redundancy_reached = || self.pending.request_stake_redundancy_reached(&self.gateway, transmission_id);
         // Determine if we should send a transmission request to the peer.
-        // We send at most `num_redundant_requests` requests and each peer can only receive one request at a time.
-        let should_send_request = num_sent_requests < num_redundant_requests && !contains_peer_with_sent_request;
+        // Each peer can only receive one request at a time.
+        // We send at most `num_redundant_requests` requests, unless the stake redundancy factor hasn't been reached.
+        let should_send_request = !contains_peer_with_sent_request
+            && (num_sent_requests < num_redundant_requests || !stake_redundancy_reached()?);
 
         // Insert the transmission ID into the pending queue.
         self.pending.insert(transmission_id, peer_ip, Some((callback_sender, should_send_request)));
