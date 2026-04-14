@@ -1013,6 +1013,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok(ErasedJson::pretty(json!({
             "is_limit_reached": rest.ledger.is_solution_limit_reached(&prover_address, 0),
             "num_remaining_solutions": rest.ledger.num_remaining_solutions(&prover_address, 0),
+            "latest_epoch_hash": rest.ledger.latest_epoch_hash()?,
             "blocks_until_next_epoch": N::NUM_BLOCKS_PER_EPOCH.saturating_sub(rest.ledger.latest_height() % N::NUM_BLOCKS_PER_EPOCH),
         })))
     }
