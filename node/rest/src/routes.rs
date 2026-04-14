@@ -36,7 +36,6 @@ use std::{collections::HashMap, fs};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
-
 use version::VersionInfo;
 
 #[cfg(feature = "history")]
@@ -1004,6 +1003,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         Ok(ret)
+    }
+
+    /// GET /<network>/solution/limits/{prover_address}
+    pub(crate) async fn get_solution_limits_for_prover(
+        State(rest): State<Self>,
+        Path(prover_address): Path<Address<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(json!({
+            "is_limit_reached": rest.ledger.is_solution_limit_reached(&prover_address, 0),
+            "num_remaining_solutions": rest.ledger.num_remaining_solutions(&prover_address, 0),
+            "blocks_until_next_epoch": N::NUM_BLOCKS_PER_EPOCH.saturating_sub(rest.ledger.latest_height() % N::NUM_BLOCKS_PER_EPOCH),
+        })))
     }
 
     /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
