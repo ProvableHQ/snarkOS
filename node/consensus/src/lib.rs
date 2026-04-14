@@ -555,16 +555,7 @@ impl<N: Network> Consensus<N> {
                 // On success, notify that the BFT workers have freed capacity for more transmissions.
                 self.block_commit_notify.notify_one();
             }
-            Ok(false) | Err(_) => {
-                if let Err(err) = self.reinsert_transmissions(transmissions).await {
-                    error!(
-                        "{}",
-                        flatten_error(
-                            err.context("Failed to reinsert transmissions after unsuccessful block advancement")
-                        )
-                    );
-                }
-            }
+            Ok(false) | Err(_) => self.reinsert_transmissions(transmissions).await,
         }
 
         callback.send(result).ok();
@@ -725,7 +716,7 @@ impl<N: Network> Consensus<N> {
     }
 
     /// Reinserts the given transmissions into the memory pool.
-    async fn reinsert_transmissions(&self, transmissions: IndexMap<TransmissionID<N>, Transmission<N>>) -> Result<()> {
+    async fn reinsert_transmissions(&self, transmissions: IndexMap<TransmissionID<N>, Transmission<N>>) {
         // Iterate over the transmissions.
         for (transmission_id, transmission) in transmissions.into_iter() {
             // Reinsert the transmission into the memory pool.
@@ -746,8 +737,6 @@ impl<N: Network> Consensus<N> {
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Reinserts the given transmission into the memory pool.
