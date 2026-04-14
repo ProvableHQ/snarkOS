@@ -61,7 +61,7 @@ workspace = true
 
 [dependencies.reqwest]
 workspace = true
-features = [ "rustls-tls" ]
+features = [ "rustls" ]
 
 [dependencies.serde]
 workspace = true

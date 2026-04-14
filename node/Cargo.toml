@@ -98,7 +98,7 @@ workspace = true
 
 [dependencies.reqwest]
 workspace = true
-features = [ "json", "rustls-tls" ]
+features = [ "json", "rustls" ]
 
 [dependencies.serde_json]
 workspace = true
