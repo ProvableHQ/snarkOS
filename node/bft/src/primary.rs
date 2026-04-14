@@ -404,10 +404,6 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         Primary::current_round(self)
     }
 
-    fn is_synced(&self) -> bool {
-        Primary::is_synced(self)
-    }
-
     fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
         self.sync.wait_for_synced_if_syncing()
     }

@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{CREATE_BATCH_INTERVAL, MAX_BATCH_DELAY};
+use crate::{CREATE_BATCH_INTERVAL, MAX_BATCH_DELAY, MIN_BATCH_DELAY};
 
 use anyhow::Result;
 use colored::Colorize;
@@ -23,10 +23,10 @@ use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use snarkvm::{prelude::Network, utilities::flatten_error};
-use std::{marker::PhantomData, sync::Arc, time::Instant};
+use std::{marker::PhantomData, sync::Arc};
 use tokio::{
     sync::Notify,
-    time::{sleep, timeout},
+    time::{Instant, sleep, sleep_until},
 };
 use tracing::{debug, warn};
 
@@ -36,9 +36,6 @@ use tracing::{debug, warn};
 pub(super) trait BatchPropose: Send + Sync {
     /// Returns the current consensus round.
     fn current_round(&self) -> u64;
-
-    /// Reurns `true` if the node is fully synced.
-    fn is_synced(&self) -> bool;
 
     /// Returns `None` if the node is already synced; otherwise returns a future that resolves
     /// once sync completes.
@@ -100,29 +97,6 @@ impl<N: Network> ProposalTask<N> {
         self.inner.is_ready_notify.notify_one();
     }
 
-    /// Returns `None` if the primary is already ready to propose.
-    /// Otherwise returns a future that resolves once the primary becomes ready.
-    ///
-    /// Atomically registers the wakeup before releasing the readiness lock, so no signal is missed
-    /// between the state check and the registration.
-    fn wait_if_not_ready(&self) -> Option<BoxFuture<'_, ()>> {
-        let mut notified = Box::pin(self.inner.is_ready_notify.notified());
-        {
-            if *self.inner.is_proposal_ready.read() {
-                return None;
-            }
-            // Register the wakeup while still holding the lock, to avoid a missed notification.
-            notified.as_mut().enable();
-        }
-        Some(
-            async move {
-                notified.await;
-                self.wait().await;
-            }
-            .boxed(),
-        )
-    }
-
     /// Waits until the primary is ready to propose. Returns immediately if already ready.
     async fn wait(&self) {
         loop {
@@ -144,53 +118,49 @@ impl<N: Network> ProposalTask<N> {
     pub(super) async fn run<P: BatchPropose + 'static>(self, primary: P) {
         loop {
             let round_start = Instant::now();
-            let current_round = primary.current_round();
-            let mut reached_min_batch_delay = false;
+            let round = primary.current_round();
+            let mut leader_timeout_reached = false;
+            let mut attempt = 1;
 
             // The inner loop represents multiple attempts to propose a batch within the same round.
             // It exits when the round advances or a batch is successfully proposed.
-            while primary.current_round() == current_round {
-                // Assemble a list of conditions that will trigger the primary to attempt batch
-                // creation.
-                let mut futures = vec![];
-
-                // Wait for the primary to be ready to propose, unless it already is.
-                if let Some(fut) = self.wait_if_not_ready() {
-                    futures.push(fut);
-                }
-
-                // If the node is not synced yet, wait for block sync to complete.
-                if let Some(sync_fut) = primary.wait_for_synced_if_syncing() {
-                    futures.push(sync_fut);
-                }
-
-                // If the maximum batch delay has not been reached, wait for it.
-                // Otherwise, add a small timeout to avoid busy waiting.
-                if reached_min_batch_delay && futures.is_empty() {
-                    // If there are no futures to await on, sleep on `CREATE_BATCH_INTERVAL`
-                    // to avoid busy waiting.
-                    sleep(CREATE_BATCH_INTERVAL).await;
-                } else if reached_min_batch_delay {
-                    // Add a timeout to prevent nodes from getting stuck
-                    // (removing this would require more testing)
-                    let _ = timeout(CREATE_BATCH_INTERVAL, futures::future::join_all(futures)).await;
-                } else {
-                    let timeout = MAX_BATCH_DELAY.saturating_sub(round_start.elapsed());
-                    futures.push(sleep(timeout).boxed());
-
-                    // Any condition completing is sufficient to attempt a proposal.
-                    // Using select_all (not join_all) ensures that once MAX_BATCH_DELAY elapses
-                    // we call propose_batch() even if signal() was never fired — which happens
-                    // when an even round has no leader cert. propose_batch() calls
-                    // try_advance_to_next_round, which checks the leader-certificate timer.
-                    futures::future::select_all(futures).await;
-                    reached_min_batch_delay = true;
-                }
-
-                // If the primary is not synced, then do not propose a batch.
-                if !primary.is_synced() {
-                    debug!("Skipping batch proposal for round {current_round} {}", "(node is syncing)".dimmed());
+            while primary.current_round() == round {
+                // A node cannot propose while it is syncing. So, block here first.
+                if let Some(fut) = primary.wait_for_synced_if_syncing() {
+                    fut.await;
+                    // Restart the loop, as the current round may have changed.
                     continue;
+                }
+
+                // If the minimum batch delay has not been reached yet, wait for it first,
+                // as we cannot propose without it having elapsed in any case.e
+                // TODO(kaimast): the sleep time should be based on the timestamp of the previous batch
+                sleep_until(round_start + MIN_BATCH_DELAY).await;
+
+                // Wait for either the leader to time-out or for the proposal to be ready.
+                // Additionally, we add a smaller timeout here out of caution, to ensure node does not get stuck on this select! call.
+                tokio::select! {
+                                    _ = sleep_until(round_start + MAX_BATCH_DELAY) => {
+                                        if !leader_timeout_reached {
+                                            info!("Leader for round {round} timed out");
+                                        }
+                                        leader_timeout_reached = true;
+                                    },
+                                    _ = self.wait().boxed() => {},
+                                    _ = sleep(CREATE_BATCH_INTERVAL) => {
+                // Retry if the timeout triggered (but do not count it as a proper attempt).
+                                    debug!("Skipping batch proposal for round {round} {}", "(not ready yet)".dimmed());
+                                    continue;
+                                    }
+                                };
+
+                if attempt > 1 {
+                    // Sleep to avoid busy waiting, if all conditions were met
+                    // and we still need to retry.
+                    sleep(CREATE_BATCH_INTERVAL).await;
+
+                    // Print a log message to see how often these retries happen (or if ever).
+                    debug!("Retrying batch proposal for round {round} (attempt #{attempt})");
                 }
 
                 // If there is no proposed batch, attempt to propose a batch.
@@ -204,9 +174,12 @@ impl<N: Network> ProposalTask<N> {
                     }
                     Ok(false) => (), // retry
                     Err(err) => {
+                        // Log warning and retry
                         warn!("{}", flatten_error(err.context("Cannot propose a batch")));
                     }
                 }
+
+                attempt += 1;
             }
         }
     }
@@ -240,10 +213,6 @@ mod tests {
             1
         }
 
-        fn is_synced(&self) -> bool {
-            true
-        }
-
         fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
             None
         }
@@ -273,10 +242,6 @@ mod tests {
             if n == 0 { 1 } else { 2 }
         }
 
-        fn is_synced(&self) -> bool {
-            true
-        }
-
         fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
             None
         }
@@ -299,10 +264,6 @@ mod tests {
     impl BatchPropose for RetryProposer {
         fn current_round(&self) -> u64 {
             1
-        }
-
-        fn is_synced(&self) -> bool {
-            true
         }
 
         fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
@@ -418,10 +379,6 @@ mod tests {
         impl BatchPropose for NoSignalProposer {
             fn current_round(&self) -> u64 {
                 1
-            }
-
-            fn is_synced(&self) -> bool {
-                true
             }
 
             fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
