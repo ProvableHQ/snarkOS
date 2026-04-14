@@ -1036,9 +1036,13 @@ impl<N: Network> Sync<N> {
         let contains_peer_with_sent_request = self.pending.contains_peer_with_sent_request(certificate_id, peer_ip);
         // Determine the maximum number of redundant requests.
         let num_redundant_requests = max_redundant_requests(self.ledger.clone(), self.storage.current_round())?;
+        // Establish whether the peers who already got the request collectively hold sufficient stake.
+        let stake_redundancy_reached = || self.pending.request_stake_redundancy_reached(&self.gateway, certificate_id);
         // Determine if we should send a certificate request to the peer.
-        // We send at most `num_redundant_requests` requests and each peer can only receive one request at a time.
-        let should_send_request = num_sent_requests < num_redundant_requests && !contains_peer_with_sent_request;
+        // Each peer can only receive one request at a time.
+        // We send at most `num_redundant_requests` requests, unless the stake redundancy factor hasn't been reached.
+        let should_send_request = !contains_peer_with_sent_request
+            && (num_sent_requests < num_redundant_requests || !stake_redundancy_reached()?);
 
         // Insert the certificate ID into the pending queue.
         self.pending.insert(certificate_id, peer_ip, Some((callback_sender, should_send_request)));
@@ -1115,6 +1119,7 @@ mod tests {
     use crate::{BFT, helpers::now, ledger_service::CoreLedgerService, storage_service::BFTMemoryService};
 
     use snarkos_account::Account;
+    use snarkos_node_network::ConnectionMode;
     use snarkos_node_sync::BlockSync;
     use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
@@ -1372,7 +1377,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1441,7 +1446,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1532,7 +1537,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1617,7 +1622,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(
@@ -1699,7 +1704,7 @@ mod tests {
         )
         .unwrap();
 
-        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(syncing_ledger.clone(), ConnectionMode::Gateway));
         let sync = Sync::new(gateway.clone(), syncing_storage.clone(), syncing_ledger.clone(), block_sync.clone());
 
         let syncing_bft = BFT::new(

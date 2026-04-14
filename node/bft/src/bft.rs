@@ -929,6 +929,7 @@ mod tests {
     use snarkos_account::Account;
     use snarkos_node_bft_ledger_service::{LedgerService, MockLedgerService};
     use snarkos_node_bft_storage_service::BFTMemoryService;
+    use snarkos_node_network::ConnectionMode;
     use snarkos_node_sync::BlockSync;
     use snarkos_utilities::NodeDataDir;
 
@@ -987,7 +988,7 @@ mod tests {
         ledger: Arc<MockLedgerService<CurrentNetwork>>,
     ) -> anyhow::Result<BFT<CurrentNetwork>> {
         // Create the block synchronization logic.
-        let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
         // Initialize the BFT.
         BFT::new(
             account.clone(),

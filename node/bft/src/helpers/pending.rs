@@ -13,14 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::MAX_FETCH_TIMEOUT;
+use crate::{Gateway, MAX_FETCH_TIMEOUT};
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_network::PeerPoolHandling;
 use snarkvm::{
     console::network::{Network, consensus_config_value},
     prelude::Result,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
@@ -109,6 +110,13 @@ impl<T: Copy + Clone + PartialEq + Eq + Hash, V: Clone> Pending<T, V> {
     /// Returns the peer IPs for the specified `item`.
     pub fn get_peers(&self, item: impl Into<T>) -> Option<HashSet<SocketAddr>> {
         self.pending.read().get(&item.into()).map(|map| map.keys().cloned().collect())
+    }
+
+    /// Returns the peer IPs for the specified `item` who have received a request for it.
+    pub fn get_sent_peers(&self, item: impl Into<T>) -> Option<HashSet<SocketAddr>> {
+        self.pending.read().get(&item.into()).map(|map| {
+            map.iter().filter_map(|(addr, cbs)| cbs.iter().any(|(_, _, sent)| *sent).then_some(*addr)).collect()
+        })
     }
 
     /// Returns the number of pending callbacks for the specified `item`.
@@ -243,6 +251,31 @@ impl<T: Copy + Clone + PartialEq + Eq + Hash, V: Clone> Pending<T, V> {
             // Keep the item in the pending map only if there are callbacks left.
             !peer_map.is_empty()
         });
+    }
+
+    /// Ensures that the combined stake of the peers that have received the request is
+    /// greater than the redundancy threshold (33%).
+    pub fn request_stake_redundancy_reached<N: Network>(&self, gateway: &Gateway<N>, desired_item: T) -> Result<bool> {
+        let committee = match gateway.ledger().current_committee() {
+            Ok(c) => c,
+            Err(err) => {
+                bail!("Failed to get current committee: {err}");
+            }
+        };
+
+        let total_stake = committee.total_stake();
+        let pending_providers = self.get_sent_peers(desired_item);
+        let mut stake_of_providers = 0;
+        for addr in pending_providers.iter().flatten() {
+            let Some(aleo_addr) = gateway.resolve_to_aleo_addr(*addr) else { continue };
+            let individual_stake = committee.get_stake(aleo_addr);
+            stake_of_providers += individual_stake;
+            if stake_of_providers as f64 / total_stake as f64 > 0.33 {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 }
 

@@ -19,6 +19,7 @@ use crate::{
 };
 use futures::future::BoxFuture;
 use snarkos_node_bft_ledger_service::{BeginLedgerUpdateError, LedgerService};
+use snarkos_node_network::ConnectionMode;
 use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
@@ -195,6 +196,9 @@ pub struct BlockSync<N: Network> {
     /// The ledger.
     ledger: Arc<dyn LedgerService<N>>,
 
+    /// The connection mode of this node (Gateway for validators, Router for clients/provers).
+    connection_mode: ConnectionMode,
+
     /// The map of peer IP to their block locators.
     /// The block locators are consistent with the ledger and every other peer's block locators.
     locators: RwLock<HashMap<SocketAddr, BlockLocators<N>>>,
@@ -237,12 +241,13 @@ pub struct BlockSync<N: Network> {
 
 impl<N: Network> BlockSync<N> {
     /// Initializes a new block sync module.
-    pub fn new(ledger: Arc<dyn LedgerService<N>>) -> Self {
+    pub fn new(ledger: Arc<dyn LedgerService<N>>, connection_mode: ConnectionMode) -> Self {
         // Make sync state aware of the blocks that already exist on disk at startup.
         let sync_state = SyncState::new_with_height(ledger.latest_block_height());
 
         Self {
             ledger,
+            connection_mode,
             sync_state: RwLock::new(sync_state),
             peer_notify: Default::default(),
             response_notify: Default::default(),
@@ -842,6 +847,7 @@ impl<N: Network> BlockSync<N> {
     /// This function does **not** check
     /// that the block locators are consistent with the peer's previous block locators or other peers' block locators.
     pub fn update_peer_locators(&self, peer_ip: SocketAddr, locators: &BlockLocators<N>) -> Result<()> {
+        let connection_mode = self.connection_mode;
         // -- First, update the locators entry for the given peer IP. --
         // We perform this update atomically, and drop the lock as soon as we are done with the update.
         match self.locators.write().entry(peer_ip) {
@@ -875,7 +881,9 @@ impl<N: Network> BlockSync<N> {
                     match ledger_hash == hash {
                         true => ancestor = height,
                         false => {
-                            warn!("Detected fork between this node and peer \"{peer_ip}\" at height {height}");
+                            warn!(
+                                "[{connection_mode}] Detected fork between this node and peer \"{peer_ip}\" at height {height}"
+                            );
                             break;
                         }
                     }
@@ -903,7 +911,7 @@ impl<N: Network> BlockSync<N> {
                             true => ancestor = height,
                             false => {
                                 debug!(
-                                    "Detected fork between peers \"{other_ip}\" and \"{peer_ip}\" at height {height}"
+                                    "[{connection_mode}] Detected fork between peers \"{other_ip}\" and \"{peer_ip}\" at height {height}"
                                 );
                                 break;
                             }
@@ -1750,7 +1758,7 @@ mod tests {
 
     /// Returns the sync pool, with the ledger initialized to the given height.
     fn sample_sync_at_height(height: u32) -> BlockSync<CurrentNetwork> {
-        BlockSync::<CurrentNetwork>::new(Arc::new(sample_ledger_service(height)))
+        BlockSync::<CurrentNetwork>::new(Arc::new(sample_ledger_service(height)), ConnectionMode::Router)
     }
 
     /// Returns a vector of randomly sampled block heights in [0, max_height].
@@ -1776,6 +1784,7 @@ mod tests {
             peer_notify: Notify::new(),
             response_notify: Default::default(),
             ledger: Arc::new(sample_ledger_service(height)),
+            connection_mode: sync.connection_mode,
             locators: RwLock::new(sync.locators.read().clone()),
             common_ancestors: RwLock::new(sync.common_ancestors.read().clone()),
             requests: RwLock::new(sync.requests.read().clone()),

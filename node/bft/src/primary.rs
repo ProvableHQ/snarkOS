@@ -49,6 +49,8 @@ use crate::{
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
 use snarkos_node_bft_ledger_service::LedgerService;
+#[cfg(test)]
+use snarkos_node_network::ConnectionMode;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
 use snarkos_utilities::{CallbackHandle, NodeDataDir};
@@ -2126,7 +2128,7 @@ mod tests {
 
         // Initialize the primary.
         let account = accounts[account_index].1.clone();
-        let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+        let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
         let primary =
             Primary::new(account, storage, ledger, block_sync, None, &[], false, NodeDataDir::new_test(None), None)
                 .unwrap();

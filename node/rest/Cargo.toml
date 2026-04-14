@@ -122,7 +122,7 @@ workspace = true
 workspace = true
 
 [dev-dependencies.tower]
-version = "0.4"
+version = "0.5"
 features = ["util"]
 
 [build-dependencies.built]

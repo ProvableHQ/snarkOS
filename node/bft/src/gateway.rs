@@ -373,6 +373,11 @@ impl<N: Network> Gateway<N> {
         self.dev
     }
 
+    /// Returns a reference to the ledger.
+    pub fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
+        &self.ledger
+    }
+
     /// Returns the resolver.
     pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
@@ -909,8 +914,6 @@ impl<N: Network> Gateway<N> {
         self.handle_min_connected_validators().await;
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
-        // Update the dynamic validator whitelist.
-        self.update_validator_whitelist();
     }
 
     /// Logs the connected validators.
@@ -1234,15 +1237,6 @@ impl<N: Network> Gateway<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.tcp.banned_peers().remove_old_bans(IP_BAN_TIME_IN_SECS);
-    }
-
-    // Update the dynamic validator whitelist.
-    fn update_validator_whitelist(&self) {
-        if let Err(err) =
-            self.save_best_peers(&self.node_data_dir.validator_whitelist_path(), Some(MAX_VALIDATORS_TO_SEND), false)
-        {
-            warn!("{CONTEXT} Could not update the validator whitelist: {err}");
-        }
     }
 }
 

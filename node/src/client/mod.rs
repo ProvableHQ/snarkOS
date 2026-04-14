@@ -22,7 +22,7 @@ use crate::{
 };
 
 use snarkos_account::Account;
-use snarkos_node_network::NodeType;
+use snarkos_node_network::{ConnectionMode, NodeType};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -172,7 +172,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         .await?;
 
         // Initialize the sync module.
-        let sync = Arc::new(BlockSync::new(ledger_service.clone()));
+        let sync = Arc::new(BlockSync::new(ledger_service.clone(), ConnectionMode::Router));
 
         // Set up the ping logic.
         let locators = sync.get_block_locators()?;

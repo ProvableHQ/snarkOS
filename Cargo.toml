@@ -155,6 +155,9 @@ default-features = false
 [workspace.dependencies.rand_distr]
 version = "0.6"
 
+[workspace.dependencies.reqwest]
+version = "0.13"
+
 [workspace.dependencies.smol_str]
 version = "=0.3.2" # Update after Rust >1.88
 
@@ -372,6 +375,9 @@ version = "2"
 opt-level = 3
 lto = "thin"
 incremental = true
+# uncomment the 2 lines below when building with the locktick feature or use the `release-locktick` profile
+# debug = "line-tables-only"
+# strip = "none"
 
 [profile.release-locktick]
 inherits = "release"
