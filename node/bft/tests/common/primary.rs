@@ -28,7 +28,7 @@ use snarkos_node_bft::{
     helpers::{PrimarySender, Storage, init_primary_channels},
 };
 use snarkos_node_bft_storage_service::BFTMemoryService;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{ConnectionMode, PeerPoolHandling};
 use snarkos_node_sync::BlockSync;
 use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
@@ -171,7 +171,7 @@ impl TestNetwork {
             )
             .unwrap();
             // Initialize the block synchronization logic.
-            let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+            let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
             let (primary, bft) = if config.bft {
                 let bft = BFT::<CurrentNetwork>::new(
                     account,

@@ -28,6 +28,7 @@ use snarkos_node_bft::{
 };
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
+use snarkos_node_network::ConnectionMode;
 use snarkos_node_sync::BlockSync;
 use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
@@ -149,7 +150,7 @@ pub async fn start_bft(
     // Initialize the consensus receiver handler.
     consensus_handler(consensus_receiver);
     // Initialize the BFT instance.
-    let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+    let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
     let mut bft = BFT::<CurrentNetwork>::new(
         account,
         storage,
@@ -199,7 +200,7 @@ pub async fn start_primary(
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     let trusted_peers_only = false;
     // Initialize the primary instance.
-    let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+    let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
     let primary = Primary::<CurrentNetwork>::new(
         account,
         storage,

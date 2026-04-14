@@ -139,7 +139,8 @@ impl<R: Reading> ReadingInternal for R {
             framed.read_buffer_mut().reserve(Self::INITIAL_BUFFER_SIZE);
         }
 
-        let (inbound_message_sender, mut inbound_message_receiver) = mpsc::channel(self.message_queue_depth());
+        let (inbound_message_sender, mut inbound_message_receiver) =
+            mpsc::channel::<(R::Message, QueuedMessageGuard)>(self.message_queue_depth());
 
         // use a channel to know when the processing task is ready
         let (tx_processing, rx_processing) = oneshot::channel::<()>();
@@ -151,13 +152,12 @@ impl<R: Reading> ReadingInternal for R {
             trace!(parent: node.span(), "spawned a task for processing messages from {addr}");
             tx_processing.send(()).unwrap(); // safe; the channel was just opened
 
-            while let Some(msg) = inbound_message_receiver.recv().await {
+            while let Some((msg, _guard)) = inbound_message_receiver.recv().await {
                 if let Err(e) = self_clone.process_message(addr, msg).await {
                     error!(parent: node.span(), "can't process a message from {addr}: {e}");
                     node.known_peers().register_failure(addr.ip());
                 }
-                #[cfg(feature = "metrics")]
-                metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
+                // _guard drops here, after process_message completes
             }
         }));
         let _ = rx_processing.await;
@@ -192,7 +192,7 @@ impl<R: Reading> ReadingInternal for R {
                 match read_result {
                     Some(Ok(msg)) => {
                         // send the message for further processing
-                        if let Err(e) = inbound_message_sender.try_send(msg) {
+                        if let Err(e) = inbound_message_sender.try_send((msg, QueuedMessageGuard::new())) {
                             node.stats().register_failure();
                             match e {
                                 mpsc::error::TrySendError::Full(_) => {
@@ -216,8 +216,6 @@ impl<R: Reading> ReadingInternal for R {
                             warn_about_dropped_messages(&node, addr, &mut dropped_count, &mut last_drop_log);
                             debug!(parent: node.span(), "the inbound queue for {addr} is no longer saturated");
                         }
-                        #[cfg(feature = "metrics")]
-                        metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
                     }
                     Some(Err(e)) => {
                         error!(parent: node.span(), "can't read from {addr}: {e}");
@@ -281,6 +279,27 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
         }
 
         Ok(ret)
+    }
+}
+
+/// Decrements the TCP_TASKS gauge on drop. Paired with each queued message so the gauge stays
+/// balanced whether the message is processed normally or discarded when the inbound channel is
+/// dropped (e.g. on connection abort). The caller must hold this guard until processing is
+/// complete; dropping it earlier will decrement the gauge prematurely.
+struct QueuedMessageGuard;
+
+impl QueuedMessageGuard {
+    fn new() -> Self {
+        #[cfg(feature = "metrics")]
+        metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
+        Self
+    }
+}
+
+impl Drop for QueuedMessageGuard {
+    fn drop(&mut self) {
+        #[cfg(feature = "metrics")]
+        metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
     }
 }
 
