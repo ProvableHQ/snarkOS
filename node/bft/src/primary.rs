@@ -143,7 +143,7 @@ pub struct Primary<N: Network> {
     /// Holds the most recent round and timestamp that the primary proposed a batch for.
     /// TODO(kaimast): avoiding using an async lock here, so this can be merged with the `proposed_batch`,
     /// to have a unified `primary_state` field.
-    latest_proposed_batch: Arc<TRwLock<Option<(u64, i64)>>>,
+    latest_proposal_timestamp: Arc<TRwLock<Option<(u64, i64)>>>,
 
     /// The recently-signed batch proposals.
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
@@ -205,7 +205,7 @@ impl<N: Network> Primary<N> {
             proposed_batch: Default::default(),
             #[cfg(feature = "metrics")]
             batch_propose_start: Default::default(),
-            latest_proposed_batch: Default::default(),
+            latest_proposal_timestamp: Default::default(),
             signed_proposals: Default::default(),
             handles: Default::default(),
             proposal_task: Default::default(),
@@ -224,7 +224,7 @@ impl<N: Network> Primary<N> {
                     let (latest_certificate_round, proposed_batch, signed_proposals, pending_certificates) =
                         proposal_cache.into();
 
-                    *self.latest_proposed_batch.write().await = Some((latest_certificate_round, now()));
+                    *self.latest_proposal_timestamp.write().await = Some((latest_certificate_round, now()));
                     *self.proposed_batch.write() = proposed_batch;
                     *self.signed_proposals.write() = signed_proposals;
 
@@ -427,7 +427,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         //
         // Note, in the current design, this function is only invoked from the batch proposal task, and it is technically
         // not possible for there to be concurrent invocations of the function, but we keep this lock for now.
-        let mut lock_guard = self.latest_proposed_batch.write().await;
+        let mut lock_guard = self.latest_proposal_timestamp.write().await;
 
         // Check if the proposed batch has expired, and clear it if it has expired.
         if let Err(err) = self
@@ -1250,7 +1250,7 @@ impl<N: Network> Primary<N> {
         // Determine if we are currently proposing a round that is relevant.
         // Note: This is important, because while our peers have advanced,
         // they may not be proposing yet, and thus still able to sign our proposed batch.
-        let should_advance = match &*self.latest_proposed_batch.read().await {
+        let should_advance = match &*self.latest_proposal_timestamp.read().await {
             // We advance if the proposal round is less than the current round that was just certified.
             Some((latest_round, _)) => *latest_round < certificate_round,
             // If there's no proposal, we consider advancing.
@@ -2066,7 +2066,7 @@ impl<N: Network> Primary<N> {
             let latest_round = proposal
                 .as_ref()
                 .map(Proposal::round)
-                .unwrap_or(self.latest_proposed_batch.read().await.map(|(round, _)| round).unwrap_or(0));
+                .unwrap_or(self.latest_proposal_timestamp.read().await.map(|(round, _)| round).unwrap_or(0));
             let pending_certificates = self.storage.get_pending_certificates();
             ProposalCache::new(latest_round, proposal, signed_proposals, pending_certificates)
         };
@@ -2861,9 +2861,13 @@ mod tests {
         primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
 
         // Set the proposal lock to a round ahead of the storage.
-        let (old_proposal_round, old_proposal_timestamp) =
-            primary.latest_proposed_batch.read().await.map(|(round, timestamp)| (round, timestamp)).unwrap_or((0, 0));
-        *primary.latest_proposed_batch.write().await =
+        let (old_proposal_round, old_proposal_timestamp) = primary
+            .latest_proposal_timestamp
+            .read()
+            .await
+            .map(|(round, timestamp)| (round, timestamp))
+            .unwrap_or((0, 0));
+        *primary.latest_proposal_timestamp.write().await =
             Some((round + 1, old_proposal_timestamp + MIN_BATCH_DELAY.as_secs() as i64));
 
         // Propose a batch and enforce that it fails.
@@ -2871,7 +2875,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_none());
 
         // Set the proposal lock back to the old round.
-        *primary.latest_proposed_batch.write().await = Some((old_proposal_round, old_proposal_timestamp));
+        *primary.latest_proposal_timestamp.write().await = Some((old_proposal_round, old_proposal_timestamp));
 
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
