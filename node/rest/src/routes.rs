@@ -994,8 +994,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path((height, mapping)): Path<HistoricalMappingAtHeight>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
+        let latest_height = rest.ledger.latest_height();
         // Ensure the request height is not in the future.
-        if height > rest.ledger.latest_height() {
+        if height > latest_height {
             return Err(RestError::not_found(anyhow!("Could not load mapping '{mapping}' from block '{height}'")));
         }
 
@@ -1004,17 +1005,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Retrieve the current keys in the mapping, then resolve each key to the value at `height`.
         let historical_mapping =
             tokio::task::spawn_blocking(move || -> Result<IndexMap<_, _>, RestError> {
-                let current_mapping =
-                    rest.ledger.vm().finalize_store().get_mapping_confirmed(program_id, mapping_name).map_err(
-                        |err| RestError::not_found(err.context(format!("Could not load mapping '{mapping}'"))),
-                    )?;
+                let store = rest.ledger.vm().finalize_store();
+                let current_mapping = store
+                    .get_mapping_confirmed(program_id, mapping_name)
+                    .map_err(|err| RestError::not_found(err.context(format!("Could not load mapping '{mapping}'"))))?;
+                if height == latest_height {
+                    return Ok(current_mapping.into_iter().collect());
+                }
 
                 let mut historical_mapping = IndexMap::with_capacity(current_mapping.len());
                 for (key, _) in current_mapping {
-                    if let Some(value) = rest
-                        .ledger
-                        .vm()
-                        .finalize_store()
+                    if let Some(value) = store
                         .get_historical_mapping_value(program_id, mapping_name, key.clone(), height)
                         .map_err(|err| {
                             RestError::not_found(
