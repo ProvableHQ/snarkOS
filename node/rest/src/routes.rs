@@ -40,6 +40,21 @@ use version::VersionInfo;
 
 #[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
+#[cfg(feature = "history")]
+type HistoricalMappingAtHeight = (u32, String);
+
+#[cfg(feature = "history")]
+fn parse_historical_mapping<N: Network>(mapping: &str) -> Result<(ProgramID<N>, Identifier<N>), RestError> {
+    let (program_id, mapping_name) =
+        mapping.split_once('/').ok_or_else(|| RestError::bad_request(anyhow!("Invalid mapping '{mapping}'")))?;
+    let program_id = program_id
+        .parse::<ProgramID<N>>()
+        .map_err(|err| RestError::bad_request(err.context(format!("Invalid program ID in mapping '{mapping}'"))))?;
+    let mapping_name = mapping_name
+        .parse::<Identifier<N>>()
+        .map_err(|err| RestError::bad_request(err.context(format!("Invalid mapping name in mapping '{mapping}'"))))?;
+    Ok((program_id, mapping_name))
+}
 
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
@@ -973,6 +988,51 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
 
+    /// GET /{network}/block/{blockHeight}/history/{mapping}
+    #[cfg(feature = "history")]
+    pub(crate) async fn get_mapping_history(
+        State(rest): State<Self>,
+        Path((height, mapping)): Path<HistoricalMappingAtHeight>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Ensure the request height is not in the future.
+        if height > rest.ledger.latest_height() {
+            return Err(RestError::not_found(anyhow!("Could not load mapping '{mapping}' from block '{height}'")));
+        }
+
+        let (program_id, mapping_name) = parse_historical_mapping::<N>(&mapping)?;
+
+        // Retrieve the current keys in the mapping, then resolve each key to the value at `height`.
+        let historical_mapping =
+            tokio::task::spawn_blocking(move || -> Result<IndexMap<_, _>, RestError> {
+                let current_mapping =
+                    rest.ledger.vm().finalize_store().get_mapping_confirmed(program_id, mapping_name).map_err(
+                        |err| RestError::not_found(err.context(format!("Could not load mapping '{mapping}'"))),
+                    )?;
+
+                let mut historical_mapping = IndexMap::with_capacity(current_mapping.len());
+                for (key, _) in current_mapping {
+                    if let Some(value) = rest
+                        .ledger
+                        .vm()
+                        .finalize_store()
+                        .get_historical_mapping_value(program_id, mapping_name, key.clone(), height)
+                        .map_err(|err| {
+                            RestError::not_found(
+                                err.context(format!("Could not load mapping '{mapping}' from block '{height}'")),
+                            )
+                        })?
+                    {
+                        historical_mapping.insert(key, value.into_owned());
+                    }
+                }
+                Ok(historical_mapping)
+            })
+            .await
+            .map_err(|err| RestError::internal_server_error(anyhow!("Tokio error: {err}")))??;
+
+        Ok((StatusCode::OK, ErasedJson::pretty(historical_mapping)))
+    }
+
     /// GET /{network}/staking/rewards/{address}/{height}
     #[cfg(feature = "history-staking-rewards")]
     pub(crate) async fn get_staking_reward(
@@ -1022,5 +1082,25 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
             None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
+    }
+}
+
+#[cfg(all(test, feature = "history"))]
+mod history_tests {
+    use super::*;
+    use snarkvm::prelude::MainnetV0;
+
+    #[test]
+    fn parse_historical_mapping_accepts_program_and_mapping_name() {
+        let (program_id, mapping_name) =
+            parse_historical_mapping::<MainnetV0>("credits.aleo/bonded").expect("valid mapping");
+        assert_eq!(program_id.to_string(), "credits.aleo");
+        assert_eq!(mapping_name.to_string(), "bonded");
+    }
+
+    #[test]
+    fn parse_historical_mapping_rejects_invalid_format() {
+        let result = parse_historical_mapping::<MainnetV0>("credits.aleo");
+        assert!(result.is_err());
     }
 }
