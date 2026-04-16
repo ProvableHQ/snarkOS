@@ -365,9 +365,6 @@ impl<N: Network> Node<N> {
                 // Skip if we've already created a checkpoint during this run, and the
                 // number of blocks baked since then is lower than the configured threshold.
                 let current_height = ledger.vm().block_store().current_block_height();
-                if current_height <= startup_height {
-                    continue;
-                }
                 if last_checkpoint_height.is_some_and(|checkpoint_height| {
                     current_height.saturating_sub(checkpoint_height) < CHECKPOINT_BLOCK_FREQUENCY
                 }) {
