@@ -59,9 +59,8 @@ fn should_create_auto_checkpoint(
     current_height: u32,
 ) -> bool {
     current_height > startup_height
-        && !last_checkpoint_height.is_some_and(|checkpoint_height| {
-            current_height.saturating_sub(checkpoint_height) < CHECKPOINT_BLOCK_FREQUENCY
-        })
+        && last_checkpoint_height
+            .map_or(true, |checkpoint_height| current_height.saturating_sub(checkpoint_height) >= CHECKPOINT_BLOCK_FREQUENCY)
 }
 
 #[derive(Clone)]
