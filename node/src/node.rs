@@ -53,6 +53,17 @@ const CHECKPOINT_BLOCK_FREQUENCY: u32 = 1000;
 /// The maximum number of automatic database checkpoints kept at any time.
 const MAX_AUTO_CHECKPOINTS: usize = 5;
 
+fn should_create_auto_checkpoint(
+    last_checkpoint_height: Option<u32>,
+    startup_height: u32,
+    current_height: u32,
+) -> bool {
+    current_height > startup_height
+        && !last_checkpoint_height.is_some_and(|checkpoint_height| {
+            current_height.saturating_sub(checkpoint_height) < CHECKPOINT_BLOCK_FREQUENCY
+        })
+}
+
 #[derive(Clone)]
 pub enum Node<N: Network> {
     /// A validator is a full node, capable of validating blocks.
@@ -347,6 +358,7 @@ impl<N: Network> Node<N> {
             let mut existing_checkpoints = Vec::with_capacity(MAX_AUTO_CHECKPOINTS + 1);
             let mut block_tree_path = aleo_ledger_dir(N::ID, ledger.vm().block_store().storage_mode());
             block_tree_path.push("block_tree");
+            let startup_height = ledger.vm().block_store().current_block_height();
 
             loop {
                 // A small delay that's smaller than block time. There are technically situations when
@@ -357,9 +369,7 @@ impl<N: Network> Node<N> {
                 // Skip if we've already created a checkpoint during this run, and the
                 // number of blocks baked since then is lower than the configured threshold.
                 let current_height = ledger.vm().block_store().current_block_height();
-                if last_checkpoint_height.is_some_and(|checkpoint_height| {
-                    current_height.saturating_sub(checkpoint_height) < CHECKPOINT_BLOCK_FREQUENCY
-                }) {
+                if !should_create_auto_checkpoint(last_checkpoint_height, startup_height, current_height) {
                     continue;
                 }
 
@@ -442,5 +452,31 @@ impl<N: Network> Node<N> {
         });
 
         Ok(Some(handle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CHECKPOINT_BLOCK_FREQUENCY, should_create_auto_checkpoint};
+
+    #[test]
+    fn skips_checkpoint_at_startup_height() {
+        assert!(!should_create_auto_checkpoint(None, 100, 100));
+    }
+
+    #[test]
+    fn creates_first_checkpoint_after_ledger_advances() {
+        assert!(should_create_auto_checkpoint(None, 100, 101));
+    }
+
+    #[test]
+    fn enforces_checkpoint_frequency_after_first_checkpoint() {
+        let last_checkpoint_height = 200;
+        assert!(!should_create_auto_checkpoint(
+            Some(last_checkpoint_height),
+            100,
+            200 + CHECKPOINT_BLOCK_FREQUENCY - 1
+        ));
+        assert!(should_create_auto_checkpoint(Some(last_checkpoint_height), 100, 200 + CHECKPOINT_BLOCK_FREQUENCY));
     }
 }
