@@ -789,6 +789,7 @@ workflows:
             branches:
               only:
                 - mainnet-release-v460
+                - fix/mainnet/sync-invalid-subdag
                 - canary
                 - testnet
                 - mainnet
@@ -799,6 +800,7 @@ workflows:
             branches:
               only:
                 - mainnet-release-v460
+                - fix/mainnet/sync-invalid-subdag
                 - canary
                 - testnet
                 - mainnet
@@ -811,6 +813,7 @@ workflows:
             branches:
               only:
                 - mainnet-release-v460
+                - fix/mainnet/sync-invalid-subdag
                 - canary
                 - testnet
                 - mainnet
