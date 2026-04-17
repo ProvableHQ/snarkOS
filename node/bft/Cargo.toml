@@ -100,7 +100,7 @@ workspace = true
 workspace = true
 
 [dependencies.sha2]
-version = "0.10"
+version = "0.11"
 default-features = false
 
 [dependencies.smol_str]
