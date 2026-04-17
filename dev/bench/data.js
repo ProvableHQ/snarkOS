@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776197866140,
+  "lastUpdate": 1776452311795,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -11982,6 +11982,72 @@ window.BENCHMARK_DATA = {
             "value": 1.49,
             "unit": "blocks/s",
             "extra": "total_wait=167s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "kai@provable.com",
+            "name": "Kai Mast",
+            "username": "kaimast"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e798f34564d78ac5332635447aa46ff936d40074",
+          "message": "Merge pull request #4216 from ProvableHQ/copilot/fix-snapshot-creation-issue\n\nSeed auto-checkpoint baseline from existing startup checkpoint directory",
+          "timestamp": "2026-04-17T11:23:21-07:00",
+          "tree_id": "5ee0e2a6159495f667a5dea5f4a0b59986c4c3c0",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/e798f34564d78ac5332635447aa46ff936d40074"
+        },
+        "date": 1776452310956,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.319160965394202,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=90.23979592323303, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7914.055884204282,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.108596801757812, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1024.9674757087303,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.7805125713348389, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.78,
+            "unit": "blocks/s",
+            "extra": "total_wait=320s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.321612,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=309, mean_speed=0.436624, max_speed=2.983333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=437s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=159s, target_height=250"
           }
         ]
       }
