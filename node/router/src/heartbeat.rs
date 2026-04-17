@@ -23,7 +23,7 @@ use crate::{
     messages::{DisconnectReason, Message, PeerRequest},
 };
 
-use snarkos_node_tcp::{ConnectError, P2P};
+use snarkos_node_tcp::ConnectError;
 
 use snarkvm::prelude::Network;
 

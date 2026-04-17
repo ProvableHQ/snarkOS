@@ -19,7 +19,8 @@ use crate::{
     Prover,
     Validator,
     network::{NodeType, Peer, PeerPoolHandling},
-    router::Outbound,
+    router::{Outbound, Router},
+    tcp::{P2P, Tcp},
     traits::NodeInterface,
 };
 
@@ -459,6 +460,26 @@ impl<N: Network> Node<N> {
         });
 
         Ok(Some(handle))
+    }
+
+    /// Return the low-level TCP layer.
+    pub fn tcp(&self) -> &Tcp {
+        match self {
+            Self::Validator(node) => node.router().tcp(),
+            Self::Prover(node) => node.router().tcp(),
+            Self::Client(node) => node.router().tcp(),
+            Self::BootstrapClient(node) => node.tcp(),
+        }
+    }
+
+    /// Return the node's router (or `None` for bootstrap clients).
+    pub fn router(&self) -> Option<&Router<N>> {
+        match self {
+            Self::Validator(node) => Some(node.router()),
+            Self::Prover(node) => Some(node.router()),
+            Self::Client(node) => Some(node.router()),
+            Self::BootstrapClient(_) => None,
+        }
     }
 }
 

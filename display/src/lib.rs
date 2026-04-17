@@ -39,15 +39,24 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Tabs as TabsTui},
+    widgets::{Block, Borders, Paragraph, Tabs as TabsTui},
 };
 use std::{
+    collections::HashMap,
     io,
+    net::IpAddr,
     sync::Arc,
     thread,
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc::Receiver;
+
+#[derive(Clone, Debug)]
+pub struct PeerStats {
+    timestamp: Instant,
+    received_bytes: u64,
+    sent_bytes: u64,
+}
 
 pub struct Display<N: Network> {
     /// An instance of the node.
@@ -59,6 +68,12 @@ pub struct Display<N: Network> {
     tabs: Tabs,
     /// The logs tab.
     logs: Logs,
+    /// The metrics tab.
+    io_metrics: IoMetrics,
+    /// The sync metrics tab.
+    sync_metrics: SyncMetrics,
+    /// Previous peer statistics for calculating instantaneous speeds.
+    previous_peer_stats: HashMap<IpAddr, PeerStats>,
 }
 
 fn header_style() -> Style {
@@ -85,6 +100,9 @@ impl<N: Network> Display<N> {
             tick_rate: Duration::from_secs(1),
             tabs: Tabs::new(PAGES.to_vec()),
             logs: Logs::new(log_receiver),
+            io_metrics: IoMetrics::new(),
+            sync_metrics: SyncMetrics::new(),
+            previous_peer_stats: HashMap::new(),
         };
 
         // Render the display.
@@ -142,7 +160,7 @@ impl<N: Network> Display<N> {
         let chunks = Layout::default()
             .margin(1)
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)].as_ref())
             .split(f.area());
 
         /* Tabs */
@@ -176,11 +194,19 @@ impl<N: Network> Display<N> {
 
         /* Pages */
 
+        // Update sync metrics data regardless of which tab is selected
+        self.sync_metrics.update_data(&self.node);
+
         // Initialize the page.
         match self.tabs.index {
-            0 => Overview.draw(f, chunks[1], &self.node),
-            1 => self.logs.draw(f, chunks[1]),
+            0 => Overview.draw(f, chunks[1], &self.node, &mut self.previous_peer_stats),
+            1 => self.io_metrics.draw(f, chunks[1], &self.node),
+            2 => self.sync_metrics.draw(f, chunks[1], &self.node),
+            3 => self.logs.draw(f, chunks[1]),
             _ => unreachable!(),
         };
+
+        let help = Paragraph::new("Use ← → to switch tabs, ESC to quit").style(content_style());
+        f.render_widget(help, chunks[2]);
     }
 }
