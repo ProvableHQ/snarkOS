@@ -52,10 +52,7 @@ use std::{
 };
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::Mutex as TMutex;
-use tokio::{
-    sync::{Notify, oneshot},
-    task::JoinHandle,
-};
+use tokio::{sync::oneshot, task::JoinHandle};
 
 /// This callback trait allows listening to synchronization updates, such as discorvering new `BatchCertificate`s.
 /// This is currently used by BFT.
@@ -107,8 +104,6 @@ pub struct Sync<N: Network> {
     ///
     /// Whenever a new block is added to this map, BlockSync::set_sync_height needs to be called.
     pending_blocks: Arc<Mutex<VecDeque<PendingBlock<N>>>>,
-    /// Notified after sync progress when the node is synced; used by [`Self::wait_for_synced`].
-    synced_notify: Arc<Notify>,
 }
 
 impl<N: Network> Sync<N> {
@@ -137,7 +132,6 @@ impl<N: Network> Sync<N> {
             handles: Default::default(),
             response_lock: Default::default(),
             pending_blocks: Default::default(),
-            synced_notify: Default::default(),
         }
     }
 
@@ -509,11 +503,6 @@ impl<N: Network> Sync<N> {
                 false
             }
         };
-
-        // When we are synced, wake waiters in [`Self::wait_for_synced`].
-        if self.is_synced() {
-            self.synced_notify.notify_waiters();
-        }
 
         if let Some(ping) = &ping
             && new_blocks

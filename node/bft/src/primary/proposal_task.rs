@@ -24,7 +24,7 @@ use tokio::{
     sync::watch,
     time::{Instant, sleep, sleep_until},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Abstracts over batch-proposal operations, allowing the proposal loop to be tested without a
 /// real primary.
@@ -94,9 +94,11 @@ impl<N: Network> ProposalTask<N> {
         let mut ready_rx = self.inner.ready.subscribe();
 
         loop {
+            // Note: This is technically the timestamp of when we last proposed a batch.
             let round_start = Instant::now();
+
             let round = primary.current_round();
-            let mut leader_timeout_reached = false;
+            let mut max_batch_delay_reached = false;
             let mut attempt = 1;
 
             // The inner loop represents multiple attempts to propose a batch within the same round.
@@ -119,10 +121,10 @@ impl<N: Network> ProposalTask<N> {
                 // does not get stuck on this select! call.
                 tokio::select! {
                     _ = sleep_until(round_start + MAX_BATCH_DELAY) => {
-                        if !leader_timeout_reached {
-                            info!("Leader for round {round} timed out");
+                        if !max_batch_delay_reached {
+                            max_batch_delay_reached = true;
+                            debug!("Did not receive leader certificate within MAX_BATCH_DELAY");
                         }
-                        leader_timeout_reached = true;
                     },
                     _ = wait_until_ready(&mut ready_rx) => {},
                     _ = sleep(CREATE_BATCH_INTERVAL) => {
@@ -388,6 +390,42 @@ mod tests {
         assert!(propose_count.load(Ordering::SeqCst) >= 1, "propose_batch should have been called at least once");
     }
 
+    /// After the leader-certificate timer fires (MAX_BATCH_DELAY elapses without an explicit
+    /// `signal()`), the task should still retry `propose_batch` when it returns `Ok(false)` and
+    /// eventually succeed once it returns `Ok(true)`.
+    ///
+    /// This models the real primary: when a round is already certified but the round has not yet
+    /// advanced (e.g. the elected leader was a freshly-reset minority validator), `propose_batch`
+    /// returns `Ok(false)` until `try_advance_to_next_round` can make progress.
+    #[test_log::test(tokio::test)]
+    async fn test_proposal_task_retries_after_leader_timeout() {
+        const RETRIES: u32 = 2;
+
+        // Start NOT ready — no external signal will be sent. The task must wait for
+        // MAX_BATCH_DELAY to fire, then retry until propose_batch succeeds.
+        let (ready, _) = watch::channel(false);
+        let task = ProposalTask::<MainnetV0> { inner: Arc::new(ProposalTaskInner { ready }), _phantom: PhantomData };
+
+        let proposed_notify = Arc::new(Notify::new());
+        let propose_count = Arc::new(AtomicU32::new(0));
+        let proposer = RetryProposer {
+            retries_before_success: RETRIES,
+            propose_count: propose_count.clone(),
+            proposed_notify: proposed_notify.clone(),
+        };
+
+        // signal() is intentionally never called — the leader timeout arm must trigger.
+        tokio::spawn(task.run(proposer));
+
+        // Allow enough time for MAX_BATCH_DELAY (2.5 s) plus RETRIES × CREATE_BATCH_INTERVAL (250 ms each).
+        // Use 10 s to give generous headroom on slow CI machines.
+        tokio::time::timeout(std::time::Duration::from_secs(10), proposed_notify.notified())
+            .await
+            .expect("propose_batch did not succeed within 10 seconds after leader timeout");
+
+        assert_eq!(propose_count.load(Ordering::SeqCst), RETRIES + 1, "expected {} total attempts", RETRIES + 1);
+    }
+
     /// When `propose_batch` returns `Ok(false)`, the task retries within the same round until
     /// it succeeds.
     #[tokio::test]
@@ -407,7 +445,7 @@ mod tests {
 
         tokio::spawn(task.run(proposer));
 
-        // The task internally waits MAX_BATCH_DELAY before the first attempt; allow up to 10s.
+        // The task internally waits MIN_BATCH_DELAY before the first attempt; allow up to 10s.
         tokio::time::timeout(std::time::Duration::from_secs(10), proposed_notify.notified())
             .await
             .expect("propose_batch did not succeed within 10 seconds");
