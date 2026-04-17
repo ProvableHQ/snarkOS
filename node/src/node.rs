@@ -44,7 +44,7 @@ use anyhow::{Result, bail};
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use std::{cmp, collections::HashMap, fs, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{cmp, collections::HashMap, fs, net::SocketAddr, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::Duration};
 use tokio::task;
 
 /// The number of blocks between automatic database checkpoints.
@@ -52,6 +52,12 @@ const CHECKPOINT_BLOCK_FREQUENCY: u32 = 1000;
 
 /// The maximum number of automatic database checkpoints kept at any time.
 const MAX_AUTO_CHECKPOINTS: usize = 5;
+
+fn existing_startup_checkpoint_height(auto_checkpoint_path: &Path, startup_height: u32) -> Option<u32> {
+    let mut checkpoint_path = auto_checkpoint_path.to_path_buf();
+    checkpoint_path.push(format!("checkpoint_{startup_height}"));
+    checkpoint_path.is_dir().then_some(startup_height)
+}
 
 #[derive(Clone)]
 pub enum Node<N: Network> {
@@ -343,7 +349,9 @@ impl<N: Network> Node<N> {
             info!("Starting the automatic ledger checkpoint routine...");
 
             // Prepare some object that will be useful throughout the routine.
-            let mut last_checkpoint_height = None;
+            let startup_height = ledger.vm().block_store().current_block_height();
+            let mut last_checkpoint_height =
+                existing_startup_checkpoint_height(auto_checkpoint_path.as_path(), startup_height);
             let mut existing_checkpoints = Vec::with_capacity(MAX_AUTO_CHECKPOINTS + 1);
             let mut block_tree_path = aleo_ledger_dir(N::ID, ledger.vm().block_store().storage_mode());
             block_tree_path.push("block_tree");
@@ -442,5 +450,38 @@ impl<N: Network> Node<N> {
         });
 
         Ok(Some(handle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::existing_startup_checkpoint_height;
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+    #[test]
+    fn seeds_last_checkpoint_height_when_startup_checkpoint_directory_exists() {
+        let startup_height = 42;
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base_path = std::env::temp_dir().join(format!("snarkos_checkpoint_seed_test_{unique}"));
+        let checkpoint_path = base_path.join(format!("checkpoint_{startup_height}"));
+        fs::create_dir_all(&checkpoint_path).unwrap();
+
+        let seeded_height = existing_startup_checkpoint_height(base_path.as_path(), startup_height);
+        assert_eq!(seeded_height, Some(startup_height));
+
+        fs::remove_dir_all(base_path).unwrap();
+    }
+
+    #[test]
+    fn does_not_seed_last_checkpoint_height_when_startup_checkpoint_directory_missing() {
+        let startup_height = 42;
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base_path = std::env::temp_dir().join(format!("snarkos_checkpoint_seed_test_{unique}"));
+        fs::create_dir_all(&base_path).unwrap();
+
+        let seeded_height = existing_startup_checkpoint_height(base_path.as_path(), startup_height);
+        assert_eq!(seeded_height, None);
+
+        fs::remove_dir_all(base_path).unwrap();
     }
 }
