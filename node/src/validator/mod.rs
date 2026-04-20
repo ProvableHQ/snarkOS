@@ -73,9 +73,6 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
-    /// The Slipstream plugin service (present when plugins are loaded).
-    #[cfg(feature = "slipstream-plugins")]
-    slipstream_service: Arc<Mutex<Option<snarkvm_slipstream_plugin_manager::slipstream_service::SlipstreamPluginService>>>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
@@ -107,19 +104,16 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         }
         .with_context(|| "Failed to initialize the ledger")?;
 
-        // Initialize the Slipstream plugin service (if any config files were provided).
+        // Initialize the Slipstream plugin manager (if any config files were provided).
         #[cfg(feature = "slipstream-plugins")]
-        let slipstream_service = if !slipstream_configs.is_empty() {
-            let service =
-                snarkvm_slipstream_plugin_manager::slipstream_service::SlipstreamPluginService::new(slipstream_configs)
-                    .context("Failed to initialize Slipstream plugin service")?;
-            ledger.vm().finalize_store().set_slipstream_plugin_manager(service.plugin_manager());
+        if !slipstream_configs.is_empty() {
+            let manager =
+                snarkvm_slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(slipstream_configs)
+                    .context("Failed to initialize Slipstream plugin manager")?;
+            ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
             let num_plugins = slipstream_configs.len();
             tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
-            Some(service)
-        } else {
-            None
-        };
+        }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
@@ -167,8 +161,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync: sync.clone(),
             ping,
             handles: Default::default(),
-            #[cfg(feature = "slipstream-plugins")]
-            slipstream_service: Arc::new(Mutex::new(slipstream_service)),
         };
 
         // Perform sync with CDN (if enabled).
@@ -489,10 +481,10 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         // Shut down the node.
         trace!("Shutting down the node...");
 
-        // Shut down the Slipstream plugin service.
+        // Shut down the Slipstream plugin manager.
         #[cfg(feature = "slipstream-plugins")]
-        if let Some(service) = self.slipstream_service.lock().take() {
-            service.join();
+        if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
+            manager.unload();
         }
 
         // Abort the tasks.

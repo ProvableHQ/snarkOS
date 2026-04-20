@@ -1101,14 +1101,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         use snarkvm_slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
 
-        let manager = rest
-            .ledger
-            .vm()
-            .finalize_store()
-            .slipstream_plugin_manager()
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        let mgr_guard = mgr_arc.read();
+        let manager = mgr_guard
+            .as_ref()
             .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
         let plugins = manager
-            .read()
             .list_plugins()
             .map_err(|e: SlipstreamPluginManagerError| RestError::internal_server_error(anyhow!(e)))?;
         Ok((StatusCode::OK, ErasedJson::pretty(plugins)))
@@ -1127,14 +1125,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .and_then(|v| v.as_str())
             .ok_or_else(|| RestError::bad_request(anyhow!("Missing required field: config_file")))?
             .to_owned();
-        let manager = rest
-            .ledger
-            .vm()
-            .finalize_store()
-            .slipstream_plugin_manager()
-            .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        if mgr_arc.read().is_none() {
+            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
+        }
         let name = tokio::task::spawn_blocking(move || -> Result<String, SlipstreamPluginManagerError> {
-            manager.write().load_plugin(&config_file)
+            // Safety: manager is set exactly once and never cleared; verified Some above.
+            mgr_arc.write().as_mut().expect("plugin manager verified present").load_plugin(&config_file)
         })
         .await
         .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
@@ -1155,14 +1152,13 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         use snarkvm_slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
 
-        let manager = rest
-            .ledger
-            .vm()
-            .finalize_store()
-            .slipstream_plugin_manager()
-            .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        if mgr_arc.read().is_none() {
+            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
+        }
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            manager.write().unload_plugin(&name).map_err(|e: SlipstreamPluginManagerError| match e {
+            // Safety: manager is set exactly once and never cleared; verified Some above.
+            mgr_arc.write().as_mut().expect("plugin manager verified present").unload_plugin(&name).map_err(|e: SlipstreamPluginManagerError| match e {
                 SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
                 other => anyhow!("{other}"),
             })
