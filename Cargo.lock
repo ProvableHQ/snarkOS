@@ -4576,7 +4576,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos"
-version = "4.6.1"
+version = "4.6.2"
 dependencies = [
  "built",
  "clap",
