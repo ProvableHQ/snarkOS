@@ -88,96 +88,154 @@ impl<N: Network> ProposalTask<N> {
 
     /// Runs the batch proposal loop. This is intended to be spawned as a long-running task.
     ///
-    /// Each outer loop iteration covers one proposed batch.  The inner loop retries within the
-    /// same round until the round advances or a batch is successfully certified.
+    /// Each iteration covers one full round (wait → propose → wait for signatures).
+    /// The three stages are implemented as separate methods; see their doc-comments for details.
     pub(super) async fn run<P: BatchPropose + 'static>(self, primary: P) {
         let mut ready_rx = self.inner.ready.subscribe();
 
         loop {
-            // Note: This is technically the timestamp of when we last proposed a batch.
+            let round = primary.current_round();
+            // TODO(kaimast): the round_start time should be based on the timestamp of the
+            // previous batch, not the current wall-clock time.
             let round_start = Instant::now();
 
-            let round = primary.current_round();
-            let mut max_batch_delay_reached = false;
-            let mut attempt = 1;
+            if !Self::wait_until_proposal_ready(&primary, &mut ready_rx, round, round_start).await {
+                continue; // round changed; restart
+            }
 
-            // The inner loop represents multiple attempts to propose a batch within the same round.
-            // It exits when the round advances or a batch is successfully proposed.
-            while primary.current_round() == round {
-                // A node cannot propose while it is syncing. So, block here first.
-                if let Some(fut) = primary.wait_for_synced_if_syncing() {
-                    fut.await;
-                    // Restart the loop, as the current round may have changed.
-                    continue;
+            if !Self::propose(&primary, round).await {
+                continue; // round changed; restart
+            }
+
+            // Reset readiness so the next round waits for an explicit signal.
+            self.inner.ready.send_replace(false);
+
+            Self::wait_for_signatures(&primary, &mut ready_rx, round).await;
+        }
+    }
+
+    /// Stage 1: Wait until conditions are met to propose a batch.
+    ///
+    /// Blocks until sync is complete, MIN_BATCH_DELAY has elapsed since `round_start`, and either
+    /// `signal()` fires (leader cert arrived) or MAX_BATCH_DELAY expires without one.
+    ///
+    /// Returns `true` if ready to propose, `false` if the round changed (caller should restart).
+    async fn wait_until_proposal_ready<P: BatchPropose>(
+        primary: &P,
+        ready_rx: &mut watch::Receiver<bool>,
+        round: u64,
+        round_start: Instant,
+    ) -> bool {
+        loop {
+            if primary.current_round() != round {
+                return false;
+            }
+
+            // A node cannot propose while it is syncing.
+            if let Some(fut) = primary.wait_for_synced_if_syncing() {
+                fut.await;
+                // Re-check round after sync completes.
+                continue;
+            }
+
+            // Enforce the minimum inter-proposal delay.
+            // This is a no-op once the deadline has already passed.
+            sleep_until(round_start + MIN_BATCH_DELAY).await;
+
+            // Wait for a readiness signal, the MAX_BATCH_DELAY deadline, or a short heartbeat
+            // that lets the round-change check at the top of the loop fire regularly.
+            tokio::select! {
+                _ = sleep_until(round_start + MAX_BATCH_DELAY) => {
+                    debug!("Did not receive leader certificate within MAX_BATCH_DELAY");
+                    return true;
+                },
+                _ = Self::wait_until_ready(ready_rx) => {
+                    return true;
+                },
+                _ = sleep(CREATE_BATCH_INTERVAL) => {
+                    debug!("Skipping batch proposal for round {round} {}", "(not ready yet)".dimmed());
                 }
+            };
+        }
+    }
 
-                // If the minimum batch delay has not been reached yet, wait for it first,
-                // as we cannot propose without it having elapsed in any case.
-                // TODO(kaimast): the sleep time should be based on the timestamp of the previous batch
-                sleep_until(round_start + MIN_BATCH_DELAY).await;
+    /// Stage 2: Propose a batch.
+    ///
+    /// Calls `propose_batch()` with CREATE_BATCH_INTERVAL retries until it returns `Ok(true)`
+    /// (batch submitted to the network).
+    ///
+    /// Returns `true` if the batch was submitted, `false` if the round changed (caller should restart).
+    async fn propose<P: BatchPropose>(primary: &P, round: u64) -> bool {
+        let mut attempt = 1u32;
+        loop {
+            if primary.current_round() != round {
+                return false;
+            }
 
-                // Wait for either the leader to time-out or for the proposal to be ready.
-                // Additionally, we add a smaller timeout here out of caution, to ensure the node
-                // does not get stuck on this select! call.
-                tokio::select! {
-                    _ = sleep_until(round_start + MAX_BATCH_DELAY) => {
-                        if !max_batch_delay_reached {
-                            max_batch_delay_reached = true;
-                            debug!("Did not receive leader certificate within MAX_BATCH_DELAY");
-                        }
-                    },
-                    _ = wait_until_ready(&mut ready_rx) => {},
-                    _ = sleep(CREATE_BATCH_INTERVAL) => {
-                        // Retry if the timeout triggered (but do not count it as a proper attempt).
-                        debug!("Skipping batch proposal for round {round} {}", "(not ready yet)".dimmed());
-                        continue;
-                    }
-                };
+            if attempt > 1 {
+                sleep(CREATE_BATCH_INTERVAL).await;
+                debug!("Retrying batch proposal for round {round} (attempt #{attempt})");
+            }
 
-                if attempt > 1 {
-                    // Sleep to avoid busy waiting, if all conditions were met
-                    // and we still need to retry.
-                    sleep(CREATE_BATCH_INTERVAL).await;
-
-                    // Print a log message to see how often these retries happen (or if ever).
-                    debug!("Retrying batch proposal for round {round} (attempt #{attempt})");
+            // Note: Do NOT spawn a task around this function call.  Proposing a batch is a
+            // critical path, and only one batch needs to be proposed at a time.
+            match primary.propose_batch().await {
+                Ok(true) => return true, // batch submitted; proceed to Stage 3
+                Ok(false) => {}          // not ready yet; retry
+                Err(err) => {
+                    warn!("{}", flatten_error(err.context("Cannot propose a batch")));
                 }
+            }
 
-                // If there is no proposed batch, attempt to propose a batch.
-                // Note: Do NOT spawn a task around this function call. Proposing a batch is a
-                // critical path, and only one batch needs to be proposed at a time.
-                match primary.propose_batch().await {
-                    Ok(true) => {
-                        // Reset readiness so the next round waits for an explicit signal.
-                        self.inner.ready.send_replace(false);
-                        break;
-                    }
-                    Ok(false) => (), // retry
-                    Err(err) => {
-                        // Log warning and retry
-                        warn!("{}", flatten_error(err.context("Cannot propose a batch")));
-                    }
+            attempt += 1;
+        }
+    }
+
+    /// Stage 3: Wait for the proposed batch to collect enough signatures.
+    ///
+    /// Periodically rebroadcasts the batch to non-signers (via `propose_batch`) at most once per
+    /// MAX_BATCH_DELAY until the round advances.  Returns when the round changes.
+    async fn wait_for_signatures<P: BatchPropose>(primary: &P, ready_rx: &mut watch::Receiver<bool>, round: u64) {
+        loop {
+            if primary.current_round() != round {
+                return;
+            }
+
+            // Wait for the rebroadcast interval or an explicit round-advance signal,
+            // whichever comes first.
+            tokio::select! {
+                _ = Self::wait_until_ready(ready_rx) => return, // round advanced
+                _ = sleep(MAX_BATCH_DELAY) => {}
+            }
+
+            if primary.current_round() != round {
+                return;
+            }
+
+            // Rebroadcast to non-signers (`propose_batch` handles this internally).
+            match primary.propose_batch().await {
+                Ok(_) => {}
+                Err(err) => {
+                    warn!("{}", flatten_error(err.context("Cannot rebroadcast a batch")));
                 }
-
-                attempt += 1;
             }
         }
     }
-}
 
-/// Waits until the readiness watch channel holds `true`. Returns immediately if it already does.
-///
-/// Spurious wakeups (e.g. from a reset to `false`) are handled by re-checking the value in a loop.
-async fn wait_until_ready(receiver: &mut watch::Receiver<bool>) {
-    loop {
-        // Fetch the `is_ready` value and return if it is true.
-        if *receiver.borrow_and_update() {
-            return;
-        }
+    /// Waits until the readiness watch channel holds `true`. Returns immediately if it already does.
+    ///
+    /// Spurious wakeups (e.g. from a reset to `false`) are handled by re-checking the value in a loop.
+    async fn wait_until_ready(receiver: &mut watch::Receiver<bool>) {
+        loop {
+            // Fetch the `is_ready` value and return if it is true.
+            if *receiver.borrow_and_update() {
+                return;
+            }
 
-        // Block until the `is_value` changed, or the channel is closed.
-        if receiver.changed().await.is_err() {
-            return;
+            // Block until the `is_value` changed, or the channel is closed.
+            if receiver.changed().await.is_err() {
+                return;
+            }
         }
     }
 }
@@ -423,7 +481,8 @@ mod tests {
             .await
             .expect("propose_batch did not succeed within 10 seconds after leader timeout");
 
-        assert_eq!(propose_count.load(Ordering::SeqCst), RETRIES + 1, "expected {} total attempts", RETRIES + 1);
+        // Stage 3 may make additional rebroadcast calls after success, so use >.
+        assert!(propose_count.load(Ordering::SeqCst) > RETRIES, "expected at least {} total attempts", RETRIES + 1);
     }
 
     /// When `propose_batch` returns `Ok(false)`, the task retries within the same round until
@@ -450,6 +509,7 @@ mod tests {
             .await
             .expect("propose_batch did not succeed within 10 seconds");
 
-        assert_eq!(propose_count.load(Ordering::SeqCst), RETRIES + 1, "expected {} total attempts", RETRIES + 1);
+        // Stage 3 may make additional rebroadcast calls after success, so use >.
+        assert!(propose_count.load(Ordering::SeqCst) > RETRIES, "expected at least {} total attempts", RETRIES + 1);
     }
 }

@@ -10,38 +10,44 @@ The `snarkos-node-bft` crate provides a node implementation for a BFT-based memo
 
 The primary is the coordinator, responsible for advancing rounds and broadcasting the anchor.
 
-#### Triggering Round Advancement
+#### Round Advancement
 
-Each round runs until one of two conditions is met:
-1. The coinbase target has been reached, or
-2. The round has reached its timeout (currently set to 10 seconds)
+A round advances once a quorum (`n - f`) of validators have submitted certificates for that round
+and the following round-type-specific conditions are met:
 
-#### Advancing Rounds
+- **Even rounds**: the elected leader's certificate is present among the quorum, confirming the
+  leader was reachable. If the leader's certificate is absent, the node waits up to
+  `MAX_LEADER_CERTIFICATE_DELAY` before advancing without it.
+- **Odd rounds**: at least `f + 1` certificates from the current round reference the previous
+  even round's leader certificate (availability threshold), or `n - f` do not (non-leader
+  quorum). If neither threshold is reached, the node again falls back to the timeout.
 
-As described in the paper [Bullshark: The Partially Synchronous Version](https://arxiv.org/abs/2209.05633),
-the BFT generally advances rounds when `n − f` vertices are delivered, however:
-```
-The problem in advancing rounds whenever n − f vertices are delivered is that parties
-might not vote for the anchor even if the party that broadcast it is just slightly slower
-than the fastest n − f parties. To deal with this, the BFT integrates timeouts into
-the DAG construction. If the first n − f vertices a party p gets in an even-numbered round r 
-do not include the anchor of round r, then p sets a timer and waits for the anchor
-until the timer expires. Similarly, in an odd-numbered round, parties wait for either
-f + 1 vertices that vote for the anchor, or 2f + 1 vertices that do not, or a timeout.
-```
-Note that in this quote `2f + 1` should really be `n - f`.
+In both cases the timeout is `MAX_LEADER_CERTIFICATE_DELAY` (currently 5 seconds), reset at the
+start of each round. This follows the [Bullshark](https://arxiv.org/abs/2209.05633) protocol.
 
 #### Batch Proposal
 
-Batch proposals are driven by a dedicated **batch proposal task** that runs in a loop and is the only place that calls `propose_batch()`. This keeps proposal on a single execution path and avoids concurrent proposal attempts.
+Batch proposals are driven by a dedicated **`ProposalTask`** that runs in a loop and is the only place that calls `Primary::propose_batch()`.
+This keeps proposal on a single execution path and avoids concurrent proposal attempts. Each loop iteration covers one full round and proceeds through three stages:
 
-Each iteration of the inner loop waits for the first of these to fire before calling `propose_batch()`:
+**Stage 1 — Wait until ready to propose**
 
-1. **Ready notification** (`is_ready_notify`) — When the primary advances to a new round (e.g. after a certificate is committed, or in the Narwhal case when storage increments the round), it signals readiness via `is_ready_notify`. The task wakes up and, if the node is synced, calls `propose_batch()`.
-2. **Delay timeout** — If not sufficient time has elapsed, the task sets a timer for `MAX_BATCH_DELAY − elapsed`.
-3. **Sync completion** If the node is currently syncing, it waits for the state to change to `Synced`. This lets the task wake up as soon as sync finishes without polling.
+The task blocks until all of the following conditions are satisfied:
+1. The node is synced. If it is currently syncing, the task waits via `wait_for_synced_if_syncing()` before continuing.
+2. `MIN_BATCH_DELAY` has elapsed since the start of the round, enforcing a minimum inter-proposal interval.
+3. One of two events fires:
+   - **Ready signal** — `ProposalTask::signal()` is called from `try_increment_to_the_next_round()` when the primary successfully advances to a new round (e.g. after a leader certificate is committed). This is delivered via a `watch` channel.
+   - **`MAX_BATCH_DELAY` timeout** — If no signal arrives within `MAX_BATCH_DELAY` of the round start, the task proceeds anyway. This handles the case where the elected leader's certificate never arrives.
 
-The primary tracks the latest proposed **(round, timestamp)** in `latest_proposed_batch`. This state is used to: avoid proposing the same round twice; rate-limit the primary's own proposals (via a dedicated check against the previous proposal timestamp); and decide whether to advance when a certificate is received. Peer proposal timestamps are validated separately so that the primary does not accept batches proposed too soon after a peer's previous proposal.
+A short `CREATE_BATCH_INTERVAL` heartbeat keeps the round-change check alive while waiting.
+
+**Stage 2 — Propose**
+
+The task calls `propose_batch()` in a loop until it returns `Ok(true)` (batch submitted). On `Ok(false)` or a transient error it retries every `CREATE_BATCH_INTERVAL`. If the round advances during retries, the task restarts from Stage 1.
+
+**Stage 3 — Wait for signatures**
+
+Once the batch is broadcast, the task periodically calls `propose_batch()` every `MAX_BATCH_DELAY` to rebroadcast to any validators that have not yet signed. It exits this stage as soon as the round advances (detected either via the ready signal or by polling `current_round()`).
 
 ### Ledger Advancement
 
