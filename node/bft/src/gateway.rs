@@ -27,13 +27,10 @@ use crate::{
 use smol_str::SmolStr;
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
-    BlockRequest,
-    BlockResponse,
     CertificateRequest,
     CertificateResponse,
     ChallengeRequest,
     ChallengeResponse,
-    DataBlocks,
     Event,
     EventTrait,
     TransmissionRequest,
@@ -43,7 +40,10 @@ use snarkos_node_bft_events::{
 };
 use snarkos_node_bft_ledger_service::LedgerService;
 use snarkos_node_network::{
+    BlockRequest,
+    BlockResponse,
     ConnectionMode,
+    DataBlocks,
     NodeType,
     Peer,
     PeerPoolHandling,

@@ -18,11 +18,13 @@ use super::*;
 use snarkvm::{
     console::network::ConsensusVersion,
     ledger::narwhal::Data,
-    prelude::{FromBytes, ToBytes},
+    prelude::{Block, FromBytes, IoResult, ToBytes},
     utilities::io_error,
 };
 
-use std::borrow::Cow;
+use anyhow::{bail, ensure};
+use serde::Serialize;
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockResponse<N: Network> {
@@ -33,20 +35,6 @@ pub struct BlockResponse<N: Network> {
     /// The consensus version at the height of the *last* block in this response.
     /// This enables detecting if the current node, or the peer, missed an upgrade. Its value is `None` for messages with version < 2.
     pub latest_consensus_version: Option<ConsensusVersion>,
-}
-
-impl<N: Network> EventTrait for BlockResponse<N> {
-    /// Returns the event name.
-    #[inline]
-    fn name(&self) -> Cow<'static, str> {
-        let start = self.request.start_height;
-        let end = self.request.end_height;
-        match start + 1 == end {
-            true => format!("BlockResponse {start}"),
-            false => format!("BlockResponse {start}..{end}"),
-        }
-        .into()
-    }
 }
 
 impl<N: Network> BlockResponse<N> {
@@ -119,7 +107,7 @@ impl<N: Network> DataBlocks<N> {
         peer_ip: SocketAddr,
         start_height: u32,
         end_height: u32,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         // Ensure the blocks are not empty.
         ensure!(!self.0.is_empty(), "Peer '{peer_ip}' sent an empty block response ({start_height}..{end_height})");
         // Check that the blocks are sequentially ordered.
@@ -155,7 +143,7 @@ impl<N: Network> ToBytes for DataBlocks<N> {
         let num_blocks = self.0.len() as u8;
         // Ensure that the number of blocks is within the allowed range.
         if num_blocks > Self::MAXIMUM_NUMBER_OF_BLOCKS {
-            return Err(error("Block response exceeds maximum number of blocks"));
+            return Err(io_error("Block response exceeds maximum number of blocks"));
         }
         // Write the number of blocks.
         num_blocks.write_le(&mut writer)?;
@@ -172,7 +160,7 @@ impl<N: Network> FromBytes for DataBlocks<N> {
         let num_blocks = u8::read_le(&mut reader)?;
         // Ensure that the number of blocks is within the allowed range.
         if num_blocks > Self::MAXIMUM_NUMBER_OF_BLOCKS {
-            return Err(error("Block response exceeds maximum number of blocks"));
+            return Err(io_error("Block response exceeds maximum number of blocks"));
         }
         // Read the blocks.
         let blocks = (0..num_blocks).map(|_| Block::read_le(&mut reader)).collect::<Result<Vec<_>, _>>()?;

@@ -13,9 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::*;
-
-use snarkvm::utilities::io_error;
+use snarkvm::{
+    prelude::{FromBytes, IoResult, ToBytes},
+    utilities::io_error,
+};
+use std::io::{Read, Write};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BlockRequest {
@@ -35,20 +37,6 @@ impl BlockRequest {
         } else {
             Ok(Self { start_height, end_height })
         }
-    }
-}
-
-impl EventTrait for BlockRequest {
-    /// Returns the event name.
-    #[inline]
-    fn name(&self) -> Cow<'static, str> {
-        let start = self.start_height;
-        let end = self.end_height;
-        match start + 1 == end {
-            true => format!("BlockRequest {start}"),
-            false => format!("BlockRequest {start}..{end}"),
-        }
-        .into()
     }
 }
 

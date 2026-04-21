@@ -15,6 +15,12 @@
 
 #![forbid(unsafe_code)]
 
+mod block_request;
+pub use block_request::BlockRequest;
+
+mod block_response;
+pub use block_response::{BlockResponse, DataBlocks};
+
 pub mod node_type;
 pub use node_type::*;
 

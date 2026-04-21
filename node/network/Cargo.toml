@@ -24,6 +24,9 @@ test = [ ]
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.bytes]
+workspace = true
+
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]
@@ -59,4 +62,10 @@ path = "."
 features = [ "test" ]
 
 [build-dependencies.built]
+workspace = true
+
+[dev-dependencies.proptest]
+workspace = true
+
+[dev-dependencies.test-strategy]
 workspace = true

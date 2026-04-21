@@ -24,12 +24,6 @@ pub use batch_propose::BatchPropose;
 mod batch_signature;
 pub use batch_signature::BatchSignature;
 
-mod block_request;
-pub use block_request::BlockRequest;
-
-mod block_response;
-pub use block_response::{BlockResponse, DataBlocks};
-
 mod certificate_request;
 pub use certificate_request::CertificateRequest;
 
@@ -69,17 +63,15 @@ pub use worker_ping::WorkerPing;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod committee_prop_tests;
 
+pub use snarkos_node_network::{BlockRequest, BlockResponse};
+
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::{
     console::prelude::{FromBytes, Network, Read, ToBytes, Write, error, io_error},
-    ledger::{
-        block::Block,
-        narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
-    },
+    ledger::narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
     prelude::{Address, Field, Signature},
 };
 
-use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 pub use std::io::{self, Result as IoResult};
@@ -88,6 +80,36 @@ use std::{borrow::Cow, net::SocketAddr};
 pub trait EventTrait: ToBytes + FromBytes {
     /// Returns the event name.
     fn name(&self) -> Cow<'static, str>;
+}
+
+// TODO: remove once the compatibility layer for Gateway-based sync is gone
+impl EventTrait for BlockRequest {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        let start = self.start_height;
+        let end = self.end_height;
+        match start + 1 == end {
+            true => format!("BlockRequest {start}"),
+            false => format!("BlockRequest {start}..{end}"),
+        }
+        .into()
+    }
+}
+
+// TODO: remove once the compatibility layer for Gateway-based sync is gone
+impl<N: Network> EventTrait for BlockResponse<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        let start = self.request.start_height;
+        let end = self.request.end_height;
+        match start + 1 == end {
+            true => format!("BlockResponse {start}"),
+            false => format!("BlockResponse {start}..{end}"),
+        }
+        .into()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
