@@ -973,14 +973,20 @@ impl Start {
     }
 }
 
+/// Checks whether a file can only be read/written by the owner. It also allows more restrictive permissions, where only the owner can read it.
 fn check_permissions(path: &PathBuf) -> Result<(), snarkvm::prelude::Error> {
     #[cfg(target_family = "unix")]
     {
         use std::os::unix::fs::PermissionsExt;
         ensure!(path.exists(), "The file '{path:?}' does not exist");
         crate::check_parent_permissions(path)?;
+
         let permissions = path.metadata()?.permissions().mode();
-        ensure!(permissions & 0o777 == 0o600, "The file {path:?} must be readable only by the owner (0600)");
+        ensure!(
+            matches!(permissions & 0o777, 0o400 | 0o600),
+            "The file {} must be readable and writable only by the owner (0600)",
+            path.display()
+        );
     }
     Ok(())
 }

@@ -44,7 +44,16 @@ use anyhow::{Result, bail};
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use std::{cmp, collections::HashMap, fs, net::SocketAddr, path::{Path, PathBuf}, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    collections::HashMap,
+    fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::task;
 
 /// The number of blocks between automatic database checkpoints.
@@ -456,7 +465,10 @@ impl<N: Network> Node<N> {
 #[cfg(test)]
 mod tests {
     use super::existing_startup_checkpoint_height;
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn seeds_last_checkpoint_height_when_startup_checkpoint_directory_exists() {
