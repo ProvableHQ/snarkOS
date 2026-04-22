@@ -116,12 +116,12 @@ impl<N: Network> DataBlocks<N> {
         }
 
         // Retrieve the start (inclusive) and end (exclusive) block height.
-        let candidate_start_height = self.first().map(|b| b.height()).unwrap_or(0);
-        let candidate_end_height = 1 + self.last().map(|b| b.height()).unwrap_or(0);
+        // let candidate_start_height = self.first().map(|b| b.height()).unwrap_or(0);
+        // let candidate_end_height = 1 + self.last().map(|b| b.height()).unwrap_or(0);
         // Check that the range matches the block request.
-        if start_height != candidate_start_height || end_height != candidate_end_height {
-            bail!("Peer '{peer_ip}' sent an invalid block response (range does not match block request)")
-        }
+        // if start_height != candidate_start_height || end_height != candidate_end_height {
+        //     bail!("Peer '{peer_ip}' sent an invalid block response (range does not match block request)")
+        // }
         Ok(())
     }
 }

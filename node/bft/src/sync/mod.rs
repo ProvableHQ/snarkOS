@@ -18,12 +18,19 @@ use crate::{
     MAX_FETCH_TIMEOUT,
     Transport,
     events::{CertificateRequest, CertificateResponse, Event},
-    helpers::{Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
+    helpers::{Pending, Storage, fmt_id, max_redundant_requests},
     ledger_service::{BeginLedgerUpdateError, LedgerService},
     spawn_blocking,
 };
 
-use snarkos_node_sync::{BftSyncMode, BlockSync, InsertBlockResponseError, Ping, locators::BlockLocators};
+use snarkos_node_sync::{
+    BftSyncMode,
+    BlockSync,
+    InsertBlockResponseError,
+    Ping,
+    SyncReceiver,
+    locators::BlockLocators,
+};
 use snarkos_utilities::CallbackHandle;
 
 use snarkvm::{

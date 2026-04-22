@@ -14,13 +14,13 @@
 // limitations under the License.
 
 use crate::{
+    MAX_NUM_BLOCKS_PER_REQUEST,
     helpers::{PeerPair, PrepareSyncRequest, SyncRequest},
     locators::BlockLocators,
 };
 use futures::future::BoxFuture;
 use snarkos_node_bft_ledger_service::{BeginLedgerUpdateError, LedgerService};
 use snarkos_node_network::ConnectionMode;
-use snarkos_node_router::messages::DataBlocks;
 use snarkos_node_sync_communication_service::CommunicationService;
 use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
 
@@ -617,11 +617,12 @@ impl<N: Network> BlockSync<N> {
             }
         } else {
             for (block_requests, sync_peers) in batches {
-                for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-                    if !self.send_block_requests(communication, &sync_peers, requests).await {
+                if let Some(request) = block_requests.chunks(MAX_NUM_BLOCKS_PER_REQUEST as usize).next() {
+                    // for requests in block_requests.chunks(MAX_NUM_BLOCKS_PER_REQUEST as usize) {
+                    if !self.send_block_requests(communication, &sync_peers, request).await {
                         break;
                     }
-                    tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
+                    // tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
                 }
             }
         }
@@ -692,10 +693,10 @@ impl<N: Network> BlockSync<N> {
         // Determine if the request is complete:
         // either there is no request for `next_height`, or the request has no peer socket addresses left.
         if let Some(entry) = self.requests.read().get(&next_height) {
-            let is_complete = entry.sync_ips().is_empty();
-            if !is_complete {
-                return None;
-            }
+            // let is_complete = entry.sync_ips().is_empty();
+            // if !is_complete {
+            //     return None;
+            // }
 
             // If the request is complete, return the block from the responses, if there is one.
             if entry.response.is_none() {
@@ -1129,8 +1130,7 @@ impl<N: Network> BlockSync<N> {
         }
 
         // Ensure to not exceed the maximum number of outstanding block requests.
-        let max_outstanding_block_requests =
-            (MAX_BLOCK_REQUESTS as u32) * (DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as u32);
+        let max_outstanding_block_requests = (MAX_BLOCK_REQUESTS as u32) * (MAX_NUM_BLOCKS_PER_REQUEST);
 
         // Ensure there is a finite bound on the number of block respnoses we receive, that have not been processed yet.
         let max_total_requests = 4 * max_outstanding_block_requests;
@@ -1280,9 +1280,9 @@ impl<N: Network> BlockSync<N> {
             });
         }
         // Ensure the sync pool requested this block from the given peer.
-        if !sync_ips.contains(&peer_ip) {
-            return Err(InsertBlockResponseError::WrongSyncPeer { height, peer_ip });
-        }
+        // if !sync_ips.contains(&peer_ip) {
+        //     return Err(InsertBlockResponseError::WrongSyncPeer { height, peer_ip });
+        // }
 
         // Remove the peer IP from the request entry.
         entry.sync_ips_mut().swap_remove(&peer_ip);

@@ -21,7 +21,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{Cache, PrimarySender, Storage, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use smol_str::SmolStr;
@@ -48,12 +48,19 @@ use snarkos_node_network::{
     Peer,
     PeerPoolHandling,
     Resolver,
+    SyncResponse,
     bootstrap_peers,
     get_repo_commit_hash,
     log_repo_sha_comparison,
     shorten_snarkos_sha,
 };
-use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{
+    MAX_BLOCKS_BEHIND,
+    SYNC_STREAM_TOKEN_LIFETIME,
+    SyncSender,
+    SyncStreams,
+    communication_service::CommunicationService,
+};
 use snarkos_node_tcp::{
     Config,
     ConnectError,
@@ -161,6 +168,8 @@ pub struct InnerGateway<N: Network> {
     worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
     /// The sync sender.
     sync_sender: OnceCell<SyncSender<N>>,
+    /// The handler for sync streams.
+    sync_streams: SyncStreams<N>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
@@ -205,6 +214,7 @@ impl<N: Network> Gateway<N> {
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
         ip: Option<SocketAddr>,
+        sync_listener: SocketAddr,
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
         node_data_dir: NodeDataDir,
@@ -240,6 +250,9 @@ impl<N: Network> Gateway<N> {
         // some of the cached validators to trusted ones.
         initial_peers.extend(trusted_validators.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
 
+        // Create the handler for block sync streams.
+        let sync_streams = SyncStreams::new(sync_listener, ledger.clone());
+
         // Return the gateway.
         Ok(Self(Arc::new(InnerGateway {
             account,
@@ -254,6 +267,7 @@ impl<N: Network> Gateway<N> {
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
+            sync_streams,
             handles: Default::default(),
             node_data_dir,
             trusted_peers_only,
@@ -278,7 +292,8 @@ impl<N: Network> Gateway<N> {
 
         // If the sync sender was provided, set the sync sender.
         if let Some(sync_sender) = sync_sender {
-            self.sync_sender.set(sync_sender).expect("Sync sender already set in gateway");
+            self.sync_sender.set(sync_sender.clone()).expect("Sync sender already set in gateway");
+            self.sync_streams.set_sync_sender(sync_sender);
         }
 
         // Enable the TCP protocols.
@@ -287,6 +302,8 @@ impl<N: Network> Gateway<N> {
         self.enable_writing().await;
         self.enable_disconnect().await;
         self.enable_on_connect().await;
+
+        self.sync_streams.enable().await;
 
         // Spawn a loop for periodic metrics.
         #[cfg(feature = "metrics")]
@@ -349,7 +366,7 @@ impl<N: Network> CommunicationService for Gateway<N> {
     /// Prepares a block request to be sent.
     fn prepare_block_request(start_height: u32, end_height: u32) -> Self::Message {
         debug_assert!(start_height < end_height, "Invalid block request format");
-        Event::BlockRequest(BlockRequest { start_height, end_height })
+        Event::SyncRequest(BlockRequest { start_height, end_height })
     }
 
     /// Sends the given message to specified peer.
@@ -581,7 +598,7 @@ impl<N: Network> Gateway<N> {
                     return Ok(true);
                 }
             }
-            Event::BlockRequest(_) => {
+            Event::BlockRequest(_) | Event::SyncRequest(_) => {
                 let num_events = self.cache.insert_inbound_block_request(peer_ip, CACHE_REQUESTS_INTERVAL);
                 if num_events >= self.max_cache_duplicates() {
                     return Ok(true);
@@ -853,6 +870,46 @@ impl<N: Network> Gateway<N> {
                         let _ = sender.tx_worker_ping.send((peer_ip, transmission_id)).await;
                     }
                 }
+                Ok(true)
+            }
+            Event::SyncRequest(request) => {
+                let self_ = self.clone();
+                tokio::spawn(async move {
+                    // Prepare a response with the syncing stream address and the access token.
+                    let sync_addr = self_.sync_streams.listener_addr();
+                    let response = SyncResponse::new(sync_addr);
+
+                    // Register the access token.
+                    let token = response.token.clone();
+                    self_.sync_streams.register_token_for_peer(token.clone(), request);
+                    debug!("[SyncStreams] Activated a sync token for {peer_ip}");
+
+                    // Send the response to the peer.
+                    Transport::send(&self_, peer_ip, Event::SyncResponse(response)).await;
+
+                    // Remove the access token after a short while.
+                    tokio::time::sleep(SYNC_STREAM_TOKEN_LIFETIME).await;
+                    self_.sync_streams.remove_token_for_peer(token);
+                    debug!("[SyncStreams] Deactivated a sync token for {peer_ip}");
+                });
+
+                Ok(true)
+            }
+            Event::SyncResponse(SyncResponse { addr, token }) => {
+                let self_ = self.clone();
+                let _: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
+                    debug!("[SyncStreams] Got a sync token from {peer_ip}");
+
+                    // Register the access token and the sync stream address.
+                    self_.sync_streams.register_token_from_peer(addr, token);
+                    // Connect to the dedicated sync stream.
+                    self_.sync_streams.tcp().connect(addr).await?;
+
+                    // The syncing continues in the dedicated stream.
+
+                    Ok(())
+                });
+
                 Ok(true)
             }
         }

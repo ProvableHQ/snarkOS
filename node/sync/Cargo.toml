@@ -31,6 +31,12 @@ test = [ "snarkos-node-sync-locators/test" ]
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.bytes]
+workspace = true
+
 [dependencies.indexmap]
 workspace = true
 features = [ "serde", "rayon" ]
@@ -47,6 +53,9 @@ features = [ "parking_lot" ]
 optional = true
 
 [dependencies.parking_lot]
+workspace = true
+
+[dependencies.rayon]
 workspace = true
 
 [dependencies.serde]
@@ -82,7 +91,13 @@ workspace = true
 [dependencies.snarkos-node-sync-locators]
 workspace = true
 
+[dependencies.snarkos-node-tcp]
+workspace = true
+
 [dependencies.snarkvm]
+workspace = true
+
+[dependencies.tokio-util]
 workspace = true
 
 [dependencies.tracing]

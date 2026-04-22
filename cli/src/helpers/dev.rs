@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snarkos_node::{bft::MEMORY_POOL_PORT, router::DEFAULT_NODE_PORT};
+use snarkos_node::{bft::MEMORY_POOL_PORT, network::DEFAULT_SYNC_PORT, router::DEFAULT_NODE_PORT};
 
 use snarkvm::{console::network::Network, prelude::PrivateKey};
 
@@ -57,4 +57,9 @@ pub fn get_devnet_gateway_address_for_validator(dev: u16) -> SocketAddr {
 /// Returns the router address a particular devnet validator will list on.
 pub fn get_devnet_router_address_for_node(dev: u16) -> SocketAddr {
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_NODE_PORT + dev))
+}
+
+/// Returns the router address a particular devnet validator will list on.
+pub fn get_devnet_sync_address_for_node(dev: u16) -> SocketAddr {
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_SYNC_PORT + dev))
 }

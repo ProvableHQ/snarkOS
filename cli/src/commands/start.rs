@@ -155,6 +155,11 @@ pub struct Start {
     #[clap(long, requires = "validator")]
     pub bft: Option<SocketAddr>,
 
+    /// Set the IP address and port used for providing block synchronization.
+    /// The default is 0.0.0.0:6130 if not specified.
+    #[clap(long = "sync-listener")]
+    pub sync_listener: Option<SocketAddr>,
+
     /// Specify the host:port address pairs of the peer(s) to connect to (as a comma-separated list).
     ///
     /// These peers will be set as "trusted", which means the node will not disconnect from them when performing peer rotation.
@@ -507,6 +512,13 @@ impl Start {
             self.node = Some(address);
         }
 
+        if self.sync_listener.is_none() {
+            let port = get_devnet_sync_address_for_node(dev).port();
+            let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
+            debug!("Setting sync listener address to {address} due to dev={dev}");
+            self.sync_listener = Some(address);
+        }
+
         // If the `norest` flag is not set and the REST IP is not already specified set the REST IP to `3030 + dev`.
         if !self.norest && self.rest.is_none() {
             let port = DEFAULT_REST_PORT + dev;
@@ -714,6 +726,9 @@ impl Start {
         // Parse the node IP or use the default IP/port.
         let node_ip = self.node.unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_NODE_PORT)));
 
+        // Parse the sync listener.
+        let sync_listener = self.sync_listener.unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 6130)));
+
         // Parse the REST IP.
         let rest_ip = match self.norest {
             true => None,
@@ -846,7 +861,7 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, sync_listener, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,

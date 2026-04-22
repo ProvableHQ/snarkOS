@@ -13,7 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::*;
+use snarkvm::{
+    ledger::narwhal::BatchCertificate,
+    prelude::{FromBytes, IoResult, Network, ToBytes},
+};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CertificateResponse<N: Network> {
@@ -31,14 +35,6 @@ impl<N: Network> From<BatchCertificate<N>> for CertificateResponse<N> {
     /// Initializes a new certificate response event.
     fn from(certificate: BatchCertificate<N>) -> Self {
         Self::new(certificate)
-    }
-}
-
-impl<N: Network> EventTrait for CertificateResponse<N> {
-    /// Returns the event name.
-    #[inline]
-    fn name(&self) -> Cow<'static, str> {
-        "CertificateResponse".into()
     }
 }
 

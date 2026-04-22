@@ -24,12 +24,6 @@ pub use batch_propose::BatchPropose;
 mod batch_signature;
 pub use batch_signature::BatchSignature;
 
-mod certificate_request;
-pub use certificate_request::CertificateRequest;
-
-mod certificate_response;
-pub use certificate_response::CertificateResponse;
-
 mod challenge_request;
 pub use challenge_request::ChallengeRequest;
 
@@ -63,7 +57,14 @@ pub use worker_ping::WorkerPing;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod committee_prop_tests;
 
-pub use snarkos_node_network::{BlockRequest, BlockResponse};
+pub use snarkos_node_network::{
+    BlockRequest,
+    BlockResponse,
+    CertificateRequest,
+    CertificateResponse,
+    SyncResponse,
+    SyncToken,
+};
 
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::{
@@ -112,6 +113,22 @@ impl<N: Network> EventTrait for BlockResponse<N> {
     }
 }
 
+impl<N: Network> EventTrait for CertificateRequest<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        "CertificateRequest".into()
+    }
+}
+
+impl<N: Network> EventTrait for CertificateResponse<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        "CertificateResponse".into()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 // TODO (howardwu): For mainnet - Remove this clippy lint. The CertificateResponse should not
 //  be a large enum variant, after removing the versioning.
@@ -133,6 +150,8 @@ pub enum Event<N: Network> {
     ValidatorsRequest(ValidatorsRequest),
     ValidatorsResponse(ValidatorsResponse<N>),
     WorkerPing(WorkerPing<N>),
+    SyncRequest(BlockRequest),
+    SyncResponse(SyncResponse),
 }
 
 impl<N: Network> From<DisconnectReason> for Event<N> {
@@ -165,6 +184,8 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(event) => event.name(),
             Self::ValidatorsResponse(event) => event.name(),
             Self::WorkerPing(event) => event.name(),
+            Self::SyncRequest(event) => event.name(),
+            Self::SyncResponse(event) => event.to_string().into(),
         }
     }
 
@@ -188,6 +209,8 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(..) => 13,
             Self::ValidatorsResponse(..) => 14,
             Self::WorkerPing(..) => 15,
+            Self::SyncRequest(..) => 16,
+            Self::SyncResponse(..) => 17,
         }
     }
 }
@@ -213,6 +236,8 @@ impl<N: Network> ToBytes for Event<N> {
             Self::ValidatorsRequest(event) => event.write_le(writer),
             Self::ValidatorsResponse(event) => event.write_le(writer),
             Self::WorkerPing(event) => event.write_le(writer),
+            Self::SyncRequest(event) => event.write_le(writer),
+            Self::SyncResponse(event) => event.write_le(writer),
         }
     }
 }
@@ -240,7 +265,9 @@ impl<N: Network> FromBytes for Event<N> {
             13 => Self::ValidatorsRequest(ValidatorsRequest::read_le(&mut reader)?),
             14 => Self::ValidatorsResponse(ValidatorsResponse::read_le(&mut reader)?),
             15 => Self::WorkerPing(WorkerPing::read_le(&mut reader)?),
-            16.. => return Err(error(format!("Unknown event ID {id}"))),
+            16 => Self::SyncRequest(BlockRequest::read_le(&mut reader)?),
+            17 => Self::SyncResponse(SyncResponse::read_le(&mut reader)?),
+            18.. => return Err(error(format!("Unknown event ID {id}"))),
         };
 
         // Ensure that there are no "dangling" bytes.

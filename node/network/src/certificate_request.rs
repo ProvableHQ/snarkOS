@@ -13,7 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::*;
+use snarkvm::prelude::{Field, FromBytes, IoResult, Network, ToBytes};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CertificateRequest<N: Network> {
@@ -31,14 +32,6 @@ impl<N: Network> From<Field<N>> for CertificateRequest<N> {
     /// Initializes a new certificate request event.
     fn from(certificate_id: Field<N>) -> Self {
         Self::new(certificate_id)
-    }
-}
-
-impl<N: Network> EventTrait for CertificateRequest<N> {
-    /// Returns the event name.
-    #[inline]
-    fn name(&self) -> Cow<'static, str> {
-        "CertificateRequest".into()
     }
 }
 

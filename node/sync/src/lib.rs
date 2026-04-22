@@ -24,6 +24,9 @@ extern crate snarkos_node_metrics as metrics;
 pub use snarkos_node_sync_communication_service as communication_service;
 pub use snarkos_node_sync_locators as locators;
 
+mod codec;
+pub(crate) use codec::*;
+
 mod ping;
 pub use ping::Ping;
 
@@ -32,3 +35,6 @@ pub use block_sync::*;
 
 mod helpers;
 pub use helpers::*;
+
+mod node;
+pub use node::*;

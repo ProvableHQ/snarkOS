@@ -35,6 +35,9 @@ optional = true
 [dependencies.parking_lot]
 workspace = true
 
+[dependencies.rand]
+workspace = true
+
 [dependencies.tracing]
 workspace = true
 
