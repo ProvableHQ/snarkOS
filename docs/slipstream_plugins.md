@@ -15,7 +15,7 @@ manager inside `snarkVM`'s `FinalizeStore` calls plugin hooks every time canonic
 Plugins can subscribe to:
 
 - **Mapping updates** — every key/value write that occurs during canonical finalize.
-- **Staking rewards** — per-staker reward notifications (requires `history-staking-rewards` feature).
+- **Staking rewards** — per-staker reward notifications
 
 Only **Validator** and **Client** nodes finalize blocks and therefore support plugins.
 Prover nodes do not.
@@ -73,15 +73,10 @@ absolute or relative to the config file's directory.
 
 ## Starting a Node with Plugins
 
-Compile snarkOS with the `slipstream-plugins` feature. Add `history` if you need mapping update
-history, or `history-staking-rewards` if you also want staking reward notifications:
+Compile snarkOS with the `slipstream-plugins` feature
 
 ```bash
-# Mapping updates only
 cargo build --features slipstream-plugins
-
-# Mapping updates + staking rewards
-cargo build --features slipstream-plugins,history-staking-rewards
 ```
 
 Pass one or more `--slipstream-config` flags at startup:
