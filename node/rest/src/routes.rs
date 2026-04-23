@@ -1136,9 +1136,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         .await
         .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
         .map_err(|e| match e {
-            SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => {
-                RestError::unprocessable_entity(anyhow!("{e}"))
-            }
+            SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => RestError::unprocessable_entity(anyhow!("{e}")),
             other => RestError::internal_server_error(anyhow!("{other}")),
         })?;
         Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "loaded": name }))))
@@ -1158,10 +1156,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             // Safety: manager is set exactly once and never cleared; verified Some above.
-            mgr_arc.write().as_mut().expect("plugin manager verified present").unload_plugin(&name).map_err(|e: SlipstreamPluginManagerError| match e {
-                SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
-                other => anyhow!("{other}"),
-            })
+            mgr_arc.write().as_mut().expect("plugin manager verified present").unload_plugin(&name).map_err(
+                |e: SlipstreamPluginManagerError| match e {
+                    SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
+                    other => anyhow!("{other}"),
+                },
+            )
         })
         .await
         .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
