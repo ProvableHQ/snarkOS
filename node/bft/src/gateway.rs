@@ -905,7 +905,7 @@ impl<N: Network> Gateway<N> {
         #[cfg(feature = "telemetry")]
         self.log_participation_scores();
         // Keep the trusted validators connected.
-        self.handle_trusted_validators();
+        self.handle_trusted_validators().await;
         // Keep the bootstrap peers within the allowed range.
         self.handle_bootstrap_peers().await;
         // Removes any validators that not in the current committee.
@@ -1050,7 +1050,7 @@ impl<N: Network> Gateway<N> {
     }
 
     /// This function attempts to connect to any disconnected trusted validators.
-    fn handle_trusted_validators(&self) {
+    async fn handle_trusted_validators(&self) {
         // Collect trusted peer addresses that genuinely need a reconnection attempt.
         // Skip peers whose last known Aleo address is already connected via a different IP,
         // which prevents spurious reconnection attempts when a validator's IP changes.
@@ -1074,12 +1074,12 @@ impl<N: Network> Gateway<N> {
         };
 
         // Attempt to re-establish connections with any trusted peer that is not connected already.
-        let handles: Vec<JoinHandle<_>> = trusted_peers
+        let (addrs, handles): (Vec<_>, Vec<JoinHandle<_>>) = trusted_peers
             .iter()
             .filter_map(|validator_ip| {
                 // Attempt to connect to the trusted validator.
                 match self.connect(*validator_ip) {
-                    Ok(hdl) => Some(hdl),
+                    Ok(hdl) => Some((*validator_ip, hdl)),
                     Err(ConnectError::SelfConnect { .. })
                     | Err(ConnectError::AlreadyConnected { .. })
                     | Err(ConnectError::AlreadyConnecting { .. }) => None,
@@ -1089,10 +1089,15 @@ impl<N: Network> Gateway<N> {
                     }
                 }
             })
-            .collect();
+            .unzip();
 
         if !handles.is_empty() {
             info!("Reconnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
+            for (addr, result) in addrs.into_iter().zip(join_all(handles).await) {
+                if let Err(err) = result {
+                    warn!("{CONTEXT} Failed to connect to trusted validator at '{addr}' - {err}");
+                }
+            }
         }
     }
 
