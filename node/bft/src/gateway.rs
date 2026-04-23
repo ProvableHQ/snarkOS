@@ -1523,6 +1523,17 @@ impl<N: Network> Handshake for Gateway<N> {
                             ConnectionMode::Gateway,
                         );
                     }
+                    // Warn if this validator was previously known under a different trusted address.
+                    for (candidate_addr, peer) in self.peer_pool.read().iter() {
+                        if let Peer::Candidate(c) = peer {
+                            if c.trusted && c.last_known_aleo_addr == Some(cr.address) && *candidate_addr != addr {
+                                warn!(
+                                    "{CONTEXT} Validator '{addr}' ({}) is connected but is also configured as trusted peer '{candidate_addr}' - the addresses differ",
+                                    cr.address
+                                );
+                            }
+                        }
+                    }
                     info!("{CONTEXT} Connected to '{addr}'");
                 }
                 Err(error) => {
