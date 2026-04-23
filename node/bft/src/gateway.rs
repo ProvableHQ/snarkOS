@@ -1051,7 +1051,27 @@ impl<N: Network> Gateway<N> {
 
     /// This function attempts to connect to any disconnected trusted validators.
     fn handle_trusted_validators(&self) {
-        let trusted_peers = self.trusted_peers();
+        // Collect trusted peer addresses that genuinely need a reconnection attempt.
+        // Skip peers whose last known Aleo address is already connected via a different IP,
+        // which prevents spurious reconnection attempts when a validator's IP changes.
+        let trusted_peers: Vec<_> = {
+            let pool = self.peer_pool().read();
+            pool.iter()
+                .filter_map(|(addr, peer)| {
+                    if !peer.is_trusted() {
+                        return None;
+                    }
+                    if let Peer::Candidate(c) = peer {
+                        if let Some(aleo_addr) = c.last_known_aleo_addr {
+                            if self.is_connected_address(aleo_addr) {
+                                return None;
+                            }
+                        }
+                    }
+                    Some(*addr)
+                })
+                .collect()
+        };
 
         // Attempt to re-establish connections with any trusted peer that is not connected already.
         let handles: Vec<JoinHandle<_>> = trusted_peers
@@ -1072,7 +1092,7 @@ impl<N: Network> Gateway<N> {
             .collect();
 
         if !handles.is_empty() {
-            info!("Reconnnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
+            info!("Reconnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
         }
     }
 
