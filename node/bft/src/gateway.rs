@@ -962,6 +962,7 @@ impl<N: Network> Gateway<N> {
         // Log the connected validators.
         let connected_validators = self.connected_peers().read().clone();
         // Resolve the total number of connectable validators.
+        // TODO: this needs to be updated with the hotswapped committee.
         let validators_total = self.ledger.current_committee().map_or(0, |c| c.num_members().saturating_sub(1));
         // Format the total validators message.
         let total_validators = format!("(of {validators_total} bonded validators)").dimmed();

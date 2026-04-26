@@ -56,7 +56,6 @@ use tokio::{
 };
 
 const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
-const DEV_START_ROUND: u64 = 3668;
 
 /// Block synchronization logic for validators.
 ///
@@ -413,7 +412,12 @@ impl<N: Network> Sync<N> {
             .into_iter()
             .map(|address| (address, (MIN_VALIDATOR_STAKE, true, 0)))
             .collect::<IndexMap<_, _>>();
-        let dev_committee = Committee::new(DEV_START_ROUND, authors)?;
+        let dev_start_round = if let Authority::Quorum(subdag) = latest_block.authority() {
+            subdag.starting_round()
+        } else {
+            bail!("Received a block with an unexpected authority type.");
+        };
+        let dev_committee = Committee::new(dev_start_round, authors)?;
         // Replace the latest production committee certificate with a dev committee certificate.
         // Pop the last block from the blocks.
         let block_at_tip = blocks.pop().unwrap(); // TODO: do we want to support this from genesis?
@@ -476,7 +480,7 @@ impl<N: Network> Sync<N> {
         // TODO: I'll actually have to replace the tip block with this newly constructed block...
         // It would be nice if we can avoid this, as it'll mean we don't have to touch storage. Then again, we will be messing with storage anyway.
         // I could consider doing the following:
-        self.storage.ledger.replace_latest_block(&dev_block_at_tip)?;
+        // self.storage.ledger.replace_latest_block(&dev_block_at_tip)?;
         // self.storage.ledger.vm().store().block_store().insert(dev_block_at_tip)?;
 
         // Iterate over the blocks.
@@ -496,7 +500,7 @@ impl<N: Network> Sync<N> {
                 // Iterate over the certificates.
                 for certificates in subdag.values().cloned() {
                     cfg_into_iter!(certificates).for_each(|certificate| {
-                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions);
+                        self.storage.sync_certificate_with_block(block, certificate, &unconfirmed_transactions, true);
                     });
                 }
 
@@ -753,7 +757,12 @@ impl<N: Network> Sync<N> {
             for certificates in subdag.values().cloned() {
                 cfg_into_iter!(certificates.clone()).for_each(|certificate| {
                     // Sync the batch certificate with the block.
-                    self.storage.sync_certificate_with_block(&block, certificate.clone(), &unconfirmed_transactions);
+                        self.storage.sync_certificate_with_block(
+                            &block,
+                            certificate.clone(),
+                            &unconfirmed_transactions,
+                            false,
+                        );
                 });
 
                 // Sync the BFT DAG with the certificates.
