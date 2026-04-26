@@ -18,7 +18,7 @@ edition = "2021"
 
 [features]
 default = [ ]
-ledger = [ "parking_lot", "rand", "rayon", "tokio", "tracing" ]
+ledger = [ "parking_lot", "rand", "rand_chacha", "rayon", "tokio", "tracing" ]
 ledger-write = [ ]
 locktick = [ "dep:locktick", "snarkvm/locktick" ]
 metrics = [ "dep:metrics", "snarkvm/metrics" ]
@@ -55,6 +55,10 @@ optional = true
 
 [dependencies.rand]
 version = "0.8"
+optional = true
+
+[dependencies.rand_chacha]
+version = "0.3"
 optional = true
 
 [dependencies.rayon]

@@ -473,6 +473,8 @@ impl<N: Network> Primary<N> {
             // Append the primary to the set.
             connected_validators.insert(self.gateway.account().address());
             info!("committee_lookback:467: {committee_lookback:?}");
+            println!("committee_lookback:467 us: {}", self.gateway.account().address());
+            println!("committee_lookback:467 connected: {:?}", connected_validators);
             // If quorum threshold is not reached, return early.
             // TODO: imagine the entire committee changes from one round to the next, then we couldn't connect anymore right? So I guess that's a liveness issue.
             if !committee_lookback.is_quorum_threshold_reached(&connected_validators) {
@@ -493,16 +495,20 @@ impl<N: Network> Primary<N> {
         let mut is_ready = previous_round == 0;
         // If the previous round is not 0, check if the previous certificates have reached the quorum threshold.
         if previous_round > 0 {
+            debug!("Reviewing previous round {previous_round} for quorum threshold");
             // Retrieve the committee lookback for the round.
             let Ok(previous_committee_lookback) = self.ledger.get_committee_lookback_for_round(previous_round) else {
                 bail!("Cannot propose a batch for round {round}: the committee lookback is not known yet")
             };
             // Construct a set over the authors.
-            let authors = previous_certificates.iter().map(BatchCertificate::author).collect();
-            // Check if the previous certificates have reached the quorum threshold.
-            if previous_committee_lookback.is_quorum_threshold_reached(&authors) {
+            // let authors = previous_certificates.iter().map(BatchCertificate::author).collect();
+            if previous_certificates.len() > 3 {
                 is_ready = true;
             }
+            // // Check if the previous certificates have reached the quorum threshold.
+            // if previous_committee_lookback.is_quorum_threshold_reached(&authors) {
+            //     is_ready = true;
+            // }
         }
         // If the batch is not ready to be proposed, return early.
         if !is_ready {

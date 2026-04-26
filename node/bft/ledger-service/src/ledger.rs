@@ -16,14 +16,15 @@
 use crate::{LedgerService, fmt_id, spawn_blocking};
 use snarkvm::{
     ledger::{
+        authority::Authority,
         Ledger,
         block::{Block, Transaction},
-        committee::Committee,
+        committee::{Committee, MIN_VALIDATOR_STAKE},
         narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
-    prelude::{Address, Field, FromBytes, Network, Result, bail, cfg_into_iter, deployment_cost, execution_cost_v2},
+    prelude::{Address, Field, FromBytes, Network, PrivateKey, Result, bail, cfg_into_iter, deployment_cost, execution_cost_v2},
 };
 
 use anyhow::anyhow;
@@ -32,9 +33,12 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
+use rand::SeedableRng;
+use rand_chacha::ChaChaRng;
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
+    env,
     fmt,
     io::Read,
     ops::Range,
@@ -46,6 +50,10 @@ use std::{
 
 /// The capacity of the cache holding the highest blocks.
 const BLOCK_CACHE_SIZE: usize = 10;
+/// Seed used to deterministically derive the dev committee keys.
+const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
+/// Enables returning a hotswapped dev committee from committee lookback calls.
+const HOTSWAP_DEV_COMMITTEE_ENV: &str = "SNARKOS_HOTSWAP_DEV_COMMITTEE";
 
 /// A core ledger service.
 #[allow(clippy::type_complexity)]
@@ -61,6 +69,39 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
         let block_cache = Arc::new(RwLock::new(BTreeMap::new()));
         Self { ledger, block_cache, latest_leader: Default::default(), shutdown }
+    }
+
+    /// Returns a deterministic dev committee for rounds after the hotswap point, if enabled.
+    fn hotswapped_dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
+        // let enabled = env::var(HOTSWAP_DEV_COMMITTEE_ENV)
+        //     .map(|value| {
+        //         let value = value.trim();
+        //         value == "1" || value.eq_ignore_ascii_case("true")
+        //     })
+        //     .unwrap_or(false);
+        // if !enabled {
+        //     return Ok(None);
+        // }
+
+        let latest_block = self.ledger.latest_block();
+        let Authority::Quorum(subdag) = latest_block.authority() else {
+            return Ok(None);
+        };
+        let dev_start_round = subdag.starting_round();
+        if round < dev_start_round {
+            return Ok(None);
+        }
+
+        let mut rng = ChaChaRng::seed_from_u64(DEVELOPMENT_MODE_RNG_SEED);
+        let dev_keys = (0..4).map(|_| PrivateKey::<N>::new(&mut rng)).collect::<Result<Vec<_>>>()?;
+        let members = dev_keys
+            .iter()
+            .map(Address::<N>::try_from)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|address| (address, (MIN_VALIDATOR_STAKE, true, 0)))
+            .collect::<IndexMap<_, _>>();
+        Ok(Some(Committee::new(dev_start_round, members)?))
     }
 }
 
@@ -163,6 +204,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
+        if let Some(dev_committee) = self.hotswapped_dev_committee_for_round(self.ledger.latest_round())? {
+            return Ok(dev_committee);
+        }
         self.ledger.latest_committee()
     }
 
@@ -176,6 +220,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the committee lookback for the given round.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
+        if let Some(dev_committee) = self.hotswapped_dev_committee_for_round(round)? {
+            return Ok(dev_committee);
+        }
         match self.ledger.get_committee_lookback_for_round(round)? {
             Some(committee) => Ok(committee),
             None => bail!("No committee lookback found for round {round} in the ledger"),
