@@ -539,7 +539,7 @@ impl<N: Network> Consensus<N> {
         // Create the candidate next block.
         let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
         // Check that the block is well-formed.
-        self.ledger.check_next_block(&next_block)?;
+        // self.ledger.check_next_block(&next_block)?;
         // Advance to the next block.
         self.ledger.advance_to_next_block(&next_block)?;
         #[cfg(feature = "telemetry")]

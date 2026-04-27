@@ -239,12 +239,6 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         Ok(())
     }
 
-    /// Replaces the latest block in the ledger with the given block.
-    #[cfg(feature = "ledger-write")]
-    fn replace_latest_block(&self, block: &Block<N>) -> Result<()> {
-        unreachable!("MockLedgerService does not support replace_latest_block");
-    }
-
     /// Returns the spent cost for a transaction in microcredits.
     fn transaction_spent_cost_in_microcredits(
         &self,

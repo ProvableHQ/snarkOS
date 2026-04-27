@@ -121,10 +121,6 @@ pub trait LedgerService<N: Network>: Debug + Send + Sync {
     #[cfg(feature = "ledger-write")]
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()>;
 
-    /// Replaces the latest block in the ledger with the given block.
-    #[cfg(feature = "ledger-write")]
-    fn replace_latest_block(&self, block: &Block<N>) -> Result<()>;
-
     /// Returns the spent cost for a transaction in microcredits.
     fn transaction_spent_cost_in_microcredits(
         &self,

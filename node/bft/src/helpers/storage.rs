@@ -349,6 +349,7 @@ impl<N: Network> Storage<N> {
     /// Returns the certificates for the given `round`.
     /// If the round does not exist in storage, an empty set is returned.
     pub fn get_certificates_for_round(&self, round: u64) -> IndexSet<BatchCertificate<N>> {
+        // println!("get_certificates_for_round: {round}");
         // The genesis round does not have batch certificates.
         if round == 0 {
             return Default::default();
@@ -356,6 +357,7 @@ impl<N: Network> Storage<N> {
         // Retrieve the certificates.
         if let Some(entries) = self.rounds.read().get(&round) {
             let certificates = self.certificates.read();
+            // println!("get_certificates_for_round: {:?}", entries);
             entries.iter().flat_map(|(certificate_id, _)| certificates.get(certificate_id).cloned()).collect()
         } else {
             Default::default()

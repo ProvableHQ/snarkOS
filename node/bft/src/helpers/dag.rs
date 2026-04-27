@@ -96,6 +96,9 @@ impl<N: Network> DAG<N> {
 
     /// Returns the batch certificates for the given round.
     pub fn get_certificates_for_round(&self, round: u64) -> Option<HashMap<Address<N>, BatchCertificate<N>>> {
+        // println!("get_certificates_for_round: {round}");
+        // println!("get_certificates_for_round: {:?}", self.graph.get(&round));
+        // println!("get_certificates_for_round: {:?}", self.graph);
         self.graph.get(&round).cloned()
     }
 

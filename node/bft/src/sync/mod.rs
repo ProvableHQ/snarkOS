@@ -413,7 +413,7 @@ impl<N: Network> Sync<N> {
             .map(|address| (address, (MIN_VALIDATOR_STAKE, true, 0)))
             .collect::<IndexMap<_, _>>();
         let dev_start_round = if let Authority::Quorum(subdag) = latest_block.authority() {
-            subdag.starting_round()
+            subdag.iter().next().map_or(0, |(round, _)| *round)
         } else {
             bail!("Received a block with an unexpected authority type.");
         };
@@ -477,11 +477,6 @@ impl<N: Network> Sync<N> {
         };
         // Add the dev block at tip to the blocks.
         blocks.push(dev_block_at_tip.clone());
-        // TODO: I'll actually have to replace the tip block with this newly constructed block...
-        // It would be nice if we can avoid this, as it'll mean we don't have to touch storage. Then again, we will be messing with storage anyway.
-        // I could consider doing the following:
-        // self.storage.ledger.replace_latest_block(&dev_block_at_tip)?;
-        // self.storage.ledger.vm().store().block_store().insert(dev_block_at_tip)?;
 
         // Iterate over the blocks.
         for block in &blocks {

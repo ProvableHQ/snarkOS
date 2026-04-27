@@ -16,7 +16,6 @@
 use crate::{LedgerService, fmt_id, spawn_blocking};
 use snarkvm::{
     ledger::{
-        authority::Authority,
         Ledger,
         block::{Block, Transaction},
         committee::{Committee, MIN_VALIDATOR_STAKE},
@@ -38,7 +37,6 @@ use rand_chacha::ChaChaRng;
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
-    env,
     fmt,
     io::Read,
     ops::Range,
@@ -52,8 +50,6 @@ use std::{
 const BLOCK_CACHE_SIZE: usize = 10;
 /// Seed used to deterministically derive the dev committee keys.
 const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
-/// Enables returning a hotswapped dev committee from committee lookback calls.
-const HOTSWAP_DEV_COMMITTEE_ENV: &str = "SNARKOS_HOTSWAP_DEV_COMMITTEE";
 
 /// A core ledger service.
 #[allow(clippy::type_complexity)]
@@ -61,33 +57,22 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
     block_cache: Arc<RwLock<BTreeMap<u32, Block<N>>>>,
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
+    hotswap_start_round: u64,
     shutdown: Arc<AtomicBool>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, shutdown: Arc<AtomicBool>) -> Self {
+        // let hotswap_start_round = ledger.latest_round().saturating_add(1);
+        let hotswap_start_round = ledger.latest_round();
         let block_cache = Arc::new(RwLock::new(BTreeMap::new()));
-        Self { ledger, block_cache, latest_leader: Default::default(), shutdown }
+        Self { ledger, block_cache, latest_leader: Default::default(), hotswap_start_round, shutdown }
     }
 
-    /// Returns a deterministic dev committee for rounds after the hotswap point, if enabled.
+    /// Returns the deterministic dev committee for rounds at or after the hotswap start.
     fn hotswapped_dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
-        // let enabled = env::var(HOTSWAP_DEV_COMMITTEE_ENV)
-        //     .map(|value| {
-        //         let value = value.trim();
-        //         value == "1" || value.eq_ignore_ascii_case("true")
-        //     })
-        //     .unwrap_or(false);
-        // if !enabled {
-        //     return Ok(None);
-        // }
-
-        let latest_block = self.ledger.latest_block();
-        let Authority::Quorum(subdag) = latest_block.authority() else {
-            return Ok(None);
-        };
-        let dev_start_round = subdag.starting_round();
+        let dev_start_round = self.hotswap_start_round;
         if round < dev_start_round {
             return Ok(None);
         }
@@ -204,7 +189,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
-        if let Some(dev_committee) = self.hotswapped_dev_committee_for_round(self.ledger.latest_round())? {
+        if let Some(dev_committee) = self.hotswapped_dev_committee_for_round(self.hotswap_start_round)? {
             return Ok(dev_committee);
         }
         self.ledger.latest_committee()
@@ -438,15 +423,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
         tracing::info!("\n\nAdvanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
         Ok(())
-    }
-
-    /// Replaces the latest block in the ledger with the given block.
-    #[cfg(feature = "ledger-write")]
-    fn replace_latest_block(&self, block: &Block<N>) -> Result<()> {
-        // let latest_block_hash = self.ledger.latest_block().hash();
-        self.ledger.vm().store.block_store().remove_last_n(1)?;
-        *self.ledger.current_block.write() = block.clone();
-        self.advance_to_next_block(block)
     }
 
     /// Returns the spent cost for a transaction in microcredits.

@@ -301,7 +301,7 @@ impl<N: Network> BFT<N> {
 
         // Retrieve the certificates for the current round.
         let current_certificates = self.storage().get_certificates_for_round(current_round);
-        info!("current_certificates: {current_certificates:?}");
+        // info!("current_certificates: {current_certificates:?}");
         // If there are no current certificates, set the leader certificate to 'None', and return early.
         if current_certificates.is_empty() {
             // Set the leader certificate to 'None'.

@@ -196,11 +196,6 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         self.inner.advance_to_next_block(block)
     }
 
-    /// Replaces the latest block in the ledger with the given block.
-    fn replace_latest_block(&self, block: &Block<N>) -> Result<()> {
-        self.inner.replace_latest_block(block)
-    }
-
     /// Returns the spent cost for a transaction in microcredits.
     fn transaction_spent_cost_in_microcredits(
         &self,

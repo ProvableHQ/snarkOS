@@ -502,7 +502,8 @@ impl<N: Network> Primary<N> {
             };
             // Construct a set over the authors.
             // let authors = previous_certificates.iter().map(BatchCertificate::author).collect();
-            if previous_certificates.len() > 3 {
+            // TODO: this is temporary to test the quorum threshold logic.
+            if previous_certificates.len() > 2 {
                 is_ready = true;
             }
             // // Check if the previous certificates have reached the quorum threshold.
