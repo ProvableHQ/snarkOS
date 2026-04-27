@@ -235,4 +235,9 @@ impl<N: Network> LedgerService<N> for MockLedgerService<N> {
         let height = N::CONSENSUS_HEIGHT(consensus_version).unwrap();
         Ok(consensus_config_value!(N, TRANSACTION_SPEND_LIMIT, height).unwrap())
     }
+
+    fn is_stopped(&self) -> bool {
+        // No ledger to check against.
+        false
+    }
 }
