@@ -2015,6 +2015,8 @@ impl<N: Network> Primary<N> {
         info!("Shutting down the primary...");
         // Remove the callback.
         self.primary_callback.clear();
+        // Shut down the sync service.
+        self.sync.shut_down().await;
         // Shut down the workers.
         self.workers().iter().for_each(|worker| worker.shut_down());
         // Abort the tasks.

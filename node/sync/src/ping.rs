@@ -135,6 +135,10 @@ impl<N: Network> Ping<N> {
         let mut new_block = false;
 
         loop {
+            if router.ledger().is_stopped() {
+                break;
+            }
+
             // Do not hold the lock while waiting.
             let sleep_time = {
                 let mut inner = inner.lock();

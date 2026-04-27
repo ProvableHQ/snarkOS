@@ -160,4 +160,6 @@ pub trait LedgerService<N: Network>: std::fmt::Debug + Send + Sync {
         transaction: &Transaction<N>,
         consensus_version: ConsensusVersion,
     ) -> Result<u64>;
+
+    fn is_stopped(&self) -> bool;
 }
