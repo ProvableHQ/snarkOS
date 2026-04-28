@@ -130,6 +130,12 @@ impl<N: Network> Ping<N> {
         self.notify.notify_one();
     }
 
+    /// Wake up the ping task so that its inner loop iterates and breaks.
+    /// It should only be called after the ledger has already been stopped.
+    pub fn stop(&self) {
+        self.notify.notify_one();
+    }
+
     /// Background task that periodically sends out new ping messages.
     async fn ping_task(inner: &Mutex<PingInner<N>>, router: &Router<N>, notify: &Notify) {
         let mut new_block = false;

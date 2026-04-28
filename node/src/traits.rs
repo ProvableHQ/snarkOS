@@ -61,8 +61,8 @@ pub trait NodeInterface<N: Network>: Routing<N> {
         // Check if there are any stragglers left.
         if let Some(handle) = &handler.handle {
             let live_tasks = handle.metrics().num_alive_tasks();
-            if live_tasks > 1 {
-                error!("There are still {live_tasks} live tasks (expected no more than 2)");
+            if live_tasks != 0 {
+                error!("There are still {live_tasks} live tasks");
             }
         }
     }

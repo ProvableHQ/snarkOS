@@ -557,6 +557,9 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
         // Shut down the router.
         self.router.shut_down().await;
 
+        // Notify the Ping.
+        self.ping.stop();
+
         info!("Node has shut down.");
     }
 }
