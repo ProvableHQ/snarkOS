@@ -131,6 +131,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub const fn handles(&self) -> &Arc<Mutex<Vec<JoinHandle<()>>>> {
         &self.handles
     }
+
+    /// Shuts down the REST instance.
+    pub fn shut_down(&self) {
+        self.handles.lock().iter().for_each(|handle| handle.abort());
+    }
 }
 
 impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
