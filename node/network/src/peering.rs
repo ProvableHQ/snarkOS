@@ -107,7 +107,7 @@ mod tests {
         pool.peer_pool().write().insert(listener_addr, Peer::new_candidate(listener_addr, false));
 
         assert_eq!(pool.number_of_candidate_peers(), 1);
-        assert_eq!(pool.number_of_connecting_peers(), 0);
+        assert_eq!(pool.number_of_connecting_peers(), Some(0));
         assert_eq!(pool.number_of_connected_peers(), 0);
         assert!(!pool.is_connecting(listener_addr));
         assert!(!pool.is_connected(listener_addr));
@@ -116,7 +116,7 @@ mod tests {
         assert!(pool.add_connecting_peer(listener_addr).is_ok());
 
         assert_eq!(pool.number_of_candidate_peers(), 0);
-        assert_eq!(pool.number_of_connecting_peers(), 1);
+        assert_eq!(pool.number_of_connecting_peers(), Some(1));
         assert_eq!(pool.number_of_connected_peers(), 0);
         assert!(pool.is_connecting(listener_addr));
         assert!(!pool.is_connected(listener_addr));
@@ -133,11 +133,11 @@ mod tests {
         );
 
         assert_eq!(pool.number_of_candidate_peers(), 0);
-        assert_eq!(pool.number_of_connecting_peers(), 0);
+        assert_eq!(pool.number_of_connecting_peers(), Some(0));
         assert_eq!(pool.number_of_connected_peers(), 1);
         assert!(!pool.is_connecting(listener_addr));
         assert!(pool.is_connected(listener_addr));
-        assert_eq!(pool.number_of_connected_validators(), 1);
+        assert_eq!(pool.number_of_connected_validators(), Some(1));
 
         // Verify the connected peer's fields.
         let connected = pool.get_connected_peer(listener_addr).expect("peer should be connected");
@@ -153,7 +153,7 @@ mod tests {
         let mut rng = TestRng::default();
 
         // Empty pool: no validators.
-        assert_eq!(pool.number_of_connected_validators(), 0);
+        assert_eq!(pool.number_of_connected_validators(), Some(0));
 
         // Insert 2 validators and 1 client.
         let (addr1, peer1) = make_connected_peer(3000, NodeType::Validator, &mut rng);
@@ -166,14 +166,14 @@ mod tests {
             pool_write.insert(addr3, peer3);
         }
 
-        assert_eq!(pool.number_of_connected_validators(), 2);
+        assert_eq!(pool.number_of_connected_validators(), Some(2));
         assert_eq!(pool.number_of_connected_peers(), 3);
 
         // A candidate peer should not be counted as a validator.
         let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 3003));
         pool.peer_pool().write().insert(candidate_addr, Peer::new_candidate(candidate_addr, false));
 
-        assert_eq!(pool.number_of_connected_validators(), 2);
+        assert_eq!(pool.number_of_connected_validators(), Some(2));
         assert_eq!(pool.number_of_connected_peers(), 3);
     }
 }
@@ -512,17 +512,21 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the number of connected validators.
-    fn number_of_connected_validators(&self) -> usize {
-        self.peer_pool()
-            .read()
-            .values()
-            .filter(|peer| peer.as_connected().is_some_and(|peer| peer.is_validator()))
-            .count()
+    #[cfg(feature = "metrics")]
+    fn number_of_connected_validators(&self) -> Option<usize> {
+        Some(
+            self.peer_pool()
+                .try_read()?
+                .values()
+                .filter(|peer| peer.as_connected().is_some_and(|peer| peer.is_validator()))
+                .count(),
+        )
     }
 
     /// Returns the number of connecting peers.
-    fn number_of_connecting_peers(&self) -> usize {
-        self.peer_pool().read().values().filter(|peer| peer.is_connecting()).count()
+    #[cfg(feature = "metrics")]
+    fn number_of_connecting_peers(&self) -> Option<usize> {
+        Some(self.peer_pool().try_read()?.values().filter(|peer| peer.is_connecting()).count())
     }
 
     /// Returns the number of candidate peers.

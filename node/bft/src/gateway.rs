@@ -478,12 +478,15 @@ impl<N: Network> Gateway<N> {
         Ok(())
     }
 
-    /// Updates the connection metrics for the gateway.
+    /// Updates the connection metrics for the gateway. Ignores the bootstrap clients.
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
-        // Ignore the bootstrap clients for this metrics.
-        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_validators() as f64);
-        metrics::gauge(metrics::bft::CONNECTING, self.number_of_connecting_peers() as f64);
+        if let Some(count) = self.number_of_connected_validators() {
+            metrics::gauge(metrics::bft::CONNECTED, count as f64);
+        }
+        if let Some(count) = self.number_of_connecting_peers() {
+            metrics::gauge(metrics::bft::CONNECTING, count as f64);
+        }
     }
 
     /// Inserts the given peer into the connected peers. This is only used in testing.
