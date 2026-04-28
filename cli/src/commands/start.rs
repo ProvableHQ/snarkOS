@@ -287,12 +287,16 @@ pub struct Start {
     pub dev_num_clients: Option<u16>,
 
     /// If development mode is enabled, specify whether node 0 should generate traffic to drive the network.
-    #[clap(long, group = "dev_flag")]
+    #[clap(long, group = "dev_flags")]
     pub no_dev_txs: bool,
 
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
     #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
+
+    /// If development mode is enabled, specify whether to run the node on a production ledger.
+    #[clap(long, group = "dev_flags", default_value_t = false)]
+    pub dev_on_prod: bool,
 
     /// If the flag is set, the node will attempt to automatically migrate the node data to the new format.
     #[clap(long)]
@@ -533,7 +537,7 @@ impl Start {
     /// Returns an alternative genesis block if the node is in development mode.
     /// Otherwise, returns the actual genesis block.
     fn parse_genesis<N: Network>(&self) -> Result<Block<N>> {
-        if self.dev.is_some() {
+        if self.dev.is_some() && !self.dev_on_prod {
             // Determine the number of genesis committee members.
             let num_committee_members = self.dev_num_validators;
             ensure!(

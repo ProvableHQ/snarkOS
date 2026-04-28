@@ -20,10 +20,8 @@ use snarkvm::{console::network::Network, prelude::PrivateKey};
 use anyhow::Result;
 use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
+pub use snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-
-/// The development mode RNG seed.
-pub const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
 
 /// The development mode number of genesis committee members.
 pub const DEVELOPMENT_MODE_NUM_GENESIS_COMMITTEE_MEMBERS: u16 = 4;

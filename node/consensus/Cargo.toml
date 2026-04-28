@@ -34,11 +34,15 @@ serial = [
   "snarkos-node-metrics/serial",
   "snarkvm/serial"
 ]
+test_network = [ ]
 
 [dependencies.aleo-std]
 workspace = true
 
 [dependencies.anyhow]
+workspace = true
+
+[dependencies.cfg_if]
 workspace = true
 
 [dependencies.colored]

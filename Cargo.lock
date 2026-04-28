@@ -4801,6 +4801,7 @@ dependencies = [
  "locktick",
  "parking_lot",
  "rand 0.10.1",
+ "rand_chacha 0.10.0",
  "rayon",
  "snarkos-node-metrics",
  "snarkos-utilities",

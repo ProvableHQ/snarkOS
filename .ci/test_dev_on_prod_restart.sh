@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "${BASH_VERSINFO[0]}" -lt 5 ]; then
+  echo "Error: This script requires bash version 5.0 or higher."
+  exit 1
+fi
+
+# shellcheck source=SCRIPTDIR/utils.sh
+. ./.ci/utils.sh
+
+network_id=0
+NETWORK_NAME=$(get_network_name "$network_id")
+REST_PORT=3030
+NUM_DEV_NODES=4
+SETUP_ADVANCE_BLOCKS=5
+DEV_ADVANCE_BLOCKS=10
+SETUP_MAX_WAIT=20
+DEV_MAX_WAIT=100
+
+BOOTSTRAP_PID=""
+declare -a DEV_PIDS=()
+SNARKOS_SETUP_BIN="snarkos"
+
+function get_height() {
+  local port="$1"
+  local result
+  result=$(curl -s --max-time 2 "http://${localhost}:${port}/v2/${NETWORK_NAME}/block/height/latest" || true)
+  if is_integer "$result"; then
+    echo "$result"
+  else
+    echo ""
+  fi
+}
+
+function wait_for_node_ready() {
+  local port="$1"
+  local timeout="$2"
+  local start
+  start=$(now)
+
+  while (( $(elapsed_since "$start") < timeout )); do
+    local height
+    height=$(get_height "$port")
+    if [ -n "$height" ]; then
+      log "Node on port ${port} is ready at height ${height}"
+      return 0
+    fi
+    log "Sleeping for 2 seconds before retrying to get height"
+    sleep 2
+  done
+
+  log "Timed out waiting for node on port ${port} to become ready"
+  return 1
+}
+
+function wait_for_height_advance() {
+  local port="$1"
+  local advance_by="$2"
+  local timeout="$3"
+  local label="$4"
+
+  wait_for_node_ready "$port" "$timeout"
+
+  local start_height
+  start_height=$(get_height "$port")
+  if [ -z "$start_height" ]; then
+    log "${label}: failed to read initial block height from port ${port}"
+    return 1
+  fi
+
+  local target_height=$((start_height + advance_by))
+  local start_time
+  start_time=$(now)
+  local last_log_time=0
+
+  log "${label}: waiting for height to advance by ${advance_by} blocks (${start_height} -> ${target_height})"
+  while (( $(elapsed_since "$start_time") < timeout )); do
+    local current_height
+    current_height=$(get_height "$port")
+    if [ -n "$current_height" ] && (( current_height >= target_height )); then
+      log "${label}: reached target height ${current_height} (>= ${target_height})"
+      return 0
+    fi
+
+    local elapsed
+    elapsed=$(elapsed_since "$start_time")
+    if (( elapsed - last_log_time >= 15 )); then
+      if [ -n "$current_height" ]; then
+        log "${label}: current height ${current_height}, target ${target_height}"
+      else
+        log "${label}: waiting for REST endpoint on port ${port}"
+      fi
+      last_log_time=$elapsed
+    fi
+    log "Sleeping for 2 seconds before retrying to get height"
+    sleep 2
+  done
+
+  local final_height
+  final_height=$(get_height "$port")
+  log "${label}: timed out waiting for height advance (final height: ${final_height:-unavailable}, target: ${target_height})"
+  return 1
+}
+
+function wait_for_pid_exit() {
+  local pid="$1"
+  local timeout="$2"
+  local start
+  start=$(now)
+  while (( $(elapsed_since "$start") < timeout )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+function graceful_stop_pid() {
+  local pid="$1"
+  local label="$2"
+
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  log "Stopping ${label} (pid=${pid}) with SIGINT"
+  kill -INT "$pid" 2>/dev/null || true
+  if wait_for_pid_exit "$pid" 60; then
+    return 0
+  fi
+
+  log "${label} did not exit after SIGINT; sending SIGTERM"
+  kill -TERM "$pid" 2>/dev/null || true
+  if wait_for_pid_exit "$pid" 20; then
+    return 0
+  fi
+
+  log "${label} did not exit after SIGTERM; sending SIGKILL"
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+function graceful_stop_all_dev_nodes() {
+  for i in "${!DEV_PIDS[@]}"; do
+    graceful_stop_pid "${DEV_PIDS[$i]}" "dev-node-${i}"
+  done
+  DEV_PIDS=()
+}
+
+function cleanup() {
+  graceful_stop_all_dev_nodes
+  graceful_stop_pid "$BOOTSTRAP_PID" "setup-node"
+}
+
+function start_setup_node() {
+  mkdir -p dev_logs
+  log "Starting production setup node: ${SNARKOS_SETUP_BIN} start --client --nodisplay"
+  "$SNARKOS_SETUP_BIN" start --client --nodisplay > "dev_logs/setup-client.txt" 2>&1 &
+  BOOTSTRAP_PID=$!
+  log "Started setup node (pid=${BOOTSTRAP_PID})"
+}
+
+function copy_setup_ledger() {
+  local source="${HOME}/.aleo/storage/ledger-0"
+  if [ ! -d "$source" ]; then
+    log "Missing source ledger at ${source}"
+    exit 1
+  fi
+
+  log "Copying setup ledger into local ledgers"
+  rm -rf ledger-0 ledger-1 ledger-2 ledger-3
+  cp -r "$source" ledger-0
+  cp -r "$source" ledger-1
+  cp -r "$source" ledger-2
+  cp -r "$source" ledger-3
+}
+
+function start_dev_nodes() {
+  mkdir -p dev_logs
+  DEV_PIDS=()
+
+  for i in $(seq 0 $((NUM_DEV_NODES - 1))); do
+    log "Starting dev node ${i}"
+    DEV_COMMITTEE_NUM_VALIDATORS=${NUM_DEV_NODES} ~/programs/snarkOS/target/debug/snarkos start --nodisplay --validator --ledger-storage "ledger-${i}" --node-data-storage "node-data-${i}" --dev "${i}" \
+      --no-dev-txs --nocdn --dev-num-validators "${NUM_DEV_NODES}" --verbosity 2 \
+      --allow-external-peers --logfile "dev_logs/val-${i}.txt" --dev-on-prod &
+    DEV_PIDS[$i]=$!
+    sleep 1
+  done
+}
+
+trap cleanup EXIT
+trap 'log "Error at line $LINENO while running: $BASH_COMMAND"' ERR
+
+init_log_dir
+require_cmd snarkos
+require_cmd curl
+require_cmd cargo
+require_cmd tar
+
+log "Downloading and building latest snarkOS release binary for setup node..."
+download_and_build_latest_snarkos
+SNARKOS_SETUP_BIN="$SNARKOS_RELEASE_BIN"
+log "Using setup binary: ${SNARKOS_SETUP_BIN}"
+
+log "Step 1: Start production node and wait for +${SETUP_ADVANCE_BLOCKS} blocks"
+start_setup_node
+wait_for_height_advance "$REST_PORT" "$SETUP_ADVANCE_BLOCKS" "$SETUP_MAX_WAIT" "setup-network"
+
+log "Step 2: Gracefully stop production node"
+graceful_stop_pid "$BOOTSTRAP_PID" "setup-node"
+BOOTSTRAP_PID=""
+
+log "Step 3: Copy production ledger and start 4 dev nodes"
+copy_setup_ledger
+start_dev_nodes
+
+log "Step 4: Wait until dev network advances by +${DEV_ADVANCE_BLOCKS} blocks"
+wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-network-first-run"
+
+log "Step 5: Gracefully stop all dev nodes"
+graceful_stop_all_dev_nodes
+
+# TODO: encountering the following warnings when stopping and starting all dev nodes:
+# - WARN "Cannot propose a batch for round 32 - the latest proposal cache round is 34"
+# - WARN "Failed to load stored certificate 1936933304208994.. from proposal cache — Previous certificates for a batch in round 32 did not reach quorum threshold (gc = 0)"
+# - WARN "Failed to load stored certificate 8429685712854720.. from proposal cache — Failed to fetch missing transmissions and previous certificates for round 33 from '127.0.0.1:0 — Unable to fetch batch certificate 1936933304208994661214537875451736804168699382028485722463302790461889223166field (failed to send request)"
+# log "Step 6: Restart all dev nodes and wait for +${DEV_ADVANCE_BLOCKS} blocks"
+# start_dev_nodes
+# wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-network-second-run"
+
+log "SUCCESS: Completed dev-on-prod restart flow"

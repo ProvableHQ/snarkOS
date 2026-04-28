@@ -518,7 +518,7 @@ mod tests {
         let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.
-        let mut rng = ChaChaRng::seed_from_u64(1234567890u64);
+        let mut rng = ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
         // Initialize the account.
         let account = Account::<CurrentNetwork>::new(&mut rng).unwrap();
         // Initialize a new VM.

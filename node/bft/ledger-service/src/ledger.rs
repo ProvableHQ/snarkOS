@@ -68,6 +68,10 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
     stoppable: Arc<dyn Stoppable>,
     update_lock: Arc<Mutex<()>>,
+    #[cfg(feature = "test_network")]
+    dev_start_round: Option<u64>,
+    #[cfg(feature = "test_network")]
+    dev_num_validators: Option<String>,
 }
 
 /// A transactional update to the ledger.
@@ -136,10 +140,46 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
         // Initialize the block height metric.
         #[cfg(feature = "metrics")]
-        {
-            metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        #[cfg(feature = "test_network")]
+        let dev_num_validators = std::env::var("DEV_COMMITTEE_NUM_VALIDATORS").ok();
+        #[cfg(feature = "test_network")]
+        let dev_start_round = dev_num_validators.is_some().then_some(ledger.latest_round());
+        Self {
+            ledger,
+            latest_leader: Default::default(),
+            stoppable,
+            update_lock: Default::default(),
+            #[cfg(feature = "test_network")]
+            dev_start_round,
+            #[cfg(feature = "test_network")]
+            dev_num_validators,
         }
-        Self { ledger, latest_leader: Default::default(), stoppable, update_lock: Default::default() }
+    }
+
+    /// Returns the deterministic dev committee for rounds at or after the hotswap start.
+    #[cfg(feature = "test_network")]
+    fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
+        let dev_num_validators = self.dev_num_validators.as_ref().expect("DEV_COMMITTEE_NUM_VALIDATORS is not set");
+        let dev_num_validators = dev_num_validators.parse::<u16>()?;
+        let dev_start_round = self.dev_start_round.as_ref().expect("DEV_COMMITTEE_NUM_VALIDATORS is not set");
+        if round < *dev_start_round {
+            return Ok(None);
+        }
+
+        use rand::SeedableRng;
+        let mut rng = rand_chacha::ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
+        let dev_keys = (0..dev_num_validators)
+            .map(|_| snarkvm::console::account::PrivateKey::<N>::new(&mut rng))
+            .collect::<Result<Vec<_>>>()?;
+        let members = dev_keys
+            .iter()
+            .map(Address::<N>::try_from)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|address| (address, (snarkvm::ledger::committee::MIN_VALIDATOR_STAKE, true, 0)))
+            .collect::<IndexMap<_, _>>();
+        Ok(Some(Committee::new(*dev_start_round, members)?))
     }
 }
 
@@ -234,6 +274,15 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
+        #[cfg(feature = "test_network")]
+        {
+            if let Some(dev_start_round) = self.dev_start_round {
+                if let Some(dev_committee) = self.dev_committee_for_round(dev_start_round)? {
+                    return Ok(dev_committee);
+                }
+            }
+        }
+
         self.ledger.latest_committee()
     }
 
@@ -247,6 +296,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the committee lookback for the given round.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
+        #[cfg(feature = "test_network")]
+        {
+            if let Some(dev_committee) = self.dev_committee_for_round(round)? {
+                return Ok(dev_committee);
+            }
+        }
+
         // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
         // because committees are updated in even rounds.
         let previous_round = match round.is_multiple_of(2) {
@@ -259,6 +315,12 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
         // Retrieve the committee for the committee lookback round.
         self.get_committee_for_round(committee_lookback_round)
+    }
+
+    /// Returns the deterministic hotswapped dev committee for the given round, if active.
+    #[cfg(feature = "test_network")]
+    fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
+        CoreLedgerService::dev_committee_for_round(self, round)
     }
 
     /// Returns `true` if the ledger contains the given certificate ID in block history.

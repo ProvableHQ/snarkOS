@@ -431,7 +431,7 @@ impl<N: Network> Sync<N> {
                 for certificates in subdag.values().cloned() {
                     cfg_into_iter!(certificates).try_for_each(|certificate| {
                         self.storage
-                            .sync_certificate_with_block(block, certificate, &unconfirmed_transactions)
+                            .sync_certificate_with_block(block, certificate, &unconfirmed_transactions, true)
                             .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
                     })?;
                 }
@@ -691,7 +691,7 @@ impl<N: Network> Sync<N> {
             cfg_into_iter!(certificates.clone()).try_for_each(|certificate| -> Result<()> {
                 // Sync the batch certificate with the block.
                 self.storage
-                    .sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions)
+                    .sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions, false)
                     .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
             })?;
         }

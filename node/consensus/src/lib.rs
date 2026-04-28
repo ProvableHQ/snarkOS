@@ -57,6 +57,7 @@ use snarkvm::{
 
 use aleo_std::StorageMode;
 use anyhow::{Context, Result};
+use cfg_if::cfg_if;
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -593,7 +594,20 @@ impl<N: Network> Consensus<N> {
         metrics::histogram(metrics::consensus::PREPARE_ADVANCE_SECS, prepare_elapsed.as_secs_f64());
 
         let check_instant = std::time::Instant::now();
-        let block = match ledger_update.check_next_block(block) {
+        cfg_if! {
+            if #[cfg(feature = "test_network")] {
+                // If we are using a hotswapped dev committee, skip checking the block.
+                let result = if self.ledger.dev_committee_for_round(block.round())?.is_some() {
+                    Ok(block)
+                } else {
+                    ledger_update.check_next_block(block)
+                };
+            } else {
+                let result = ledger_update.check_next_block(block);
+            }
+        }
+
+        let block = match result {
             Ok(block) => block,
             Err(CheckBlockError::BlockAlreadyExists { .. }) => {
                 debug!("The given block hash already exists in the ledger");
@@ -609,6 +623,7 @@ impl<N: Network> Consensus<N> {
             }
             Err(err) => return Err(err.into_anyhow()),
         };
+
         let check_elapsed = check_instant.elapsed();
         trace!("check_next_block took {:.3}s", check_elapsed.as_secs_f64());
         #[cfg(feature = "metrics")]

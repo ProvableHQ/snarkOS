@@ -118,6 +118,12 @@ pub trait LedgerService<N: Network>: std::fmt::Debug + Send + Sync {
     /// Returns the committee lookback for the given round.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>>;
 
+    /// Returns the deterministic hotswapped dev committee for the given round, if active.
+    #[cfg(feature = "test_network")]
+    fn dev_committee_for_round(&self, _round: u64) -> Result<Option<Committee<N>>> {
+        Ok(None)
+    }
+
     /// Returns `true` if the ledger contains the given certificate ID.
     fn contains_certificate(&self, certificate_id: &Field<N>) -> Result<bool>;
 
