@@ -539,7 +539,7 @@ mod tests {
             false,
             dev_txs,
             None,
-            SignalHandler::new(),
+            SignalHandler::new(None),
         )
         .await
         .unwrap();

@@ -15,10 +15,11 @@
 
 use snarkos_node_network::{NodeType, PeerPoolHandling};
 use snarkos_node_router::Routing;
-
 use snarkos_utilities::SignalHandler;
-
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
+
+use std::time::Duration;
+use tokio::time::sleep;
 
 #[async_trait]
 pub trait NodeInterface<N: Network>: Routing<N> {
@@ -53,6 +54,17 @@ pub trait NodeInterface<N: Network>: Routing<N> {
 
         // If the node is already initialized, then shut it down.
         self.shut_down().await;
+
+        // Allow a bit of time for the tasks to wind down.
+        sleep(Duration::from_secs(1)).await;
+
+        // Check if there are any stragglers left.
+        if let Some(handle) = &handler.handle {
+            let live_tasks = handle.metrics().num_alive_tasks();
+            if live_tasks > 2 {
+                error!("There are still {live_tasks} live tasks (expected no more than 2)");
+            }
+        }
     }
 
     /// Shuts down the node.
