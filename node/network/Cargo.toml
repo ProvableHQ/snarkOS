@@ -18,6 +18,7 @@ edition = "2024"
 
 [features]
 locktick = [ "dep:locktick", "snarkos-node-tcp/locktick" ]
+metrics = [ ]
 test = [ ]
 
 [dependencies.anyhow]
