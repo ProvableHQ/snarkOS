@@ -816,7 +816,7 @@ workflows:
           filters:
             branches:
               only:
-                - ci/reenable-check-logs
+                - test_fixed_dev_committee
                 - canary
                 - testnet
                 - mainnet
