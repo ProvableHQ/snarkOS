@@ -61,6 +61,9 @@ workspace = true
 features = [ "parking_lot" ]
 optional = true
 
+[dependencies.lru]
+workspace = true
+
 [dependencies.once_cell]
 workspace = true
 
