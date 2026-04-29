@@ -190,6 +190,11 @@ impl<N: Network> Primary<N> {
     }
 
     /// Load the proposal cache file and update the Primary state with the stored data.
+    ///
+    /// If the proposal cache is more than `MAX_GC_ROUNDS` ahead of the current ledger, loading is
+    /// deferred: a background task is spawned that polls the ledger until it has synced within GC
+    /// range of the cached proposal, at which point the cached state is applied.  This allows the
+    /// node to start normally after restoring an older ledger snapshot instead of failing hard.
     async fn load_proposal_cache(&self) -> Result<()> {
         // Fetch the signed proposals from the file system if it exists.
         match ProposalCache::<N>::exists(&self.node_data_dir) {
@@ -200,25 +205,65 @@ impl<N: Network> Primary<N> {
                     let (latest_certificate_round, proposed_batch, signed_proposals, pending_certificates) =
                         proposal_cache.into();
 
-                    // Verify that the proposal cache is not too far ahead of the ledger.
-                    // If the cache round exceeds the ledger round by more than MAX_GC_ROUNDS, the ledger
-                    // snapshot is too old to recover from the cached state. The operator must restore a
-                    // more recent ledger snapshot before restarting the node.
                     let ledger_round = self.ledger.latest_round();
                     let max_gc_rounds = BatchHeader::<N>::MAX_GC_ROUNDS as u64;
+
+                    // Check whether the proposal cache is too far ahead of the current ledger.
                     if latest_certificate_round > ledger_round.saturating_add(max_gc_rounds) {
-                        bail!(
-                            "The proposal cache (round {latest_certificate_round}) is more than {max_gc_rounds} \
-                             rounds ahead of the ledger (round {ledger_round}). \
-                             Please restore a more recent ledger snapshot before restarting the node."
+                        // The ledger snapshot is older than MAX_GC_ROUNDS relative to the cached
+                        // proposal.  Rather than failing hard, defer loading the cache until the
+                        // node has synced within GC range of the cached proposal round.
+                        info!(
+                            "The proposal cache (round {latest_certificate_round}) is more than \
+                             {max_gc_rounds} GC rounds ahead of the ledger (round {ledger_round}). \
+                             Deferring proposal cache load until the ledger syncs within GC range."
                         );
+                        let self_ = self.clone();
+                        self.spawn(async move {
+                            // Poll until the ledger has synced within GC rounds of the cached proposal.
+                            loop {
+                                let current_ledger_round = self_.ledger.latest_round();
+                                if latest_certificate_round <= current_ledger_round.saturating_add(max_gc_rounds) {
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_secs(10)).await;
+                            }
+                            info!(
+                                "Loading the deferred proposal cache (round {latest_certificate_round}) \
+                                 now that the ledger has synced to round {}",
+                                self_.ledger.latest_round()
+                            );
+                            // Write the proposed batch.
+                            *self_.proposed_batch.write() = proposed_batch;
+                            // Write the signed proposals.
+                            *self_.signed_proposals.write() = signed_proposals;
+                            // Write the propose lock.
+                            *self_.propose_lock.lock().await = latest_certificate_round;
+                            // Update the storage with the pending certificates.
+                            for certificate in pending_certificates {
+                                let batch_id = certificate.batch_id();
+                                // We use a dummy IP because the node should not need to request from any peers.
+                                // The storage should have stored all the transmissions. If not, we simply
+                                // skip the certificate.
+                                if let Err(err) =
+                                    self_.sync_with_certificate_from_peer::<true>(DUMMY_SELF_IP, certificate).await
+                                {
+                                    let err = err.context(format!(
+                                        "Failed to load stored certificate {} from proposal cache",
+                                        fmt_id(batch_id)
+                                    ));
+                                    warn!("{}", &flatten_error(err));
+                                }
+                            }
+                        });
+                        return Ok(());
                     }
 
                     // Write the proposed batch.
                     *self.proposed_batch.write() = proposed_batch;
                     // Write the signed proposals.
                     *self.signed_proposals.write() = signed_proposals;
-                    // Writ the propose lock.
+                    // Write the propose lock.
                     *self.propose_lock.lock().await = latest_certificate_round;
 
                     // Update the storage with the pending certificates.
@@ -293,12 +338,16 @@ impl<N: Network> Primary<N> {
         let (sync_sender, sync_receiver) = init_sync_channels();
         // Next, initialize the sync module and sync the storage from ledger.
         self.sync.initialize(sync_callback)?;
-        // Next, load and process the proposal cache before running the sync module.
-        self.load_proposal_cache().await?;
         // Next, run the sync module.
         self.sync.run(ping, sync_receiver).await?;
         // Next, initialize the gateway.
         self.gateway.run(primary_sender, worker_senders, Some(sync_sender)).await;
+        // Next, load and process the proposal cache.
+        // Note: This is done after starting the sync module and gateway so that, if the proposal
+        // cache is more than MAX_GC_ROUNDS ahead of the current ledger, a background task can be
+        // spawned to defer loading until the ledger has synced within GC range of the cached
+        // proposal round.
+        self.load_proposal_cache().await?;
         // Lastly, start the primary handlers.
         // Note: This ensures the primary does not start communicating before syncing is complete.
         self.start_handlers(primary_receiver);
