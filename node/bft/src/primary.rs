@@ -221,11 +221,22 @@ impl<N: Network> Primary<N> {
                         let self_ = self.clone();
                         self.spawn(async move {
                             // Poll until the ledger has synced within GC rounds of the cached proposal.
+                            // Log periodically so operators can see that the node is still waiting.
+                            let mut iters: u32 = 0;
                             loop {
                                 let current_ledger_round = self_.ledger.latest_round();
                                 if latest_certificate_round <= current_ledger_round.saturating_add(max_gc_rounds) {
                                     break;
                                 }
+                                // Log a reminder every ~5 minutes (every 30 × 10-second iterations).
+                                if iters % 30 == 0 {
+                                    info!(
+                                        "Waiting to load the proposal cache (round {latest_certificate_round}): \
+                                         ledger is at round {current_ledger_round}, need to reach at least round {}.",
+                                        latest_certificate_round.saturating_sub(max_gc_rounds)
+                                    );
+                                }
+                                iters = iters.saturating_add(1);
                                 tokio::time::sleep(Duration::from_secs(10)).await;
                             }
                             info!(
@@ -233,60 +244,62 @@ impl<N: Network> Primary<N> {
                                  now that the ledger has synced to round {}",
                                 self_.ledger.latest_round()
                             );
-                            // Write the proposed batch.
-                            *self_.proposed_batch.write() = proposed_batch;
-                            // Write the signed proposals.
-                            *self_.signed_proposals.write() = signed_proposals;
-                            // Write the propose lock.
-                            *self_.propose_lock.lock().await = latest_certificate_round;
-                            // Update the storage with the pending certificates.
-                            for certificate in pending_certificates {
-                                let batch_id = certificate.batch_id();
-                                // We use a dummy IP because the node should not need to request from any peers.
-                                // The storage should have stored all the transmissions. If not, we simply
-                                // skip the certificate.
-                                if let Err(err) =
-                                    self_.sync_with_certificate_from_peer::<true>(DUMMY_SELF_IP, certificate).await
-                                {
-                                    let err = err.context(format!(
-                                        "Failed to load stored certificate {} from proposal cache",
-                                        fmt_id(batch_id)
-                                    ));
-                                    warn!("{}", &flatten_error(err));
-                                }
-                            }
+                            self_
+                                .apply_proposal_cache(
+                                    latest_certificate_round,
+                                    proposed_batch,
+                                    signed_proposals,
+                                    pending_certificates,
+                                )
+                                .await;
                         });
                         return Ok(());
                     }
 
-                    // Write the proposed batch.
-                    *self.proposed_batch.write() = proposed_batch;
-                    // Write the signed proposals.
-                    *self.signed_proposals.write() = signed_proposals;
-                    // Write the propose lock.
-                    *self.propose_lock.lock().await = latest_certificate_round;
-
-                    // Update the storage with the pending certificates.
-                    for certificate in pending_certificates {
-                        let batch_id = certificate.batch_id();
-                        // We use a dummy IP because the node should not need to request from any peers.
-                        // The storage should have stored all the transmissions. If not, we simply
-                        // skip the certificate.
-                        if let Err(err) = self.sync_with_certificate_from_peer::<true>(DUMMY_SELF_IP, certificate).await
-                        {
-                            let err = err.context(format!(
-                                "Failed to load stored certificate {} from proposal cache",
-                                fmt_id(batch_id)
-                            ));
-                            warn!("{}", &flatten_error(err));
-                        }
-                    }
+                    // The cache is within GC range; apply it immediately.
+                    self.apply_proposal_cache(
+                        latest_certificate_round,
+                        proposed_batch,
+                        signed_proposals,
+                        pending_certificates,
+                    )
+                    .await;
                     Ok(())
                 }
                 Err(err) => Err(err.context("Failed to read the signed proposals from the file system")),
             },
             // If the proposal cache does not exist, then return early.
             false => Ok(()),
+        }
+    }
+
+    /// Applies the proposal cache state to the primary: writes the proposed batch, signed
+    /// proposals, propose lock, and loads any pending certificates into storage.
+    async fn apply_proposal_cache(
+        &self,
+        latest_certificate_round: u64,
+        proposed_batch: Option<Proposal<N>>,
+        signed_proposals: SignedProposals<N>,
+        pending_certificates: IndexSet<BatchCertificate<N>>,
+    ) {
+        // Write the proposed batch.
+        *self.proposed_batch.write() = proposed_batch;
+        // Write the signed proposals.
+        *self.signed_proposals.write() = signed_proposals;
+        // Write the propose lock.
+        *self.propose_lock.lock().await = latest_certificate_round;
+
+        // Update the storage with the pending certificates.
+        for certificate in pending_certificates {
+            let batch_id = certificate.batch_id();
+            // We use a dummy IP because the node should not need to request from any peers.
+            // The storage should have stored all the transmissions. If not, we simply
+            // skip the certificate.
+            if let Err(err) = self.sync_with_certificate_from_peer::<true>(DUMMY_SELF_IP, certificate).await {
+                let err =
+                    err.context(format!("Failed to load stored certificate {} from proposal cache", fmt_id(batch_id)));
+                warn!("{}", &flatten_error(err));
+            }
         }
     }
 
