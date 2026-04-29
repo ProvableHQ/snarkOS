@@ -297,15 +297,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
-            // Enable tower-http tracing.
-            .layer(trace_layer)
-            // Enable CORS.
-            .layer(cors)
             // Cap the request body size at 512KiB.
             .layer(DefaultBodyLimit::max(512 * 1024))
             .layer(GovernorLayer {
                 config: governor_config.into(),
             })
+            // Enable CORS.
+            .layer(cors)
+            // Enable tower-http tracing.
+            .layer(trace_layer)
     }
 
     async fn spawn_server(&mut self, rest_ip: SocketAddr, rest_rps: u32) -> Result<()> {
