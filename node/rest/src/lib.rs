@@ -53,13 +53,14 @@ use axum_extra::response::ErasedJson;
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
+use tracing::Span;
 
 /// The default port used for the REST API
 pub const DEFAULT_REST_PORT: u16 = 3030;
@@ -263,13 +264,34 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         #[cfg(feature = "history-staking-rewards")]
         let routes = routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward));
 
+        let trace_layer = TraceLayer::new_for_http()
+            .make_span_with(|request: &Request<_>| {
+                let addr = request
+                    .extensions()
+                    .get::<ConnectInfo<SocketAddr>>()
+                    .map(|ConnectInfo(addr)| addr.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                // Create a span that includes method, path, and our extracted IP
+                tracing::info_span!(
+                    "REST",
+                    method = %request.method(),
+                    uri = %request.uri().path(),
+                    addr = %addr,
+                )
+            })
+            .on_request(|_request: &Request<_>, _span: &Span| {
+                info!("Received a request");
+            })
+            .on_response(|_response: &Response<_>, latency: Duration, _span: &Span| {
+                info!("Finished request in {:?}", latency);
+            });
+
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
             // Enable tower-http tracing.
-            .layer(TraceLayer::new_for_http())
-            // Custom logging.
-            .layer(middleware::map_request(log_middleware))
+            .layer(trace_layer)
             // Enable CORS.
             .layer(cors)
             // Cap the request body size at 512KiB.
@@ -312,12 +334,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         self.handles.lock().push(handle);
         Ok(())
     }
-}
-
-/// Creates a log message for every HTTP request.
-async fn log_middleware(ConnectInfo(addr): ConnectInfo<SocketAddr>, request: Request<Body>) -> Request<Body> {
-    info!("Received '{} {}' from '{addr}'", request.method(), request.uri());
-    request
 }
 
 /// Converts errors to the old style for the v1 API.
