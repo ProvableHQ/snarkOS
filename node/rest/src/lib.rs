@@ -51,9 +51,10 @@ use axum::{
 use axum_extra::response::ErasedJson;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
+use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
@@ -68,6 +69,9 @@ pub const DEFAULT_REST_PORT: u16 = 3030;
 /// The API version prefixes.
 pub const API_VERSION_V1: &str = "v1";
 pub const API_VERSION_V2: &str = "v2";
+
+/// The capacity of the LRU holding recently requested blocks.
+const BLOCK_CACHE_SIZE: usize = 128;
 
 /// A REST API server for the ledger.
 #[derive(Clone)]
@@ -90,6 +94,8 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     num_verifying_executions: Arc<Semaphore>,
     /// The number of ongoing solution verifications via REST.
     num_verifying_solutions: Arc<Semaphore>,
+    /// A cache containing recently requested blocks.
+    block_cache: Arc<Mutex<LruCache<N::BlockHash, ErasedJson>>>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -114,6 +120,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             num_verifying_deploys: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS)),
             num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
             num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
+            block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
         };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
