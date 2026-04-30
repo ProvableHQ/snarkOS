@@ -146,7 +146,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     /// GET /<network>/block/latest
     pub(crate) async fn get_block_latest(State(rest): State<Self>) -> ErasedJson {
-        ErasedJson::pretty(rest.ledger.latest_block())
+        let block = rest.ledger.latest_block();
+        let hash = block.hash();
+        // When present, this is 3x faster than serializing the block from the ledger.
+        rest.block_cache.lock().get_or_insert(hash, || ErasedJson::pretty(block)).clone()
     }
 
     /// GET /<network>/block/{height}
@@ -157,23 +160,38 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         // Manually parse the height or the height of the hash, axum doesn't support different types
         // for the same path param.
-        let id_name;
-        let block = if let Ok(height) = height_or_hash.parse::<u32>() {
-            id_name = "hash";
-            rest.ledger.try_get_block(height).with_context(|| "Failed to get block by height")?
+        let hash = if let Ok(height) = height_or_hash.parse::<u32>() {
+            rest.ledger.get_hash(height).with_context(|| "Failed to get a block's hash")?
         } else if let Ok(hash) = height_or_hash.parse::<N::BlockHash>() {
-            id_name = "height";
-            rest.ledger.try_get_block_by_hash(&hash).with_context(|| "Failed to get block by hash")?
+            hash
         } else {
-            return Err(RestError::bad_request(anyhow!(
-                "invalid input, it is neither a block height nor a block hash"
-            )));
+            return Err(RestError::bad_request(anyhow!("invalid input: neither a block height nor a block hash")));
         };
 
-        match block {
-            Some(block) => Ok(ErasedJson::pretty(block)),
-            None => Err(RestError::not_found(anyhow!("No block with {id_name} {height_or_hash} found"))),
+        // Attempt to find a serialized block in the cache.
+        if let Some(json_block) = rest.block_cache.lock().get(&hash) {
+            return Ok(json_block.clone());
         }
+
+        // Retrieve the block from the database.
+        let json_block = match tokio::task::spawn_blocking(move || match rest.ledger.try_get_block_by_hash(&hash) {
+            Ok(Some(block)) => Some(ErasedJson::pretty(block)),
+            Ok(None) => None,
+            Err(e) => {
+                error!("Couldn't find a block: {e}");
+                None
+            }
+        })
+        .await
+        {
+            Ok(Some(block)) => Ok(block),
+            Ok(None) => Err(RestError::not_found(anyhow!("Couldn't find block {height_or_hash}"))),
+            Err(e) => Err(RestError::internal_server_error(anyhow!("tokio error: {e}"))),
+        }?;
+
+        rest.block_cache.lock().put(hash, json_block.clone());
+
+        Ok(json_block)
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
