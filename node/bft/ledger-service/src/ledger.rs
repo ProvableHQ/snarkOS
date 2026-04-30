@@ -69,9 +69,7 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     stoppable: Arc<dyn Stoppable>,
     update_lock: Arc<Mutex<()>>,
     #[cfg(feature = "test_network")]
-    dev_start_round: Option<u64>,
-    #[cfg(feature = "test_network")]
-    dev_num_validators: Option<u16>,
+    dev_committee: Option<Committee<N>>,
 }
 
 /// A transactional update to the ledger.
@@ -142,33 +140,32 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
         #[cfg(feature = "metrics")]
         metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
         #[cfg(feature = "test_network")]
-        let dev_num_validators = std::env::var("DEV_COMMITTEE_NUM_VALIDATORS").ok().map(|s| s.parse::<u16>().unwrap());
-        #[cfg(feature = "test_network")]
-        let dev_start_round = dev_num_validators.is_some().then_some(ledger.latest_round());
+        let dev_committee = Self::build_dev_committee(ledger.latest_round())
+            .expect("Failed to build dev committee from DEV_COMMITTEE_NUM_VALIDATORS");
         Self {
             ledger,
             latest_leader: Default::default(),
             stoppable,
             update_lock: Default::default(),
             #[cfg(feature = "test_network")]
-            dev_start_round,
-            #[cfg(feature = "test_network")]
-            dev_num_validators,
+            dev_committee,
         }
     }
 
-    /// Returns the deterministic dev committee for rounds at or after the hotswap start.
+    /// Builds the deterministic dev committee from `DEV_COMMITTEE_NUM_VALIDATORS`, if set.
+    ///
+    /// Returns `Ok(None)` when the env var is unset, otherwise returns a committee whose
+    /// starting round is `start_round`.
     #[cfg(feature = "test_network")]
-    fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
-        let dev_num_validators = self.dev_num_validators.as_ref().expect("DEV_COMMITTEE_NUM_VALIDATORS is not set");
-        let dev_start_round = self.dev_start_round.as_ref().expect("DEV_COMMITTEE_NUM_VALIDATORS is not set");
-        if round < *dev_start_round {
+    fn build_dev_committee(start_round: u64) -> Result<Option<Committee<N>>> {
+        let Some(dev_num_validators) = std::env::var("DEV_COMMITTEE_NUM_VALIDATORS").ok() else {
             return Ok(None);
-        }
+        };
+        let dev_num_validators = dev_num_validators.parse::<u16>()?;
 
         use rand::SeedableRng;
         let mut rng = rand_chacha::ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
-        let dev_keys = (0..*dev_num_validators)
+        let dev_keys = (0..dev_num_validators)
             .map(|_| snarkvm::console::account::PrivateKey::<N>::new(&mut rng))
             .collect::<Result<Vec<_>>>()?;
         let members = dev_keys
@@ -178,7 +175,19 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
             .into_iter()
             .map(|address| (address, (snarkvm::ledger::committee::MIN_VALIDATOR_STAKE, true, 0)))
             .collect::<IndexMap<_, _>>();
-        Ok(Some(Committee::new(*dev_start_round, members)?))
+        Ok(Some(Committee::new(start_round, members)?))
+    }
+
+    /// Returns the deterministic dev committee for rounds at or after the hotswap start.
+    #[cfg(feature = "test_network")]
+    fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
+        let Some(dev_committee) = self.dev_committee.as_ref() else {
+            return Ok(None);
+        };
+        if round < dev_committee.starting_round() {
+            return Ok(None);
+        }
+        Ok(Some(dev_committee.clone()))
     }
 }
 
@@ -275,10 +284,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     fn current_committee(&self) -> Result<Committee<N>> {
         #[cfg(feature = "test_network")]
         {
-            if let Some(dev_start_round) = self.dev_start_round {
-                if let Some(dev_committee) = self.dev_committee_for_round(dev_start_round)? {
-                    return Ok(dev_committee);
-                }
+            if let Some(dev_committee) = self.dev_committee.as_ref() {
+                return Ok(dev_committee.clone());
             }
         }
 
