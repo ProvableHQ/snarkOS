@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777482817174,
+  "lastUpdate": 1777567330166,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -12240,6 +12240,72 @@ window.BENCHMARK_DATA = {
             "value": 0.33,
             "unit": "blocks/s",
             "extra": "total_wait=749s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.56,
+            "unit": "blocks/s",
+            "extra": "total_wait=160s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c9a024b1faed5365b23828da0b43365be6bf6a7",
+          "message": "Merge pull request #4239 from ProvableHQ/copilot/fix-parameter-downloads-issue\n\nCache ~/.aleo/resources in CircleCI to fix parameter download failures",
+          "timestamp": "2026-04-30T18:08:58+02:00",
+          "tree_id": "30ce56deb7f93328741c1a722f1ebda8b5d3fcbf",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/4c9a024b1faed5365b23828da0b43365be6bf6a7"
+        },
+        "date": 1777567329489,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.97668995993581,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=53.47182559967041, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7733.305123749957,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.344865322113037, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3174.6380397236208,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2519972324371338, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.69,
+            "unit": "blocks/s",
+            "extra": "total_wait=360s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.524957,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=350, mean_speed=0.664381, max_speed=2.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=393s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
