@@ -896,13 +896,14 @@ impl<N: Network> BlockSync<N> {
         }
 
         // -- Finally, update sync state and notify the sync loop about the change. --
-        let just_became_synced =
-            if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
-                self.sync_state.write().set_greatest_peer_height(greatest_peer_height)
-            } else {
-                error!("Got new block locators but greatest peer height is zero.");
-                false
-            };
+        let just_became_synced = if let Some(greatest_peer_height) =
+            self.locators.read().values().map(|l| l.latest_locator_height()).max()
+        {
+            self.sync_state.write().set_greatest_peer_height(greatest_peer_height)
+        } else {
+            error!("Got new block locators but greatest peer height is zero.");
+            false
+        };
         // Even if the greatest peer height did not change, we still received new block locators
         // that the sync loop might need to proceed.
         self.peer_notify.notify_one();
@@ -930,13 +931,14 @@ impl<N: Network> BlockSync<N> {
         self.remove_block_requests_to_peer(peer_ip);
 
         // Update sync state, because the greatest peer height may have decreased.
-        let just_became_synced =
-            if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
-                self.sync_state.write().set_greatest_peer_height(greatest_peer_height)
-            } else {
-                // There are no more peers left.
-                self.sync_state.write().clear_greatest_peer_height()
-            };
+        let just_became_synced = if let Some(greatest_peer_height) =
+            self.locators.read().values().map(|l| l.latest_locator_height()).max()
+        {
+            self.sync_state.write().set_greatest_peer_height(greatest_peer_height)
+        } else {
+            // There are no more peers left.
+            self.sync_state.write().clear_greatest_peer_height()
+        };
 
         // Notify the sync loop that something changed.
         self.peer_notify.notify_one();
@@ -1739,6 +1741,7 @@ mod tests {
             advance_with_sync_blocks_lock: Default::default(),
             metrics: Default::default(),
             prepare_requests_lock: Default::default(),
+            synced_notify: Default::default(),
         }
     }
 
