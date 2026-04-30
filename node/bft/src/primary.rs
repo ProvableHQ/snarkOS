@@ -1852,18 +1852,24 @@ impl<N: Network> Primary<N> {
             missing_previous_certificates_handle,
         ).with_context(|| format!("Failed to fetch missing transmissions and previous certificates for round {batch_round} from '{peer_ip}"))?;
 
-        // Iterate through the missing previous certificates.
-        for batch_certificate in missing_previous_certificates {
-            // Check if the missing previous certificate is valid. This is only
-            // needed if we are processing an incoming batch header from a peer.
-            // For incoming certificates, validity is assured by checking the
-            // root certificate in `process_batch_certificate_from_peer`.
-            if CHECK_PREVIOUS_CERTIFICATES {
-                self.storage.check_incoming_certificate(&batch_certificate)?;
+        // Process all missing previous certificates in parallel, so that their
+        // recursive fetches (for level R-2, R-3, ...) all fire concurrently
+        // rather than being serialized one certificate at a time.
+        futures::future::try_join_all(missing_previous_certificates.into_iter().map(|batch_certificate| {
+            let self_ = self.clone();
+            async move {
+                // Check if the missing previous certificate is valid. This is only
+                // needed if we are processing an incoming batch header from a peer.
+                // For incoming certificates, validity is assured by checking the
+                // root certificate in `process_batch_certificate_from_peer`.
+                if CHECK_PREVIOUS_CERTIFICATES {
+                    self_.storage.check_incoming_certificate(&batch_certificate)?;
+                }
+                // Store the batch certificate (recursively fetching any missing previous certificates).
+                self_.sync_with_certificate_from_peer::<IS_SYNCING>(peer_ip, batch_certificate).await
             }
-            // Store the batch certificate (recursively fetching any missing previous certificates).
-            self.sync_with_certificate_from_peer::<IS_SYNCING>(peer_ip, batch_certificate).await?;
-        }
+        }))
+        .await?;
         Ok(missing_transmissions)
     }
 
