@@ -19,7 +19,7 @@ num_validators=40
 num_clients=1
 
 # Adjust this to show more/less log messages
-log_filter="info,snarkos_node::client=trace,snarkos_node_sync=trace,snarkos_node_tcp=warn,snarkos_node_rest=warn"
+log_filter="info"
 
 max_wait=2400 # Wait for up to 40 minutes
 poll_interval=1 # Check block heights every second
