@@ -147,6 +147,8 @@ commands:
             - ~/.cache/sccache
             # Store the cargo registry
             - ~/.cargo
+            # Store the Aleo parameters
+            - ~/.aleo/resources
 
   run_serial:
     description: "Build and run tests"
