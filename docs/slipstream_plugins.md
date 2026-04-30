@@ -99,8 +99,6 @@ the node exits with an error.
 
 ## Runtime Management via REST API
 
-All endpoints require a valid JWT token (`Authorization: Bearer <token>`).
-
 ### List loaded plugins
 
 ```
@@ -151,21 +149,19 @@ config during runtime, unload it with DELETE and reload it with POST. Otherwise,
 ## Example: curl Commands
 
 ```bash
-JWT="<your-jwt-token>"
 BASE="http://localhost:3030/mainnet"
 
 # List
-curl -H "Authorization: Bearer $JWT" "$BASE/slipstream/plugins"
+curl "$BASE/slipstream/plugins"
 
 # Load
-curl -X POST -H "Authorization: Bearer $JWT" \
+curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"config_file":"/path/to/plugin.json5"}' \
   "$BASE/slipstream/plugins"
 
 # Unload
-curl -X DELETE -H "Authorization: Bearer $JWT" \
-  "$BASE/slipstream/plugins/postgres"
+curl -X DELETE "$BASE/slipstream/plugins/postgres"
 ```
 
 ---
