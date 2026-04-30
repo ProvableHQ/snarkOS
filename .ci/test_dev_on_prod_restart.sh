@@ -16,7 +16,7 @@ REST_PORT=3030
 NUM_DEV_NODES=4
 SETUP_ADVANCE_BLOCKS=5
 DEV_ADVANCE_BLOCKS=10
-SETUP_MAX_WAIT=20
+SETUP_MAX_WAIT=40
 DEV_MAX_WAIT=100
 
 BOOTSTRAP_PID=""
@@ -188,7 +188,7 @@ function start_dev_nodes() {
 
   for i in $(seq 0 $((NUM_DEV_NODES - 1))); do
     log "Starting dev node ${i}"
-    DEV_COMMITTEE_NUM_VALIDATORS=${NUM_DEV_NODES} ~/programs/snarkOS/target/debug/snarkos start --nodisplay --validator --ledger-storage "ledger-${i}" --node-data-storage "node-data-${i}" --dev "${i}" \
+    DEV_COMMITTEE_NUM_VALIDATORS=${NUM_DEV_NODES} snarkos start --nodisplay --validator --ledger-storage "ledger-${i}" --node-data-storage "node-data-${i}" --dev "${i}" \
       --no-dev-txs --nocdn --dev-num-validators "${NUM_DEV_NODES}" --verbosity 2 \
       --allow-external-peers --logfile "dev_logs/val-${i}.txt" --dev-on-prod &
     DEV_PIDS[$i]=$!
@@ -205,9 +205,7 @@ require_cmd curl
 require_cmd cargo
 require_cmd tar
 
-log "Downloading and building latest snarkOS release binary for setup node..."
-download_and_build_latest_snarkos
-SNARKOS_SETUP_BIN="$SNARKOS_RELEASE_BIN"
+SNARKOS_SETUP_BIN="snarkos"
 log "Using setup binary: ${SNARKOS_SETUP_BIN}"
 
 log "Step 1: Start production node and wait for +${SETUP_ADVANCE_BLOCKS} blocks"
