@@ -71,7 +71,7 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     #[cfg(feature = "test_network")]
     dev_start_round: Option<u64>,
     #[cfg(feature = "test_network")]
-    dev_num_validators: Option<String>,
+    dev_num_validators: Option<u16>,
 }
 
 /// A transactional update to the ledger.
@@ -142,7 +142,7 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
         #[cfg(feature = "metrics")]
         metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
         #[cfg(feature = "test_network")]
-        let dev_num_validators = std::env::var("DEV_COMMITTEE_NUM_VALIDATORS").ok();
+        let dev_num_validators = std::env::var("DEV_COMMITTEE_NUM_VALIDATORS").ok().map(|s| s.parse::<u16>().unwrap());
         #[cfg(feature = "test_network")]
         let dev_start_round = dev_num_validators.is_some().then_some(ledger.latest_round());
         Self {
@@ -161,7 +161,6 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     #[cfg(feature = "test_network")]
     fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
         let dev_num_validators = self.dev_num_validators.as_ref().expect("DEV_COMMITTEE_NUM_VALIDATORS is not set");
-        let dev_num_validators = dev_num_validators.parse::<u16>()?;
         let dev_start_round = self.dev_start_round.as_ref().expect("DEV_COMMITTEE_NUM_VALIDATORS is not set");
         if round < *dev_start_round {
             return Ok(None);
@@ -169,7 +168,7 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
 
         use rand::SeedableRng;
         let mut rng = rand_chacha::ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
-        let dev_keys = (0..dev_num_validators)
+        let dev_keys = (0..*dev_num_validators)
             .map(|_| snarkvm::console::account::PrivateKey::<N>::new(&mut rng))
             .collect::<Result<Vec<_>>>()?;
         let members = dev_keys
