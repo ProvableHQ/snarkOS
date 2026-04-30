@@ -87,6 +87,21 @@ log "Using network: $network_name (ID: $network_id)"
 snapshot_info=$(<info.txt)
 log "Snapshot_info: ${snapshot_info}"
 
+# Print CPU layout so we can verify the taskset pinning in utils.sh is valid for this host.
+# TASKSET1/TASKSET2 in utils.sh pin nodes to cores 0-7 and 8-15, which requires >= 16 cores on Linux.
+if command -v nproc >/dev/null 2>&1; then
+  num_cores_available=$(nproc)
+  num_cores_total=$(nproc --all)
+elif [[ "$(uname)" == "Darwin" ]]; then
+  num_cores_available=$(sysctl -n hw.ncpu)
+  num_cores_total=$num_cores_available
+else
+  num_cores_available="unknown"
+  num_cores_total="unknown"
+fi
+log "CPU cores: available=${num_cores_available}, total=${num_cores_total}"
+log "TASKSET1='${TASKSET1}' TASKSET2='${TASKSET2}'"
+
 # Define a trap handler that cleans up all processes on exit.
 trap stop_nodes EXIT
 

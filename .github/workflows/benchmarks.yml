@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'staging'
+      - 'bench_test'
   workflow_dispatch:
 
 jobs:
