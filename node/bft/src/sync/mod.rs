@@ -993,6 +993,14 @@ impl<N: Network> Sync<N> {
         self.block_sync.is_block_synced()
     }
 
+    /// Waits asynchronously until the node is fully synced (block-level sync is complete).
+    ///
+    /// Returns immediately if the node is already synced; otherwise suspends until the
+    /// block sync state transitions to [`snarkos_node_sync::BftSyncMode`] synced.
+    pub async fn wait_until_synced(&self) {
+        self.block_sync.wait_until_block_synced().await;
+    }
+
     /// Returns the number of blocks the node is behind the greatest peer height.
     pub fn num_blocks_behind(&self) -> Option<u32> {
         self.block_sync.num_blocks_behind()

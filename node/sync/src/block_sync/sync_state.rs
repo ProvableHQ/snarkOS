@@ -128,43 +128,47 @@ impl SyncState {
 
     /// Update the height we are synced to.
     /// If the value is lower than the current height, the sync height remains unchanged.
-    pub fn set_sync_height(&mut self, sync_height: u32) {
+    /// Returns `true` if this call caused the state to transition to [`SyncStatus::Synced`].
+    pub fn set_sync_height(&mut self, sync_height: u32) -> bool {
         if sync_height <= self.sync_height {
-            return;
+            return false;
         }
 
         trace!("Sync height increased from {old_height} to {sync_height}", old_height = self.sync_height);
         self.sync_height = sync_height;
-        self.update_is_block_synced();
+        self.update_is_block_synced()
     }
 
     /// Update the greatest known height of a connected peer.
-    pub fn set_greatest_peer_height(&mut self, peer_height: u32) {
+    /// Returns `true` if this call caused the state to transition to [`SyncStatus::Synced`].
+    pub fn set_greatest_peer_height(&mut self, peer_height: u32) -> bool {
         if let Some(old_height) = self.greatest_peer_height {
             match old_height.cmp(&peer_height) {
-                Ordering::Equal => return,
+                Ordering::Equal => return false,
                 Ordering::Greater => warn!("Greatest peer height reduced from {old_height} to {peer_height}"),
                 Ordering::Less => trace!("Greatest peer height increased from {old_height} to {peer_height}"),
             }
         }
 
         self.greatest_peer_height = Some(peer_height);
-        self.update_is_block_synced();
+        self.update_is_block_synced()
     }
 
     /// Remove the greatest peer height (used when all peers disconnect).
-    pub fn clear_greatest_peer_height(&mut self) {
+    /// Returns `true` if this call caused the state to transition to [`SyncStatus::Synced`].
+    pub fn clear_greatest_peer_height(&mut self) -> bool {
         // No-op if there is no change.
         if self.greatest_peer_height.is_none() {
-            return;
+            return false;
         }
 
         self.greatest_peer_height = None;
-        self.update_is_block_synced();
+        self.update_is_block_synced()
     }
 
     /// Updates the state of `is_block_synced` for the sync module.
-    fn update_is_block_synced(&mut self) {
+    /// Returns `true` if the state JUST transitioned to [`SyncStatus::Synced`].
+    fn update_is_block_synced(&mut self) -> bool {
         trace!(
             "Updating is_block_synced: greatest_peer_height={greatest_peer:?}, current_height={current}, status={status:?}",
             greatest_peer = self.greatest_peer_height,
@@ -183,9 +187,9 @@ impl SyncState {
             None => SyncStatus::Unsynced,
         };
 
-        // Return early if the state is unchanged
+        // Return early if the state is unchanged.
         if new_status == old_status {
-            return;
+            return false;
         }
 
         // Measure how long sync took.
@@ -223,5 +227,8 @@ impl SyncState {
         // Update the `IS_SYNCED` metric.
         #[cfg(feature = "metrics")]
         metrics::gauge(metrics::bft::IS_SYNCED, self.status == SyncStatus::Synced);
+
+        // Return whether the state JUST transitioned to Synced.
+        self.status == SyncStatus::Synced
     }
 }

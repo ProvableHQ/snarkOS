@@ -84,7 +84,11 @@ use std::{
     collections::{HashMap, HashSet},
     future::Future,
     net::SocketAddr,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc,
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 #[cfg(not(feature = "locktick"))]
@@ -137,6 +141,11 @@ pub struct Primary<N: Network> {
     propose_lock: Arc<TMutex<u64>>,
     /// The node configuration directory.
     node_data_dir: NodeDataDir,
+    /// Whether the proposal cache has been loaded (or there is no cache to load).
+    ///
+    /// This is used to prevent the primary from being considered synced before the proposal cache
+    /// has been applied, avoiding proposing stale batches after restoring an old ledger snapshot.
+    proposal_cache_loaded: Arc<AtomicBool>,
 }
 
 impl<N: Network> Primary<N> {
@@ -186,15 +195,19 @@ impl<N: Network> Primary<N> {
             handles: Default::default(),
             propose_lock: Default::default(),
             node_data_dir,
+            // Default to `true` (loaded / not pending): the proposal cache is not pending
+            // unless `load_proposal_cache` explicitly defers it.
+            proposal_cache_loaded: Arc::new(AtomicBool::new(true)),
         })
     }
 
     /// Load the proposal cache file and update the Primary state with the stored data.
     ///
     /// If the proposal cache is more than `MAX_GC_ROUNDS` ahead of the current ledger, loading is
-    /// deferred: a background task is spawned that polls the ledger until it has synced within GC
-    /// range of the cached proposal, at which point the cached state is applied.  This allows the
-    /// node to start normally after restoring an older ledger snapshot instead of failing hard.
+    /// deferred: `proposal_cache_loaded` is set to `false` and a background task is spawned that
+    /// awaits the first time the node becomes block-synced, then applies the cached state and
+    /// restores the flag. While the cache is pending, [`Self::is_synced`] returns `false` so
+    /// the primary will not propose or sign batches until the cache has been loaded.
     async fn load_proposal_cache(&self) -> Result<()> {
         // Fetch the signed proposals from the file system if it exists.
         match ProposalCache::<N>::exists(&self.node_data_dir) {
@@ -211,37 +224,23 @@ impl<N: Network> Primary<N> {
                     // Check whether the proposal cache is too far ahead of the current ledger.
                     if latest_certificate_round > ledger_round.saturating_add(max_gc_rounds) {
                         // The ledger snapshot is older than MAX_GC_ROUNDS relative to the cached
-                        // proposal.  Rather than failing hard, defer loading the cache until the
-                        // node has synced within GC range of the cached proposal round.
+                        // proposal. Rather than failing hard, mark the cache as not yet loaded and
+                        // defer applying it until the block sync reaches the required height.
                         info!(
                             "The proposal cache (round {latest_certificate_round}) is more than \
                              {max_gc_rounds} GC rounds ahead of the ledger (round {ledger_round}). \
-                             Deferring proposal cache load until the ledger syncs within GC range."
+                             Deferring proposal cache load until the node has finished syncing."
                         );
+                        // Mark the cache as pending: `is_synced()` will return `false` until
+                        // this flag is cleared after the cache is applied.
+                        self.proposal_cache_loaded.store(false, Ordering::Release);
                         let self_ = self.clone();
                         self.spawn(async move {
-                            // Poll until the ledger has synced within GC rounds of the cached proposal.
-                            // Log periodically so operators can see that the node is still waiting.
-                            let mut iters: u32 = 0;
-                            loop {
-                                let current_ledger_round = self_.ledger.latest_round();
-                                if latest_certificate_round <= current_ledger_round.saturating_add(max_gc_rounds) {
-                                    break;
-                                }
-                                // Log a reminder every ~5 minutes (every 30 × 10-second iterations).
-                                if iters % 30 == 0 {
-                                    info!(
-                                        "Waiting to load the proposal cache (round {latest_certificate_round}): \
-                                         ledger is at round {current_ledger_round}, need to reach at least round {}.",
-                                        latest_certificate_round.saturating_sub(max_gc_rounds)
-                                    );
-                                }
-                                iters = iters.saturating_add(1);
-                                tokio::time::sleep(Duration::from_secs(10)).await;
-                            }
+                            // Wait for the block sync to reach the Synced state for the first time.
+                            self_.sync.wait_until_synced().await;
                             info!(
                                 "Loading the deferred proposal cache (round {latest_certificate_round}) \
-                                 now that the ledger has synced to round {}",
+                                 now that the node has finished syncing to round {}",
                                 self_.ledger.latest_round()
                             );
                             self_
@@ -252,6 +251,8 @@ impl<N: Network> Primary<N> {
                                     pending_certificates,
                                 )
                                 .await;
+                            // Mark the proposal cache as loaded so `is_synced()` can return `true`.
+                            self_.proposal_cache_loaded.store(true, Ordering::Release);
                         });
                         return Ok(());
                     }
@@ -374,8 +375,11 @@ impl<N: Network> Primary<N> {
     }
 
     /// Returns `true` if the primary is synced.
+    ///
+    /// Returns `false` when the block sync is not yet complete, or when there is a pending
+    /// proposal cache that has not yet been applied (see [`Self::load_proposal_cache`]).
     pub fn is_synced(&self) -> bool {
-        self.sync.is_synced()
+        self.proposal_cache_loaded.load(Ordering::Acquire) && self.sync.is_synced()
     }
 
     /// Returns the gateway.
@@ -1390,7 +1394,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             while let Some((peer_ip, primary_certificate)) = rx_primary_ping.recv().await {
                 // If the primary is not synced, then do not process the primary ping.
-                if self_.sync.is_synced() {
+                if self_.is_synced() {
                     trace!("Processing new primary ping from '{peer_ip}'");
                 } else {
                     trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
@@ -1424,7 +1428,7 @@ impl<N: Network> Primary<N> {
             loop {
                 tokio::time::sleep(Duration::from_millis(WORKER_PING_IN_MS)).await;
                 // If the primary is not synced, then do not broadcast the worker ping(s).
-                if !self_.sync.is_synced() {
+                if !self_.is_synced() {
                     trace!("Skipping worker ping(s) {}", "(node is syncing)".dimmed());
                     continue;
                 }
@@ -1443,7 +1447,7 @@ impl<N: Network> Primary<N> {
                 tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
                 let current_round = self_.current_round();
                 // If the primary is not synced, then do not propose a batch.
-                if !self_.sync.is_synced() {
+                if !self_.is_synced() {
                     debug!("Skipping batch proposal for round {current_round} {}", "(node is syncing)".dimmed());
                     continue;
                 }
@@ -1470,7 +1474,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             while let Some((peer_ip, batch_propose)) = rx_batch_propose.recv().await {
                 // If the primary is not synced, then do not sign the batch.
-                if !self_.sync.is_synced() {
+                if !self_.is_synced() {
                     trace!("Skipping a batch proposal from '{peer_ip}' {}", "(node is syncing)".dimmed());
                     continue;
                 }
@@ -1492,7 +1496,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             while let Some((peer_ip, batch_signature)) = rx_batch_signature.recv().await {
                 // If the primary is not synced, then do not store the signature.
-                if !self_.sync.is_synced() {
+                if !self_.is_synced() {
                     trace!("Skipping a batch signature from '{peer_ip}' {}", "(node is syncing)".dimmed());
                     continue;
                 }
@@ -1514,7 +1518,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             while let Some((peer_ip, batch_certificate)) = rx_batch_certified.recv().await {
                 // If the primary is not synced, then do not store the certificate.
-                if !self_.sync.is_synced() {
+                if !self_.is_synced() {
                     trace!("Skipping a certified batch from '{peer_ip}' {}", "(node is syncing)".dimmed());
                     continue;
                 }
@@ -1551,7 +1555,7 @@ impl<N: Network> Primary<N> {
                 // Sleep briefly.
                 tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
                 // If the primary is not synced, then do not increment to the next round.
-                if !self_.sync.is_synced() {
+                if !self_.is_synced() {
                     trace!("Skipping round increment {}", "(node is syncing)".dimmed());
                     continue;
                 }
