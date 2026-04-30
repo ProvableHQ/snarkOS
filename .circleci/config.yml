@@ -788,8 +788,7 @@ workflows:
           filters:
             branches:
               only:
-                - mainnet-release-v460
-                - fix/mainnet/sync-invalid-subdag
+                - fix/mainnet/recursive-cert-fetch
                 - canary
                 - testnet
                 - mainnet
@@ -799,8 +798,7 @@ workflows:
           filters:
             branches:
               only:
-                - mainnet-release-v460
-                - fix/mainnet/sync-invalid-subdag
+                - fix/mainnet/recursive-cert-fetch
                 - canary
                 - testnet
                 - mainnet
