@@ -15,7 +15,7 @@ keywords = [
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.88.0" # Attention - Change the MSRV in rust-toolchain and in .circleci/config.yml as well
+rust-version = "1.92.0" # Attention - Change the MSRV in rust-toolchain and in .circleci/config.yml as well
 
 [workspace]
 members = [
@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "8c5ef1f5849cf12e2e00b2b4ca5cea152db48402"
+rev = "0c9b6c7cda5a495b54d41dafbacfd825ced7a971"
 #version = "=4.6.0"
 default-features = false
 
@@ -359,6 +359,14 @@ tikv-jemallocator = "0.6"
 [dependencies.tracing]
 workspace = true
 
+# Pinned to =0.14.0-rc.29 because k256 v0.14.0-rc.8 does not implement the
+# MulVartime/MulByGeneratorVartime traits added in elliptic-curve v0.14.0-rc.31.
+# Adding this as a direct dependency forces cargo to resolve the exact version
+# and prevents automatic upgrades to incompatible RC releases.
+[dependencies.elliptic-curve]
+version = "=0.14.0-rc.29"
+default-features = false
+
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
@@ -406,6 +414,7 @@ debug-assertions = true
 
 [package.metadata.cargo-machete]
 ignored = [
+  "elliptic-curve", # Needed to pin the crate to a specific version
   "snarkos-account", # Needed for cuda feature
   "snarkos-node", # Needed for metrics feature
   "snarkos-node-bft", # Needed for cuda and locktick features

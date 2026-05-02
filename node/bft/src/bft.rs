@@ -1529,7 +1529,7 @@ mod tests {
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
-            let private_keys = [
+            let private_keys = &[
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
@@ -1749,7 +1749,7 @@ mod tests {
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
-            let private_keys = [
+            let private_keys = &[
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
                 PrivateKey::new(rng).unwrap(),
