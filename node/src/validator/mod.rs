@@ -486,9 +486,6 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         trace!("Shutting down consensus...");
         self.consensus.shut_down().await;
 
-        // Notify the Ping.
-        self.ping.stop();
-
         info!("Node has shut down.");
     }
 }

@@ -73,11 +73,11 @@ impl<N: Network> Ping<N> {
 
         {
             let inner = inner.clone();
-            let router = router.clone();
+            let router_ = router.clone();
             let notify = notify.clone();
 
-            tokio::spawn(async move {
-                Self::ping_task(&inner, &router, &notify).await;
+            router.spawn(async move {
+                Self::ping_task(&inner, &router_, &notify).await;
             });
         }
 
@@ -92,11 +92,11 @@ impl<N: Network> Ping<N> {
 
         {
             let inner = inner.clone();
-            let router = router.clone();
+            let router_ = router.clone();
             let notify = notify.clone();
 
-            tokio::spawn(async move {
-                Self::ping_task(&inner, &router, &notify).await;
+            router.spawn(async move {
+                Self::ping_task(&inner, &router_, &notify).await;
             });
         }
 
@@ -127,12 +127,6 @@ impl<N: Network> Ping<N> {
         self.inner.lock().block_locators = Some(locators);
 
         // wake up the ping task
-        self.notify.notify_one();
-    }
-
-    /// Wake up the ping task so that its inner loop iterates and breaks.
-    /// It should only be called after the ledger has already been stopped.
-    pub fn stop(&self) {
         self.notify.notify_one();
     }
 
