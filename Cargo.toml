@@ -312,6 +312,10 @@ tokio_console = [ "snarkos-cli/tokio_console" ]
 workspace = true
 features = [ "derive" ]
 
+[dependencies.heapster]
+version = "0.2"
+features = ["fmt"]
+
 [dependencies.locktick]
 workspace = true
 optional = true

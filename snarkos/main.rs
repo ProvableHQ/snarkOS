@@ -17,6 +17,7 @@ use snarkos_cli::{commands::CLI, helpers::Updater};
 use snarkvm::utilities::{display_error, flatten_error};
 
 use clap::Parser;
+use heapster::Heapster;
 #[cfg(feature = "locktick")]
 use locktick::lock_snapshots;
 #[cfg(feature = "locktick")]
@@ -29,7 +30,7 @@ use tikv_jemallocator::Jemalloc;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: Heapster<Jemalloc> = Heapster::new(Jemalloc);
 
 // Obtain information on the build.
 include!(concat!(env!("OUT_DIR"), "/built.rs"));
@@ -106,6 +107,13 @@ fn main() {
             }
             tracing::debug!("[locktick] finished the check in {:?}", ts.elapsed());
             std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+    });
+
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            println!("\n{}\n", GLOBAL.stats());
         }
     });
 
