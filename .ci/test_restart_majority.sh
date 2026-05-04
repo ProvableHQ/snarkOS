@@ -20,6 +20,7 @@ network_id=$2
 reset_interval=$3
 final_height=$4
 num_resets=$5
+max_warnings=$6
 
 # Default values if not provided
 : "${total_validators:=7}"
@@ -27,6 +28,7 @@ num_resets=$5
 : "${reset_interval:=10}"
 : "${final_height:=20}"
 : "${num_resets:=3}"
+: "${max_warnings:=40}"
 
 max_faulty=$(( (total_validators - 1) / 3 ))
 # AleoBFT needs at least N-f for a quorum, not 2*f+1.
@@ -102,7 +104,7 @@ fi
 
 log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
 
-if check_logs "$log_dir" "$total_validators" 0 40; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
   exit 0
 else
   exit 1
