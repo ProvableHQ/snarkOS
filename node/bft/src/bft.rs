@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use crate::{
-    MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
+    MAX_LEADER_CERTIFICATE_DELAY,
     helpers::{ConsensusSender, DAG, PrimaryReceiver, PrimarySender, Storage, fmt_id, now},
     primary::{Primary, PrimaryCallback},
     sync::SyncCallback,
@@ -42,6 +42,8 @@ use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
+#[cfg(feature = "locktick")]
+use locktick::tokio::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use std::{
@@ -52,6 +54,8 @@ use std::{
         atomic::{AtomicI64, Ordering},
     },
 };
+#[cfg(not(feature = "locktick"))]
+use tokio::sync::Mutex;
 use tokio::sync::{OnceCell, oneshot};
 
 #[derive(Clone)]
@@ -66,6 +70,12 @@ pub struct BFT<N: Network> {
     leader_certificate_timer: Arc<AtomicI64>,
     /// The consensus sender.
     consensus_sender: Arc<OnceCell<ConsensusSender<N>>>,
+    /// Ensures only one call to `commit_leader_certificate` runs at a time.
+    ///
+    /// Without this, a second certificate crossing the availability threshold while the consensus
+    /// callback for a prior commit is still in-flight would re-walk already-committed rounds
+    /// (because `last_committed_round` hasn't been updated yet), causing duplicate subdag commits.
+    commit_lock: Arc<Mutex<()>>,
 }
 
 impl<N: Network> BFT<N> {
@@ -98,6 +108,7 @@ impl<N: Network> BFT<N> {
             leader_certificate: Default::default(),
             leader_certificate_timer: Default::default(),
             consensus_sender: Default::default(),
+            commit_lock: Default::default(),
         })
     }
 
@@ -207,7 +218,13 @@ impl<N: Network> BFT<N> {
 #[async_trait::async_trait]
 impl<N: Network> PrimaryCallback<N> for BFT<N> {
     /// Notification that a new round has started.
-    fn update_to_next_round(&self, current_round: u64) -> bool {
+    ///
+    /// # Arguments
+    /// * `current_round` - the round the caller is in (to avoid race conditions)
+    ///
+    /// # Returns
+    /// `true` if the BFT moved to the next round.
+    fn try_advance_to_next_round(&self, current_round: u64) -> bool {
         // Ensure the current round is at least the storage round (this is a sanity check).
         let storage_round = self.storage().current_round();
         if current_round < storage_round {
@@ -482,7 +499,7 @@ impl<N: Network> BFT<N> {
     ///
     /// This is always true for a new BFT instance.
     fn is_timer_expired(&self) -> bool {
-        self.leader_certificate_timer.load(Ordering::SeqCst) + MAX_LEADER_CERTIFICATE_DELAY_IN_SECS <= now()
+        self.leader_certificate_timer.load(Ordering::SeqCst) + MAX_LEADER_CERTIFICATE_DELAY.as_secs() as i64 <= now()
     }
 
     /// Returns 'true' if the quorum threshold `(N - f)` is reached for this round under one of the following conditions:
@@ -580,21 +597,40 @@ impl<N: Network> BFT<N> {
         #[cfg(debug_assertions)]
         trace!("Attempting to commit leader certificate for round {}...", leader_certificate.round());
 
+        // Serialize all commits so that `last_committed_round` is up-to-date before the next call
+        // re-walks the DAG, preventing duplicate subdag commits.
+        let _commit_guard = self.commit_lock.lock().await;
+
         // Fetch the leader round.
         let latest_leader_round = leader_certificate.round();
+
         // Determine the list of all previous leader certificates since the last committed round.
         // The order of the leader certificates is from **newest** to **oldest**.
         let mut leader_certificates = vec![leader_certificate.clone()];
+        // Whether the consensus callback should be skipped (true when the round is already committed).
+        // When `latest_leader_round == last_committed_round` the round was already committed by a
+        // concurrent call that beat us to the lock, or by a prior session whose DAG state was
+        // reconstructed without populating `recently_committed`.  In both cases we still re-run
+        // DFS + GC to ensure `recently_committed` and `gc_round` are populated, but we must NOT
+        // send a duplicate subdag to the consensus callback.
+        let skip_consensus;
         {
-            // Retrieve the leader round and the latest round we committed.
-            let leader_round = leader_certificate.round();
-
             // Read-lock the DAG.
             // We need to hold the lock, so we do not later fail to re-acquire it.
             let dag = self.dag.read();
 
+            // Re-check under the lock: another call may have committed this round while we were waiting.
+            if latest_leader_round < dag.last_committed_round() {
+                trace!("Skipping already-committed leader round {latest_leader_round}");
+                return Ok(());
+            }
+            skip_consensus = latest_leader_round == dag.last_committed_round();
+
+            #[cfg(debug_assertions)]
+            trace!("Attempting to commit leader certificate for round {}...", latest_leader_round);
+
             let mut current_certificate = leader_certificate;
-            for round in (dag.last_committed_round() + 2..=leader_round.saturating_sub(2)).rev().step_by(2) {
+            for round in (dag.last_committed_round() + 2..=latest_leader_round.saturating_sub(2)).rev().step_by(2) {
                 // Retrieve the previous committee for the leader round.
                 let previous_committee_lookback =
                     self.ledger().get_committee_lookback_for_round(round).with_context(|| {
@@ -721,25 +757,28 @@ impl<N: Network> BFT<N> {
                 "BFT failed to commit - the subdag anchor round {anchor_round} does not match the leader round {leader_round}",
             );
 
-            // Trigger consensus.
-            if let Some(consensus_sender) = self.consensus_sender.get() {
-                // Initialize a callback sender and receiver.
-                let (callback_sender, callback_receiver) = oneshot::channel();
-                // Send the subdag and transmissions to consensus.
-                consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
-                // Await the callback to continue.
-                match callback_receiver.await {
-                    Ok(Ok(_)) => (),
-                    Ok(Err(err)) => {
-                        let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
-                        error!("{}", &flatten_error(err));
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        let err: anyhow::Error = err.into();
-                        let err = err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
-                        error!("{}", flatten_error(err));
-                        return Ok(());
+            // Trigger consensus (skipped if the round was already committed by a prior call).
+            if !skip_consensus {
+                if let Some(consensus_sender) = self.consensus_sender.get() {
+                    // Initialize a callback sender and receiver.
+                    let (callback_sender, callback_receiver) = oneshot::channel();
+                    // Send the subdag and transmissions to consensus.
+                    consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
+                    // Await the callback to continue.
+                    match callback_receiver.await {
+                        Ok(Ok(_)) => (),
+                        Ok(Err(err)) => {
+                            let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
+                            error!("{}", &flatten_error(err));
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            let err: anyhow::Error = err.into();
+                            let err =
+                                err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
+                            error!("{}", flatten_error(err));
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -881,7 +920,7 @@ impl<N: Network> BFT<N> {
 mod tests {
     use crate::{
         BFT,
-        MAX_LEADER_CERTIFICATE_DELAY_IN_SECS,
+        MAX_LEADER_CERTIFICATE_DELAY,
         PrimaryCallback,
         helpers::{Storage, dag::test_helpers::mock_dag_with_modified_last_committed_round},
         sync::SyncCallback,
@@ -1114,9 +1153,7 @@ mod tests {
             assert!(!result);
         }
         // Wait for the timer to expire.
-        let leader_certificate_timeout =
-            std::time::Duration::from_millis(MAX_LEADER_CERTIFICATE_DELAY_IN_SECS as u64 * 1000);
-        std::thread::sleep(leader_certificate_timeout);
+        std::thread::sleep(MAX_LEADER_CERTIFICATE_DELAY);
         // Once the leader certificate timer has expired and quorum threshold is reached, we are ready to advance to the next round.
         let result = bft_timer.is_even_round_ready_for_next_round(certificates.clone(), committee.clone(), 2);
         if bft_timer.is_timer_expired() {
