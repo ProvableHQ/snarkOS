@@ -474,4 +474,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             }
         }
     }
+
+    fn is_stopped(&self) -> bool {
+        self.stoppable.is_stopped()
+    }
 }

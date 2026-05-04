@@ -73,11 +73,11 @@ impl<N: Network> Ping<N> {
 
         {
             let inner = inner.clone();
-            let router = router.clone();
+            let router_ = router.clone();
             let notify = notify.clone();
 
-            tokio::spawn(async move {
-                Self::ping_task(&inner, &router, &notify).await;
+            router.spawn(async move {
+                Self::ping_task(&inner, &router_, &notify).await;
             });
         }
 
@@ -92,11 +92,11 @@ impl<N: Network> Ping<N> {
 
         {
             let inner = inner.clone();
-            let router = router.clone();
+            let router_ = router.clone();
             let notify = notify.clone();
 
-            tokio::spawn(async move {
-                Self::ping_task(&inner, &router, &notify).await;
+            router.spawn(async move {
+                Self::ping_task(&inner, &router_, &notify).await;
             });
         }
 
@@ -135,6 +135,10 @@ impl<N: Network> Ping<N> {
         let mut new_block = false;
 
         loop {
+            if router.ledger().is_stopped() {
+                break;
+            }
+
             // Do not hold the lock while waiting.
             let sleep_time = {
                 let mut inner = inner.lock();
