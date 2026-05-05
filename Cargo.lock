@@ -4949,6 +4949,7 @@ dependencies = [
  "indexmap 2.14.0",
  "jsonwebtoken",
  "locktick",
+ "lru",
  "once_cell",
  "parking_lot",
  "rand 0.10.1",

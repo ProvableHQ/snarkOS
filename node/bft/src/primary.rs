@@ -65,7 +65,7 @@ use snarkvm::{
         narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
-    prelude::{ConsensusVersion, committee::Committee},
+    prelude::committee::Committee,
     utilities::flatten_error,
 };
 
@@ -929,91 +929,6 @@ impl<N: Network> Primary<N> {
 
         // Inserts the missing transmissions into the workers.
         self.insert_missing_transmissions_into_workers(peer_ip, missing_transmissions.into_iter())?;
-
-        // Ensure the transaction doesn't bring the proposal above the spend limit.
-        let block_height = self.ledger.latest_block_height() + 1;
-        if N::CONSENSUS_VERSION(block_height)? >= ConsensusVersion::V5 {
-            let mut proposal_cost = 0u64;
-            for transmission_id in batch_header.transmission_ids() {
-                let worker_id = assign_to_worker(*transmission_id, self.num_workers())?;
-                let Some(worker) = self.workers().get(worker_id as usize) else {
-                    debug!("Unable to find worker {worker_id}");
-                    return Ok(());
-                };
-
-                let Some(transmission) = worker.get_transmission(*transmission_id) else {
-                    debug!("Unable to find transmission '{}' in worker '{worker_id}", fmt_id(transmission_id));
-                    return Ok(());
-                };
-
-                // If the transmission is a transaction, compute its execution cost.
-                if let (TransmissionID::Transaction(transaction_id, _), Transmission::Transaction(transaction)) =
-                    (transmission_id, transmission)
-                {
-                    // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                    let transaction = spawn_blocking!({
-                        match transaction {
-                            Data::Object(transaction) => Ok(transaction),
-                            Data::Buffer(bytes) => {
-                                // Note: If `LATEST_MAX_TRANSACTION_SIZE` ever decreases, then we need to allow the previous larger
-                                // size to be deserialized here, until the nodes are properly past the migration height.
-                                Ok(Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?)
-                            }
-                        }
-                    })?;
-
-                    // Fetch the current consensus version.
-                    let consensus_version = N::CONSENSUS_VERSION(block_height)?;
-                    // TODO (raychu86): Remove this logic after the next migration height is reached.
-                    // Enforce maximum transaction size.
-                    if consensus_version < ConsensusVersion::V14 {
-                        // Retrieve the maximum transaction size for the consensus version.
-                        if let Some(max_tx_size) = consensus_config_value!(N, MAX_TRANSACTION_SIZE, block_height) {
-                            // Ensure the transaction does not exceed the maximum size.
-                            if transaction.to_bytes_le()?.len() > max_tx_size {
-                                trace!(
-                                    "Invalid batch proposal - Batch proposal transaction '{}' - Exceeds maximum transaction size of {max_tx_size} bytes",
-                                    fmt_id(transaction_id),
-                                );
-                                continue;
-                            }
-                        }
-                    }
-
-                    // Compute the transaction spent cost (in microcredits).
-                    // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                    let Ok(cost) = self.ledger.transaction_spend_in_microcredits(&transaction, consensus_version)
-                    else {
-                        bail!(
-                            "Invalid batch proposal - Unable to compute transaction spent cost on transaction '{}'",
-                            fmt_id(transaction_id)
-                        )
-                    };
-
-                    // Compute the next proposal cost.
-                    // Note: We purposefully discard this transaction if the proposal cost overflows.
-                    let Some(next_proposal_cost) = proposal_cost.checked_add(cost) else {
-                        bail!(
-                            "Invalid batch proposal - Batch proposal overflowed on transaction '{}'",
-                            fmt_id(transaction_id)
-                        )
-                    };
-
-                    // Check if the next proposal cost exceeds the batch proposal spend limit.
-                    let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(block_height);
-                    if next_proposal_cost > batch_spend_limit {
-                        bail!(
-                            "Malicious peer - Batch proposal from '{peer_ip}' exceeds the spend limit on transaction '{}' ({next_proposal_cost} > {})",
-                            fmt_id(transaction_id),
-                            batch_spend_limit
-                        );
-                    }
-
-                    // Update the proposal cost.
-                    proposal_cost = next_proposal_cost;
-                }
-            }
-        }
 
         /* Proceeding to sign the batch. */
 
