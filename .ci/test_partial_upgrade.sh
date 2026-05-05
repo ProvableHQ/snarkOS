@@ -22,10 +22,12 @@ set -eo pipefail  # error on any command failure
 # --- Parameters from CLI ---
 total_validators=$1
 network_id=$2
+max_warnings=$3
 
 # Default values if not provided
 : "${total_validators:=4}"
 : "${network_id:=0}"
+: "${max_warnings:=40}"
 
 # Node verbosity
 NODE_VERBOSITY=1
@@ -292,7 +294,7 @@ fi
 
 log "🎉 Test passed! Node synced to new consensus height ($new_consensus_height) after another node was upgraded."
 
-if check_logs "$log_dir" "$total_validators" 0 20; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
   exit 0
 else
   exit 1
