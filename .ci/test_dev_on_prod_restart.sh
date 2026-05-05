@@ -180,6 +180,12 @@ function copy_setup_ledger() {
   cp -r "$source" ledger-1
   cp -r "$source" ledger-2
   cp -r "$source" ledger-3
+
+  # Clear any state cached by a previous test run (proposal cache, dev committee state, etc.).
+  # The ledger we just copied is fresh, so any persisted dev state must be regenerated from it.
+  for i in $(seq 0 $((NUM_DEV_NODES - 1))); do
+    snarkos clean "--dev=${i}" "--network=0"
+  done
 }
 
 function start_dev_nodes() {
@@ -188,10 +194,10 @@ function start_dev_nodes() {
 
   for i in $(seq 0 $((NUM_DEV_NODES - 1))); do
     log "Starting dev node ${i}"
-    DEV_COMMITTEE_NUM_VALIDATORS=${NUM_DEV_NODES} snarkos start --nodisplay --validator --ledger-storage "ledger-${i}" --node-data-storage "node-data-${i}" --dev "${i}" \
+    snarkos start --nodisplay --validator --ledger-storage "ledger-${i}" --node-data-storage "node-data-${i}" --dev "${i}" \
       --no-dev-txs --nocdn --dev-num-validators "${NUM_DEV_NODES}" --verbosity 2 \
       --allow-external-peers --logfile "dev_logs/val-${i}.txt" --dev-on-prod &
-    DEV_PIDS[$i]=$!
+    DEV_PIDS[i]=$!
     sleep 1
   done
 }
@@ -226,12 +232,8 @@ wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-
 log "Step 5: Gracefully stop all dev nodes"
 graceful_stop_all_dev_nodes
 
-# TODO: encountering the following warnings when stopping and starting all dev nodes:
-# - WARN "Cannot propose a batch for round 32 - the latest proposal cache round is 34"
-# - WARN "Failed to load stored certificate 1936933304208994.. from proposal cache — Previous certificates for a batch in round 32 did not reach quorum threshold (gc = 0)"
-# - WARN "Failed to load stored certificate 8429685712854720.. from proposal cache — Failed to fetch missing transmissions and previous certificates for round 33 from '127.0.0.1:0 — Unable to fetch batch certificate 1936933304208994661214537875451736804168699382028485722463302790461889223166field (failed to send request)"
-# log "Step 6: Restart all dev nodes and wait for +${DEV_ADVANCE_BLOCKS} blocks"
-# start_dev_nodes
-# wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-network-second-run"
+log "Step 6: Restart all dev nodes and wait for +${DEV_ADVANCE_BLOCKS} blocks"
+start_dev_nodes
+wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-network-second-run"
 
 log "SUCCESS: Completed dev-on-prod restart flow"

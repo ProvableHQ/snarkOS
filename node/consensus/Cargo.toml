@@ -42,7 +42,7 @@ workspace = true
 [dependencies.anyhow]
 workspace = true
 
-[dependencies.cfg_if]
+[dependencies.cfg-if]
 workspace = true
 
 [dependencies.colored]

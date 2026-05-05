@@ -92,6 +92,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
+        #[cfg(feature = "test_network")] dev_num_validators_for_committee_hotswap: Option<u16>,
+        #[cfg(not(feature = "test_network"))] _dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -104,7 +106,20 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         .with_context(|| "Failed to initialize the ledger")?;
 
         // Initialize the ledger service.
+        #[cfg(not(feature = "test_network"))]
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
+        #[cfg(feature = "test_network")]
+        // Initialize the ledger service with a deterministic dev committee.
+        let ledger_service = if let Some(dev_num_validators) = dev_num_validators_for_committee_hotswap {
+            Arc::new(CoreLedgerService::new_dev(
+                ledger.clone(),
+                signal_handler.clone(),
+                Some((node_data_dir.clone(), dev_num_validators)),
+            ))
+        // Initialize the ledger service without a deterministic dev committee.
+        } else {
+            Arc::new(CoreLedgerService::new_dev(ledger.clone(), signal_handler.clone(), None))
+        };
 
         // Initialize the node router.
         let router = Router::new(
@@ -544,6 +559,7 @@ mod tests {
             node_data_dir,
             false,
             dev_txs,
+            None,
             None,
             SignalHandler::new(None),
         )

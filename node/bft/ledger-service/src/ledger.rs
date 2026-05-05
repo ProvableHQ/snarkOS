@@ -15,6 +15,8 @@
 
 use crate::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService, fmt_id, spawn_blocking};
 
+#[cfg(feature = "test_network")]
+use snarkos_utilities::NodeDataDir;
 use snarkos_utilities::Stoppable;
 
 use snarkvm::{
@@ -139,29 +141,60 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
         // Initialize the block height metric.
         #[cfg(feature = "metrics")]
         metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
-        #[cfg(feature = "test_network")]
-        let dev_committee = Self::build_dev_committee(ledger.latest_round())
-            .expect("Failed to build dev committee from DEV_COMMITTEE_NUM_VALIDATORS");
+
+        Self::new_inner(ledger, stoppable, None)
+    }
+
+    /// Initializes a new core ledger service that persists hotswapped dev committee state to disk.
+    ///
+    /// This variant should be used by long-running nodes (e.g. validators) that may be restarted,
+    /// so that the deterministic dev committee's starting round remains stable across runs.
+    #[cfg(feature = "test_network")]
+    pub fn new_dev(
+        ledger: Ledger<N, C>,
+        stoppable: Arc<dyn Stoppable>,
+        dev_committee_config: Option<(NodeDataDir, u16)>,
+    ) -> Self {
+        // Initialize the block height metric.
+        #[cfg(feature = "metrics")]
+        metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        // Build the deterministic dev committee.
+        let dev_committee = dev_committee_config.map(|(node_data_dir, dev_num_validators)| {
+            Self::build_dev_committee(ledger.latest_round(), node_data_dir, dev_num_validators)
+                .expect("Failed to build dev committee")
+        });
+        Self::new_inner(ledger, stoppable, dev_committee)
+    }
+
+    /// Initializes the core ledger service.
+    fn new_inner(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>, _dev_committee: Option<Committee<N>>) -> Self {
         Self {
             ledger,
             latest_leader: Default::default(),
             stoppable,
             update_lock: Default::default(),
             #[cfg(feature = "test_network")]
-            dev_committee,
+            dev_committee: _dev_committee,
         }
     }
 
-    /// Builds the deterministic dev committee from `DEV_COMMITTEE_NUM_VALIDATORS`, if set.
+    /// Builds the deterministic dev committee with `dev_num_validators` members, if requested.
     ///
-    /// Returns `Ok(None)` when the env var is unset, otherwise returns a committee whose
-    /// starting round is `start_round`.
+    /// Returns `Ok(None)` when `dev_num_validators` is `None`, otherwise returns a committee
+    /// whose starting round is anchored to the round at which the dev committee was first
+    /// activated.
+    ///
+    /// The starting round is persisted to disk on first activation and re-read
+    /// on subsequent invocations. This keeps the committee's identity (and
+    /// therefore the certificates that reference it) consistent across
+    /// restarts.
     #[cfg(feature = "test_network")]
-    fn build_dev_committee(start_round: u64) -> Result<Option<Committee<N>>> {
-        let Some(dev_num_validators) = std::env::var("DEV_COMMITTEE_NUM_VALIDATORS").ok() else {
-            return Ok(None);
-        };
-        let dev_num_validators = dev_num_validators.parse::<u16>()?;
+    fn build_dev_committee(
+        default_start_round: u64,
+        node_data_dir: NodeDataDir,
+        dev_num_validators: u16,
+    ) -> Result<Committee<N>> {
+        let start_round = Self::load_or_init_dev_committee_start_round(node_data_dir, default_start_round)?;
 
         use rand::SeedableRng;
         let mut rng = rand_chacha::ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
@@ -175,7 +208,53 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
             .into_iter()
             .map(|address| (address, (snarkvm::ledger::committee::MIN_VALIDATOR_STAKE, true, 0)))
             .collect::<IndexMap<_, _>>();
-        Ok(Some(Committee::new(start_round, members)?))
+        Committee::new(start_round, members)
+    }
+
+    /// Reads the persisted dev committee starting round from disk if it exists and is consistent
+    /// with `default_start_round`; otherwise writes the default to disk and returns it.
+    #[cfg(feature = "test_network")]
+    fn load_or_init_dev_committee_start_round(node_data_dir: NodeDataDir, default_start_round: u64) -> Result<u64> {
+        let path = node_data_dir.dev_committee_state_path();
+        let path_str = path.display();
+        // If the dev committee state file exists, read it and parse the starting round.
+        if path.exists() {
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|err| anyhow::anyhow!("Failed to read dev committee state from {path_str} - {err}"))?;
+            let start_round = contents.trim().parse::<u64>().map_err(|err| {
+                anyhow::anyhow!("Failed to parse dev committee state at {path_str} ({contents}) - {err}",)
+            })?;
+
+            if start_round > default_start_round {
+                bail!(
+                    "Stale dev committee starting round {start_round} at {path_str} (current ledger round is {default_start_round})"
+                );
+            }
+
+            tracing::info!("Loaded the dev committee starting round {start_round} from {path_str}");
+            Ok(start_round)
+        // If the dev committee state file does not exist, write the default starting round to it.
+        } else {
+            Self::write_dev_committee_start_round(&path, default_start_round)?;
+            tracing::info!("Persisted the dev committee starting round {default_start_round} to {path_str}");
+            Ok(default_start_round)
+        }
+    }
+
+    /// Writes the given `start_round` to the dev committee state file at `path`, creating the
+    /// parent directory if needed.
+    #[cfg(feature = "test_network")]
+    fn write_dev_committee_start_round(path: &std::path::Path, start_round: u64) -> Result<()> {
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                anyhow::anyhow!("Failed to create dev committee state directory {} - {err}", parent.display())
+            })?;
+        }
+        std::fs::write(path, start_round.to_string())
+            .map_err(|err| anyhow::anyhow!("Failed to write dev committee state to {} - {err}", path.display()))?;
+        Ok(())
     }
 
     /// Returns the deterministic dev committee for rounds at or after the hotswap start.

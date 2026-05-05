@@ -4853,6 +4853,7 @@ version = "4.6.0"
 dependencies = [
  "aleo-std",
  "anyhow",
+ "cfg-if",
  "colored 3.1.1",
  "indexmap 2.14.0",
  "itertools",
