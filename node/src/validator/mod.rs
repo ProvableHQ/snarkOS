@@ -79,6 +79,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     /// Initializes a new validator node.
     pub async fn new(
         node_ip: SocketAddr,
+        sync_listener: SocketAddr,
         bft_ip: Option<SocketAddr>,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
@@ -130,6 +131,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             account.clone(),
             ledger_service.clone(),
             sync.clone(),
+            sync_listener,
             bft_ip,
             trusted_validators,
             trusted_peers_only,

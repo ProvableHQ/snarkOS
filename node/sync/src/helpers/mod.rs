@@ -13,6 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod sync_channel;
+pub use sync_channel::*;
+
 use snarkvm::prelude::Network;
 
 use core::hash::Hash;

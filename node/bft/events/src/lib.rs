@@ -24,18 +24,6 @@ pub use batch_propose::BatchPropose;
 mod batch_signature;
 pub use batch_signature::BatchSignature;
 
-mod block_request;
-pub use block_request::BlockRequest;
-
-mod block_response;
-pub use block_response::{BlockResponse, DataBlocks};
-
-mod certificate_request;
-pub use certificate_request::CertificateRequest;
-
-mod certificate_response;
-pub use certificate_response::CertificateResponse;
-
 mod challenge_request;
 pub use challenge_request::ChallengeRequest;
 
@@ -69,17 +57,22 @@ pub use worker_ping::WorkerPing;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod committee_prop_tests;
 
+pub use snarkos_node_network::{
+    BlockRequest,
+    BlockResponse,
+    CertificateRequest,
+    CertificateResponse,
+    SyncResponse,
+    SyncToken,
+};
+
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::{
     console::prelude::{FromBytes, Network, Read, ToBytes, Write, error, io_error},
-    ledger::{
-        block::Block,
-        narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
-    },
+    ledger::narwhal::{BatchCertificate, BatchHeader, Data, Transmission, TransmissionID},
     prelude::{Address, Field, Signature},
 };
 
-use anyhow::{Result, bail, ensure};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 pub use std::io::{self, Result as IoResult};
@@ -88,6 +81,52 @@ use std::{borrow::Cow, net::SocketAddr};
 pub trait EventTrait: ToBytes + FromBytes {
     /// Returns the event name.
     fn name(&self) -> Cow<'static, str>;
+}
+
+// TODO: remove once the compatibility layer for Gateway-based sync is gone
+impl EventTrait for BlockRequest {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        let start = self.start_height;
+        let end = self.end_height;
+        match start + 1 == end {
+            true => format!("BlockRequest {start}"),
+            false => format!("BlockRequest {start}..{end}"),
+        }
+        .into()
+    }
+}
+
+// TODO: remove once the compatibility layer for Gateway-based sync is gone
+impl<N: Network> EventTrait for BlockResponse<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        let start = self.request.start_height;
+        let end = self.request.end_height;
+        match start + 1 == end {
+            true => format!("BlockResponse {start}"),
+            false => format!("BlockResponse {start}..{end}"),
+        }
+        .into()
+    }
+}
+
+impl<N: Network> EventTrait for CertificateRequest<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        "CertificateRequest".into()
+    }
+}
+
+impl<N: Network> EventTrait for CertificateResponse<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        "CertificateResponse".into()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +150,8 @@ pub enum Event<N: Network> {
     ValidatorsRequest(ValidatorsRequest),
     ValidatorsResponse(ValidatorsResponse<N>),
     WorkerPing(WorkerPing<N>),
+    SyncRequest(BlockRequest),
+    SyncResponse(SyncResponse),
 }
 
 impl<N: Network> From<DisconnectReason> for Event<N> {
@@ -143,6 +184,8 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(event) => event.name(),
             Self::ValidatorsResponse(event) => event.name(),
             Self::WorkerPing(event) => event.name(),
+            Self::SyncRequest(event) => event.name(),
+            Self::SyncResponse(event) => event.to_string().into(),
         }
     }
 
@@ -166,6 +209,8 @@ impl<N: Network> Event<N> {
             Self::ValidatorsRequest(..) => 13,
             Self::ValidatorsResponse(..) => 14,
             Self::WorkerPing(..) => 15,
+            Self::SyncRequest(..) => 16,
+            Self::SyncResponse(..) => 17,
         }
     }
 }
@@ -191,6 +236,8 @@ impl<N: Network> ToBytes for Event<N> {
             Self::ValidatorsRequest(event) => event.write_le(writer),
             Self::ValidatorsResponse(event) => event.write_le(writer),
             Self::WorkerPing(event) => event.write_le(writer),
+            Self::SyncRequest(event) => event.write_le(writer),
+            Self::SyncResponse(event) => event.write_le(writer),
         }
     }
 }
@@ -218,7 +265,9 @@ impl<N: Network> FromBytes for Event<N> {
             13 => Self::ValidatorsRequest(ValidatorsRequest::read_le(&mut reader)?),
             14 => Self::ValidatorsResponse(ValidatorsResponse::read_le(&mut reader)?),
             15 => Self::WorkerPing(WorkerPing::read_le(&mut reader)?),
-            16.. => return Err(error(format!("Unknown event ID {id}"))),
+            16 => Self::SyncRequest(BlockRequest::read_le(&mut reader)?),
+            17 => Self::SyncResponse(SyncResponse::read_le(&mut reader)?),
+            18.. => return Err(error(format!("Unknown event ID {id}"))),
         };
 
         // Ensure that there are no "dangling" bytes.

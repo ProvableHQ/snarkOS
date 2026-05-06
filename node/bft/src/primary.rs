@@ -38,7 +38,6 @@ use crate::{
         assign_to_worker,
         assign_to_workers,
         fmt_id,
-        init_sync_channels,
         init_worker_channels,
         now,
     },
@@ -52,7 +51,7 @@ use snarkos_node_bft_ledger_service::LedgerService;
 #[cfg(test)]
 use snarkos_node_network::ConnectionMode;
 use snarkos_node_network::PeerPoolHandling;
-use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping};
+use snarkos_node_sync::{BlockSync, DUMMY_SELF_IP, Ping, init_sync_channels};
 use snarkos_utilities::{CallbackHandle, NodeDataDir};
 
 use snarkvm::{
@@ -173,6 +172,7 @@ impl<N: Network> Primary<N> {
         storage: Storage<N>,
         ledger: Arc<dyn LedgerService<N>>,
         block_sync: Arc<BlockSync<N>>,
+        sync_listener: SocketAddr,
         ip: Option<SocketAddr>,
         trusted_validators: &[SocketAddr],
         trusted_peers_only: bool,
@@ -185,6 +185,7 @@ impl<N: Network> Primary<N> {
             storage.clone(),
             ledger.clone(),
             ip,
+            sync_listener,
             trusted_validators,
             trusted_peers_only,
             node_data_dir.clone(),

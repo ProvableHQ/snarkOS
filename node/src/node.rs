@@ -84,6 +84,7 @@ impl<N: Network> Node<N> {
     /// Initializes a new validator node.
     pub async fn new_validator(
         node_ip: SocketAddr,
+        sync_listener: SocketAddr,
         bft_ip: Option<SocketAddr>,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
@@ -103,6 +104,7 @@ impl<N: Network> Node<N> {
         let validator = Arc::new(
             Validator::new(
                 node_ip,
+                sync_listener,
                 bft_ip,
                 rest_ip,
                 rest_rps,

@@ -15,6 +15,18 @@
 
 #![forbid(unsafe_code)]
 
+mod block_request;
+pub use block_request::BlockRequest;
+
+mod block_response;
+pub use block_response::{BlockResponse, DataBlocks};
+
+mod certificate_request;
+pub use certificate_request::CertificateRequest;
+
+mod certificate_response;
+pub use certificate_response::CertificateResponse;
+
 pub mod node_type;
 pub use node_type::*;
 
@@ -26,6 +38,12 @@ pub use peering::*;
 
 pub mod resolver;
 pub use resolver::*;
+
+mod sync_response;
+pub use sync_response::*;
+
+mod sync_token;
+pub use sync_token::*;
 
 use snarkvm::prelude::Network;
 
@@ -39,6 +57,9 @@ use tracing::*;
 pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
+
+/// The default port used for the sync streams.
+pub const DEFAULT_SYNC_PORT: u16 = 6130;
 
 /// Returns the list of bootstrap peers.
 #[allow(clippy::if_same_then_else)]

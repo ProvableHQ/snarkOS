@@ -21,12 +21,6 @@ extern crate tracing;
 pub mod helpers;
 pub use helpers::*;
 
-mod block_request;
-pub use block_request::BlockRequest;
-
-mod block_response;
-pub use block_response::BlockResponse;
-
 mod challenge_request;
 pub use challenge_request::ChallengeRequest;
 
@@ -60,7 +54,7 @@ pub use unconfirmed_solution::UnconfirmedSolution;
 mod unconfirmed_transaction;
 pub use unconfirmed_transaction::UnconfirmedTransaction;
 
-pub use snarkos_node_bft_events::DataBlocks;
+pub use snarkos_node_network::{BlockRequest, BlockResponse, DataBlocks};
 
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::prelude::{
@@ -80,6 +74,24 @@ use std::{borrow::Cow, io, net::SocketAddr};
 pub trait MessageTrait: ToBytes + FromBytes {
     /// Returns the message name.
     fn name(&self) -> Cow<'static, str>;
+}
+
+// TODO: remove once the compatibility layer for Router-based sync is gone
+impl MessageTrait for BlockRequest {
+    /// Returns the message name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        snarkos_node_bft_events::EventTrait::name(self)
+    }
+}
+
+// TODO: remove once the compatibility layer for Router-based sync is gone
+impl<N: Network> MessageTrait for BlockResponse<N> {
+    /// Returns the event name.
+    #[inline]
+    fn name(&self) -> Cow<'static, str> {
+        snarkos_node_bft_events::EventTrait::name(self)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
