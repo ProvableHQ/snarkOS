@@ -99,6 +99,12 @@ the node exits with an error.
 
 ## Runtime Management via REST API
 
+> **Authentication required.** All slipstream management endpoints are protected by JWT
+> authentication. Every request must include an `Authorization: Bearer <token>` header.
+> The token is printed to stdout at node startup and written to
+> `<node_data_dir>/jwt_secret_<address>.txt`. To disable auth entirely, start the node
+> with `--nojwt` (not recommended in production).
+
 ### List loaded plugins
 
 ```
@@ -150,7 +156,7 @@ config during runtime, unload it with DELETE and reload it with POST. Otherwise,
 
 ```bash
 BASE="http://localhost:3030/mainnet"
-TOKEN="<your-jwt-token>"   # printed at startup or found in <data_dir>/jwt_secret_<address>.txt
+TOKEN="<your-jwt-token>"   # printed at startup or found in <data_dir>/jwt_secret_<address>.txt (e.g. `~/.aleo/storage/jwt_secrect_{address}.txt`)
 
 # List
 curl -H "Authorization: Bearer $TOKEN" "$BASE/slipstream/plugins"
