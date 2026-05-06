@@ -27,7 +27,7 @@ extern crate snarkos_node_metrics as metrics;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     Primary,
     helpers::{
         ConsensusReceiver,
@@ -64,8 +64,11 @@ use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc};
+use tokio::{
+    sync::{Notify, oneshot},
+    task::JoinHandle,
+};
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -113,6 +116,8 @@ pub struct Consensus<N: Network> {
     ping: Arc<Ping<N>>,
     /// The block sync logic.
     block_sync: Arc<BlockSync<N>>,
+    /// Notifies when a block is committed, and relays it to the primary.
+    block_commit_notify: Arc<Notify>,
 }
 
 impl<N: Network> Consensus<N> {
@@ -163,6 +168,7 @@ impl<N: Network> Consensus<N> {
             transmissions_tracker: Default::default(),
             handles: Default::default(),
             ping: ping.clone(),
+            block_commit_notify: Arc::new(Notify::new()),
         };
 
         info!("Starting the consensus instance...");
@@ -501,13 +507,19 @@ impl<N: Network> Consensus<N> {
 
         // Process the unconfirmed transactions in the memory pool.
         //
-        // TODO (kaimast): This shouldn't happen periodically but only when new batches/blocks are accepted
-        // by the BFT layer, after which the worker's ready queue may have capacity for more transactions/solutions.
+        // This loop wakes up either when a block is committed (signaled via notify) or after a timeout.
+        // When a block is committed, the BFT workers have freed capacity for more transmissions.
+        // The timeout serves as a fallback for startup or idle periods when blocks are not being produced.
+        //
+        // TODO(kaimast): wake up the loop after a proposal is created, not only when a block commits.
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                // Wait for either a block commit notification or timeout.
+                tokio::select! {
+                    _ = self_.block_commit_notify.notified() => {}
+                    _ = tokio::time::sleep(MAX_BATCH_DELAY) => {}
+                }
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(err) = self_.process_unconfirmed_transactions().await {
                     warn!("{}", flatten_error(err.context("Cannot process unconfirmed transactions")));
@@ -538,12 +550,14 @@ impl<N: Network> Consensus<N> {
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if result.is_err() {
-            // On failure, reinsert the transmissions into the memory pool.
-            self.reinsert_transmissions(transmissions).await;
+        match result {
+            Ok(true) => {
+                // On success, notify that the BFT workers have freed capacity for more transmissions.
+                self.block_commit_notify.notify_one();
+            }
+            Ok(false) | Err(_) => self.reinsert_transmissions(transmissions).await,
         }
-        // Send the callback **after** advancing to the next block.
-        // Note: We must await the block to be advanced before sending the callback.
+
         callback.send(result).ok();
     }
 
@@ -551,7 +565,7 @@ impl<N: Network> Consensus<N> {
     ///
     /// # Returns
     /// - `Ok(true)` if the ledger was advanced to the next block.
-    /// - `Ok(false)` if the block may be valide but the ledger already advanced.
+    /// - `Ok(false)` if the block may be valid but the ledger already advanced.
     /// - `Err(anyhow::Error)` for incorrect blocks and any other error.
     fn try_advance_to_next_block(
         &self,
@@ -568,10 +582,18 @@ impl<N: Network> Consensus<N> {
         // Create the candidate next block.
         let ledger_update = self.ledger.begin_ledger_update()?;
 
-        let block = match ledger_update
-            .prepare_advance_to_next_quorum_block(subdag, transmissions)
-            .and_then(|block| ledger_update.check_next_block(block))
-        {
+        let prepare_instant = std::time::Instant::now();
+        let block = match ledger_update.prepare_advance_to_next_quorum_block(subdag, transmissions) {
+            Ok(block) => block,
+            Err(err) => return Err(err.into_anyhow()),
+        };
+        let prepare_elapsed = prepare_instant.elapsed();
+        trace!("prepare_advance_to_next_quorum_block took {:.3}s", prepare_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::PREPARE_ADVANCE_SECS, prepare_elapsed.as_secs_f64());
+
+        let check_instant = std::time::Instant::now();
+        let block = match ledger_update.check_next_block(block) {
             Ok(block) => block,
             Err(CheckBlockError::BlockAlreadyExists { .. }) => {
                 debug!("The given block hash already exists in the ledger");
@@ -587,11 +609,20 @@ impl<N: Network> Consensus<N> {
             }
             Err(err) => return Err(err.into_anyhow()),
         };
+        let check_elapsed = check_instant.elapsed();
+        trace!("check_next_block took {:.3}s", check_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::CHECK_NEXT_BLOCK_SECS, check_elapsed.as_secs_f64());
 
         let block_height = block.height();
 
         // Advance to the next block.
+        let advance_instant = std::time::Instant::now();
         ledger_update.advance_to_next_block(&block)?;
+        let advance_elapsed = advance_instant.elapsed();
+        trace!("advance_to_next_block took {:.3}s", advance_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_SECS, advance_elapsed.as_secs_f64());
 
         #[cfg(feature = "telemetry")]
         // Fetch the committee lookback for the latest round.
@@ -648,34 +679,36 @@ impl<N: Network> Consensus<N> {
 
             // If telemetry is enabled, update participation scores.
             #[cfg(feature = "telemetry")]
-            match latest_committee {
-                Ok(latest_committee) => {
-                    // Retrieve the individual participation scores.
-                    let participation_scores = self
-                        .bft()
-                        .primary()
-                        .gateway()
-                        .validator_telemetry()
-                        .get_participation_scores(&latest_committee);
+            {
+                match latest_committee {
+                    Ok(latest_committee) => {
+                        // Retrieve the individual participation scores.
+                        let participation_scores = self
+                            .bft()
+                            .primary()
+                            .gateway()
+                            .validator_telemetry()
+                            .get_participation_scores(&latest_committee);
 
-                    // Export the certificate and signature participation scores as individual gauges.
-                    for (address, (certificate_score, signature_score)) in participation_scores {
-                        let address_str = address.to_string();
-                        metrics::gauge_label(
-                            metrics::consensus::VALIDATOR_CERTIFICATE_PARTICIPATION,
-                            "validator_address",
-                            address_str.clone(),
-                            certificate_score,
-                        );
-                        metrics::gauge_label(
-                            metrics::consensus::VALIDATOR_SIGNATURE_PARTICIPATION,
-                            "validator_address",
-                            address_str,
-                            signature_score,
-                        );
+                        // Export the certificate and signature participation scores as individual gauges.
+                        for (address, (certificate_score, signature_score)) in participation_scores {
+                            let address_str = address.to_string();
+                            metrics::gauge_label(
+                                metrics::consensus::VALIDATOR_CERTIFICATE_PARTICIPATION,
+                                "validator_address",
+                                address_str.clone(),
+                                certificate_score,
+                            );
+                            metrics::gauge_label(
+                                metrics::consensus::VALIDATOR_SIGNATURE_PARTICIPATION,
+                                "validator_address",
+                                address_str,
+                                signature_score,
+                            );
+                        }
                     }
+                    Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
                 }
-                Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
             }
         }
 
@@ -690,7 +723,7 @@ impl<N: Network> Consensus<N> {
             match self.reinsert_transmission(transmission_id, transmission).await {
                 Ok(true) => {}
                 Ok(false) => debug!(
-                    "Unable to reinsert transmission {}.{} into the memory pool. Already exists.",
+                    "Unable to reinsert transmission {}:{} into the memory pool. Already exists.",
                     fmt_id(transmission_id),
                     fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
                 ),

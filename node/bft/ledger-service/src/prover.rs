@@ -190,4 +190,9 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     ) -> Result<u64> {
         bail!("Cannot compute spent_cost in prover")
     }
+
+    fn is_stopped(&self) -> bool {
+        // No ledger to check against.
+        false
+    }
 }

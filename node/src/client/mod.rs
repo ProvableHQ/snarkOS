@@ -562,6 +562,12 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
             manager.unload();
         }
 
+        // Shut down the REST instance.
+        if let Some(rest) = &self.rest {
+            trace!("Shutting down the REST server...");
+            rest.shut_down();
+        }
+
         // Abort the tasks.
         trace!("Shutting down the client...");
         self.handles.lock().iter().for_each(|handle| handle.abort());

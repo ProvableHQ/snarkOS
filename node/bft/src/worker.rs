@@ -16,7 +16,7 @@
 #[cfg(not(test))]
 use crate::Gateway;
 use crate::{
-    MAX_FETCH_TIMEOUT_IN_MS,
+    MAX_FETCH_TIMEOUT,
     MAX_WORKERS,
     ProposedBatch,
     Transport,
@@ -43,7 +43,7 @@ use locktick::parking_lot::{Mutex, RwLock};
 use parking_lot::{Mutex, RwLock};
 use rand::seq::IteratorRandom;
 
-use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 /// A worker's main role is maintaining a queue of verified ("ready") transmissions,
@@ -448,7 +448,7 @@ impl<N: Network> Worker<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+                tokio::time::sleep(MAX_FETCH_TIMEOUT).await;
 
                 // Remove the expired pending certificate requests.
                 let self__ = self_.clone();
@@ -533,9 +533,9 @@ impl<N: Network> Worker<N> {
                 self.format_transmission_id(transmission_id)
             );
         }
-        // Wait for the transmission to be fetched.
 
-        let transmission = timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+        // Wait for the transmission to be fetched.
+        let transmission = timeout(MAX_FETCH_TIMEOUT, callback_receiver)
             .await
             .with_context(|| {
                 format!("Unable to fetch transmission {} (timeout)", self.format_transmission_id(transmission_id))
@@ -618,7 +618,7 @@ mod tests {
     use bytes::Bytes;
     use mockall::mock;
     use rand::RngExt;
-    use std::{io, ops::Range};
+    use std::{io, ops::Range, time::Duration};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
@@ -676,6 +676,7 @@ mod tests {
             fn check_block_subdag(&self, _block: Block<N>, _prefix: &[PendingBlock<N>]) -> Result<PendingBlock<N>, CheckBlockError<N>>;
             fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError>;
             fn transaction_spend_in_microcredits(&self, transaction: &Transaction<N>, consensus_version: ConsensusVersion) -> Result<u64>;
+            fn is_stopped(&self) -> bool;
         }
     }
 

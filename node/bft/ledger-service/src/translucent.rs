@@ -200,4 +200,8 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     ) -> Result<u64> {
         self.inner.transaction_spend_in_microcredits(transaction, consensus_version)
     }
+
+    fn is_stopped(&self) -> bool {
+        self.inner.is_stopped()
+    }
 }

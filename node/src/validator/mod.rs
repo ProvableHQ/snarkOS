@@ -486,6 +486,12 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
             manager.unload();
         }
+        
+        // Shut down the REST instance.
+        if let Some(rest) = &self.rest {
+            trace!("Shutting down the REST server...");
+            rest.shut_down();
+        }
 
         // Abort the tasks.
         trace!("Shutting down the validator...");
@@ -558,7 +564,7 @@ mod tests {
             dev_txs,
             None,
             &[],
-            SignalHandler::new(),
+            SignalHandler::new(None),
         )
         .await
         .unwrap();

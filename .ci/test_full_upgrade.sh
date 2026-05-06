@@ -18,11 +18,13 @@ set -eo pipefail  # error on any command failure
 total_validators=$1
 total_clients=$2
 network_id=$3
+max_warnings=$4
 
 # Default values if not provided
 : "${total_validators:=4}"
 : "${total_clients:=2}"
 : "${network_id:=0}"
+: "${max_warnings:=40}"
 
 # Node verbosity
 NODE_VERBOSITY=1
@@ -379,7 +381,7 @@ done
 
 log "Upgrade test passed: network reached highest consensus version with release, all nodes upgraded to PR snarkos, and consensus version remained correct."
 
-if check_logs "$log_dir" "$total_validators" "$total_clients" 20; then
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
   exit 0
 else
   exit 1

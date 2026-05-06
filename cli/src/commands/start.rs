@@ -64,7 +64,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::{
-    runtime::{self, Runtime},
+    runtime::{self, Handle, Runtime},
     sync::mpsc,
     task,
 };
@@ -329,7 +329,9 @@ impl Start {
         }
 
         // Initialize the runtime.
-        Self::runtime().block_on(async move {
+        let runtime = Self::runtime();
+        let handle = runtime.handle().clone();
+        runtime.block_on(async move {
             // Error messages.
             let node_parse_error = || "Failed to start node";
 
@@ -338,9 +340,15 @@ impl Start {
 
             // Parse the node arguments, start it, and block until shutdown.
             match self_.network {
-                MainnetV0::ID => self_.parse_node::<MainnetV0>(log_receiver).await.with_context(node_parse_error)?,
-                TestnetV0::ID => self_.parse_node::<TestnetV0>(log_receiver).await.with_context(node_parse_error)?,
-                CanaryV0::ID => self_.parse_node::<CanaryV0>(log_receiver).await.with_context(node_parse_error)?,
+                MainnetV0::ID => {
+                    self_.parse_node::<MainnetV0>(handle, log_receiver).await.with_context(node_parse_error)?
+                }
+                TestnetV0::ID => {
+                    self_.parse_node::<TestnetV0>(handle, log_receiver).await.with_context(node_parse_error)?
+                }
+                CanaryV0::ID => {
+                    self_.parse_node::<CanaryV0>(handle, log_receiver).await.with_context(node_parse_error)?
+                }
                 _ => panic!("Invalid network ID specified"),
             };
 
@@ -671,7 +679,7 @@ impl Start {
 
     /// Start the node and blocks until it terminates.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, log_receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
+    async fn parse_node<N: Network>(&mut self, handle: Handle, log_receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
@@ -848,7 +856,7 @@ impl Start {
         }
 
         // Register the signal handler.
-        let signal_handler = SignalHandler::new();
+        let signal_handler = SignalHandler::new(Some(handle));
 
         // Collect slipstream plugin config paths (empty slice when feature is disabled).
         #[cfg(feature = "slipstream-plugins")]

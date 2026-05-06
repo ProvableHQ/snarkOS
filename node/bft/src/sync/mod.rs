@@ -15,7 +15,7 @@
 
 use crate::{
     Gateway,
-    MAX_FETCH_TIMEOUT_IN_MS,
+    MAX_FETCH_TIMEOUT,
     Transport,
     events::{CertificateRequest, CertificateResponse, Event},
     helpers::{Pending, Storage, SyncReceiver, fmt_id, max_redundant_requests},
@@ -23,7 +23,6 @@ use crate::{
     spawn_blocking,
 };
 
-use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_sync::{BftSyncMode, BlockSync, InsertBlockResponseError, Ping, locators::BlockLocators};
 use snarkos_utilities::CallbackHandle;
 
@@ -136,6 +135,18 @@ impl<N: Network> Sync<N> {
         }
     }
 
+    /// Waits until the node is synced (has connected peers and is block-synced).
+    /// Returns immediately if already synced.
+    pub async fn wait_for_synced(&self) {
+        self.block_sync.wait_for_synced().await;
+    }
+
+    /// Returns `None` if the node is already synced.
+    /// Otherwise, returns a future that completes once the node becomes synced.
+    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<()>> {
+        self.block_sync.wait_for_synced_if_syncing()
+    }
+
     /// Initializes the sync module and sync the storage with the ledger at bootup.
     pub fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
         // If a callback was provided, set it.
@@ -205,7 +216,7 @@ impl<N: Network> Sync<N> {
         self.spawn(async move {
             loop {
                 // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+                tokio::time::sleep(MAX_FETCH_TIMEOUT).await;
 
                 // Remove the expired pending transmission requests.
                 let self__ = self_.clone();
@@ -984,12 +995,6 @@ impl<N: Network> Sync<N> {
 impl<N: Network> Sync<N> {
     /// Returns `true` if the node is synced and has connected peers.
     pub fn is_synced(&self) -> bool {
-        // Ensure the validator is connected to other validators,
-        // not just clients.
-        if self.gateway.number_of_connected_peers() == 0 {
-            return false;
-        }
-
         self.block_sync.is_block_synced()
     }
 
@@ -1045,7 +1050,7 @@ impl<N: Network> Sync<N> {
         }
         // Wait for the certificate to be fetched.
         // TODO (raychu86): Consider making the timeout dynamic based on network traffic and/or the number of validators.
-        tokio::time::timeout(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS), callback_receiver)
+        tokio::time::timeout(MAX_FETCH_TIMEOUT, callback_receiver)
             .await
             .with_context(|| format!("Unable to fetch batch certificate {} (timeout)", fmt_id(certificate_id)))?
             .with_context(|| format!("Unable to fetch batch certificate {}", fmt_id(certificate_id)))
