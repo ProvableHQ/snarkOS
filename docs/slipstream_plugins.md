@@ -150,18 +150,20 @@ config during runtime, unload it with DELETE and reload it with POST. Otherwise,
 
 ```bash
 BASE="http://localhost:3030/mainnet"
+TOKEN="<your-jwt-token>"   # printed at startup or found in <data_dir>/jwt_secret_<address>.txt
 
 # List
-curl "$BASE/slipstream/plugins"
+curl -H "Authorization: Bearer $TOKEN" "$BASE/slipstream/plugins"
 
 # Load
 curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"config_file":"/path/to/plugin.json5"}' \
   "$BASE/slipstream/plugins"
 
 # Unload
-curl -X DELETE "$BASE/slipstream/plugins/postgres"
+curl -X DELETE -H "Authorization: Bearer $TOKEN" "$BASE/slipstream/plugins/postgres"
 ```
 
 ---
