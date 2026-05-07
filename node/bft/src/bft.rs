@@ -614,6 +614,7 @@ impl<N: Network> BFT<N> {
         // DFS + GC to ensure `recently_committed` and `gc_round` are populated, but we must NOT
         // send a duplicate subdag to the consensus callback.
         let skip_consensus;
+        let previous_last_committed_round;
         {
             // Read-lock the DAG.
             // We need to hold the lock, so we do not later fail to re-acquire it.
@@ -624,13 +625,14 @@ impl<N: Network> BFT<N> {
                 trace!("Skipping already-committed leader round {latest_leader_round}");
                 return Ok(());
             }
-            skip_consensus = latest_leader_round == dag.last_committed_round();
+            previous_last_committed_round = dag.last_committed_round();
+            skip_consensus = latest_leader_round == previous_last_committed_round;
 
             #[cfg(debug_assertions)]
             trace!("Attempting to commit leader certificate for round {}...", latest_leader_round);
 
             let mut current_certificate = leader_certificate;
-            for round in (dag.last_committed_round() + 2..=latest_leader_round.saturating_sub(2)).rev().step_by(2) {
+            for round in (previous_last_committed_round + 2..=latest_leader_round.saturating_sub(2)).rev().step_by(2) {
                 // Retrieve the previous committee for the leader round.
                 let previous_committee_lookback =
                     self.ledger().get_committee_lookback_for_round(round).with_context(|| {
@@ -824,7 +826,13 @@ impl<N: Network> BFT<N> {
             .with_context(|| "BFT failed to garbage collect certificates")?;
 
         #[cfg(feature = "metrics")]
-        metrics::histogram(metrics::bft::COMMIT_LEADER_CERTIFICATE_LATENCY, start.elapsed().as_secs_f64());
+        {
+            let rounds_per_commit = latest_leader_round.saturating_sub(previous_last_committed_round);
+            if rounds_per_commit > 0 {
+                metrics::histogram(metrics::bft::COMMIT_ROUNDS_PER_COMMIT, rounds_per_commit as f64);
+            }
+            metrics::histogram(metrics::bft::COMMIT_LEADER_CERTIFICATE_LATENCY, start.elapsed().as_secs_f64());
+        }
         Ok(())
     }
 
