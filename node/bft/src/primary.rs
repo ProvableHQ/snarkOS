@@ -2377,7 +2377,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch() {
         let mut rng = TestRng::default();
         let (primary, _) = primary_without_handlers(&mut rng);
@@ -2398,7 +2398,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch_with_no_transmissions() {
         let mut rng = TestRng::default();
         let (primary, _) = primary_without_handlers(&mut rng);
@@ -2411,7 +2411,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch_in_round() {
         let round = 3;
         let mut rng = TestRng::default();
@@ -2436,7 +2436,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch_skip_transmissions_from_previous_certificates() {
         let round = 3;
         let prev_round = round - 1;
@@ -2508,7 +2508,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch_over_spend_limit() {
         let mut rng = TestRng::default();
 
@@ -2544,7 +2544,7 @@ mod tests {
         assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 3);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer() {
         let mut rng = TestRng::default();
         let (primary, accounts) = primary_without_handlers(&mut rng);
@@ -2583,7 +2583,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_when_not_synced() {
         let mut rng = TestRng::default();
         let (primary, accounts) = primary_without_handlers(&mut rng);
@@ -2620,7 +2620,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_in_round() {
         let round = 2;
         let mut rng = TestRng::default();
@@ -2660,7 +2660,7 @@ mod tests {
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_wrong_round() {
         let mut rng = TestRng::default();
         let (primary, accounts) = primary_without_handlers(&mut rng);
@@ -2703,7 +2703,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_in_round_wrong_round() {
         let round = 4;
         let mut rng = TestRng::default();
@@ -2750,7 +2750,7 @@ mod tests {
     }
 
     /// Tests that the minimum batch delay is enforced as expected, i.e., that proposals with timestamps that are too close to the previous proposal are rejected.
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_with_past_timestamp() {
         let round = 2;
         let mut rng = TestRng::default();
@@ -2801,7 +2801,7 @@ mod tests {
     }
 
     /// Check that proposals rejected that have timestamps older than the previous proposal.
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_over_spend_limit() {
         let mut rng = TestRng::default();
 
@@ -2864,7 +2864,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch_with_storage_round_behind_proposal_lock() {
         let round = 3;
         let mut rng = TestRng::default();
@@ -2903,7 +2903,7 @@ mod tests {
         assert!(primary.proposed_batch.read().is_some());
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_propose_batch_with_storage_round_behind_proposal() {
         let round = 5;
         let mut rng = TestRng::default();
@@ -2933,7 +2933,7 @@ mod tests {
         assert!(primary.proposed_batch.read().as_ref().unwrap().round() > primary.current_round());
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
     async fn test_batch_signature_from_peer() {
         let mut rng = TestRng::default();
         let (primary, accounts) = primary_without_handlers(&mut rng);
@@ -2971,7 +2971,7 @@ mod tests {
         assert_eq!(primary.current_round(), round + 1);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
     async fn test_batch_signature_from_peer_in_round() {
         let round = 5;
         let mut rng = TestRng::default();
@@ -3012,7 +3012,7 @@ mod tests {
         assert_eq!(primary.current_round(), round + 1);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_signature_from_peer_no_quorum() {
         let mut rng = TestRng::default();
         let (primary, accounts) = primary_without_handlers(&mut rng);
@@ -3047,7 +3047,7 @@ mod tests {
         assert_eq!(primary.current_round(), round);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_batch_signature_from_peer_in_round_no_quorum() {
         let round = 7;
         let mut rng = TestRng::default();
@@ -3085,7 +3085,7 @@ mod tests {
         assert_eq!(primary.current_round(), round);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_insert_certificate_with_aborted_transmissions() {
         let round = 3;
         let prev_round = round - 1;
