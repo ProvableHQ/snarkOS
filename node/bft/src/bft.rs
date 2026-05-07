@@ -828,9 +828,7 @@ impl<N: Network> BFT<N> {
         #[cfg(feature = "metrics")]
         {
             let rounds_per_commit = latest_leader_round.saturating_sub(previous_last_committed_round);
-            if rounds_per_commit > 0 {
-                metrics::histogram(metrics::bft::COMMIT_ROUNDS_PER_COMMIT, rounds_per_commit as f64);
-            }
+            metrics::histogram(metrics::bft::COMMIT_ROUNDS_PER_COMMIT, rounds_per_commit as f64);
             metrics::histogram(metrics::bft::COMMIT_LEADER_CERTIFICATE_LATENCY, start.elapsed().as_secs_f64());
         }
         Ok(())
