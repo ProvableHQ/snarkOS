@@ -98,6 +98,7 @@ impl<N: Network> Node<N> {
         auto_db_checkpoints: Option<PathBuf>,
         dev_txs: bool,
         dev: Option<u16>,
+        only_cdn: bool,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         let validator = Arc::new(
@@ -116,6 +117,7 @@ impl<N: Network> Node<N> {
                 trusted_peers_only,
                 dev_txs,
                 dev,
+                only_cdn,
                 signal_handler,
             )
             .await?,
@@ -173,6 +175,7 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         auto_db_checkpoints: Option<PathBuf>,
         dev: Option<u16>,
+        only_cdn: bool,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         let client = Arc::new(
@@ -188,6 +191,7 @@ impl<N: Network> Node<N> {
                 node_data_dir,
                 trusted_peers_only,
                 dev,
+                only_cdn,
                 signal_handler,
             )
             .await?,

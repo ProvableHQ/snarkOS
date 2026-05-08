@@ -37,6 +37,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         NodeDataDir::new_test(None),
         false, // Connect to untrusted peers.
         None,
+        false, // No CDN-only mode.
         SignalHandler::new(None),
     )
     .await
@@ -74,6 +75,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         false, // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
+        false, // No CDN-only mode.
         SignalHandler::new(None),
     )
     .await

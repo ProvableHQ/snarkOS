@@ -144,6 +144,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
+        only_cdn: bool,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -198,9 +199,11 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         };
 
         // Perform sync with CDN (if enabled).
-        let cdn_sync = cdn.map(|base_url| {
+        // When only_cdn is true the CdnBlockSync worker retries indefinitely until
+        // signal_handler fires, so wait() below blocks until user-initiated shutdown.
+        let cdn_sync = cdn.as_ref().map(|base_url| {
             trace!("CDN sync is enabled");
-            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler))
+            Arc::new(CdnBlockSync::new(base_url.clone(), ledger.clone(), signal_handler.clone(), only_cdn))
         });
 
         // Initialize the REST server.
@@ -211,7 +214,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             );
         }
 
-        // Set up everything else after CDN sync is done.
+        // Wait for CDN sync to complete (or, in --onlycdn mode, until shutdown).
         if let Some(cdn_sync) = cdn_sync {
             if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
                 crate::log_clean_error(&storage_mode);

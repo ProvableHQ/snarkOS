@@ -92,6 +92,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
+        only_cdn: bool,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -152,7 +153,11 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         };
 
         // Perform sync with CDN (if enabled).
-        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler)));
+        // When only_cdn is true the CdnBlockSync worker retries indefinitely until
+        // signal_handler fires, so wait() below blocks until user-initiated shutdown.
+        let cdn_sync = cdn.as_ref().map(|base_url| {
+            Arc::new(CdnBlockSync::new(base_url.clone(), ledger.clone(), signal_handler.clone(), only_cdn))
+        });
 
         // Initialize the transaction pool.
         node.initialize_transaction_pool(dev, dev_txs)?;
@@ -173,7 +178,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             );
         }
 
-        // Set up everything else after CDN sync is done.
+        // Wait for CDN sync to complete (or, in --onlycdn mode, until shutdown).
         if let Some(cdn_sync) = cdn_sync {
             if let Err(error) = cdn_sync.wait().await.with_context(|| "Failed to synchronize from the CDN") {
                 crate::log_clean_error(&storage_mode);
@@ -545,6 +550,7 @@ mod tests {
             false,
             dev_txs,
             None,
+            false,
             SignalHandler::new(None),
         )
         .await

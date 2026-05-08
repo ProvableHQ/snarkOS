@@ -17,7 +17,7 @@
 // https://github.com/rust-lang/rust-clippy/issues/6446
 #![allow(clippy::await_holding_lock)]
 
-use snarkos_utilities::{SignalHandler, Stoppable};
+use snarkos_utilities::{SimpleStoppable, Stoppable};
 
 use snarkvm::{
     prelude::{Deserialize, DeserializeOwned, Ledger, Network, Serialize, block::Block, store::ConsensusStorage},
@@ -83,14 +83,19 @@ pub struct CdnBlockSync {
 
 impl CdnBlockSync {
     /// Spawn a background task that loads blocks from a CDN into the ledger.
+    ///
+    /// When `only_cdn` is `true` the worker retries indefinitely after reaching the
+    /// CDN tip or encountering a transient error, sleeping 30 s between attempts.
+    /// It exits only when `stoppable.is_stopped()` returns `true`.
     pub fn new<N: Network, C: ConsensusStorage<N>>(
         base_url: http::Uri,
         ledger: Ledger<N, C>,
-        stoppable: Arc<SignalHandler>,
+        stoppable: Arc<dyn Stoppable>,
+        only_cdn: bool,
     ) -> Self {
         let task = {
             let base_url = base_url.clone();
-            tokio::spawn(async move { Self::worker(base_url, ledger, stoppable).await })
+            tokio::spawn(async move { Self::worker(base_url, ledger, stoppable, only_cdn).await })
         };
 
         debug!("Started sync from CDN at {base_url}");
@@ -122,46 +127,60 @@ impl CdnBlockSync {
         base_url: http::Uri,
         ledger: Ledger<N, C>,
         stoppable: Arc<dyn Stoppable>,
+        only_cdn: bool,
     ) -> SyncResult {
-        // Fetch the node height.
-        let start_height = ledger.latest_height() + 1;
-        // Load the blocks from the CDN into the ledger.
-        let ledger_clone = ledger.clone();
-        let result = load_blocks(&base_url, start_height, None, stoppable, move |block: Block<N>| {
-            ledger_clone
-                .advance_to_next_block(&block)
-                .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))
-        })
-        .await;
+        loop {
+            // Fetch the node height.
+            let start_height = ledger.latest_height() + 1;
+            // In --onlycdn mode use a fresh per-attempt stoppable so CDN-internal stop() calls
+            // do not permanently poison the global stoppable used to detect user shutdown.
+            let attempt_stoppable: Arc<dyn Stoppable> =
+                if only_cdn { SimpleStoppable::new() } else { stoppable.clone() };
+            // Load the blocks from the CDN into the ledger.
+            let ledger_clone = ledger.clone();
+            let result = load_blocks(&base_url, start_height, None, attempt_stoppable, move |block: Block<N>| {
+                ledger_clone.advance_to_next_block(&block).with_context(|| {
+                    format!("Failed to advance to block {} at height {}", block.hash(), block.height())
+                })
+            })
+            .await;
 
-        // TODO (howardwu): Find a way to resolve integrity failures.
-        // If the sync failed, check the integrity of the ledger.
-        match result {
-            Ok(completed_height) => Ok(completed_height),
-            Err((completed_height, error)) => {
-                warn!("{}", flatten_error(error.context("Failed to sync block(s) from the CDN")));
+            // TODO (howardwu): Find a way to resolve integrity failures.
+            // If the sync failed, check the integrity of the ledger.
+            let completed_height = match result {
+                Ok(completed_height) => completed_height,
+                Err((completed_height, error)) => {
+                    error!("{}", flatten_error(error.context("Failed to sync block(s) from the CDN")));
 
-                // If the sync made any progress, then check the integrity of the ledger.
-                if completed_height != start_height {
-                    debug!("Synced the ledger up to block {completed_height}");
+                    // If the sync made any progress, then check the integrity of the ledger.
+                    if completed_height != start_height {
+                        debug!("Synced the ledger up to block {completed_height}");
 
-                    // Retrieve the latest height, according to the ledger.
-                    let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
-                    // Check the integrity of the latest height.
-                    if node_height != completed_height {
-                        return Err((
-                            completed_height,
-                            anyhow!("The ledger height does not match the last sync height"),
-                        ));
+                        // Retrieve the latest height, according to the ledger.
+                        let node_height = *ledger.vm().block_store().heights().max().unwrap_or_default();
+                        // Check the integrity of the latest height.
+                        if node_height != completed_height {
+                            // Log an error.
+                            error!("The ledger height does not match the last sync height");
+                        }
+
+                        // Fetch the latest block from the ledger.
+                        if let Err(err) = ledger.get_block(node_height) {
+                            return Err((completed_height, err));
+                        }
                     }
 
-                    // Fetch the latest block from the ledger.
-                    if let Err(err) = ledger.get_block(node_height) {
-                        return Err((completed_height, err));
-                    }
+                    completed_height
                 }
+            };
 
-                Ok(completed_height)
+            // In --onlycdn mode, retry after a delay unless the node is shutting down.
+            if !only_cdn || stoppable.is_stopped() {
+                return Ok(completed_height);
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            if stoppable.is_stopped() {
+                return Ok(completed_height);
             }
         }
     }
