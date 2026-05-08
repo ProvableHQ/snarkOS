@@ -400,7 +400,16 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             bail!("Skipping advancing to block {} - The node is shutting down", block.height());
         }
         // Advance to the next block.
+        let timer = std::time::Instant::now();
         self.ledger.advance_to_next_block(block)?;
+        let elapsed = timer.elapsed().as_millis();
+        tracing::debug!(
+            "\t snarkos::advance_to_next_block self.ledger.advance_to_next_block for block {} took {elapsed} ms",
+            block.height()
+        );
+
+        let timer = std::time::Instant::now();
+
         // Update BFT metrics.
         #[cfg(feature = "metrics")]
         {
@@ -414,6 +423,12 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             metrics::increment_gauge(metrics::blocks::TRANSACTIONS, num_tx as f64);
             metrics::update_block_metrics(block);
         }
+
+        let elapsed = timer.elapsed().as_millis();
+        tracing::debug!(
+            "\t snarkos::advance_to_next_block metrics logging for block {} took {elapsed} ms",
+            block.height()
+        );
 
         tracing::info!("Advanced to block {} at round {} - {}", block.height(), block.round(), block.hash());
         Ok(())

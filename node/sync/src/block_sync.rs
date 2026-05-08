@@ -592,12 +592,20 @@ impl<N: Network> BlockSync<N> {
             self.get_sync_speed()
         );
 
+        let mut timer = Instant::now();
+
         loop {
             let next_height = current_height + 1;
 
             let Some(block) = self.peek_next_block(next_height) else {
                 break;
             };
+
+            let elapsed = timer.elapsed().as_millis();
+            tracing::debug!(
+                "try_advancing_block_synchronization for block {next_height} took {elapsed}ms since the previous block",
+            );
+            timer = Instant::now();
 
             // Ensure the block height matches.
             if block.height() != next_height {
@@ -633,6 +641,10 @@ impl<N: Network> BlockSync<N> {
                 }
             })
             .await?;
+
+            tracing::debug!(
+                "try_advancing_block_synchronization blocking task (advancement) for block {next_height} took {elapsed}ms",
+            );
 
             // Only count successful requests.
             if advanced {
