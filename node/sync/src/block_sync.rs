@@ -605,7 +605,7 @@ impl<N: Network> BlockSync<N> {
             tracing::debug!(
                 "try_advancing_block_synchronization for block {next_height} took {elapsed}ms since the previous block",
             );
-            timer = Instant::now();
+            let block_timer = Instant::now();
 
             // Ensure the block height matches.
             if block.height() != next_height {
@@ -642,9 +642,11 @@ impl<N: Network> BlockSync<N> {
             })
             .await?;
 
+            let elapsed = block_timer.elapsed().as_millis();
             tracing::debug!(
                 "try_advancing_block_synchronization blocking task (advancement) for block {next_height} took {elapsed}ms",
             );
+            timer = Instant::now();
 
             // Only count successful requests.
             if advanced {
