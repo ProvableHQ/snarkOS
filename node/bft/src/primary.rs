@@ -413,6 +413,10 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         self.sync.wait_for_synced_if_syncing()
     }
 
+    fn is_synced(&self) -> bool {
+        self.sync.is_synced()
+    }
+
     /// Proposes the batch for the current round.
     ///
     /// This method performs the following steps:
