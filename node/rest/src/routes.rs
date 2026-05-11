@@ -56,9 +56,7 @@ fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plai
     // Return an error if the number of keys exceeds the maximum allowed.
     if num_keys > MAX_KEYS_PER_REQUEST {
         return Err(RestError::unprocessable_entity(anyhow!(
-            "Too many keys provided (max: {}, got: {})",
-            MAX_KEYS_PER_REQUEST,
-            num_keys
+            "Too many keys provided (max: {MAX_KEYS_PER_REQUEST}, got: {num_keys})"
         )));
     }
 
@@ -1108,7 +1106,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                     .ledger
                     .vm()
                     .finalize_store()
-                    .get_historical_mapping_value(program_id.clone(), mapping_name.clone(), mapping_key, height)
+                    .get_historical_mapping_value(program_id, mapping_name, mapping_key, height)
                     .map_err(|err| {
                         RestError::not_found(err.context(format!(
                             "Could not load mapping '{mapping_name}/{key}' for program '{program_id}' from block '{height}'"
@@ -1192,21 +1190,21 @@ mod tests {
     #[test]
     fn parse_historical_mapping_keys_rejects_empty() {
         let err = parse_historical_mapping_keys::<MainnetV0>(&[]).unwrap_err();
-        assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[test]
     fn parse_historical_mapping_keys_rejects_too_many() {
         let keys = vec![String::from("1field"); MAX_KEYS_PER_REQUEST + 1];
         let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
-        assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[test]
     fn parse_historical_mapping_keys_rejects_invalid_key_with_index() {
         let keys = vec![String::from("1field"), String::from("not_a_plaintext")];
         let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
-        assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(err.1.to_string().contains("Invalid key at index 1"));
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(err.to_string().contains("Invalid key at index 1"));
     }
 }
