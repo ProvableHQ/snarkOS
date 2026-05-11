@@ -20,6 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// An enum of error handlers for the REST API server.
 #[derive(Debug)]
@@ -117,6 +118,33 @@ impl IntoResponse for RestError {
         *response.status_mut() = status;
         response.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
         response
+    }
+}
+
+impl fmt::Display for RestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RestError::BadRequest(err) => write!(f, "{err}"),
+            RestError::NotFound(err) => write!(f, "{err}"),
+            RestError::UnprocessableEntity(err) => write!(f, "{err}"),
+            RestError::TooManyRequests(err) => write!(f, "{err}"),
+            RestError::ServiceUnavailable(err) => write!(f, "{err}"),
+            RestError::InternalServerError(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl PartialEq<StatusCode> for RestError {
+    fn eq(&self, other: &StatusCode) -> bool {
+        let status = match self {
+            RestError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            RestError::NotFound(_) => StatusCode::NOT_FOUND,
+            RestError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            RestError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
+            RestError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            RestError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        status == *other
     }
 }
 

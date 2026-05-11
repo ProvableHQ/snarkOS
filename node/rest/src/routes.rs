@@ -39,7 +39,37 @@ use rayon::prelude::*;
 use version::VersionInfo;
 
 #[cfg(feature = "history")]
+const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
+#[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
+#[cfg(feature = "history")]
+type HistoricalMappingRoute<N> = (ProgramID<N>, Identifier<N>, u32);
+
+#[cfg(feature = "history")]
+fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plaintext<N>>, RestError> {
+    // Retrieve the number of keys.
+    let num_keys = keys.len();
+    // Return an error if no keys are provided.
+    if num_keys == 0 {
+        return Err(RestError::unprocessable_entity(anyhow!("No keys provided")));
+    }
+    // Return an error if the number of keys exceeds the maximum allowed.
+    if num_keys > MAX_KEYS_PER_REQUEST {
+        return Err(RestError::unprocessable_entity(anyhow!(
+            "Too many keys provided (max: {MAX_KEYS_PER_REQUEST}, got: {num_keys})"
+        )));
+    }
+
+    // Deserialize the keys from the query.
+    keys.iter()
+        .enumerate()
+        .map(|(index, key)| {
+            key.parse::<Plaintext<N>>().map_err(|err| {
+                RestError::unprocessable_entity(err.context(format!("Invalid key at index {index}: {key}")))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
 
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
@@ -88,6 +118,14 @@ pub(crate) struct CheckSolution {
 pub(crate) struct Commitments {
     #[serde(deserialize_with = "de_csv")]
     commitments: Vec<String>,
+}
+
+/// The query object for `get_history_batch`.
+#[cfg(feature = "history")]
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct HistoricalKeys {
+    #[serde(deserialize_with = "de_csv")]
+    keys: Vec<String>,
 }
 
 /// The return value for a transaction metadata query.
@@ -610,22 +648,31 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
         // Return an error if the number of commitments exceeds the maximum allowed.
         if num_commitments > N::MAX_INPUTS {
-            return Err(RestError::unprocessable_entity(anyhow!(
-                "Too many commitments provided (max: {}, got: {})",
-                N::MAX_INPUTS,
-                num_commitments
-            )));
+            return Err(RestError::unprocessable_entity(anyhow!(format!(
+                "Too many commitments provided (max: {}, got: {num_commitments})",
+                N::MAX_INPUTS
+            ))));
         }
 
         // Deserialize the commitments from the query.
-        let commitments = commitments
-            .commitments
-            .iter()
-            .map(|s| {
-                s.parse::<Field<N>>()
-                    .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let commitments = match tokio::task::spawn_blocking(move || {
+            commitments
+                .commitments
+                .iter()
+                .map(|s| {
+                    s.parse::<Field<N>>()
+                        .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        {
+            Ok(Ok(commitments)) => commitments,
+            Ok(Err(err)) => {
+                return Err(RestError::internal_server_error(anyhow!(err).context("Unable to parse commitments")));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
+        };
 
         Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
     }
@@ -1051,6 +1098,42 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
 
+    /// GET /{network}/program/{id}/mapping/{name}/history/{height}?keys=key1,key2,...
+    #[cfg(feature = "history")]
+    pub(crate) async fn get_history_batch(
+        State(rest): State<Self>,
+        Path((program_id, mapping_name, height)): Path<HistoricalMappingRoute<N>>,
+        Query(historical_keys): Query<HistoricalKeys>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
+
+        let values = match tokio::task::spawn_blocking(move || cfg_into_iter!(historical_keys
+            .keys)
+            .zip(mapping_keys)
+            .map(|(key, mapping_key)| {
+                let value = rest
+                    .ledger
+                    .vm()
+                    .finalize_store()
+                    .get_historical_mapping_value(program_id, mapping_name, mapping_key, height)
+                    .map_err(|err| {
+                        RestError::not_found(err.context(format!(
+                            "Could not load mapping '{mapping_name}/{key}' for program '{program_id}' from block '{height}'"
+                        )))
+                    })?;
+
+                Ok(json!({ "key": key, "value": value }))
+            })
+            .collect::<Result<Vec<_>, RestError>>())
+            .await {
+                Ok(Ok(values)) => values,
+                Ok(Err(err)) => return Err(RestError::internal_server_error(anyhow!(err).context("Unable to get historical mapping values"))),
+                Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+            };
+
+        Ok((StatusCode::OK, ErasedJson::pretty(values)))
+    }
+
     /// GET /{network}/staking/rewards/{address}/{height}
     #[cfg(feature = "history-staking-rewards")]
     pub(crate) async fn get_staking_reward(
@@ -1195,4 +1278,31 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     // TODO: PUT /{network}/slipstream/plugins/{name} (reload) is not yet implemented.
+}
+
+#[cfg(all(test, feature = "history"))]
+mod tests {
+    use super::*;
+    use snarkvm::prelude::MainnetV0;
+
+    #[test]
+    fn parse_historical_mapping_keys_rejects_empty() {
+        let err = parse_historical_mapping_keys::<MainnetV0>(&[]).unwrap_err();
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn parse_historical_mapping_keys_rejects_too_many() {
+        let keys = vec![String::from("1field"); MAX_KEYS_PER_REQUEST + 1];
+        let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn parse_historical_mapping_keys_rejects_invalid_key_with_index() {
+        let keys = vec![String::from("1field"), String::from("not_a_plaintext")];
+        let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(err.to_string().contains("Invalid key at index 1"));
+    }
 }

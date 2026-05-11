@@ -38,6 +38,7 @@ use snarkos_node_tcp::{
 use snarkos_utilities::{NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::{
+    console::network::consensus_config_value,
     ledger::narwhal::Data,
     prelude::{
         Network,
@@ -200,7 +201,13 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             // If the node is not connected to any peers, then skip this iteration.
             if self.router.number_of_connected_peers() == 0 {
                 debug!("Skipping an iteration of the puzzle (no connected peers)");
-                tokio::time::sleep(Duration::from_secs(N::REWARD_ANCHOR_TIME as u64)).await;
+                let anchor_time = self
+                    .latest_block_header
+                    .read()
+                    .as_ref()
+                    .and_then(|header| consensus_config_value!(N, ANCHOR_TIMES, header.height()))
+                    .unwrap_or_else(|| N::ANCHOR_TIMES.last().unwrap().1);
+                tokio::time::sleep(Duration::from_secs(anchor_time as u64)).await;
                 continue;
             }
 

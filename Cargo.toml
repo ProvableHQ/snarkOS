@@ -47,14 +47,14 @@ default-features = false
 
 [workspace.dependencies.snarkvm]
 git = "https://github.com/ProvableHQ/snarkVM.git"
-# Latest staging commit
-rev = "159f04ce49a29674e0fe63530e0212a71d58417f"
+rev = "5f6b502578cc"
+#version = "=4.6.0"
 default-features = false
 
 [workspace.dependencies.snarkvm-slipstream-plugin-manager]
 git = "https://github.com/ProvableHQ/snarkVM.git"
-# Latest staging commit
-rev = "159f04ce49a29674e0fe63530e0212a71d58417f"
+rev = "5f6b502578cc"
+#version = "=4.6.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -365,6 +365,14 @@ tikv-jemallocator = "0.6"
 [dependencies.tracing]
 workspace = true
 
+# Pinned to =0.14.0-rc.29 because k256 v0.14.0-rc.8 does not implement the
+# MulVartime/MulByGeneratorVartime traits added in elliptic-curve v0.14.0-rc.31.
+# Adding this as a direct dependency forces cargo to resolve the exact version
+# and prevents automatic upgrades to incompatible RC releases.
+[dependencies.elliptic-curve]
+version = "=0.14.0-rc.29"
+default-features = false
+
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
@@ -412,6 +420,7 @@ debug-assertions = true
 
 [package.metadata.cargo-machete]
 ignored = [
+  "elliptic-curve", # Needed to pin the crate to a specific version
   "snarkos-account", # Needed for cuda feature
   "snarkos-node", # Needed for metrics feature
   "snarkos-node-bft", # Needed for cuda and locktick features
