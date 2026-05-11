@@ -649,12 +649,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             return Err(RestError::unprocessable_entity(anyhow!("No commitments provided")));
         }
         // Return an error if the number of commitments exceeds the maximum allowed.
-        if num_commitments > MAX_KEYS_PER_REQUEST {
-            return Err(RestError::unprocessable_entity(anyhow!(
-                "Too many commitments provided (max: {}, got: {})",
-                MAX_KEYS_PER_REQUEST,
-                num_commitments
-            )));
+        if num_commitments > N::MAX_INPUTS {
+            return Err(RestError::unprocessable_entity(anyhow!(format!(
+                "Too many commitments provided (max: {}, got: {num_commitments})",
+                N::MAX_INPUTS
+            ))));
         }
 
         // Deserialize the commitments from the query.
