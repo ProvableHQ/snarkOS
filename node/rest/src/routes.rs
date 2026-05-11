@@ -38,6 +38,8 @@ use std::{collections::HashMap, fs};
 use rayon::prelude::*;
 use version::VersionInfo;
 
+const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
+
 #[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
 #[cfg(feature = "history")]
@@ -52,10 +54,10 @@ fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plai
         return Err(RestError::unprocessable_entity(anyhow!("No keys provided")));
     }
     // Return an error if the number of keys exceeds the maximum allowed.
-    if num_keys > N::MAX_INPUTS {
+    if num_keys > MAX_KEYS_PER_REQUEST {
         return Err(RestError::unprocessable_entity(anyhow!(
             "Too many keys provided (max: {}, got: {})",
-            N::MAX_INPUTS,
+            MAX_KEYS_PER_REQUEST,
             num_keys
         )));
     }
@@ -647,10 +649,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             return Err(RestError::unprocessable_entity(anyhow!("No commitments provided")));
         }
         // Return an error if the number of commitments exceeds the maximum allowed.
-        if num_commitments > N::MAX_INPUTS {
+        if num_commitments > MAX_KEYS_PER_REQUEST {
             return Err(RestError::unprocessable_entity(anyhow!(
                 "Too many commitments provided (max: {}, got: {})",
-                N::MAX_INPUTS,
+                MAX_KEYS_PER_REQUEST,
                 num_commitments
             )));
         }
@@ -1196,7 +1198,7 @@ mod tests {
 
     #[test]
     fn parse_historical_mapping_keys_rejects_too_many() {
-        let keys = vec![String::from("1field"); (MainnetV0::MAX_INPUTS as usize) + 1];
+        let keys = vec![String::from("1field"); MAX_KEYS_PER_REQUEST + 1];
         let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
         assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
     }
