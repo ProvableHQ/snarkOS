@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778184704316,
+  "lastUpdate": 1778505217651,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -12708,6 +12708,72 @@ window.BENCHMARK_DATA = {
             "value": 1.47,
             "unit": "blocks/s",
             "extra": "total_wait=170s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f784b61c29ea1dc4ce50a0578b482ea060a2fdb",
+          "message": "Merge pull request #4260 from ProvableHQ/copilot/feature-batch-historical-mapping-lookup\n\nAdd batch historical mapping lookup endpoint and standardize batch key cap to 128",
+          "timestamp": "2026-05-11T14:34:39+02:00",
+          "tree_id": "535807ca387ebed9f6ab7bb5911be5251d337633",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/2f784b61c29ea1dc4ce50a0578b482ea060a2fdb"
+        },
+        "date": 1778505217217,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.620098075966506,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=55.68382120132446, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 10093.193138196968,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=7.926133871078491, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3196.1198229459665,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2503035068511963, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.7,
+            "unit": "blocks/s",
+            "extra": "total_wait=356s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.292813,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=343, mean_speed=0.619436, max_speed=1.833333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.46,
+            "unit": "blocks/s",
+            "extra": "total_wait=535s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.47,
+            "unit": "blocks/s",
+            "extra": "total_wait=169s, target_height=250"
           }
         ]
       }
