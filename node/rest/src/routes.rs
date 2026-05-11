@@ -38,8 +38,8 @@ use std::{collections::HashMap, fs};
 use rayon::prelude::*;
 use version::VersionInfo;
 
+#[cfg(feature = "history")]
 const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
-
 #[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
 #[cfg(feature = "history")]
@@ -655,14 +655,24 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         // Deserialize the commitments from the query.
-        let commitments = commitments
-            .commitments
-            .iter()
-            .map(|s| {
-                s.parse::<Field<N>>()
-                    .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let commitments = match tokio::task::spawn_blocking(move || {
+            commitments
+                .commitments
+                .iter()
+                .map(|s| {
+                    s.parse::<Field<N>>()
+                        .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        {
+            Ok(Ok(commitments)) => commitments,
+            Ok(Err(err)) => {
+                return Err(RestError::internal_server_error(anyhow!(err).context("Unable to parse commitments")));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
+        };
 
         Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
     }
@@ -1097,9 +1107,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
 
-        let values = historical_keys
-            .keys
-            .into_iter()
+        let values = match tokio::task::spawn_blocking(move || cfg_into_iter!(historical_keys
+            .keys)
             .zip(mapping_keys)
             .map(|(key, mapping_key)| {
                 let value = rest
@@ -1115,7 +1124,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
                 Ok(json!({ "key": key, "value": value }))
             })
-            .collect::<Result<Vec<_>, RestError>>()?;
+            .collect::<Result<Vec<_>, RestError>>())
+            .await {
+                Ok(Ok(values)) => values,
+                Ok(Err(err)) => return Err(RestError::internal_server_error(anyhow!(err).context("Unable to get historical mapping values"))),
+                Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+            };
 
         Ok((StatusCode::OK, ErasedJson::pretty(values)))
     }
