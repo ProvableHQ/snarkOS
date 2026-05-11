@@ -124,7 +124,7 @@ pub(crate) struct Commitments {
 #[cfg(feature = "history")]
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct HistoricalKeys {
-    #[serde(default, deserialize_with = "de_csv")]
+    #[serde(deserialize_with = "de_csv")]
     keys: Vec<String>,
 }
 
@@ -1107,10 +1107,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                     .ledger
                     .vm()
                     .finalize_store()
-                    .get_historical_mapping_value(program_id.clone(), mapping_name.clone(), mapping_key.clone(), height)
+                    .get_historical_mapping_value(program_id.clone(), mapping_name.clone(), mapping_key, height)
                     .map_err(|err| {
                         RestError::not_found(err.context(format!(
-                            "Could not load mapping '{mapping_name}/{mapping_key}' for program '{program_id}' from block '{height}'"
+                            "Could not load mapping '{mapping_name}/{key}' for program '{program_id}' from block '{height}'"
                         )))
                     })?;
 
