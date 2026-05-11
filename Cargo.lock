@@ -2161,7 +2161,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3074,6 +3074,7 @@ dependencies = [
  "cfg-if",
  "foreign-types",
  "libc",
+ "once_cell",
  "openssl-macros",
  "openssl-sys",
 ]
@@ -3514,7 +3515,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3552,7 +3553,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5864,13 +5865,34 @@ dependencies = [
  "parking_lot",
  "paste",
  "rand 0.10.1",
- "reqwest",
  "serde_json",
  "sha2 0.11.0",
  "snarkvm-curves",
  "snarkvm-utilities",
  "thiserror 2.0.18",
  "ureq",
+]
+
+[[package]]
+name = "snarkvm-slipstream-plugin-interface"
+version = "4.6.0"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=5f6b502578cc#5f6b502578ccc14661bfd768207e6d7376ddd7fc"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "snarkvm-slipstream-plugin-manager"
+version = "4.6.0"
+source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=5f6b502578cc#5f6b502578ccc14661bfd768207e6d7376ddd7fc"
+dependencies = [
+ "anyhow",
+ "json5",
+ "libloading",
+ "serde_json",
+ "snarkvm-slipstream-plugin-interface",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

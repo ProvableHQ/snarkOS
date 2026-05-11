@@ -172,7 +172,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 .expect("Couldn't set up rate limiting for the REST server!"),
         );
 
-        // Build the auth-protected routes. #[cfg] cannot appear inside a method chain, so we
+        // Build the JWT auth-protected endpoints. #[cfg] cannot appear inside a method chain, so we
         // build this router as a named binding and conditionally extend it before applying the layer.
         let auth_routes = axum::Router::new()
             .route("/node/address", get(Self::get_node_address))
@@ -191,6 +191,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         let routes = axum::Router::new()
             .merge(auth_routes.route_layer(middleware::from_fn(auth_middleware)))
+
+            // All endpoints declared after here are not protected
 
              // Get ../consensus_version
             .route("/consensus_version", get(Self::get_consensus_version))
