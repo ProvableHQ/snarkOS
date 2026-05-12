@@ -430,8 +430,16 @@ impl<N: Network> Sync<N> {
                 // Iterate over the certificates.
                 for certificates in subdag.values().cloned() {
                     cfg_into_iter!(certificates).try_for_each(|certificate| {
+                        // The block was already verified when it was added to the
+                        // ledger, so we do not have to re-check its certificates here.
+                        let trusted_ledger_certificate = true;
                         self.storage
-                            .sync_certificate_with_block(block, certificate, &unconfirmed_transactions, true)
+                            .sync_certificate_with_block(
+                                block,
+                                certificate,
+                                &unconfirmed_transactions,
+                                trusted_ledger_certificate,
+                            )
                             .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
                     })?;
                 }
@@ -690,8 +698,15 @@ impl<N: Network> Sync<N> {
         for certificates in subdag.values() {
             cfg_into_iter!(certificates.clone()).try_for_each(|certificate| -> Result<()> {
                 // Sync the batch certificate with the block.
+                // Make sure to perform full verification of the certificate here.
+                let trusted_ledger_certificate = false;
                 self.storage
-                    .sync_certificate_with_block(block, certificate.clone(), &unconfirmed_transactions, false)
+                    .sync_certificate_with_block(
+                        block,
+                        certificate.clone(),
+                        &unconfirmed_transactions,
+                        trusted_ledger_certificate,
+                    )
                     .with_context(|| format!("Failed to sync certificate with block {}", block.height()))
             })?;
         }
