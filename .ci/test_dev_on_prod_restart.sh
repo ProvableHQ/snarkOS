@@ -92,8 +92,15 @@ function wait_for_height_advance() {
   return 1
 }
 
+function graceful_stop_all_dev_nodes() {
+  for i in "${!PIDS[@]}"; do
+    graceful_stop_pid "${PIDS[$i]}" "dev-node-${i}"
+  done
+  PIDS=()
+}
+
 function cleanup() {
-  stop_nodes
+  graceful_stop_all_dev_nodes
   graceful_stop_pid "$BOOTSTRAP_PID" "setup-node"
 }
 
@@ -168,7 +175,7 @@ log "Step 4: Wait until dev network advances by +${DEV_ADVANCE_BLOCKS} blocks"
 wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-network-first-run"
 
 log "Step 5: Gracefully stop all dev nodes"
-stop_nodes
+graceful_stop_all_dev_nodes
 
 log "Step 6: Restart all dev nodes and wait for +${DEV_ADVANCE_BLOCKS} blocks"
 start_dev_nodes
