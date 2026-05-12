@@ -20,19 +20,7 @@ SETUP_MAX_WAIT=40
 DEV_MAX_WAIT=100
 
 BOOTSTRAP_PID=""
-declare -a DEV_PIDS=()
 SNARKOS_SETUP_BIN="snarkos"
-
-function get_height() {
-  local port="$1"
-  local result
-  result=$(curl -s --max-time 2 "http://${localhost}:${port}/v2/${NETWORK_NAME}/block/height/latest" || true)
-  if is_integer "$result"; then
-    echo "$result"
-  else
-    echo ""
-  fi
-}
 
 function wait_for_node_ready() {
   local port="$1"
@@ -42,7 +30,7 @@ function wait_for_node_ready() {
 
   while (( $(elapsed_since "$start") < timeout )); do
     local height
-    height=$(get_height "$port")
+    height=$(get_block_height_by_port "$port" "$NETWORK_NAME" 2)
     if [ -n "$height" ]; then
       log "Node on port ${port} is ready at height ${height}"
       return 0
@@ -64,7 +52,7 @@ function wait_for_height_advance() {
   wait_for_node_ready "$port" "$timeout"
 
   local start_height
-  start_height=$(get_height "$port")
+  start_height=$(get_block_height_by_port "$port" "$NETWORK_NAME" 2)
   if [ -z "$start_height" ]; then
     log "${label}: failed to read initial block height from port ${port}"
     return 1
@@ -78,7 +66,7 @@ function wait_for_height_advance() {
   log "${label}: waiting for height to advance by ${advance_by} blocks (${start_height} -> ${target_height})"
   while (( $(elapsed_since "$start_time") < timeout )); do
     local current_height
-    current_height=$(get_height "$port")
+    current_height=$(get_block_height_by_port "$port" "$NETWORK_NAME" 2)
     if [ -n "$current_height" ] && (( current_height >= target_height )); then
       log "${label}: reached target height ${current_height} (>= ${target_height})"
       return 0
@@ -99,63 +87,13 @@ function wait_for_height_advance() {
   done
 
   local final_height
-  final_height=$(get_height "$port")
+  final_height=$(get_block_height_by_port "$port" "$NETWORK_NAME" 2)
   log "${label}: timed out waiting for height advance (final height: ${final_height:-unavailable}, target: ${target_height})"
   return 1
 }
 
-function wait_for_pid_exit() {
-  local pid="$1"
-  local timeout="$2"
-  local start
-  start=$(now)
-  while (( $(elapsed_since "$start") < timeout )); do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-function graceful_stop_pid() {
-  local pid="$1"
-  local label="$2"
-
-  if [ -z "$pid" ]; then
-    return 0
-  fi
-
-  if ! kill -0 "$pid" 2>/dev/null; then
-    return 0
-  fi
-
-  log "Stopping ${label} (pid=${pid}) with SIGINT"
-  kill -INT "$pid" 2>/dev/null || true
-  if wait_for_pid_exit "$pid" 60; then
-    return 0
-  fi
-
-  log "${label} did not exit after SIGINT; sending SIGTERM"
-  kill -TERM "$pid" 2>/dev/null || true
-  if wait_for_pid_exit "$pid" 20; then
-    return 0
-  fi
-
-  log "${label} did not exit after SIGTERM; sending SIGKILL"
-  kill -KILL "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-}
-
-function graceful_stop_all_dev_nodes() {
-  for i in "${!DEV_PIDS[@]}"; do
-    graceful_stop_pid "${DEV_PIDS[$i]}" "dev-node-${i}"
-  done
-  DEV_PIDS=()
-}
-
 function cleanup() {
-  graceful_stop_all_dev_nodes
+  stop_nodes
   graceful_stop_pid "$BOOTSTRAP_PID" "setup-node"
 }
 
@@ -190,14 +128,14 @@ function copy_setup_ledger() {
 
 function start_dev_nodes() {
   mkdir -p dev_logs
-  DEV_PIDS=()
+  PIDS=()
 
   for i in $(seq 0 $((NUM_DEV_NODES - 1))); do
     log "Starting dev node ${i}"
     snarkos start --nodisplay --validator --ledger-storage "ledger-${i}" --node-data-storage "node-data-${i}" --dev "${i}" \
       --no-dev-txs --nocdn --dev-num-validators "${NUM_DEV_NODES}" --verbosity 2 \
       --allow-external-peers --logfile "dev_logs/val-${i}.txt" --dev-on-prod &
-    DEV_PIDS[i]=$!
+    PIDS[i]=$!
     sleep 1
   done
 }
@@ -230,7 +168,7 @@ log "Step 4: Wait until dev network advances by +${DEV_ADVANCE_BLOCKS} blocks"
 wait_for_height_advance "$REST_PORT" "$DEV_ADVANCE_BLOCKS" "$DEV_MAX_WAIT" "dev-network-first-run"
 
 log "Step 5: Gracefully stop all dev nodes"
-graceful_stop_all_dev_nodes
+stop_nodes
 
 log "Step 6: Restart all dev nodes and wait for +${DEV_ADVANCE_BLOCKS} blocks"
 start_dev_nodes

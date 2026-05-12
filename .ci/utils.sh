@@ -205,7 +205,53 @@ function log() {
 # Array to store PIDs of all node processes.
 declare -a PIDS
 
-# Stops all running processe in the given list.
+# Wait until the given PID is no longer running, or until timeout seconds elapse.
+# Returns 0 if the process exited, 1 on timeout.
+function wait_for_pid_exit() {
+  local pid="$1"
+  local timeout="$2"
+  local start
+  start=$(now)
+  while (( $(elapsed_since "$start") < timeout )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Stop a process with SIGINT, then SIGTERM, then SIGKILL if needed.
+function graceful_stop_pid() {
+  local pid="$1"
+  local label="$2"
+
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  log "Stopping ${label} (pid=${pid}) with SIGINT"
+  kill -INT "$pid" 2>/dev/null || true
+  if wait_for_pid_exit "$pid" 60; then
+    return 0
+  fi
+
+  log "${label} did not exit after SIGINT; sending SIGTERM"
+  kill -TERM "$pid" 2>/dev/null || true
+  if wait_for_pid_exit "$pid" 20; then
+    return 0
+  fi
+
+  log "${label} did not exit after SIGTERM; sending SIGKILL"
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+# Stops all running processes in the given list (graceful shutdown per PID).
 function stop_nodes() {
   log "🚨 Cleaning up ${#PIDS[@]} process(es)…"
   for pid in "${PIDS[@]}"; do
