@@ -160,7 +160,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         #[cfg(feature = "slipstream-plugins")]
         if !_slipstream_configs.is_empty() {
             let manager =
-                snarkvm_slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
+                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
                     .context("Failed to initialize Slipstream plugin manager")?;
             ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
             let num_plugins = _slipstream_configs.len();

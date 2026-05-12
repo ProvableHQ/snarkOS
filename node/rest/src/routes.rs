@@ -1200,7 +1200,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub(crate) async fn slipstream_list_plugins(
         State(rest): State<Self>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm_slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
 
         let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
         let mgr_guard = mgr_arc.read();
@@ -1219,7 +1219,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Json(body): Json<serde_json::Value>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm_slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
 
         let config_file = body
             .get("config_file")
@@ -1249,7 +1249,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(name): Path<String>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm_slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
 
         let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
         if mgr_arc.read().is_none() {

@@ -18,9 +18,9 @@ edition = "2024"
 
 [features]
 default = [ ]
-history = [ "dep:snarkvm-slipstream-plugin-manager", "snarkvm/history" ]
-history-staking-rewards = [ "dep:snarkvm-slipstream-plugin-manager", "snarkvm/history-staking-rewards" ]
-slipstream-plugins = [ "dep:snarkvm-slipstream-plugin-manager", "snarkvm/slipstream-plugins" ]
+history = [ "snarkvm/history" ]
+history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
+slipstream-plugins = [ "snarkvm/slipstream-plugins" ]
 telemetry = [ "snarkos-node-consensus/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
@@ -99,10 +99,6 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-
-[dependencies.snarkvm-slipstream-plugin-manager]
-workspace = true
-optional = true
 
 [dependencies.rand]
 workspace = true
