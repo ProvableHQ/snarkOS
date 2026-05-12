@@ -144,7 +144,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
-        slipstream_configs: &[std::path::PathBuf],
+        _slipstream_configs: &[std::path::PathBuf],
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -158,12 +158,12 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
         // Initialize the Slipstream plugin manager (if any config files were provided).
         #[cfg(feature = "slipstream-plugins")]
-        if !slipstream_configs.is_empty() {
+        if !_slipstream_configs.is_empty() {
             let manager =
-                snarkvm_slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(slipstream_configs)
+                snarkvm_slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
                     .context("Failed to initialize Slipstream plugin manager")?;
             ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
-            let num_plugins = slipstream_configs.len();
+            let num_plugins = _slipstream_configs.len();
             tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
         }
 
