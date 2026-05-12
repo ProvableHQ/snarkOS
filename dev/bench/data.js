@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778505217651,
+  "lastUpdate": 1778574781255,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -12774,6 +12774,72 @@ window.BENCHMARK_DATA = {
             "value": 1.47,
             "unit": "blocks/s",
             "extra": "total_wait=169s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3313dac2c6d857a048e2d2e2e03e1336e9c773bc",
+          "message": "Merge pull request #4261 from ProvableHQ/fix/batch-propose-syncing\n\n[Fix] Stop proposing when a node starts syncing again",
+          "timestamp": "2026-05-12T09:59:41+02:00",
+          "tree_id": "a542ceb016ba599ab88063fce1b5bf283bb84bfa",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/3313dac2c6d857a048e2d2e2e03e1336e9c773bc"
+        },
+        "date": 1778574780254,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.17445935109577,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=52.319159269332886, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7516.040763591597,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.643901824951172, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2981.336190773206,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.26833605766296387, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 0.82,
+            "unit": "blocks/s",
+            "extra": "total_wait=303s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.591282,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=293, mean_speed=0.752332, max_speed=2.500000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 0.55,
+            "unit": "blocks/s",
+            "extra": "total_wait=452s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=159s, target_height=250"
           }
         ]
       }
