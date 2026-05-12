@@ -98,6 +98,7 @@ impl<N: Network> Node<N> {
         auto_db_checkpoints: Option<PathBuf>,
         dev_txs: bool,
         dev: Option<u16>,
+        dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         let validator = Arc::new(
@@ -116,6 +117,7 @@ impl<N: Network> Node<N> {
                 trusted_peers_only,
                 dev_txs,
                 dev,
+                dev_num_validators_for_committee_hotswap,
                 signal_handler,
             )
             .await?,
