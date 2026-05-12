@@ -19,6 +19,7 @@ use crate::{
     MAX_FETCH_TIMEOUT,
     MAX_WORKERS,
     ProposedBatch,
+    ProposedBatchState,
     Transport,
     events::{Event, TransmissionRequest, TransmissionResponse},
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
@@ -188,7 +189,7 @@ impl<N: Network> Worker<N> {
         let transmission_id = transmission_id.into();
         // Check if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
         self.ready.read().contains(transmission_id)
-            || self.proposed_batch.read().as_ref().is_some_and(|p| p.contains_transmission(transmission_id))
+            || matches!(&*self.proposed_batch.read(), ProposedBatchState::Certifying(p) if p.contains_transmission(transmission_id))
             || self.storage.contains_transmission(transmission_id)
             || self.ledger.contains_transmission(&transmission_id).unwrap_or(false)
     }
@@ -207,9 +208,10 @@ impl<N: Network> Worker<N> {
             return Some(transmission);
         }
         // Check if the transmission ID exists in the proposed batch.
-        if let Some(transmission) =
-            self.proposed_batch.read().as_ref().and_then(|p| p.get_transmission(transmission_id))
-        {
+        if let Some(transmission) = match &*self.proposed_batch.read() {
+            ProposedBatchState::Certifying(p) => p.get_transmission(transmission_id),
+            _ => None,
+        } {
             return Some(transmission.clone());
         }
         None
