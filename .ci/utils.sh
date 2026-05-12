@@ -7,6 +7,9 @@
 # Ensures we use IPv4 localhost everywhere.
 localhost="127.0.0.1"
 
+# Tracked node PIDs (declared before any function so callers using `set -u` never see PIDS unbound).
+declare -a PIDS=()
+
 # How many cores should each node use?
 # (Should be half of the number of (v)CPUs)
 # NOTE: when you update this, update TASKSET1/2 as well.
@@ -201,9 +204,6 @@ function log() {
 ###########################################
 # Helper functions to set up and stop nodes 
 ###########################################
-
-# Array to store PIDs of all node processes.
-declare -a PIDS
 
 # Wait until the given PID is no longer running, or until timeout seconds elapse.
 # Returns 0 if the process exited, 1 on timeout.
@@ -921,20 +921,40 @@ function get_consensus_version {
   fi
 }
 
+# Latest block height from REST (port + network). Prints height or empty on failure; no logging.
+# Optional third argument: curl --max-time seconds (omit for no per-request timeout).
+function get_block_height_by_port() {
+  local port="$1"
+  local network_name="$2"
+  local max_time="${3-}"
+  local result
+  if [[ -n "$max_time" ]]; then
+    result=$(curl -s --max-time "$max_time" "http://$localhost:$port/v2/$network_name/block/height/latest" || true)
+  else
+    result=$(curl -s "http://$localhost:$port/v2/$network_name/block/height/latest" || true)
+  fi
+  if is_integer "$result"; then
+    echo "$result"
+  else
+    echo ""
+  fi
+}
+
 # Get the block height of the specified node
 function get_block_height {
   local node_index=$1
   local network_name=$2
+  local port
+  local result
 
   port=$((3030+node_index))
-  result=$(curl -s "http://$localhost:$port/v2/$network_name/block/height/latest")
+  result=$(get_block_height_by_port "$port" "$network_name")
 
-  if ! is_integer "$result"; then
+  if [[ -z "$result" ]]; then
     log "❌ Failed to retrieve block height for node #${node_index}"
     return 1
-  else
-    echo "$result"
-    return 0
   fi
+  echo "$result"
+  return 0
 }
 
