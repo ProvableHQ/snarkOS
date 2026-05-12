@@ -37,6 +37,9 @@ pub(super) trait BatchPropose: Send + Sync {
     /// once sync completes.
     fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>>;
 
+    /// Returns `true` if the node is currently synced with the network.
+    fn is_synced(&self) -> bool;
+
     /// Attempts to propose a batch.
     ///
     /// Returns `Ok(true)` when a batch was successfully proposed, `Ok(false)` to retry, and
@@ -164,11 +167,19 @@ impl<N: Network> ProposalTask<N> {
     /// Calls `propose_batch()` with CREATE_BATCH_INTERVAL retries until it returns `Ok(true)`
     /// (batch submitted to the network).
     ///
-    /// Returns `true` if the batch was submitted, `false` if the round changed (caller should restart).
+    /// Returns `true` if the batch was submitted, `false` if the round changed or the node started
+    /// syncing (caller should restart; Stage 1 will then await sync completion).
     async fn propose<P: BatchPropose>(primary: &P, round: u64) -> bool {
         let mut attempt = 1u32;
         loop {
             if primary.current_round() != round {
+                return false;
+            }
+
+            // Bail out if sync started mid-Stage-2; otherwise propose_batch may spin at the
+            // CREATE_BATCH_INTERVAL cadence on Ok(false) paths (e.g. previous round has not
+            // reached quorum, not enough connected validators, cached batch rebroadcast).
+            if !primary.is_synced() {
                 return false;
             }
 
@@ -194,7 +205,9 @@ impl<N: Network> ProposalTask<N> {
     /// Stage 3: Wait for the proposed batch to collect enough signatures.
     ///
     /// Periodically rebroadcasts the batch to non-signers (via `propose_batch`) at most once per
-    /// MAX_BATCH_DELAY until the round advances.  Returns when the round changes.
+    /// MAX_BATCH_DELAY until the round advances. Returns when the round changes or when the node
+    /// starts syncing — in the latter case the outer loop restarts and Stage 1's sync gate takes
+    /// over.
     async fn wait_for_signatures<P: BatchPropose>(primary: &P, ready_rx: &mut watch::Receiver<bool>, round: u64) {
         loop {
             if primary.current_round() != round {
@@ -209,6 +222,13 @@ impl<N: Network> ProposalTask<N> {
             }
 
             if primary.current_round() != round {
+                return;
+            }
+
+            // A node cannot rebroadcast its proposed batch while it is syncing — its previous
+            // certificates may be stale and peers won't sign it anyway. Bail out so the outer
+            // loop falls back through Stage 1, which awaits sync completion before proposing.
+            if !primary.is_synced() {
                 return;
             }
 
@@ -248,7 +268,7 @@ mod tests {
     use std::{
         sync::{
             Arc,
-            atomic::{AtomicU32, Ordering},
+            atomic::{AtomicBool, AtomicU32, Ordering},
         },
         time::Duration,
     };
@@ -271,6 +291,10 @@ mod tests {
 
         fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
             None
+        }
+
+        fn is_synced(&self) -> bool {
+            true
         }
 
         async fn propose_batch(&self) -> Result<bool> {
@@ -302,6 +326,10 @@ mod tests {
             None
         }
 
+        fn is_synced(&self) -> bool {
+            true
+        }
+
         async fn propose_batch(&self) -> Result<bool> {
             self.propose_count.fetch_add(1, Ordering::SeqCst);
             Ok(true)
@@ -324,6 +352,10 @@ mod tests {
 
         fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
             None
+        }
+
+        fn is_synced(&self) -> bool {
+            true
         }
 
         async fn propose_batch(&self) -> Result<bool> {
@@ -426,6 +458,10 @@ mod tests {
                 None
             }
 
+            fn is_synced(&self) -> bool {
+                true
+            }
+
             async fn propose_batch(&self) -> Result<bool> {
                 self.propose_count.fetch_add(1, Ordering::SeqCst);
                 self.proposed_notify.notify_one();
@@ -511,5 +547,167 @@ mod tests {
 
         // Stage 3 may make additional rebroadcast calls after success, so use >.
         assert!(propose_count.load(Ordering::SeqCst) > RETRIES, "expected at least {} total attempts", RETRIES + 1);
+    }
+
+    /// While the node is syncing, Stage 3 must not rebroadcast the proposed batch — its previous
+    /// certificates may be stale and peers will not sign it. Once sync completes, rebroadcast
+    /// should resume.
+    #[test_log::test(tokio::test)]
+    async fn test_proposal_task_pauses_rebroadcast_while_syncing() {
+        /// Synced for Stage 1/2. After the first successful `propose_batch`, flips to "syncing"
+        /// so Stage 3's rebroadcast loop must pause. The held `sync_release` `Notify` lets the
+        /// test resume sync on demand to assert that rebroadcast comes back.
+        struct SyncTogglingProposer {
+            propose_count: Arc<AtomicU32>,
+            proposed_notify: Arc<Notify>,
+            is_syncing: Arc<AtomicBool>,
+            sync_release: Arc<Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl BatchPropose for SyncTogglingProposer {
+            fn current_round(&self) -> u64 {
+                1
+            }
+
+            fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
+                if self.is_syncing.load(Ordering::SeqCst) {
+                    let release = self.sync_release.clone();
+                    Some(Box::pin(async move { release.notified().await }))
+                } else {
+                    None
+                }
+            }
+
+            fn is_synced(&self) -> bool {
+                !self.is_syncing.load(Ordering::SeqCst)
+            }
+
+            async fn propose_batch(&self) -> Result<bool> {
+                self.propose_count.fetch_add(1, Ordering::SeqCst);
+                self.proposed_notify.notify_one();
+                // Transition to syncing once the Stage 2 proposal has gone out.
+                self.is_syncing.store(true, Ordering::SeqCst);
+                Ok(true)
+            }
+        }
+
+        // Default starts ready — Stage 1 completes after MIN_BATCH_DELAY without a signal.
+        let task = ProposalTask::<MainnetV0>::default();
+
+        let proposed_notify = Arc::new(Notify::new());
+        let propose_count = Arc::new(AtomicU32::new(0));
+        let is_syncing = Arc::new(AtomicBool::new(false));
+        let sync_release = Arc::new(Notify::new());
+
+        let proposer = SyncTogglingProposer {
+            propose_count: propose_count.clone(),
+            proposed_notify: proposed_notify.clone(),
+            is_syncing: is_syncing.clone(),
+            sync_release: sync_release.clone(),
+        };
+
+        tokio::spawn(task.run(proposer));
+
+        // Wait for Stage 2 to make its single propose call.
+        tokio::time::timeout(Duration::from_secs(10), proposed_notify.notified())
+            .await
+            .expect("Stage 2 did not call propose_batch within 10 seconds");
+        assert_eq!(propose_count.load(Ordering::SeqCst), 1, "expected exactly one Stage 2 call");
+
+        // Stage 3 sleeps MAX_BATCH_DELAY before each rebroadcast attempt; wait past that to give
+        // the sync gate a chance to fire. Without the gate, propose_count would increment here.
+        tokio::time::sleep(MAX_BATCH_DELAY + Duration::from_secs(1)).await;
+        assert_eq!(propose_count.load(Ordering::SeqCst), 1, "Stage 3 rebroadcast fired while the node was syncing",);
+
+        // Release sync. Stage 3 should resume rebroadcasting after the next MAX_BATCH_DELAY tick.
+        is_syncing.store(false, Ordering::SeqCst);
+        sync_release.notify_waiters();
+
+        tokio::time::timeout(MAX_BATCH_DELAY + Duration::from_secs(5), proposed_notify.notified())
+            .await
+            .expect("Stage 3 did not resume rebroadcast after sync completed");
+        assert!(propose_count.load(Ordering::SeqCst) >= 2, "expected rebroadcast after sync completed");
+    }
+
+    /// Stage 2 retries `propose_batch` every CREATE_BATCH_INTERVAL (250ms) while it returns
+    /// `Ok(false)`. If sync starts mid-retry, the loop must bail out so the outer loop can fall
+    /// back through Stage 1's sync gate — otherwise the node spins, calling `propose_batch` four
+    /// times per second (which on a real primary triggers the cached-batch rebroadcast).
+    #[test_log::test(tokio::test)]
+    async fn test_proposal_task_bails_stage_2_when_syncing_starts() {
+        /// Always returns `Ok(false)` from `propose_batch`, so Stage 2 enters its retry loop.
+        /// The test flips `syncing` to true after a few calls; subsequent calls should stop.
+        struct AlwaysFalseProposer {
+            propose_count: Arc<AtomicU32>,
+            syncing: Arc<AtomicBool>,
+            sync_release: Arc<Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl BatchPropose for AlwaysFalseProposer {
+            fn current_round(&self) -> u64 {
+                1
+            }
+
+            fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
+                if self.syncing.load(Ordering::SeqCst) {
+                    let release = self.sync_release.clone();
+                    Some(Box::pin(async move { release.notified().await }))
+                } else {
+                    None
+                }
+            }
+
+            fn is_synced(&self) -> bool {
+                !self.syncing.load(Ordering::SeqCst)
+            }
+
+            async fn propose_batch(&self) -> Result<bool> {
+                self.propose_count.fetch_add(1, Ordering::SeqCst);
+                // Never succeed — Stage 2 will keep retrying every CREATE_BATCH_INTERVAL.
+                Ok(false)
+            }
+        }
+
+        let task = ProposalTask::<MainnetV0>::default();
+        let propose_count = Arc::new(AtomicU32::new(0));
+        let syncing = Arc::new(AtomicBool::new(false));
+        let sync_release = Arc::new(Notify::new());
+
+        let proposer = AlwaysFalseProposer {
+            propose_count: propose_count.clone(),
+            syncing: syncing.clone(),
+            sync_release: sync_release.clone(),
+        };
+
+        tokio::spawn(task.run(proposer));
+
+        // Let Stage 2 spin for a few CREATE_BATCH_INTERVAL ticks (250ms each). After MIN_BATCH_DELAY
+        // (1s) for Stage 1 to release plus a couple of retry cycles, we should see >= 2 calls.
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        let pre_sync_calls = propose_count.load(Ordering::SeqCst);
+        assert!(pre_sync_calls >= 2, "Stage 2 should have retried at least twice while synced (got {pre_sync_calls})");
+
+        // Start syncing. Stage 2 must bail out, and Stage 1 must then block on the sync gate.
+        syncing.store(true, Ordering::SeqCst);
+
+        // Allow Stage 2 to notice and bail, and Stage 1 to install its sync wait.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let after_bail_calls = propose_count.load(Ordering::SeqCst);
+
+        // From this point, no further propose_batch calls should happen until sync releases.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(
+            propose_count.load(Ordering::SeqCst),
+            after_bail_calls,
+            "propose_batch called while syncing — Stage 2 did not bail (or Stage 1 missed the gate)",
+        );
+
+        // Release sync; the outer loop should drive Stage 2 again.
+        syncing.store(false, Ordering::SeqCst);
+        sync_release.notify_waiters();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(propose_count.load(Ordering::SeqCst) > after_bail_calls, "Stage 2 did not resume after sync completed",);
     }
 }
