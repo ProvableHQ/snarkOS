@@ -75,7 +75,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         false, // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
-        &[], // No Slipstream plugins.
+        &[],  // No Slipstream plugins.
         None, // No dev committee hotswap in production mode.
         SignalHandler::new(None),
     )

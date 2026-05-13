@@ -1268,8 +1268,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
         .map_err(|e| {
             let msg = e.to_string();
-            if msg.starts_with("404: ") {
-                RestError::not_found(anyhow!("{}", &msg[5..]))
+            if let Some(stripped) = msg.strip_prefix("404: ") {
+                RestError::not_found(anyhow!("{}", stripped))
             } else {
                 RestError::internal_server_error(e)
             }
