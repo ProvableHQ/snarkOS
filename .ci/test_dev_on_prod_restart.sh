@@ -128,8 +128,9 @@ function copy_setup_ledger() {
 
   # Clear any state cached by a previous test run (proposal cache, dev committee state, etc.).
   # The ledger we just copied is fresh, so any persisted dev state must be regenerated from it.
+  # Pass --node-data-storage so clean targets the same custom path start_dev_nodes uses.
   for i in $(seq 0 $((NUM_DEV_NODES - 1))); do
-    snarkos clean "--dev=${i}" "--network=0"
+    snarkos clean "--dev=${i}" "--network=0" --node-data-storage "node-data-${i}"
   done
 }
 
