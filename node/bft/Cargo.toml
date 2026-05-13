@@ -47,8 +47,8 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
-test_network = [
-  "snarkos-node-bft-ledger-service/test_network",
+devnet = [
+  "snarkos-node-bft-ledger-service/devnet",
 ]
 serial = [
   "snarkos-node-metrics/serial",

@@ -37,8 +37,8 @@ if [[ $build_binary == "y" ]]; then
   enable_telemetry=${enable_telemetry:-y}
 
   # Ask the user for additional crate features (comma-separated)
-  read -p "Enter crate features to enable (comma separated, default: test_network): " crate_features
-  crate_features=${crate_features:-test_network}
+  read -p "Enter crate features to enable (comma separated, default: devnet): " crate_features
+  crate_features=${crate_features:-devnet}
 
   # Build command
   build_cmd="cargo install --locked --path ."

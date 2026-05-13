@@ -17,7 +17,7 @@ license = "Apache-2.0"
 edition = "2024"
 
 [features]
-test_network = [ ]
+devnet = [ ]
 
 [dependencies.anyhow]
 workspace = true

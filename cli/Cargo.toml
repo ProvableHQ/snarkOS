@@ -39,8 +39,8 @@ cuda = [
 ]
 test_targets = [ "snarkvm/test_targets" ]
 test_consensus_heights = [ "snarkvm/test_consensus_heights" ]
-test_network = [
-  "test_targets", 
+devnet = [
+  "test_targets",
   "test_consensus_heights",
   "snarkvm/dev-print"
 ]
