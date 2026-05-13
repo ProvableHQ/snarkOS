@@ -760,7 +760,7 @@ jobs:
       - run:
           name: Lint scripts
           command: |
-            shellcheck -x .ci/*.sh
+            shellcheck -x .ci/*.sh scripts/*.sh
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
 
