@@ -99,6 +99,7 @@ impl<N: Network> Node<N> {
         dev_txs: bool,
         dev: Option<u16>,
         slipstream_configs: &[PathBuf],
+        dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         let validator = Arc::new(
@@ -118,6 +119,7 @@ impl<N: Network> Node<N> {
                 dev_txs,
                 dev,
                 slipstream_configs,
+                dev_num_validators_for_committee_hotswap,
                 signal_handler,
             )
             .await?,

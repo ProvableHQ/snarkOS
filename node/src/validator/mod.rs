@@ -93,6 +93,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         dev_txs: bool,
         dev: Option<u16>,
         _slipstream_configs: &[std::path::PathBuf],
+        #[cfg(feature = "test_network")] dev_num_validators_for_committee_hotswap: Option<u16>,
+        #[cfg(not(feature = "test_network"))] _dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -116,7 +118,20 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         }
 
         // Initialize the ledger service.
+        #[cfg(not(feature = "test_network"))]
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
+        #[cfg(feature = "test_network")]
+        // Initialize the ledger service with a deterministic dev committee.
+        let ledger_service = if let Some(dev_num_validators) = dev_num_validators_for_committee_hotswap {
+            Arc::new(CoreLedgerService::new_dev(
+                ledger.clone(),
+                signal_handler.clone(),
+                Some((node_data_dir.clone(), dev_num_validators)),
+            ))
+        // Initialize the ledger service without a deterministic dev committee.
+        } else {
+            Arc::new(CoreLedgerService::new_dev(ledger.clone(), signal_handler.clone(), None))
+        };
 
         // Initialize the node router.
         let router = Router::new(
@@ -536,7 +551,7 @@ mod tests {
         let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.
-        let mut rng = ChaChaRng::seed_from_u64(1234567890u64);
+        let mut rng = ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
         // Initialize the account.
         let account = Account::<CurrentNetwork>::new(&mut rng).unwrap();
         // Initialize a new VM.
@@ -564,6 +579,7 @@ mod tests {
             dev_txs,
             None,
             &[],
+            None,
             SignalHandler::new(None),
         )
         .await

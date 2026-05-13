@@ -828,6 +828,7 @@ impl<N: Network> Storage<N> {
         block: &Block<N>,
         certificate: BatchCertificate<N>,
         unconfirmed_transactions: &HashMap<N::TransactionID, Transaction<N>>,
+        trusted_ledger_certificate: bool,
     ) -> Result<()> {
         // Skip if the certificate round is below the GC round.
         let gc_round = self.gc_round();
@@ -912,8 +913,14 @@ impl<N: Network> Storage<N> {
             certificate.transmission_ids().len()
         );
 
-        self.insert_certificate(certificate, missing_transmissions, aborted_transmissions)
-            .with_context(|| format!("Failed to insert certificate '{certificate_id}' from block {}", block.height()))
+        if trusted_ledger_certificate {
+            self.insert_certificate_atomic(certificate, aborted_transmissions, missing_transmissions);
+            Ok(())
+        } else {
+            self.insert_certificate(certificate, missing_transmissions, aborted_transmissions).with_context(|| {
+                format!("Failed to insert certificate '{certificate_id}' from block {}", block.height())
+            })
+        }
     }
 }
 

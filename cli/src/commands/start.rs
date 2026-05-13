@@ -287,12 +287,16 @@ pub struct Start {
     pub dev_num_clients: Option<u16>,
 
     /// If development mode is enabled, specify whether node 0 should generate traffic to drive the network.
-    #[clap(long, group = "dev_flag")]
+    #[clap(long, group = "dev_flags")]
     pub no_dev_txs: bool,
 
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
     #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
+
+    /// If development mode is enabled, specify whether to run the node on a production ledger.
+    #[clap(long, group = "dev_flags", requires = "dev_num_validators", default_value_t = false)]
+    pub dev_on_prod: bool,
 
     /// If the flag is set, the node will attempt to automatically migrate the node data to the new format.
     #[clap(long)]
@@ -539,7 +543,7 @@ impl Start {
     /// Returns an alternative genesis block if the node is in development mode.
     /// Otherwise, returns the actual genesis block.
     fn parse_genesis<N: Network>(&self) -> Result<Block<N>> {
-        if self.dev.is_some() {
+        if self.dev.is_some() && !self.dev_on_prod {
             // Determine the number of genesis committee members.
             let num_committee_members = self.dev_num_validators;
             ensure!(
@@ -685,10 +689,9 @@ impl Start {
             println!("{}", crate::helpers::welcome_message());
         }
 
-        // Check if we are running with the lower coinbase and proof targets. This should only be
-        // allowed in --dev mode and should not be allowed in mainnet mode.
-        if cfg!(feature = "test_network") && self.dev.is_none() {
-            bail!("The 'test_network' feature is enabled, but the '--dev' flag is not set");
+        // Only allow dev mode if we built with the 'test_network' feature.
+        if self.dev.is_some() && cfg!(not(feature = "test_network")) {
+            bail!("The 'dev' flag is set, but the 'test_network' feature is not enabled");
         }
 
         // Parse the trusted peers to connect to.
@@ -850,6 +853,9 @@ impl Start {
             }
         };
 
+        // Determine the number of validators for the committee hotswap.
+        let dev_num_validators_for_committee_hotswap = self.dev_on_prod.then_some(self.dev_num_validators);
+
         // TODO(kaimast): start the display earlier and show sync progress.
         if !self.nodisplay && cdn.is_some() {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
@@ -866,7 +872,8 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, signal_handler.clone()).await,
+            // NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_num_validators_for_committee_hotswap, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, slipstream_configs, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,

@@ -76,6 +76,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         false, // No dev traffic in production mode.
         None,
         &[], // No Slipstream plugins.
+        None, // No dev committee hotswap in production mode.
         SignalHandler::new(None),
     )
     .await
