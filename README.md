@@ -26,10 +26,10 @@
   * [6.1 Quick Start](#61-quick-start)
   * [6.2 Operations](#62-operations)
   * [6.3 Local Devnet](#63-local-devnet)
-  * [6.4 Feature Flags](#64-feature-flags)
-  * [6.5 Local Backups](#65-local-backups)
-* [7. Contributors](#7-contributors)
-* [8. License](#8-license)
+  * [6.4 Local Backups](#64-local-backups)
+* [7. Cargo Features](#7-cargo-features)
+* [8. Contributors](#8-contributors)
+* [9. License](#9-license)
 
 [comment]: <> (* [4. JSON-RPC Interface]&#40;#4-json-rpc-interface&#41;)
 [comment]: <> (* [5. Additional Information]&#40;#5-additional-information&#41;)
@@ -292,7 +292,7 @@ The following is an overview of all files that may be needed to be migrated.
 
 To run a node with custom settings, refer to the options and flags available in the `snarkOS` CLI.
 
-The full list of CLI flags and options can be viewed with `snarkos --help`:
+The available CLI flags and options can be viewed using `snarkos --help`:
 ```
 snarkOS 
 The Aleo Team <hello@aleo.org>
@@ -312,7 +312,8 @@ SUBCOMMANDS:
     update     Update snarkOS
 ```
 
-The following are the options for the `snarkos start` command:
+<details><summary>Full <code>snarkos start</code> list of command-line options/summary>
+
 ```
       --network <NETWORK>
           Specify the network ID of this node [options: 0 = mainnet, 1 = testnet, 2 = canary]
@@ -455,6 +456,8 @@ The following are the options for the `snarkos start` command:
           Print help (see a summary with '-h')
 ```
 
+</details>
+
 ## 6. Development Guide
 
 ### 6.1 Quick Start
@@ -587,22 +590,7 @@ To clean up the node storage, run:
 cargo run --release -- clean --dev <NODE_ID>
 ```
 
-## 6.4 Feature Flags
-
-By default, the metrics feature is turned on for some internal crates.
-
-* **history** -
-  Enables a /history REST endpoint.
-* **telemetry** -
-  Allows the node to upload telemetry data.
-* **cuda** -
-  Allows some operations to run on the (NVidia) GPU, instead of on the CPU. See [CUDA acceleration for provers](#optional-cuda-acceleration-for-provers) for install tips and current puzzle status.
-* **locktick** -
-  This feature turns on code for detecting deadlocks.
-* **test_targets** -
-  This feature allows the lowering of coinbase and proof targets for testing.
-
-## 6.5 Local Backups
+## 6.4 Local Backups
 
 The snarkOS node implementation uses rocksdb under the hood. By using its native checkpointing mechanism, you can create backups locally and efficiently. The backups leverage hard links on your filesystem, thereby incurring only a marginal amount of extra space. The aim of these local backups is for you to be able to recover quickly in case your node were to halt.
 
@@ -616,7 +604,56 @@ You can find a basic sample script in `scripts/backup.sh` which you can run as a
 
 You may want to change the `NETWORK`, `BASE_DIR`, `ENDPOINT` and `JWT` variables.
 
-## 7. Contributors
+## 7. Cargo Features
+
+snarkOS exposes a number of cargo features that toggle optional functionality at build time. They
+can be enabled by passing `--features <name>` (comma-separated) to `cargo build`, `cargo install`,
+or `cargo run`.
+
+By default, the `metrics` feature is enabled for some internal crates; all other features below
+are opt-in.
+
+### Production features
+
+* **history** —
+  Enables the `/history` REST endpoint, which exposes historical chain data.
+* **history-staking-rewards** —
+  Extends `history` with per-validator staking-reward records. Implies `history`.
+* **telemetry** —
+  Allows validators to upload participation telemetry. See
+  [Enable Validator Telemetry Metrics](#321-enable-validator-telemetry-metrics-optional).
+* **cuda** —
+  Runs select cryptographic operations on an NVIDIA GPU instead of the CPU. See
+  [CUDA acceleration for provers](#optional-cuda-acceleration-for-provers) for installation notes
+  and the current puzzle status.
+
+### Development and debugging features
+
+* **locktick** —
+  Compiles in instrumentation for detecting lock contention and potential deadlocks.
+* **tokio_console** —
+  Enables a [`tokio-console`](https://github.com/tokio-rs/console) subscriber for inspecting
+  async tasks at runtime.
+* **serial** —
+  Forces single-threaded execution in components that would otherwise use rayon/tokio
+  parallelism. Useful for deterministic debugging.
+
+### Testing features
+
+* **test_targets** —
+  Lowers the coinbase and proof targets so that puzzles can be solved quickly in tests.
+* **test_consensus_heights** —
+  Allows overriding consensus version heights via environment variables, so tests can exercise
+  upgrade paths without waiting for real mainnet heights.
+* **devnet** —
+  Enables development-only code paths used by local devnets: the `--dev` flag and dev-committee
+  hotswap support, deterministic account derivation, and snarkVM's `dev-print` output. Implies
+  `test_targets` and `test_consensus_heights`, so it is the most convenient way to build a node
+  for local testing.
+* **test_network** —
+  *Deprecated.* Alias for `devnet`.
+  
+## 8. Contributors
 Thank you for helping make snarkOS better!  
 [🧐 What do the emojis mean?](https://allcontributors.org/docs/en/emoji-key)
 
@@ -716,8 +753,8 @@ Thank you for helping make snarkOS better!
 
 This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind are welcome!
 
-## 8. License
+## 9. License
 
-We welcome all contributions to `snarkOS`. Please refer to the [license](#7-license) for the terms of contributions.
+We welcome all contributions to `snarkOS`. Please refer to the [license](#9-license) for the terms of contributions.
 
 [![License: GPL v3](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE.md)
