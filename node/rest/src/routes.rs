@@ -1194,6 +1194,90 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
+
+    /// GET /{network}/slipstream/plugins
+    #[cfg(feature = "slipstream-plugins")]
+    pub(crate) async fn slipstream_list_plugins(
+        State(rest): State<Self>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        let mgr_guard = mgr_arc.read();
+        let manager = mgr_guard
+            .as_ref()
+            .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
+        let plugins = manager
+            .list_plugins()
+            .map_err(|e: SlipstreamPluginManagerError| RestError::internal_server_error(anyhow!(e)))?;
+        Ok((StatusCode::OK, ErasedJson::pretty(plugins)))
+    }
+
+    /// POST /{network}/slipstream/plugins
+    #[cfg(feature = "slipstream-plugins")]
+    pub(crate) async fn slipstream_load_plugin(
+        State(rest): State<Self>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+
+        let config_file = body
+            .get("config_file")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RestError::bad_request(anyhow!("Missing required field: config_file")))?
+            .to_owned();
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        if mgr_arc.read().is_none() {
+            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
+        }
+        let name = tokio::task::spawn_blocking(move || -> Result<String, SlipstreamPluginManagerError> {
+            // Safety: manager is set exactly once and never cleared; verified Some above.
+            mgr_arc.write().as_mut().expect("plugin manager verified present").load_plugin(&config_file)
+        })
+        .await
+        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
+        .map_err(|e| match e {
+            SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => RestError::unprocessable_entity(anyhow!("{e}")),
+            other => RestError::internal_server_error(anyhow!("{other}")),
+        })?;
+        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "loaded": name }))))
+    }
+
+    /// DELETE /{network}/slipstream/plugins/{name}
+    #[cfg(feature = "slipstream-plugins")]
+    pub(crate) async fn slipstream_unload_plugin(
+        State(rest): State<Self>,
+        Path(name): Path<String>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        if mgr_arc.read().is_none() {
+            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
+        }
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            // Safety: manager is set exactly once and never cleared; verified Some above.
+            mgr_arc.write().as_mut().expect("plugin manager verified present").unload_plugin(&name).map_err(
+                |e: SlipstreamPluginManagerError| match e {
+                    SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
+                    other => anyhow!("{other}"),
+                },
+            )
+        })
+        .await
+        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
+        .map_err(|e| {
+            let msg = e.to_string();
+            if let Some(stripped) = msg.strip_prefix("404: ") {
+                RestError::not_found(anyhow!("{}", stripped))
+            } else {
+                RestError::internal_server_error(e)
+            }
+        })?;
+        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "unloaded": true }))))
+    }
+
+    // TODO: PUT /{network}/slipstream/plugins/{name} (reload) is not yet implemented.
 }
 
 #[cfg(all(test, feature = "history"))]

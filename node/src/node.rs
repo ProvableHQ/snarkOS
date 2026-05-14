@@ -98,6 +98,7 @@ impl<N: Network> Node<N> {
         auto_db_checkpoints: Option<PathBuf>,
         dev_txs: bool,
         dev: Option<u16>,
+        slipstream_configs: &[PathBuf],
         dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
@@ -117,6 +118,7 @@ impl<N: Network> Node<N> {
                 trusted_peers_only,
                 dev_txs,
                 dev,
+                slipstream_configs,
                 dev_num_validators_for_committee_hotswap,
                 signal_handler,
             )
@@ -175,6 +177,7 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         auto_db_checkpoints: Option<PathBuf>,
         dev: Option<u16>,
+        slipstream_configs: &[PathBuf],
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         let client = Arc::new(
@@ -190,6 +193,7 @@ impl<N: Network> Node<N> {
                 node_data_dir,
                 trusted_peers_only,
                 dev,
+                slipstream_configs,
                 signal_handler,
             )
             .await?,

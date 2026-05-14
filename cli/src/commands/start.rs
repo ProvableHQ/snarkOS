@@ -301,6 +301,12 @@ pub struct Start {
     /// If the flag is set, the node will attempt to automatically migrate the node data to the new format.
     #[clap(long)]
     pub auto_migrate_node_data: bool,
+
+    /// Paths to Slipstream plugin config files (JSON5). May be repeated for multiple plugins.
+    /// Requires the node to be compiled with --features slipstream-plugins.
+    #[cfg(feature = "slipstream-plugins")]
+    #[clap(long = "slipstream-config", value_name = "PATH", verbatim_doc_comment)]
+    pub slipstream_configs: Vec<PathBuf>,
 }
 
 impl Start {
@@ -858,11 +864,18 @@ impl Start {
         // Register the signal handler.
         let signal_handler = SignalHandler::new(Some(handle));
 
+        // Collect slipstream plugin config paths (empty slice when feature is disabled).
+        #[cfg(feature = "slipstream-plugins")]
+        let slipstream_configs: &[PathBuf] = &self.slipstream_configs;
+        #[cfg(not(feature = "slipstream-plugins"))]
+        let slipstream_configs: &[PathBuf] = &[];
+
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, dev_num_validators_for_committee_hotswap, signal_handler.clone()).await,
+            // NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_num_validators_for_committee_hotswap, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, slipstream_configs, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
