@@ -235,6 +235,12 @@ pub struct BlockSync<N: Network> {
     /// Tracks failed requests that need to be re-issued.
     failed_requests: Mutex<FailedRequests<N::BlockHash>>,
 
+    /// Tracks the last time each peer delivered a successful block response.
+    ///
+    /// Used in `handle_block_request_timeouts` to avoid banning peers that are actively
+    /// responding but cannot keep up with the request rate.
+    last_response_at: Mutex<HashMap<SocketAddr, Instant>>,
+
     /// Condition variable that wakes up waiting tasks when the node is synced.
     synced_notify: Notify,
 }
@@ -258,6 +264,7 @@ impl<N: Network> BlockSync<N> {
             metrics: Default::default(),
             prepare_requests_lock: Default::default(),
             failed_requests: Default::default(),
+            last_response_at: Default::default(),
             synced_notify: Default::default(),
         }
     }
@@ -971,6 +978,8 @@ impl<N: Network> BlockSync<N> {
         self.locators.write().remove(peer_ip);
         // Remove all common ancestor entries for this peers.
         self.common_ancestors.write().retain(|pair, _| !pair.contains(peer_ip));
+        // Drop the last-response timestamp so a reconnecting peer starts fresh.
+        self.last_response_at.lock().remove(peer_ip);
         // Remove all block requests to the peer.
         self.remove_block_requests_to_peer(peer_ip);
 
@@ -1298,6 +1307,10 @@ impl<N: Network> BlockSync<N> {
 
         trace!("Received a new and valid block response for height {height}");
 
+        // Record that this peer is actively responding. Used by `handle_block_request_timeouts`
+        // to avoid banning peers that are slow but making progress.
+        self.last_response_at.lock().insert(peer_ip, Instant::now());
+
         // Notify the sync loop that something changed.
         self.response_notify.notify_one();
 
@@ -1395,6 +1408,19 @@ impl<N: Network> BlockSync<N> {
     ///
     /// Timed-out requests will be marked as "failed" and re-issued on the next call to `prepare_block_requests`.
     pub fn handle_block_request_timeouts(&self) {
+        // Snapshot last-response times before locking `requests`. A request whose assigned peer
+        // has responded within `BLOCK_REQUEST_TIMEOUT` is not timed out, even if its own timer
+        // has elapsed — the peer is keeping up with a backlog and timing this request out would
+        // just churn it through `failed_requests` and lose its place in the queue.
+        let responsive_peers: HashSet<SocketAddr> = {
+            let last_response_at = self.last_response_at.lock();
+            let now = Instant::now();
+            last_response_at
+                .iter()
+                .filter_map(|(peer, t)| (now.duration_since(*t) <= BLOCK_REQUEST_TIMEOUT).then_some(*peer))
+                .collect()
+        };
+
         // Avoid locking `locators` and `requests` at the same time.
         let (timed_out_requests, peers_to_ban) = {
             // Acquire the write lock on the requests map.
@@ -1419,9 +1445,11 @@ impl<N: Network> BlockSync<N> {
                 let timer_elapsed = now.duration_since(e.timestamp) > BLOCK_REQUEST_TIMEOUT;
                 // Determine if the request is complete.
                 let is_complete = e.sync_ips().is_empty() && e.response.is_some();
+                // If any assigned peer is still actively responding, the request is not stuck.
+                let has_responsive_peer = e.sync_ips().iter().any(|ip| responsive_peers.contains(ip));
 
                 // Determine if the request has timed out.
-                let is_timeout = timer_elapsed && !is_complete;
+                let is_timeout = timer_elapsed && !is_complete && !has_responsive_peer;
 
                 // Retain if this is not a timeout and is not obsolete.
                 let retain = !is_timeout && !is_obsolete;
@@ -1470,7 +1498,9 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // Now remove and ban any unresponsive peers
+        // Remove and ban the unresponsive peers. The `has_responsive_peer` check inside `retain`
+        // above already guarantees that a request only counts as timed out when none of its
+        // assigned peers have responded recently, so every peer in this set is unresponsive.
         for peer_ip in peers_to_ban {
             self.remove_peer(&peer_ip);
             // TODO: Uncomment this when we have a more rigorous analysis and testing of peer banning.
@@ -1793,6 +1823,7 @@ mod tests {
             advance_with_sync_blocks_lock: Default::default(),
             metrics: Default::default(),
             prepare_requests_lock: Default::default(),
+            last_response_at: Default::default(),
         }
     }
 
