@@ -1633,9 +1633,7 @@ impl<N: Network> BlockSync<N> {
 
         for height in start_height..end_height {
             // Ensure the current height is not in the ledger or already requested.
-            if let Err(err) = self.check_block_request(height) {
-                trace!("{err}");
-
+            if self.check_block_request(height).is_err() {
                 // If the sequence of block requests is interrupted, then return early.
                 // Otherwise, continue until the first start height that is new.
                 match request_hashes.is_empty() {
