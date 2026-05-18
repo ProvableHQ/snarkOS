@@ -56,13 +56,11 @@ jobs:
           unzip ledger.zip
  
       - name: Install snarkOS (test_network)
-        run: |
-          # use `test_network` flag without snarkVM `dev_println`
-          cargo install --path=. --locked --features=test_consensus_heights,test_targets
+        run: cargo install --path=. --locked --features=test_network
 
       # Download previous benchmark result from cache (if exists)
       - name: Download previous benchmark data
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ./cache
           key: ${{ runner.os }}-benchmark
