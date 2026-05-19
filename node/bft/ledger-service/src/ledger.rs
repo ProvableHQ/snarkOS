@@ -38,7 +38,6 @@ use snarkvm::{
         Result,
         bail,
         cfg_into_iter,
-        consensus_config_value_by_version,
         deploy_compute_cost_in_microcredits,
         deployment_cost,
         execute_compute_cost_in_microcredits,
@@ -46,7 +45,6 @@ use snarkvm::{
     },
 };
 
-use anyhow::ensure;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::{
@@ -442,31 +440,18 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         transaction: &Transaction<N>,
         consensus_version: ConsensusVersion,
     ) -> Result<u64> {
-        let transaction_spend_limit =
-            consensus_config_value_by_version!(N, TRANSACTION_SPEND_LIMIT, consensus_version).unwrap();
         let id = transaction.id();
         match transaction {
             Transaction::Deploy(_, _, _, deployment, _) => {
                 let (_, cost_details) =
                     deployment_cost(&self.ledger.vm().process().read(), deployment, consensus_version)?;
                 let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version)?;
-                ensure!(
-                    compute_spend <= transaction_spend_limit,
-                    "Transaction '{id}' exceeds the transaction spend limit with compute_spend: '{compute_spend}'"
-                );
                 Ok(compute_spend)
             }
             Transaction::Execute(_, _, execution, _) => {
                 let (_, cost_details) =
                     execution_cost(&self.ledger.vm().process().read(), execution, consensus_version)?;
                 let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version)?;
-                if consensus_version >= ConsensusVersion::V11 {
-                    // From V11, add this check for consistency with our deployment checks.
-                    ensure!(
-                        compute_spend <= transaction_spend_limit,
-                        "Transaction '{id}' exceeds the transaction spend limit with compute_spend: '{compute_spend}'"
-                    );
-                }
                 Ok(compute_spend)
             }
             Transaction::Fee(..) => {
