@@ -443,15 +443,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         let id = transaction.id();
         match transaction {
             Transaction::Deploy(_, _, _, deployment, _) => {
-                let (_, cost_details) =
-                    deployment_cost(&self.ledger.vm().process().read(), deployment, consensus_version)?;
-                let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version)?;
+                let (_, cost_details) = deployment_cost(self.ledger.vm().process(), deployment, consensus_version)?;
+                let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version);
                 Ok(compute_spend)
             }
             Transaction::Execute(_, _, execution, _) => {
-                let (_, cost_details) =
-                    execution_cost(&self.ledger.vm().process().read(), execution, consensus_version)?;
-                let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version)?;
+                let (_, cost_details) = execution_cost(self.ledger.vm().process(), execution, consensus_version)?;
+                let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version);
                 Ok(compute_spend)
             }
             Transaction::Fee(..) => {
