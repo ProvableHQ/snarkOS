@@ -162,7 +162,7 @@ impl Execute {
                 debug!("At block height {height} and consensus {version:?}");
 
                 // Load the program and it's imports into the process.
-                load_program(&query, &mut vm.process().write(), &program_id, &endpoint)?;
+                load_program(&query, vm.process(), &program_id, &endpoint)?;
             }
 
             // Prepare the fee.
@@ -240,7 +240,7 @@ impl Execute {
 /// A helper function to recursively load the program and all of its imports into the process.
 fn load_program<N: Network>(
     query: &Query<N, BlockMemory<N>>,
-    process: &mut Process<N>,
+    process: &std::sync::Arc<Process<N>>,
     program_id: &ProgramID<N>,
     endpoint: &Uri,
 ) -> Result<()> {
@@ -269,6 +269,7 @@ fn load_program<N: Network>(
     if !process.contains_program(program.id()) {
         debug!("Adding program {program_id} with edition {edition}");
         process
+            .lock()
             .add_programs_with_editions(&[(program, edition)])
             .with_context(|| format!("Failed to add program {program_id}"))?;
     }

@@ -200,7 +200,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             // If the node is not connected to any peers, then skip this iteration.
             if self.router.number_of_connected_peers() == 0 {
                 debug!("Skipping an iteration of the puzzle (no connected peers)");
-                tokio::time::sleep(Duration::from_secs(N::ANCHOR_TIME as u64)).await;
+                tokio::time::sleep(Duration::from_secs(N::ANCHOR_TIMES.last().unwrap().1 as u64)).await;
                 continue;
             }
 
