@@ -166,19 +166,13 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     .with_context(|| format!("Failed to read slipstream config {config_path:?}"))?;
                 let val: serde_json::Value = json5::from_str(&raw)
                     .with_context(|| format!("Invalid JSON5 in slipstream config {config_path:?}"))?;
-                if val.get("libpath").is_some() {
-                    manager
-                        .load_plugin(config_path)
-                        .map_err(|e| anyhow::anyhow!("Failed to load slipstream plugin: {e}"))?;
-                } else {
-                    let plugin = crate::build_static_slipstream_plugin(&val).ok_or_else(|| {
-                        let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("<missing>");
-                        anyhow::anyhow!("Unknown static slipstream plugin '{name}' in {config_path:?}")
-                    })?;
-                    manager
-                        .register(plugin, config_path)
-                        .map_err(|e| anyhow::anyhow!("Failed to register slipstream plugin: {e}"))?;
-                }
+                let plugin = crate::build_static_slipstream_plugin(&val).ok_or_else(|| {
+                    let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("<missing>");
+                    anyhow::anyhow!("Unknown static slipstream plugin '{name}' in {config_path:?}")
+                })?;
+                manager
+                    .register(plugin, config_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to register slipstream plugin: {e}"))?;
             }
             ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
         }
