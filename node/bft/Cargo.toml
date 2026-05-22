@@ -47,6 +47,9 @@ test = [
   "snarkos-node-bft-ledger-service/test",
   "snarkos-node-bft-storage-service/test"
 ]
+test_network = [
+  "snarkos-node-bft-ledger-service/test_network",
+]
 serial = [
   "snarkos-node-metrics/serial",
   "snarkos-node-bft-ledger-service/serial"
@@ -96,11 +99,14 @@ workspace = true
 [dependencies.rand]
 workspace = true
 
+[dependencies.rand_chacha]
+workspace = true
+
 [dependencies.rayon]
 workspace = true
 
 [dependencies.sha2]
-version = "0.10"
+version = "0.11"
 default-features = false
 
 [dependencies.smol_str]

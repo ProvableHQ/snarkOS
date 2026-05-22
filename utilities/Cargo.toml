@@ -16,6 +16,9 @@ categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
 
+[features]
+test_network = [ ]
+
 [dependencies.anyhow]
 workspace = true
 

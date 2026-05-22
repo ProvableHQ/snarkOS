@@ -19,6 +19,7 @@ edition = "2024"
 [features]
 default = [ ]
 async = [ ]
+slipstream-plugins = [ "snarkos-node/slipstream-plugins" ]
 locktick = [
   "dep:locktick",
   "snarkos-display/locktick",

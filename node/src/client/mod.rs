@@ -144,6 +144,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
+        _slipstream_configs: &[std::path::PathBuf],
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -154,6 +155,17 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
         }
         .with_context(|| "Failed to initialize the ledger")?;
+
+        // Initialize the Slipstream plugin manager (if any config files were provided).
+        #[cfg(feature = "slipstream-plugins")]
+        if !_slipstream_configs.is_empty() {
+            let manager =
+                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
+                    .context("Failed to initialize Slipstream plugin manager")?;
+            ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
+            let num_plugins = _slipstream_configs.len();
+            tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
+        }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
@@ -543,6 +555,12 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
+
+        // Shut down the Slipstream plugin service.
+        #[cfg(feature = "slipstream-plugins")]
+        if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
+            manager.unload();
+        }
 
         // Shut down the REST instance.
         if let Some(rest) = &self.rest {

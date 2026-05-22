@@ -46,11 +46,11 @@ version = "1.0.1"
 default-features = false
 
 [workspace.dependencies.snarkvm]
-#path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "e026b3c41"
+rev = "6bae4ab6d"
 #version = "=4.6.0"
 default-features = false
+
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -75,6 +75,9 @@ version = "0.8"
 features = ["git2"]
 
 [workspace.dependencies.bytes]
+version = "1"
+
+[workspace.dependencies.cfg-if]
 version = "1"
 
 [workspace.dependencies.clap]
@@ -268,6 +271,7 @@ path = "snarkos/main.rs"
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history" ]
 history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
+slipstream-plugins = [ "snarkos-node/slipstream-plugins", "snarkos-cli/slipstream-plugins" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",
@@ -305,7 +309,7 @@ serial = [
 ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
-test_network = [ "snarkos-cli/test_network" ]
+test_network = [ "snarkos-cli/test_network", "snarkos-node/test_network" ]
 tokio_console = [ "snarkos-cli/tokio_console" ]
 
 [dependencies.clap]
@@ -359,6 +363,14 @@ tikv-jemallocator = "0.6"
 [dependencies.tracing]
 workspace = true
 
+# Pinned to =0.14.0-rc.29 because k256 v0.14.0-rc.8 does not implement the
+# MulVartime/MulByGeneratorVartime traits added in elliptic-curve v0.14.0-rc.31.
+# Adding this as a direct dependency forces cargo to resolve the exact version
+# and prevents automatic upgrades to incompatible RC releases.
+[dependencies.elliptic-curve]
+version = "=0.14.0-rc.29"
+default-features = false
+
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
@@ -406,6 +418,7 @@ debug-assertions = true
 
 [package.metadata.cargo-machete]
 ignored = [
+  "elliptic-curve", # Needed to pin the crate to a specific version
   "snarkos-account", # Needed for cuda feature
   "snarkos-node", # Needed for metrics feature
   "snarkos-node-bft", # Needed for cuda and locktick features

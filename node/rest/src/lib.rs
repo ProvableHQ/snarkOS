@@ -150,7 +150,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn build_routes(&self, rest_rps: u32) -> axum::Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
@@ -172,13 +172,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 .expect("Couldn't set up rate limiting for the REST server!"),
         );
 
-        let routes = axum::Router::new()
-
-            // All the endpoints before the call to `route_layer` are protected with JWT auth.
+        // Build the JWT auth-protected endpoints. #[cfg] cannot appear inside a method chain, so we
+        // build this router as a named binding and conditionally extend it before applying the layer.
+        let auth_routes = axum::Router::new()
             .route("/node/address", get(Self::get_node_address))
             .route("/program/{id}/mapping/{name}", get(Self::get_mapping_values))
-            .route("/db_backup", post(Self::db_backup))
-            .route_layer(middleware::from_fn(auth_middleware))
+            .route("/db_backup", post(Self::db_backup));
+
+        // Slipstream plugin management endpoints require auth.
+        #[cfg(feature = "slipstream-plugins")]
+        let auth_routes = auth_routes
+            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
+            .route(
+                "/slipstream/plugins/{name}",
+                // TODO: PUT (reload) is not yet implemented.
+                axum::routing::delete(Self::slipstream_unload_plugin),
+            );
+
+        let routes = axum::Router::new()
+            .merge(auth_routes.route_layer(middleware::from_fn(auth_middleware)))
+
+            // All endpoints declared after here are not protected
 
              // Get ../consensus_version
             .route("/consensus_version", get(Self::get_consensus_version))
@@ -270,7 +284,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         // If the `history` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history")]
-        let routes = routes.route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history));
+        let routes = routes
+            .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
+            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch));
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history-staking-rewards")]
