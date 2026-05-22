@@ -40,7 +40,7 @@ use snarkvm::{
         Result,
         bail,
         cfg_into_iter,
-        consensus_config_value,
+        consensus_config_value_by_version,
         deploy_compute_cost_in_microcredits,
         deployment_cost,
         execute_compute_cost_in_microcredits,
@@ -589,9 +589,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         transaction: &Transaction<N>,
         consensus_version: ConsensusVersion,
     ) -> Result<u64> {
+        let transaction_spend_limit =
+            consensus_config_value_by_version!(N, TRANSACTION_SPEND_LIMIT, consensus_version).unwrap();
         let id = transaction.id();
-        let height = N::CONSENSUS_HEIGHT(consensus_version).unwrap();
-        let transaction_spend_limit = consensus_config_value!(N, TRANSACTION_SPEND_LIMIT, height).unwrap();
         match transaction {
             Transaction::Deploy(_, _, _, deployment, _) => {
                 let (_, cost_details) = deployment_cost(self.ledger.vm().process(), deployment, consensus_version)?;
