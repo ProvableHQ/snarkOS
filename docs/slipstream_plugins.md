@@ -8,14 +8,15 @@ real time, without modifying node code.
 
 ## Overview
 
-Slipstream plugins are dynamically loaded shared libraries (`.so` / `.dylib` / `.dll`) that
-implement the `SlipstreamPlugin` trait from `snarkvm-slipstream-plugin-interface`. The plugin
-manager inside `snarkVM`'s `FinalizeStore` calls plugin hooks every time canonical finalize runs.
+Slipstream plugins are statically linked into the `snarkos` binary at compile time. Each plugin
+implements the `SlipstreamPlugin` trait from `snarkvm-slipstream-plugin-interface` and
+self-registers via `inventory::submit!` at link time. The plugin manager inside `snarkVM`'s
+`FinalizeStore` calls plugin hooks every time canonical finalize runs.
 
 Plugins can subscribe to:
 
 - **Mapping updates** — every key/value write that occurs during canonical finalize.
-- **Staking rewards** — per-staker reward notifications
+- **Staking rewards** — per-staker reward notifications.
 
 Only **Validator** and **Client** nodes finalize blocks and therefore support plugins.
 Prover nodes do not.
@@ -24,46 +25,75 @@ Prover nodes do not.
 
 ## Building a Plugin
 
-Use `snarkvm-slipstream-plugin-interface` as a dependency and implement the `SlipstreamPlugin`
-trait. Compile your crate as a `cdylib`:
+### 1. Implement the trait
+
+Add `snarkvm-slipstream-plugin-interface` and `inventory` as dependencies:
 
 ```toml
 # Cargo.toml
-[lib]
-crate-type = ["cdylib"]
-
 [dependencies]
-snarkvm-slipstream-plugin-interface = { git = "https://github.com/ProvableHQ/snarkVM.git", branch = "stream_plugin_testing" }
+snarkvm-slipstream-plugin-interface = { git = "https://github.com/ProvableHQ/snarkVM.git" }
+inventory = "0.3"
 ```
 
-Export the constructor with the exact symbol name `_create_plugin`:
+Implement `SlipstreamPlugin` and register with `inventory::submit!`:
 
 ```rust
-#[no_mangle]
-pub extern "C" fn _create_plugin() -> *mut dyn SlipstreamPlugin {
-    Box::into_raw(Box::new(MyPlugin::new()))
+use snarkvm_slipstream_plugin_interface::slipstream_plugin_interface::{
+    SlipstreamPlugin, PluginRegistration,
+};
+
+struct MyPlugin;
+
+impl SlipstreamPlugin for MyPlugin {
+    fn name(&self) -> &'static str { "my-plugin" }
+    // override on_load, on_broadcast, on_unload as needed
+}
+
+inventory::submit! {
+    PluginRegistration {
+        name: "my-plugin",
+        factory: || Box::new(MyPlugin::new()),
+    }
 }
 ```
 
-See `slipstream-plugin-postgres` in the snarkVM repository for a complete reference
-implementation.
+### 2. Add the plugin to snarkOS
+
+Add your crate as an optional dependency in `snarkOS/node/Cargo.toml` under the
+`slipstream-plugins` feature:
+
+```toml
+[dependencies.my-plugin]
+path = "../../my-plugin"
+optional = true
+
+[features]
+slipstream-plugins = [
+    "snarkvm/slipstream-plugins",
+    "dep:my-plugin",
+    # ...
+]
+```
+
+No other snarkOS or snarkVM code changes are required. snarkOS discovers all registered plugins
+at startup via `inventory::iter::<PluginRegistration>()`.
+
+See `slipstream-plugin-postgres` for a complete reference implementation.
 
 ---
 
 ## Plugin Config File (JSON5)
 
-Each plugin is configured via a JSON5 file. The required field is `libpath`, which can be
-absolute or relative to the config file's directory.
+Each plugin is configured via a JSON5 file. The `name` field must match the name passed to
+`inventory::submit!` in the plugin crate.
 
 ```json5
 {
-  // Required: path to the compiled .so / .dylib
-  libpath: "./libslipstream_postgres_example.so",
+  // Required: must match the name registered via inventory::submit! in the plugin crate.
+  name: "my-plugin",
 
-  // Optional: override the plugin name reported by name()
-  name: "postgres",
-
-  // Plugin-specific fields (passed verbatim to on_load)
+  // Plugin-specific fields — read by the plugin's own on_load implementation.
   connection_string: "postgres://user:pass@localhost/aleo",
   batch_size: 100,
 }
@@ -73,39 +103,37 @@ absolute or relative to the config file's directory.
 
 ## Starting a Node with Plugins
 
-Compile snarkOS with the `slipstream-plugins` feature
+Build snarkOS with the `slipstream-plugins` feature:
 
 ```bash
-cargo build --features slipstream-plugins
+cargo build --release --features slipstream-plugins
 ```
 
-Pass one or more `--slipstream-config` flags at startup:
+Pass one or more config file paths at startup (comma-separated or repeated):
 
 ```bash
 # Single plugin
-snarkos start --client \
-  --slipstream-config ~/.aleo/plugins/postgres/plugin.json5
+snarkos start --nodetype validator \
+  --slipstream-plugins ~/.aleo/plugins/postgres.json5
 
 # Multiple plugins
-snarkos start --validator \
-  --slipstream-config ~/.aleo/plugins/postgres/plugin.json5 \
-  --slipstream-config ~/.aleo/plugins/metrics/plugin.json5
+snarkos start --nodetype validator \
+  --slipstream-plugins ~/.aleo/plugins/postgres.json5,~/.aleo/plugins/metrics.json5
 ```
 
-Plugins are loaded synchronously before the REST server starts. If any plugin fails to load,
-the node exits with an error.
+Plugins are initialized synchronously before the REST server and consensus engine start.
+If any plugin's `on_load` returns an error, the node exits immediately — there is no
+"start without the plugin" fallback.
 
 ---
 
-## Runtime Management via REST API
+## REST API
 
-> **Authentication required.** All slipstream management endpoints are protected by JWT
-> authentication. Every request must include an `Authorization: Bearer <token>` header.
+> **Authentication required.** All slipstream endpoints require a JWT bearer token.
 > The token is printed to stdout at node startup and written to
-> `<node_data_dir>/jwt_secret_<address>.txt`. To disable auth entirely, start the node
-> with `--nojwt` (not recommended in production).
+> `<node_data_dir>/jwt_secret_<address>.txt`.
 
-### List loaded plugins
+### List active plugins
 
 ```
 GET /{network}/slipstream/plugins
@@ -116,70 +144,24 @@ Response (200):
 ["postgres", "metrics"]
 ```
 
-### Load a plugin at runtime
-
-```
-POST /{network}/slipstream/plugins
-Content-Type: application/json
-
-{ "config_file": "/path/to/plugin.json5" }
-```
-
-Response (200):
-```json
-{ "loaded": "postgres" }
-```
-
-Returns **422 Unprocessable Entity** if a plugin with that name is already loaded.
-
-### Unload a plugin
-
-```
-DELETE /{network}/slipstream/plugins/{name}
-```
-
-Response (200):
-```json
-{ "unloaded": true }
-```
-
-Returns **404 Not Found** if no plugin with that name is loaded.
-
-### Reload a plugin (not yet implemented)
-
-`PUT /{network}/slipstream/plugins/{name}` is not currently available. To update a plugin's
-config during runtime, unload it with DELETE and reload it with POST. Otherwise, stop the snarkos service, update the config, and restart it, pointing at the new config.
-
 ---
 
 ## Example: curl Commands
 
 ```bash
 BASE="http://localhost:3030/mainnet"
-TOKEN="<your-jwt-token>"   # printed at startup or found in <data_dir>/jwt_secret_<address>.txt (e.g. `~/.aleo/storage/jwt_secrect_{address}.txt`)
+TOKEN="<your-jwt-token>"
 
-# List
+# List active plugins
 curl -H "Authorization: Bearer $TOKEN" "$BASE/slipstream/plugins"
-
-# Load
-curl -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"config_file":"/path/to/plugin.json5"}' \
-  "$BASE/slipstream/plugins"
-
-# Unload
-curl -X DELETE -H "Authorization: Bearer $TOKEN" "$BASE/slipstream/plugins/postgres"
 ```
 
 ---
 
 ## Notes
 
-- Plugins are loaded in startup order and unloaded in reverse order on shutdown.
-- The `on_unload` method is called on every plugin during graceful shutdown.
-- Plugin errors during `notify_mapping_update` / `notify_staking_reward` are logged as warnings
-  and never propagated to the node — a misbehaving plugin cannot crash the node.
-- The plugin manager uses a `std::sync::RwLock`; `notify_*` calls acquire a read lock, while
-  load/unload/reload operations acquire the write lock. Avoid long-running operations inside
-  plugin callbacks.
+- Plugins are initialized in the order config files are provided and unloaded in reverse on shutdown.
+- `on_unload` is called for every plugin during graceful shutdown.
+- Errors returned from `on_broadcast` are logged as warnings and never propagated to the node —
+  a misbehaving plugin cannot affect consensus.
+- To update a plugin's config, stop the node, update the config file, and restart.
