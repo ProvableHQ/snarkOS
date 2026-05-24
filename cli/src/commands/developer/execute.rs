@@ -269,7 +269,6 @@ fn load_program<N: Network>(
     if !process.contains_program(program.id()) {
         debug!("Adding program {program_id} with edition {edition}");
         process
-            .lock()
             .add_programs_with_editions(&[(program, edition)])
             .with_context(|| format!("Failed to add program {program_id}"))?;
     }
