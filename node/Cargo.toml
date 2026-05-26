@@ -146,7 +146,7 @@ workspace = true
 
 [dependencies.slipstream-plugin-postgres]
 git = "ssh://git@github.com/ProvableHQ/slipstream-plugin-postgres.git"
-rev = "5430dde"
+rev = "da18fd0"
 optional = true
 
 [dependencies.json5]
