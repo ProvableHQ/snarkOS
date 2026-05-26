@@ -273,7 +273,7 @@ dependencies = [
  "bytes",
  "form_urlencoded",
  "futures-util",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.9.0",
@@ -304,7 +304,7 @@ checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
 dependencies = [
  "bytes",
  "futures-core",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
  "mime",
@@ -326,7 +326,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "headers",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
  "mime",
@@ -1827,7 +1827,7 @@ dependencies = [
  "fnv",
  "futures-core",
  "futures-sink",
- "http 1.4.1",
+ "http 1.3.1",
  "indexmap 2.14.0",
  "slab",
  "tokio",
@@ -1900,7 +1900,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "headers-core",
- "http 1.4.1",
+ "http 1.3.1",
  "httpdate",
  "mime",
  "sha1",
@@ -1912,7 +1912,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54b4a22553d4242c49fddb9ba998a99962b5cc6f22cb5a3482bec22522403ce4"
 dependencies = [
- "http 1.4.1",
+ "http 1.3.1",
 ]
 
 [[package]]
@@ -1964,11 +1964,12 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.1"
+version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be7462df143984c4598a256ef469b251d7d7f9e271135073e78fc535414f3d0"
+checksum = "f4a85d31aea989eead29a3aaf9e1115a180df8282431156e533de47660892565"
 dependencies = [
  "bytes",
+ "fnv",
  "itoa",
 ]
 
@@ -1990,7 +1991,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
 dependencies = [
  "bytes",
- "http 1.4.1",
+ "http 1.3.1",
 ]
 
 [[package]]
@@ -2001,7 +2002,7 @@ checksum = "b021d93e26becf5dc7e1b75b1bed1fd93124b374ceb73f43d4d4eafec896a64a"
 dependencies = [
  "bytes",
  "futures-core",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "pin-project-lite",
 ]
@@ -2075,7 +2076,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "h2",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "httparse",
  "httpdate",
@@ -2092,7 +2093,7 @@ version = "0.27.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
 dependencies = [
- "http 1.4.1",
+ "http 1.3.1",
  "hyper 1.9.0",
  "hyper-util",
  "rustls",
@@ -2153,7 +2154,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "hyper 1.9.0",
  "ipnet",
@@ -3909,7 +3910,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "h2",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.9.0",
@@ -4285,7 +4286,7 @@ version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e79722b5a505d4ddc77527455a97244e9e8c4c07533ff44cf4421cce7bb6d17"
 dependencies = [
- "http 1.4.1",
+ "http 1.3.1",
  "indicatif",
  "log",
  "quick-xml",
@@ -4709,7 +4710,7 @@ dependencies = [
  "colored 3.1.1",
  "deadline",
  "futures-util",
- "http 1.4.1",
+ "http 1.3.1",
  "indexmap 2.14.0",
  "locktick",
  "lru",
@@ -4856,7 +4857,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "colored 3.1.1",
- "http 1.4.1",
+ "http 1.3.1",
  "locktick",
  "parking_lot",
  "rayon",
@@ -4940,7 +4941,7 @@ dependencies = [
  "axum-extra",
  "base64 0.22.1",
  "built",
- "http 1.4.1",
+ "http 1.3.1",
  "indexmap 2.14.0",
  "jsonwebtoken",
  "locktick",
@@ -6721,7 +6722,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "h2",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.9.0",
@@ -6779,7 +6780,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
- "http 1.4.1",
+ "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
  "http-range-header",
@@ -6818,7 +6819,7 @@ dependencies = [
  "axum",
  "forwarded-header-value",
  "governor",
- "http 1.4.1",
+ "http 1.3.1",
  "pin-project",
  "thiserror 2.0.18",
  "tower",
@@ -7033,7 +7034,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e994ba84b0bd1b1b0cf92878b7ef898a5c1760108fe7b6010327e274917a808c"
 dependencies = [
  "base64 0.22.1",
- "http 1.4.1",
+ "http 1.3.1",
  "httparse",
  "log",
 ]
