@@ -56,6 +56,11 @@ pub use traits::*;
 /// The config is already parsed from the JSON5 file; the `name` field selects
 /// the plugin to instantiate. Plugins self-register via `inventory::submit!` at
 /// link time — no per-plugin code is needed here.
+// Force the linker to include each plugin crate so their inventory::submit!
+// registrations are not dead-stripped from the final binary.
+#[cfg(feature = "slipstream-plugins")]
+extern crate slipstream_plugin_postgres;
+
 #[cfg(feature = "slipstream-plugins")]
 pub(crate) fn build_static_slipstream_plugin(
     config: &serde_json::Value,
