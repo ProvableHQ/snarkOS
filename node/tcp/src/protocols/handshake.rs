@@ -58,24 +58,24 @@ where
             tx.send(()).unwrap(); // safe; the channel was just opened
 
             while let Some((conn, result_sender)) = from_node_receiver.recv().await {
-                let addr = conn.addr();
+                let conn_span = conn.span().clone();
 
                 let node = self_clone.clone();
                 tokio::spawn(async move {
-                    debug!(parent: node.tcp().span(), "shaking hands with {} as the {:?}", addr, !conn.side());
+                    debug!(parent: &conn_span, "shaking hands as the {:?}", !conn.side());
                     let result = timeout(Duration::from_millis(Self::TIMEOUT_MS), node.perform_handshake(conn)).await;
 
                     let ret: io::Result<_> = match result {
                         Ok(Ok(conn)) => {
-                            debug!(parent: node.tcp().span(), "successfully handshaken with {addr}");
+                            debug!(parent: &conn_span, "successfully handshaken");
                             Ok(conn)
                         }
                         Ok(Err(err)) => {
-                            debug!(parent: node.tcp().span(), "handshake with {addr} failed: {err}");
+                            debug!(parent: &conn_span, "handshake failed: {err}");
                             Err(err.into())
                         }
                         Err(_) => {
-                            debug!(parent: node.tcp().span(), "handshake with {addr} timed out");
+                            debug!(parent: &conn_span, "handshake timed out");
                             Err(io::ErrorKind::TimedOut.into())
                         }
                     };

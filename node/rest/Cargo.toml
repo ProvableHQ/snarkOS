@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.5.1"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -20,6 +20,7 @@ edition = "2024"
 default = [ ]
 history = [ "snarkvm/history" ]
 history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
+slipstream-plugins = [ "snarkvm/slipstream-plugins" ]
 telemetry = [ "snarkos-node-consensus/telemetry" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
@@ -60,6 +61,9 @@ version = "9.2"
 workspace = true
 features = [ "parking_lot" ]
 optional = true
+
+[dependencies.lru]
+workspace = true
 
 [dependencies.once_cell]
 workspace = true
@@ -122,7 +126,7 @@ workspace = true
 workspace = true
 
 [dev-dependencies.tower]
-version = "0.4"
+version = "0.5"
 features = ["util"]
 
 [build-dependencies.built]

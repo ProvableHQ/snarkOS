@@ -29,7 +29,8 @@ use snarkvm::prelude::Network;
 
 use colored::Colorize;
 use futures::future::join_all;
-use rand::{prelude::IteratorRandom, rngs::OsRng};
+use rand::{SeedableRng, prelude::IteratorRandom};
+use rand_chacha::ChaChaRng;
 use std::time::Duration;
 use tokio::task::JoinError;
 
@@ -180,7 +181,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     /// This function keeps the number of connected peers within the allowed range.
     async fn handle_connected_peers(&self) {
         // Initialize an RNG.
-        let rng = &mut OsRng;
+        let rng = &mut ChaChaRng::from_rng(&mut rand::rng());
 
         // Obtain the number of connected peers.
         let num_connected = self.router().number_of_connected_peers();
@@ -209,7 +210,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                 .router()
                 .filter_connected_peers(|peer| peer.node_type.is_prover() && !peer.trusted)
                 .into_iter()
-                .choose_multiple(rng, num_surplus_provers);
+                .sample(rng, num_surplus_provers);
 
             // Determine the clients and validators to disconnect from.
             let peers_to_disconnect = self
@@ -240,7 +241,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
 
         if num_deficient > 0 {
             // Initialize an RNG.
-            let rng = &mut OsRng;
+            let rng = &mut ChaChaRng::from_rng(&mut rand::rng());
 
             // Attempt to connect to more peers, separately choosing from those at a greater block
             // height, and those whose height is lower or unknown to us.
@@ -253,16 +254,15 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
             // We may not know of half of `num_deficient` candidates; account for it using `min`.
             let num_higher_peers = num_deficient.div_ceil(2).min(higher_peers.len());
 
-            let higher_peers = higher_peers.into_iter().choose_multiple(rng, num_higher_peers);
-            let other_peers =
-                other_peers.into_iter().choose_multiple(rng, num_deficient.saturating_sub(num_higher_peers));
+            let higher_peers = higher_peers.into_iter().sample(rng, num_higher_peers);
+            let other_peers = other_peers.into_iter().sample(rng, num_deficient.saturating_sub(num_higher_peers));
 
             // Initiate connection attempts and wait for them to complete.
             self.try_connect_to_peers(higher_peers.into_iter().chain(other_peers)).await;
 
             if !self.router().trusted_peers_only() {
                 // Request more peers from the connected peers.
-                for peer_ip in self.router().connected_peers().into_iter().choose_multiple(rng, 3) {
+                for peer_ip in self.router().connected_peers().into_iter().sample(rng, 3) {
                     self.router().send(peer_ip, Message::PeerRequest(PeerRequest));
                 }
             }
@@ -287,7 +287,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         // If there are not enough connected bootstrap peers, connect to more.
         if connected_bootstrap.is_empty() {
             // Initialize an RNG.
-            let rng = &mut OsRng;
+            let rng = &mut ChaChaRng::from_rng(&mut rand::rng());
             // Attempt to connect to a random bootstrap peer.
             if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
                 match self.router().connect(peer_ip) {
@@ -306,9 +306,9 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let num_surplus = connected_bootstrap.len().saturating_sub(1);
         if num_surplus > 0 {
             // Initialize an RNG.
-            let rng = &mut OsRng;
+            let rng = &mut ChaChaRng::from_rng(&mut rand::rng());
             // Proceed to send disconnect requests to these bootstrap peers.
-            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+            for peer in connected_bootstrap.into_iter().sample(rng, num_surplus) {
                 info!("Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
                 self.router().send(peer.listener_addr, Message::Disconnect(DisconnectReason::TooManyPeers.into()));
                 // Disconnect from this peer.

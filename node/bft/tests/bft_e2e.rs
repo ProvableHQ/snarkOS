@@ -21,11 +21,11 @@ mod components;
 use crate::common::primary::{TestNetwork, TestNetworkConfig};
 use deadline::deadline;
 use itertools::Itertools;
-use snarkos_node_bft::MAX_FETCH_TIMEOUT_IN_MS;
+use snarkos_node_bft::MAX_FETCH_TIMEOUT;
 use std::time::Duration;
 use tokio::time::sleep;
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[ignore = "long-running e2e test"]
 async fn test_state_coherence() {
     const N: u16 = 4;
@@ -37,8 +37,6 @@ async fn test_state_coherence() {
             bft: true,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: Some(0),
             log_connections: true,
         })
     })
@@ -50,7 +48,7 @@ async fn test_state_coherence() {
     std::future::pending::<()>().await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[ignore = "fails"]
 async fn test_resync() {
     // Start N nodes, connect them and start the cannons for each.
@@ -62,8 +60,6 @@ async fn test_resync() {
             bft: true,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: Some(0),
             log_connections: false,
         })
     })
@@ -83,7 +79,6 @@ async fn test_resync() {
         bft: true,
         connect_all: false,
         fire_transmissions: None,
-        log_level: None,
         log_connections: false,
     });
     spare_network.start().await;
@@ -100,7 +95,7 @@ async fn test_resync() {
     deadline!(Duration::from_secs(20), move || { network_clone.is_round_reached(RECOVERY_ROUND) });
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_quorum_threshold() {
     // Start N nodes but don't connect them.
     const N: u16 = 4;
@@ -112,8 +107,6 @@ async fn test_quorum_threshold() {
             bft: true,
             connect_all: false,
             fire_transmissions: None,
-            // Set this to Some(0..=4) to see the logs.
-            log_level: None,
             log_connections: true,
         })
     })
@@ -129,7 +122,7 @@ async fn test_quorum_threshold() {
     // Start the cannons for node 0.
     network.fire_transmissions_at(0, TRANSMISSION_INTERVAL_MS);
 
-    sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+    sleep(MAX_FETCH_TIMEOUT).await;
 
     // Check each node is still at round 1.
     for validator in network.validators.values() {
@@ -140,7 +133,7 @@ async fn test_quorum_threshold() {
     network.connect_validators(0, 1).await;
     network.fire_transmissions_at(1, TRANSMISSION_INTERVAL_MS);
 
-    sleep(Duration::from_millis(MAX_FETCH_TIMEOUT_IN_MS)).await;
+    sleep(MAX_FETCH_TIMEOUT).await;
 
     // Check each node is still at round 1.
     for validator in network.validators.values() {
@@ -158,7 +151,7 @@ async fn test_quorum_threshold() {
     deadline!(Duration::from_secs(20), move || { net.is_round_reached(TARGET_ROUND) });
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_quorum_break() {
     // Start N nodes, connect them and start the cannons for each.
     const N: u16 = 4;
@@ -169,8 +162,6 @@ async fn test_quorum_break() {
             bft: true,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: None,
             log_connections: true,
         })
     })
@@ -192,7 +183,8 @@ async fn test_quorum_break() {
     assert!(network.is_halted().await);
 }
 
-#[tokio::test(flavor = "multi_thread")]
+/// Tests that the all validators agree on the same leader for every even round.
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_leader_election_consistency() {
     // The minimum and maximum rounds to check for leader consistency.
     // From manual experimentation, the minimum round that works is 4.
@@ -209,8 +201,6 @@ async fn test_leader_election_consistency() {
             bft: true,
             connect_all: true,
             fire_transmissions: Some(CANNON_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: None,
             log_connections: true,
         })
     })
@@ -249,11 +239,11 @@ async fn test_leader_election_consistency() {
         println!("Found {} validators with a leader ({} out of sync)", leaders.len(), validators.len() - leaders.len());
 
         // Assert that all leaders are equal
-        assert!(leaders.iter().all_equal());
+        assert!(leaders.iter().all_equal(), "Leaders are not equal: {leaders:?} for round {target_round}");
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[ignore = "run multiple times to see failure"]
 async fn test_transient_break() {
     // Start N nodes, connect them and start the cannons for each.
@@ -265,8 +255,6 @@ async fn test_transient_break() {
             bft: true,
             connect_all: true,
             fire_transmissions: Some(TRANSMISSION_INTERVAL_MS),
-            // Set this to Some(0..=4) to see the logs.
-            log_level: Some(6),
             log_connections: false,
         })
     })

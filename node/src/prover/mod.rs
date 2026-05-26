@@ -22,7 +22,7 @@ use crate::{
 };
 
 use snarkos_account::Account;
-use snarkos_node_network::{NodeType, PeerPoolHandling};
+use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
@@ -38,6 +38,7 @@ use snarkos_node_tcp::{
 use snarkos_utilities::{NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::{
+    console::network::consensus_config_value,
     ledger::narwhal::Data,
     prelude::{
         Network,
@@ -55,7 +56,7 @@ use core::{marker::PhantomData, time::Duration};
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::{CryptoRng, Rng, rngs::OsRng};
+use rand::{CryptoRng, Rng, RngExt};
 use snarkos_node_bft::helpers::fmt_id;
 use std::{
     net::SocketAddr,
@@ -125,7 +126,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         .await?;
 
         // Initialize the sync module.
-        let sync = BlockSync::new(ledger_service.clone());
+        let sync = BlockSync::new(ledger_service.clone(), ConnectionMode::Router);
 
         // Set up the ping logic.
         let ping = Arc::new(Ping::new_nosync(router.clone()));
@@ -200,7 +201,13 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             // If the node is not connected to any peers, then skip this iteration.
             if self.router.number_of_connected_peers() == 0 {
                 debug!("Skipping an iteration of the puzzle (no connected peers)");
-                tokio::time::sleep(Duration::from_secs(N::ANCHOR_TIME as u64)).await;
+                let anchor_time = self
+                    .latest_block_header
+                    .read()
+                    .as_ref()
+                    .and_then(|header| consensus_config_value!(N, ANCHOR_TIMES, header.height()))
+                    .unwrap_or_else(|| N::ANCHOR_TIMES.last().unwrap().1);
+                tokio::time::sleep(Duration::from_secs(anchor_time as u64)).await;
                 continue;
             }
 
@@ -225,7 +232,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
                 // Execute the puzzle.
                 let prover = self.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    prover.puzzle_iteration(epoch_hash, coinbase_target, proof_target, &mut OsRng)
+                    prover.puzzle_iteration(epoch_hash, coinbase_target, proof_target, &mut rand::rng())
                 })
                 .await;
 
@@ -267,7 +274,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
 
         // Compute the solution.
         let result =
-            self.puzzle.prove(epoch_hash, self.address(), rng.r#gen(), Some(proof_target)).ok().and_then(|solution| {
+            self.puzzle.prove(epoch_hash, self.address(), rng.random(), Some(proof_target)).ok().and_then(|solution| {
                 self.puzzle.get_proof_target(&solution).ok().map(|solution_target| (solution_target, solution))
             });
 

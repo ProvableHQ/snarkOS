@@ -29,6 +29,8 @@ pub use snarkos_node_bft_events as events;
 pub use snarkos_node_bft_ledger_service as ledger_service;
 pub use snarkos_node_bft_storage_service as storage_service;
 
+use std::time::Duration;
+
 pub mod helpers;
 
 mod bft;
@@ -51,24 +53,40 @@ pub const CONTEXT: &str = "[MemoryPool]";
 /// The port on which the memory pool listens for incoming connections.
 pub const MEMORY_POOL_PORT: u16 = 5000; // port
 
-/// The maximum number of milliseconds to wait before proposing a batch.
-pub const MAX_BATCH_DELAY_IN_MS: u64 = 2500; // ms
-/// The minimum number of seconds to wait before proposing a batch.
-pub const MIN_BATCH_DELAY_IN_SECS: u64 = 1; // seconds
-/// The maximum number of milliseconds to wait before timing out on a fetch.
-pub const MAX_FETCH_TIMEOUT_IN_MS: u64 = 3 * MAX_BATCH_DELAY_IN_MS; // ms
-/// The maximum number of seconds allowed for the leader to send their certificate.
-pub const MAX_LEADER_CERTIFICATE_DELAY_IN_SECS: i64 = 2 * MAX_BATCH_DELAY_IN_MS as i64 / 1000; // seconds
-/// The maximum number of seconds before the timestamp is considered expired.
-pub const MAX_TIMESTAMP_DELTA_IN_SECS: i64 = 10; // seconds
+/// The maximum time to wait before proposing a batch.
+pub const MAX_BATCH_DELAY: Duration = Duration::from_millis(2500);
+
+/// The minimum time that needs to elapse between two consecutive batch proposals.
+/// This creates a lower bound on the block interval, and ensures the network will not be overwhelmed with too many blocks/certificates.
+pub const MIN_BATCH_DELAY: Duration = Duration::from_secs(1);
+
+/// The time a primary waits between attempts to create a new batch (only relevant after `MIN_BATCH_DELAY` has passed).
+/// This only serves as a failsafe in case the task does not get woken up through other means.
+/// Lowering it too much would be wasteful.
+pub const CREATE_BATCH_INTERVAL: Duration = Duration::from_millis(250);
+
+/// The maximum time to wait before timing out on a fetch.
+/// TODO(kaimast): directy multiply by constant once the `const_trait_impl` feature is stable.
+pub const MAX_FETCH_TIMEOUT: Duration = Duration::from_millis(3 * (MAX_BATCH_DELAY.as_millis() as u64));
+
+/// The maximum time allowed for the leader to send their certificate.
+/// After this time, the node will consider the leader as failed and try to advance the round without it.
+pub const MAX_LEADER_CERTIFICATE_DELAY: Duration = Duration::from_millis(2 * (MAX_BATCH_DELAY.as_millis() as u64));
+
+/// The maximum difference allowed between our local time and a certificate's timestamp, for the node to sign the certificate.
+/// This prevents malicious actors from proposing certificates with timestamps that are too log or too far in the future)
+/// w
+pub const MAX_TIMESTAMP_DELTA: Duration = Duration::from_secs(10);
+
 /// The maximum number of workers that can be spawned.
 pub const MAX_WORKERS: u8 = 1; // worker(s)
 
 /// The interval at which each primary broadcasts a ping to every other node.
 /// Note: If this is updated, be sure to update `MAX_BLOCKS_BEHIND` to correspond properly.
-pub const PRIMARY_PING_IN_MS: u64 = 2 * MAX_BATCH_DELAY_IN_MS; // ms
+pub const PRIMARY_PING_INTERVAL: Duration = Duration::from_millis(2 * (MAX_BATCH_DELAY.as_millis() as u64));
+
 /// The interval at which each worker broadcasts a ping to every other node.
-pub const WORKER_PING_IN_MS: u64 = 4 * MAX_BATCH_DELAY_IN_MS; // ms
+pub const WORKER_PING_INTERVAL: Duration = Duration::from_millis(4 * (MAX_BATCH_DELAY.as_millis() as u64));
 
 /// A helper macro to spawn a blocking task.
 #[macro_export]

@@ -16,19 +16,19 @@
 use crate::common::{
     CurrentNetwork,
     TranslucentLedgerService,
-    utils::{fire_unconfirmed_solutions, fire_unconfirmed_transactions, initialize_logger},
+    utils::{fire_unconfirmed_solutions, fire_unconfirmed_transactions},
 };
 
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     MEMORY_POOL_PORT,
     Primary,
     helpers::{PrimarySender, Storage, init_primary_channels},
 };
 use snarkos_node_bft_storage_service::BFTMemoryService;
-use snarkos_node_network::PeerPoolHandling;
+use snarkos_node_network::{ConnectionMode, PeerPoolHandling};
 use snarkos_node_sync::BlockSync;
 use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
@@ -78,8 +78,6 @@ pub struct TestNetworkConfig {
     pub connect_all: bool,
     /// If `Some(i)` is set, the cannons will fire every `i` milliseconds.
     pub fire_transmissions: Option<u64>,
-    /// The log level to use for the test.
-    pub log_level: Option<u8>,
     /// If this is set to `true`, the number of connections is logged every 5 seconds.
     pub log_connections: bool,
 }
@@ -140,10 +138,6 @@ impl TestNetwork {
     pub fn new(config: TestNetworkConfig) -> Self {
         let mut rng = TestRng::default();
 
-        if let Some(log_level) = config.log_level {
-            initialize_logger(log_level);
-        }
-
         let (accounts, committee) = new_test_committee(config.num_nodes, &mut rng);
         let bonded_balances: IndexMap<_, _> = committee
             .members()
@@ -168,9 +162,10 @@ impl TestNetwork {
                 ledger.clone(),
                 Arc::new(BFTMemoryService::new()),
                 BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
-            );
+            )
+            .unwrap();
             // Initialize the block synchronization logic.
-            let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+            let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
             let (primary, bft) = if config.bft {
                 let bft = BFT::<CurrentNetwork>::new(
                     account,
@@ -258,9 +253,10 @@ impl TestNetwork {
     pub async fn connect_validators(&self, first_id: u16, second_id: u16) {
         let first_validator = self.validators.get(&first_id).unwrap();
         let second_validator_ip = self.validators.get(&second_id).unwrap().primary.gateway().local_ip();
-        let _ = first_validator.primary.gateway().connect(second_validator_ip);
-        // Give the connection time to be established.
-        sleep(Duration::from_millis(100)).await;
+        let gateway = first_validator.primary.gateway();
+        let handle = gateway.connect(second_validator_ip).expect("connection attempt failed");
+        // Await the full TCP + handshake completion instead of relying on a fixed sleep.
+        handle.await.unwrap().expect("connecting validators failed");
     }
 
     // Connects all nodes to each other.
@@ -322,7 +318,7 @@ impl TestNetwork {
     // Checks if all the nodes have stopped progressing.
     pub async fn is_halted(&self) -> bool {
         let halt_round = self.validators.values().map(|v| v.primary.current_round()).max().unwrap();
-        sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS * 2)).await;
+        sleep(MAX_BATCH_DELAY * 2).await;
         self.validators.values().all(|v| v.primary.current_round() <= halt_round)
     }
 
@@ -373,7 +369,7 @@ pub fn new_test_committee(n: u16, rng: &mut TestRng) -> (Vec<Account<CurrentNetw
         let account = Account::new(rng).unwrap();
         info!("Validator {}: {}", i, account.address());
 
-        members.insert(account.address(), (MIN_VALIDATOR_STAKE, false, rng.gen_range(0..100)));
+        members.insert(account.address(), (MIN_VALIDATOR_STAKE, false, rng.random_range(0..100)));
         accounts.push(account);
     }
     // Initialize the committee.

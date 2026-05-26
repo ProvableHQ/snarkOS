@@ -13,8 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{LedgerService, fmt_id, spawn_blocking};
+use crate::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService, fmt_id, spawn_blocking};
 
+#[cfg(feature = "test_network")]
+use snarkos_utilities::NodeDataDir;
 use snarkos_utilities::Stoppable;
 
 use snarkvm::{
@@ -49,9 +51,13 @@ use snarkvm::{
 use anyhow::ensure;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::RwLock;
+use locktick::{
+    LockGuard,
+    parking_lot::{Mutex, RwLock},
+};
+use parking_lot::MutexGuard;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 
@@ -63,6 +69,70 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
     stoppable: Arc<dyn Stoppable>,
+    update_lock: Arc<Mutex<()>>,
+    #[cfg(feature = "test_network")]
+    dev_committee: Option<Committee<N>>,
+}
+
+/// A transactional update to the ledger.
+#[cfg(feature = "ledger-write")]
+pub struct LedgerUpdate<'a, N: Network, C: ConsensusStorage<N>> {
+    ledger: Ledger<N, C>,
+    #[cfg(feature = "locktick")]
+    _lock: LockGuard<MutexGuard<'a, ()>>,
+    #[cfg(not(feature = "locktick"))]
+    _lock: MutexGuard<'a, ()>,
+}
+
+#[cfg(feature = "ledger-write")]
+impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUpdate<'a, N, C> {
+    fn check_block_subdag(
+        &self,
+        block: Block<N>,
+        prefix: &[PendingBlock<N>],
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>> {
+        self.ledger.check_block_subdag(block, prefix)
+    }
+
+    fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>> {
+        self.ledger.check_block_content(block, &mut rand::rng())
+    }
+
+    /// Checks the given block is valid next block.
+    fn check_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>> {
+        let pending = self.ledger.check_block_subdag(block, &[])?;
+        self.check_block_content(pending)
+    }
+
+    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
+    fn prepare_advance_to_next_quorum_block(
+        &self,
+        subdag: Subdag<N>,
+        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
+    ) -> Result<Block<N>, CheckBlockError<N>> {
+        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::rng())
+    }
+
+    /// Adds the given block as the next block in the ledger.
+    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
+        // Advance to the next block.
+        self.ledger.advance_to_next_block(block)?;
+        // Update BFT metrics.
+        #[cfg(feature = "metrics")]
+        {
+            let num_sol = block.solutions().len();
+            let num_tx = block.transactions().len();
+
+            metrics::gauge(metrics::bft::HEIGHT, block.height() as f64);
+            metrics::gauge(metrics::bft::LAST_COMMITTED_ROUND, block.round() as f64);
+            metrics::increment_gauge(metrics::blocks::SOLUTIONS, num_sol as f64);
+            metrics::increment_gauge(metrics::blocks::TRANSACTIONS, num_tx as f64);
+            metrics::update_block_metrics(block);
+        }
+
+        tracing::info!("Advanced to block {} at round {} - {}\n", block.height(), block.round(), block.hash());
+        Ok(())
+    }
 }
 
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
@@ -70,10 +140,133 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
         // Initialize the block height metric.
         #[cfg(feature = "metrics")]
-        {
-            metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+
+        Self::new_inner(ledger, stoppable, None)
+    }
+
+    /// Initializes a new core ledger service that persists hotswapped dev committee state to disk.
+    ///
+    /// This variant should be used by long-running nodes (e.g. validators) that may be restarted,
+    /// so that the deterministic dev committee's starting round remains stable across runs.
+    #[cfg(feature = "test_network")]
+    pub fn new_dev(
+        ledger: Ledger<N, C>,
+        stoppable: Arc<dyn Stoppable>,
+        dev_committee_config: Option<(NodeDataDir, u16)>,
+    ) -> Self {
+        // Initialize the block height metric.
+        #[cfg(feature = "metrics")]
+        metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        // Build the deterministic dev committee.
+        let dev_committee = dev_committee_config.map(|(node_data_dir, dev_num_validators)| {
+            Self::build_dev_committee(ledger.latest_round(), node_data_dir, dev_num_validators)
+                .expect("Failed to build dev committee")
+        });
+        Self::new_inner(ledger, stoppable, dev_committee)
+    }
+
+    /// Initializes the core ledger service.
+    fn new_inner(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>, _dev_committee: Option<Committee<N>>) -> Self {
+        Self {
+            ledger,
+            latest_leader: Default::default(),
+            stoppable,
+            update_lock: Default::default(),
+            #[cfg(feature = "test_network")]
+            dev_committee: _dev_committee,
         }
-        Self { ledger, latest_leader: Default::default(), stoppable }
+    }
+
+    /// Builds the deterministic dev committee with `dev_num_validators` members, if requested.
+    ///
+    /// Returns `Ok(None)` when `dev_num_validators` is `None`, otherwise returns a committee
+    /// whose starting round is anchored to the round at which the dev committee was first
+    /// activated.
+    ///
+    /// The starting round is persisted to disk on first activation and re-read
+    /// on subsequent invocations. This keeps the committee's identity (and
+    /// therefore the certificates that reference it) consistent across
+    /// restarts.
+    #[cfg(feature = "test_network")]
+    fn build_dev_committee(
+        default_start_round: u64,
+        node_data_dir: NodeDataDir,
+        dev_num_validators: u16,
+    ) -> Result<Committee<N>> {
+        let start_round = Self::load_or_init_dev_committee_start_round(node_data_dir, default_start_round)?;
+
+        use rand::SeedableRng;
+        let mut rng = rand_chacha::ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
+        let dev_keys = (0..dev_num_validators)
+            .map(|_| snarkvm::console::account::PrivateKey::<N>::new(&mut rng))
+            .collect::<Result<Vec<_>>>()?;
+        let members = dev_keys
+            .iter()
+            .map(Address::<N>::try_from)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|address| (address, (snarkvm::ledger::committee::MIN_VALIDATOR_STAKE, true, 0)))
+            .collect::<IndexMap<_, _>>();
+        Committee::new(start_round, members)
+    }
+
+    /// Reads the persisted dev committee starting round from disk if it exists and is consistent
+    /// with `default_start_round`; otherwise writes the default to disk and returns it.
+    #[cfg(feature = "test_network")]
+    fn load_or_init_dev_committee_start_round(node_data_dir: NodeDataDir, default_start_round: u64) -> Result<u64> {
+        let path = node_data_dir.dev_committee_state_path();
+        let path_str = path.display();
+        // If the dev committee state file exists, read it and parse the starting round.
+        if path.exists() {
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|err| anyhow::anyhow!("Failed to read dev committee state from {path_str} - {err}"))?;
+            let start_round = contents.trim().parse::<u64>().map_err(|err| {
+                anyhow::anyhow!("Failed to parse dev committee state at {path_str} ({contents}) - {err}",)
+            })?;
+
+            if start_round > default_start_round {
+                bail!(
+                    "Stale dev committee starting round {start_round} at {path_str} (current ledger round is {default_start_round})"
+                );
+            }
+
+            tracing::info!("Loaded the dev committee starting round {start_round} from {path_str}");
+            Ok(start_round)
+        // If the dev committee state file does not exist, write the default starting round to it.
+        } else {
+            Self::write_dev_committee_start_round(&path, default_start_round)?;
+            tracing::info!("Persisted the dev committee starting round {default_start_round} to {path_str}");
+            Ok(default_start_round)
+        }
+    }
+
+    /// Writes the given `start_round` to the dev committee state file at `path`, creating the
+    /// parent directory if needed.
+    #[cfg(feature = "test_network")]
+    fn write_dev_committee_start_round(path: &std::path::Path, start_round: u64) -> Result<()> {
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                anyhow::anyhow!("Failed to create dev committee state directory {} - {err}", parent.display())
+            })?;
+        }
+        std::fs::write(path, start_round.to_string())
+            .map_err(|err| anyhow::anyhow!("Failed to write dev committee state to {} - {err}", path.display()))?;
+        Ok(())
+    }
+
+    /// Returns the deterministic dev committee for rounds at or after the hotswap start.
+    #[cfg(feature = "test_network")]
+    fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
+        let Some(dev_committee) = self.dev_committee.as_ref() else {
+            return Ok(None);
+        };
+        if round < dev_committee.starting_round() {
+            return Ok(None);
+        }
+        Ok(Some(dev_committee.clone()))
     }
 }
 
@@ -148,13 +341,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
-        self.ledger.get_solution(solution_id)
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
+        self.ledger.try_get_solution(solution_id)
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
-        self.ledger.get_unconfirmed_transaction(&transaction_id)
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
+        self.ledger.try_get_unconfirmed_transaction(&transaction_id)
     }
 
     /// Returns the batch certificate for the given batch certificate ID.
@@ -168,6 +361,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the current committee.
     fn current_committee(&self) -> Result<Committee<N>> {
+        #[cfg(feature = "test_network")]
+        {
+            if let Some(dev_committee) = self.dev_committee.as_ref() {
+                return Ok(dev_committee.clone());
+            }
+        }
+
         self.ledger.latest_committee()
     }
 
@@ -181,6 +381,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     /// Returns the committee lookback for the given round.
     fn get_committee_lookback_for_round(&self, round: u64) -> Result<Committee<N>> {
+        #[cfg(feature = "test_network")]
+        {
+            if let Some(dev_committee) = self.dev_committee_for_round(round)? {
+                return Ok(dev_committee);
+            }
+        }
+
         // Get the round number for the previous committee. Note, we subtract 2 from odd rounds,
         // because committees are updated in even rounds.
         let previous_round = match round.is_multiple_of(2) {
@@ -193,6 +400,12 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
         // Retrieve the committee for the committee lookback round.
         self.get_committee_for_round(committee_lookback_round)
+    }
+
+    /// Returns the deterministic hotswapped dev committee for the given round, if active.
+    #[cfg(feature = "test_network")]
+    fn dev_committee_for_round(&self, round: u64) -> Result<Option<Committee<N>>> {
+        CoreLedgerService::dev_committee_for_round(self, round)
     }
 
     /// Returns `true` if the ledger contains the given certificate ID in block history.
@@ -343,7 +556,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         }
         // Check the transaction is well-formed.
         let ledger = self.ledger.clone();
-        spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()))
+        spawn_blocking!(ledger.check_transaction_basic(&transaction, None, &mut rand::rng()))
     }
 
     fn check_block_subdag(
@@ -354,49 +567,18 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         self.ledger.check_block_subdag(block, prefix)
     }
 
-    fn check_block_content(&self, block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>> {
-        self.ledger.check_block_content(block, &mut rand::thread_rng())
-    }
-
-    /// Checks the given block is valid next block.
-    fn check_next_block(&self, block: &Block<N>) -> Result<()> {
-        self.ledger.check_next_block(block, &mut rand::thread_rng())
-    }
-
-    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
-    #[cfg(feature = "ledger-write")]
-    fn prepare_advance_to_next_quorum_block(
-        &self,
-        subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
-        Ok(self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::thread_rng())?)
-    }
-
-    /// Adds the given block as the next block in the ledger.
-    #[cfg(feature = "ledger-write")]
-    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
-        // If the Ctrl-C handler registered the signal, then skip advancing to the next block.
+    /// Begins a ledger update.
+    ///
+    /// # Returns
+    /// - `Ok(Some(LedgerUpdate<N, C>))` if the ledger update was successfully started.
+    /// - `Ok(None)` if the node is stopped.
+    /// - `Err(anyhow::Error)` if we failed to acquire the update lock.
+    fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError> {
         if self.stoppable.is_stopped() {
-            bail!("Skipping advancing to block {} - The node is shutting down", block.height());
-        }
-        // Advance to the next block.
-        self.ledger.advance_to_next_block(block)?;
-        // Update BFT metrics.
-        #[cfg(feature = "metrics")]
-        {
-            let num_sol = block.solutions().len();
-            let num_tx = block.transactions().len();
-
-            metrics::gauge(metrics::bft::HEIGHT, block.height() as f64);
-            metrics::gauge(metrics::bft::LAST_COMMITTED_ROUND, block.round() as f64);
-            metrics::increment_gauge(metrics::blocks::SOLUTIONS, num_sol as f64);
-            metrics::increment_gauge(metrics::blocks::TRANSACTIONS, num_tx as f64);
-            metrics::update_block_metrics(block);
+            return Err(BeginLedgerUpdateError::ShuttingDown);
         }
 
-        tracing::info!("Advanced to block {} at round {} - {}", block.height(), block.round(), block.hash());
-        Ok(())
+        Ok(Box::new(LedgerUpdate { ledger: self.ledger.clone(), _lock: self.update_lock.lock() }))
     }
 
     /// Returns the spend for a transaction in microcredits.
@@ -412,8 +594,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         let id = transaction.id();
         match transaction {
             Transaction::Deploy(_, _, _, deployment, _) => {
-                let (_, cost_details) =
-                    deployment_cost(&self.ledger.vm().process().read(), deployment, consensus_version)?;
+                let (_, cost_details) = deployment_cost(self.ledger.vm().process(), deployment, consensus_version)?;
                 let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version)?;
                 ensure!(
                     compute_spend <= transaction_spend_limit,
@@ -422,8 +603,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 Ok(compute_spend)
             }
             Transaction::Execute(_, _, execution, _) => {
-                let (_, cost_details) =
-                    execution_cost(&self.ledger.vm().process().read(), execution, consensus_version)?;
+                let (_, cost_details) = execution_cost(self.ledger.vm().process(), execution, consensus_version)?;
                 let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version)?;
                 if consensus_version >= ConsensusVersion::V11 {
                     // From V11, add this check for consistency with our deployment checks.
@@ -438,5 +618,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 bail!("Fee transactions are internal to the VM, transaction {id} is invalid.")
             }
         }
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.stoppable.is_stopped()
     }
 }

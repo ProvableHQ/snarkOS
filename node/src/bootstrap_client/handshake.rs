@@ -28,7 +28,7 @@ use snarkvm::{
 };
 
 use futures_util::sink::SinkExt;
-use rand::{Rng, rngs::OsRng};
+
 use std::{io, net::SocketAddr};
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
@@ -209,13 +209,10 @@ impl<N: Network> BootstrapClient<N> {
 
         /* Step 2: Send the challenge response followed by own challenge request. */
 
-        // Initialize an RNG.
-        let rng = &mut OsRng;
-
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::other(format!("Failed to sign the challenge request nonce from '{peer_addr}'")));
         };
 
@@ -240,7 +237,7 @@ impl<N: Network> BootstrapClient<N> {
         }
 
         // Sample a random nonce.
-        let our_nonce: u64 = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Do not send a snarkOS SHA as the bootstrap client is not aware of height.
         let snarkos_sha = None;
         // Send the challenge request.

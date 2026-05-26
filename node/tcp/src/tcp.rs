@@ -46,7 +46,7 @@ use crate::{
     Config,
     KnownPeers,
     Stats,
-    connections::{Connection, ConnectionSide, Connections},
+    connections::{Connection, ConnectionSide, Connections, create_connection_span},
     protocols::{Protocol, Protocols},
 };
 
@@ -553,7 +553,8 @@ impl Tcp {
             }
         }
 
-        let connection = Connection::new(peer_addr, stream, !own_side);
+        let conn_span = create_connection_span(peer_addr, self.span());
+        let connection = Connection::new(peer_addr, stream, !own_side, conn_span);
 
         // Enact the enabled protocols.
         let mut connection = self.enable_protocols(connection).await?;
@@ -742,7 +743,7 @@ mod tests {
 
         // Simulate an active connection.
         let stream = TcpStream::connect(peer_ip).await.unwrap();
-        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Initiator));
+        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Initiator, Span::none()));
         assert!(!tcp.can_add_connection());
 
         // Ensure that we cannot invoke connect() successfully in this case.
@@ -770,7 +771,7 @@ mod tests {
 
         // Simulate an active and a pending connection (this case should never occur).
         let stream = TcpStream::connect(peer_ip).await.unwrap();
-        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Responder));
+        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Responder, Span::none()));
         tcp.connecting.lock().insert(peer_ip);
         assert!(!tcp.can_add_connection());
 
@@ -799,7 +800,7 @@ mod tests {
 
         // Simulate an active connection.
         let stream = TcpStream::connect(peer1_ip).await.unwrap();
-        tcp.connections.add(Connection::new(peer1_ip, stream, ConnectionSide::Responder));
+        tcp.connections.add(Connection::new(peer1_ip, stream, ConnectionSide::Responder, Span::none()));
         assert!(!tcp.can_add_connection());
         assert_eq!(tcp.num_connected(), 1);
         assert_eq!(tcp.num_connecting(), 0);

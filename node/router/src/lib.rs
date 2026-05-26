@@ -238,6 +238,11 @@ impl<N: Network> Router<N> {
         &self.cache
     }
 
+    /// Returns a reference to the ledger.
+    pub fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
+        &self.ledger
+    }
+
     /// Returns `true` if the node is only engaging with trusted peers.
     pub fn trusted_peers_only(&self) -> bool {
         self.trusted_peers_only

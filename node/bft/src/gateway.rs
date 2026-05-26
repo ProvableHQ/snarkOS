@@ -17,7 +17,7 @@
 use crate::helpers::Telemetry;
 use crate::{
     CONTEXT,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
@@ -53,7 +53,7 @@ use snarkos_node_network::{
     log_repo_sha_comparison,
     shorten_snarkos_sha,
 };
-use snarkos_node_sync::{InsertBlockResponseError, MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
 use snarkos_node_tcp::{
     Config,
     ConnectError,
@@ -71,6 +71,7 @@ use snarkvm::{
         narwhal::{BatchHeader, Data},
     },
     prelude::{Address, Field},
+    utilities::flatten_error,
 };
 
 use colored::Colorize;
@@ -80,10 +81,7 @@ use indexmap::IndexMap;
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use rand::{
-    rngs::OsRng,
-    seq::{IteratorRandom, SliceRandom},
-};
+use rand::seq::{IteratorRandom, SliceRandom};
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -101,9 +99,9 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
 /// The maximum interval of events to cache.
-const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
+const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 /// The maximum interval of requests to cache.
-const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY_IN_MS / 1000) as i64; // seconds
+const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 
 /// The maximum number of connection attempts in an interval.
 #[cfg(not(test))]
@@ -375,6 +373,11 @@ impl<N: Network> Gateway<N> {
         self.dev
     }
 
+    /// Returns a reference to the ledger.
+    pub fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
+        &self.ledger
+    }
+
     /// Returns the resolver.
     pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
@@ -475,11 +478,15 @@ impl<N: Network> Gateway<N> {
         Ok(())
     }
 
-    /// Updates the connection metrics for the gateway.
+    /// Updates the connection metrics for the gateway. Ignores the bootstrap clients.
     #[cfg(feature = "metrics")]
     fn update_metrics(&self) {
-        metrics::gauge(metrics::bft::CONNECTED, self.number_of_connected_peers() as f64);
-        metrics::gauge(metrics::bft::CONNECTING, self.number_of_connecting_peers() as f64);
+        if let Some(count) = self.number_of_connected_validators() {
+            metrics::gauge(metrics::bft::CONNECTED, count as f64);
+        }
+        if let Some(count) = self.number_of_connecting_peers() {
+            metrics::gauge(metrics::bft::CONNECTING, count as f64);
+        }
     }
 
     /// Inserts the given peer into the connected peers. This is only used in testing.
@@ -668,15 +675,27 @@ impl<N: Network> Gateway<N> {
                     // Send the blocks to the sync module.
                     match sync_sender.insert_block_response(peer_ip, blocks.0, latest_consensus_version).await {
                         Ok(_) => Ok(true),
-                        Err(err @ InsertBlockResponseError::EmptyBlockResponse)
-                        | Err(err @ InsertBlockResponseError::NoConsensusVersion)
-                        | Err(err @ InsertBlockResponseError::ConsensusVersionMismatch { .. }) => {
-                            error!("Peer '{peer_ip}' sent an invalid block response - {err}");
-                            self.ip_ban_peer(peer_ip, Some(&err.to_string()));
-                            Err(err.into())
+                        Err(err) if err.is_benign() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Ignoring block response from peer '{peer_ip}'"));
+                            debug!("{}", flatten_error(err));
+                            Ok(true)
+                        }
+                        Err(err) if err.is_invalid_consensus_version() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
+
+                            let msg = flatten_error(&err);
+                            error!("{msg}");
+                            self.ip_ban_peer(peer_ip, Some(&msg));
+                            Err(err)
                         }
                         Err(err) => {
-                            warn!("Unable to process block response from '{peer_ip}' - {err}");
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!("Peer '{peer_ip}' sent an invalid block response"));
+                            warn!("{}", flatten_error(err));
+
+                            // TODO(kaimast): This needs more testing to ensure disconnect is the correct action.
                             Ok(true)
                         }
                     }
@@ -765,7 +784,7 @@ impl<N: Network> Gateway<N> {
             }
             Event::ValidatorsRequest(_) => {
                 let mut connected_peers = self.get_best_connected_peers(Some(MAX_VALIDATORS_TO_SEND));
-                connected_peers.shuffle(&mut rand::thread_rng());
+                connected_peers.shuffle(&mut rand::rng());
 
                 let self_ = self.clone();
                 tokio::spawn(async move {
@@ -898,8 +917,6 @@ impl<N: Network> Gateway<N> {
         self.handle_min_connected_validators().await;
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
-        // Update the dynamic validator whitelist.
-        self.update_validator_whitelist();
     }
 
     /// Logs the connected validators.
@@ -1020,13 +1037,17 @@ impl<N: Network> Gateway<N> {
     // Logs the validator participation scores.
     #[cfg(feature = "telemetry")]
     fn log_participation_scores(&self) {
-        if let Ok(current_committee) = self.ledger.current_committee() {
+        if let Ok(committee_lookback) = self.ledger.get_committee_lookback_for_round(self.storage.current_round()) {
             // Retrieve the participation scores.
-            let participation_scores = self.validator_telemetry().get_participation_scores(&current_committee);
+            let participation_scores = self.validator_telemetry().get_participation_scores(&committee_lookback);
+
             // Log the participation scores.
             debug!("Participation Scores (in the last {} rounds):", self.storage.max_gc_rounds());
-            for (address, score) in participation_scores {
-                debug!("{}", format!("  {address} - {score:.2}%").dimmed());
+            for (address, (cert_score, sig_score)) in participation_scores {
+                debug!(
+                    "{}",
+                    format!("  {address} - certificates: {cert_score:.2}%  signatures: {sig_score:.2}%").dimmed()
+                );
             }
         }
     }
@@ -1074,12 +1095,12 @@ impl<N: Network> Gateway<N> {
         }
         // If there are not enough connected bootstrap peers, connect to more.
         if connected_bootstrap.is_empty() {
-            // Initialize an RNG.
-            let rng = &mut OsRng;
-            // Attempt to connect to a bootstrap peer.
-            if let Some(peer_ip) = candidate_bootstrap.into_iter().choose(rng) {
+            // Sample a random bootstrap peer to connect to (drop rng before any await).
+            let peer_to_connect = candidate_bootstrap.into_iter().choose(&mut rand::rng());
+            if let Some(peer_ip) = peer_to_connect {
                 match self.connect(peer_ip) {
                     Ok(hdl) => {
+                        debug!("{CONTEXT} (Re-)connecting to bootstrap peer at '{peer_ip}'");
                         let result = hdl.await;
                         if let Err(err) = result {
                             warn!("{CONTEXT} Failed to connect to bootstrap peer at '{peer_ip}' - {err}");
@@ -1095,10 +1116,9 @@ impl<N: Network> Gateway<N> {
         // Determine if the node is connected to more bootstrap peers than allowed.
         let num_surplus = connected_bootstrap.len().saturating_sub(1);
         if num_surplus > 0 {
-            // Initialize an RNG.
-            let rng = &mut OsRng;
-            // Proceed to send disconnect requests to these bootstrap peers.
-            for peer in connected_bootstrap.into_iter().choose_multiple(rng, num_surplus) {
+            // Sample peers to disconnect (drop rng before any await).
+            let peers_to_disconnect = connected_bootstrap.into_iter().sample(&mut rand::rng(), num_surplus);
+            for peer in peers_to_disconnect {
                 info!("{CONTEXT} Disconnecting from '{}' (exceeded maximum bootstrap)", peer.listener_addr);
                 <Self as Transport<N>>::send(
                     self,
@@ -1189,7 +1209,7 @@ impl<N: Network> Gateway<N> {
                 return;
             }
             // Select a random validator IP.
-            if let Some(validator_ip) = validators.into_iter().choose(&mut rand::thread_rng()) {
+            if let Some(validator_ip) = validators.into_iter().choose(&mut rand::rng()) {
                 let self_ = self.clone();
                 tokio::spawn(async move {
                     // Increment the number of outbound validators requests for this validator.
@@ -1220,15 +1240,6 @@ impl<N: Network> Gateway<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.tcp.banned_peers().remove_old_bans(IP_BAN_TIME_IN_SECS);
-    }
-
-    // Update the dynamic validator whitelist.
-    fn update_validator_whitelist(&self) {
-        if let Err(err) =
-            self.save_best_peers(&self.node_data_dir.validator_whitelist_path(), Some(MAX_VALIDATORS_TO_SEND), false)
-        {
-            warn!("{CONTEXT} Could not update the validator whitelist: {err}");
-        }
     }
 }
 
@@ -1368,21 +1379,38 @@ impl<N: Network> Disconnect for Gateway<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
-            self.downgrade_peer_to_candidate(peer_ip);
+            // TODO(kaimast): This can, in theory, still lead to race conditions, if we immediately reconnect to the same peer.
+            // In practice, there should always be a significant delay between those two delays, so it is not an immediate issue.
+            //
+            // To properly fix this, we either needk hold a lock here, or add a dedicated "disconnecting" state, so that
+            // a peer is not re-added while the rest of the disconnect logic is running.
+            let was_fully_connected = self.downgrade_peer_to_candidate(peer_ip);
+
             // Remove the peer from the sync module. Except for some tests, there is always a sync sender.
-            if let Some(sync_sender) = self.sync_sender.get() {
-                let tx_block_sync_remove_peer_ = sync_sender.tx_block_sync_remove_peer.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = tx_block_sync_remove_peer_.send(peer_ip).await {
-                        warn!("{CONTEXT} Unable to remove '{peer_ip}' from the sync module - {err}");
-                    }
-                });
+            if was_fully_connected && let Some(sync_sender) = self.sync_sender.get() {
+                let (tx, rx) = oneshot::channel();
+
+                if let Err(err) = sync_sender.tx_block_sync_remove_peer.send((peer_ip, tx)).await {
+                    let err: anyhow::Error = err.into();
+                    let err =
+                        err.context(format!("Unable to remove disconnecting peer '{peer_ip}' from the sync module"));
+                    warn!("{CONTEXT} {}", flatten_error(err));
+                }
+
+                if let Err(err) = rx.await {
+                    let err: anyhow::Error = err.into();
+                    let err =
+                        err.context(format!("Unable to remove disconnecting peer '{peer_ip}' from the sync module"));
+                    warn!("{CONTEXT} {}", flatten_error(err));
+                }
             }
             // We don't clear this map based on time but only on peer disconnect.
             // This is sufficient to avoid infinite growth as the committee has a fixed number
             // of members.
             self.cache.clear_outbound_validators_requests(peer_ip);
             self.cache.clear_outbound_block_requests(peer_ip);
+        } else {
+            warn!("{CONTEXT} Got disconnect for a peer '{peer_addr}' that is not in the peer pool");
         }
     }
 }
@@ -1543,13 +1571,10 @@ impl<N: Network> Gateway<N> {
         // Construct the stream.
         let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
 
-        // Initialize an RNG.
-        let rng = &mut rand::rngs::OsRng;
-
         /* Step 1: Send the challenge request. */
 
         // Sample a random nonce.
-        let our_nonce = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
@@ -1587,9 +1612,9 @@ impl<N: Network> Gateway<N> {
         /* Step 3: Send the challenge response. */
 
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
         };
         // Send the challenge response.
@@ -1642,13 +1667,10 @@ impl<N: Network> Gateway<N> {
 
         /* Step 2: Send the challenge response followed by own challenge request. */
 
-        // Initialize an RNG.
-        let rng = &mut rand::rngs::OsRng;
-
         // Sign the counterparty nonce.
-        let response_nonce: u64 = rng.r#gen();
+        let response_nonce: u64 = rand::random();
         let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, rng) else {
+        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
             return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
         };
         // Send the challenge response.
@@ -1657,7 +1679,7 @@ impl<N: Network> Gateway<N> {
         send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
 
         // Sample a random nonce.
-        let our_nonce = rng.r#gen();
+        let our_nonce: u64 = rand::random();
         // Determine the snarkOS SHA to send to the peer.
         let current_block_height = self.ledger.latest_block_height();
         let consensus_version = N::CONSENSUS_VERSION(current_block_height).unwrap();
@@ -1768,13 +1790,10 @@ mod prop_tests {
     use snarkos_node_tcp::P2P;
     use snarkos_utilities::NodeDataDir;
 
+    use snarkos_node_bft_events::committee_prop_tests::{CommitteeContext, ValidatorSet};
     use snarkvm::{
         ledger::{
-            committee::{
-                Committee,
-                prop_tests::{CommitteeContext, ValidatorSet},
-                test_helpers::sample_committee_for_round_and_members,
-            },
+            committee::{Committee, test_helpers::sample_committee_for_round_and_members},
             narwhal::{BatchHeader, batch_certificate::test_helpers::sample_batch_certificate_for_round},
         },
         prelude::{MainnetV0, PrivateKey},
@@ -2016,7 +2035,7 @@ mod prop_tests {
         // Initialize the ledger.
         let ledger = Arc::new(MockLedgerService::new(committee.clone()));
         // Initialize the storage.
-        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds);
+        let storage = Storage::new(ledger.clone(), Arc::new(BFTMemoryService::new()), max_gc_rounds).unwrap();
         // Initialize the gateway.
         let gateway = Gateway::new(
             account.clone(),

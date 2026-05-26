@@ -108,7 +108,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 9] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 10] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -120,8 +120,9 @@ impl<N: Network> Message<N> {
         // increment the message version before the canary release, so canary
         // nodes need to jump from 23 to 25, whereas for testnet/mainnet we can
         // then jump from 24 to 25 as usual.
-        (ConsensusVersion::V13, 23),
+        (ConsensusVersion::V13, 24),
         (ConsensusVersion::V14, 25),
+        (ConsensusVersion::V15, 26),
     ];
 
     /// Returns the latest message version.

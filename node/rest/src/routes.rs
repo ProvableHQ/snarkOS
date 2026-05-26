@@ -16,6 +16,7 @@
 use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
+use snarkos_node_sync::BftSyncMode;
 #[cfg(feature = "history-staking-rewards")]
 use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
@@ -35,11 +36,40 @@ use std::{collections::HashMap, fs};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
-
 use version::VersionInfo;
 
 #[cfg(feature = "history")]
+const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
+#[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
+#[cfg(feature = "history")]
+type HistoricalMappingRoute<N> = (ProgramID<N>, Identifier<N>, u32);
+
+#[cfg(feature = "history")]
+fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plaintext<N>>, RestError> {
+    // Retrieve the number of keys.
+    let num_keys = keys.len();
+    // Return an error if no keys are provided.
+    if num_keys == 0 {
+        return Err(RestError::unprocessable_entity(anyhow!("No keys provided")));
+    }
+    // Return an error if the number of keys exceeds the maximum allowed.
+    if num_keys > MAX_KEYS_PER_REQUEST {
+        return Err(RestError::unprocessable_entity(anyhow!(
+            "Too many keys provided (max: {MAX_KEYS_PER_REQUEST}, got: {num_keys})"
+        )));
+    }
+
+    // Deserialize the keys from the query.
+    keys.iter()
+        .enumerate()
+        .map(|(index, key)| {
+            key.parse::<Plaintext<N>>().map_err(|err| {
+                RestError::unprocessable_entity(err.context(format!("Invalid key at index {index}: {key}")))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
 
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
@@ -90,6 +120,23 @@ pub(crate) struct Commitments {
     commitments: Vec<String>,
 }
 
+/// The query object for `get_history_batch`.
+#[cfg(feature = "history")]
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct HistoricalKeys {
+    #[serde(deserialize_with = "de_csv")]
+    keys: Vec<String>,
+}
+
+/// The return value for a transaction metadata query.
+#[skip_serializing_none]
+#[derive(Serialize)]
+pub(crate) struct TransactionWithMetadata<T: Serialize, N: Network> {
+    transaction: T,
+    block_hash: Option<N::BlockHash>,
+    block_height: Option<u32>,
+}
+
 /// The return value for a `sync_status` query.
 #[skip_serializing_none]
 #[derive(Copy, Clone, Serialize)]
@@ -100,6 +147,9 @@ struct SyncStatus<'a> {
     ledger_height: u32,
     /// Which way are we sync'ing (either "cdn" or "p2p")
     sync_mode: &'a str,
+    /// Validators can either sync in "fast" mode, by fetching blocks similar to how clients do,
+    /// or the can sync certificates in "dag" mode.
+    bft_sync_mode: Option<&'a str>,
     /// The block height of the CDN (if connected to a CDN).
     cdn_height: Option<u32>,
     /// The greatest known block height of a peer.
@@ -134,7 +184,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     /// GET /<network>/block/latest
     pub(crate) async fn get_block_latest(State(rest): State<Self>) -> ErasedJson {
-        ErasedJson::pretty(rest.ledger.latest_block())
+        let block = rest.ledger.latest_block();
+        let hash = block.hash();
+        // When present, this is 3x faster than serializing the block from the ledger.
+        rest.block_cache.lock().get_or_insert(hash, || ErasedJson::pretty(block)).clone()
     }
 
     /// GET /<network>/block/{height}
@@ -145,23 +198,38 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         // Manually parse the height or the height of the hash, axum doesn't support different types
         // for the same path param.
-        let id_name;
-        let block = if let Ok(height) = height_or_hash.parse::<u32>() {
-            id_name = "hash";
-            rest.ledger.try_get_block(height).with_context(|| "Failed to get block by height")?
+        let hash = if let Ok(height) = height_or_hash.parse::<u32>() {
+            rest.ledger.get_hash(height).with_context(|| "Failed to get a block's hash")?
         } else if let Ok(hash) = height_or_hash.parse::<N::BlockHash>() {
-            id_name = "height";
-            rest.ledger.try_get_block_by_hash(&hash).with_context(|| "Failed to get block by hash")?
+            hash
         } else {
-            return Err(RestError::bad_request(anyhow!(
-                "invalid input, it is neither a block height nor a block hash"
-            )));
+            return Err(RestError::bad_request(anyhow!("invalid input: neither a block height nor a block hash")));
         };
 
-        match block {
-            Some(block) => Ok(ErasedJson::pretty(block)),
-            None => Err(RestError::not_found(anyhow!("No block with {id_name} {height_or_hash} found"))),
+        // Attempt to find a serialized block in the cache.
+        if let Some(json_block) = rest.block_cache.lock().get(&hash) {
+            return Ok(json_block.clone());
         }
+
+        // Retrieve the block from the database.
+        let json_block = match tokio::task::spawn_blocking(move || match rest.ledger.try_get_block_by_hash(&hash) {
+            Ok(Some(block)) => Some(ErasedJson::pretty(block)),
+            Ok(None) => None,
+            Err(e) => {
+                error!("Couldn't find a block: {e}");
+                None
+            }
+        })
+        .await
+        {
+            Ok(Some(block)) => Ok(block),
+            Ok(None) => Err(RestError::not_found(anyhow!("Couldn't find block {height_or_hash}"))),
+            Err(e) => Err(RestError::internal_server_error(anyhow!("tokio error: {e}"))),
+        }?;
+
+        rest.block_cache.lock().put(hash, json_block.clone());
+
+        Ok(json_block)
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
@@ -227,8 +295,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Generate a string representing the current sync mode.
         let sync_mode = if cdn_sync { "cdn" } else { "p2p" };
 
+        let bft_sync_mode = rest.block_sync.get_bft_sync_mode().map(|mode| match mode {
+            BftSyncMode::Fast => "fast",
+            BftSyncMode::Dag => "dag",
+        });
+
         Ok(ErasedJson::pretty(SyncStatus {
             sync_mode,
+            bft_sync_mode,
             cdn_height,
             is_synced: !cdn_sync && rest.routing.is_block_synced(),
             ledger_height: rest.ledger.latest_height(),
@@ -282,25 +356,54 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/transaction/{transactionID}
+    /// GET /<network>/transaction/{transactionID}?metadata={true}
     pub(crate) async fn get_transaction(
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
+        metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
         // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
-        Ok(ErasedJson::pretty(rest.ledger.get_transaction(tx_id).map_err(|err| {
+        let transaction = rest.ledger.get_transaction(tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
-        })?))
+        })?;
+        // Check if metadata is requested and return the transaction with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the block hash and height for the transaction, if it exists.
+            let block_hash = rest.ledger.find_block_hash(&tx_id).ok().flatten();
+            let block_height = block_hash.and_then(|hash| rest.ledger.get_height(&hash).ok());
+            Ok(ErasedJson::pretty(TransactionWithMetadata::<_, N> { transaction, block_hash, block_height }))
+        } else {
+            Ok(ErasedJson::pretty(transaction))
+        }
     }
 
     /// GET /<network>/transaction/confirmed/{transactionID}
+    /// GET /<network>/transaction/confirmed/{transactionID}?metadata={true}
     pub(crate) async fn get_confirmed_transaction(
         State(rest): State<Self>,
         Path(tx_id): Path<N::TransactionID>,
+        metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
         // Ledger returns a generic anyhow::Error, so checking the message is the only way to parse it.
-        Ok(ErasedJson::pretty(rest.ledger.get_confirmed_transaction(tx_id).map_err(|err| {
+        let transaction = rest.ledger.get_confirmed_transaction(tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
-        })?))
+        })?;
+        // Check if metadata is requested and return the transaction with metadata if so.
+        if metadata.metadata.unwrap_or(false) {
+            // Get the block hash and height for the confirmed transaction.
+            let block_hash = rest
+                .ledger
+                .find_block_hash(&tx_id)?
+                .ok_or_else(|| anyhow!("Block hash not found for transaction {tx_id}"))?;
+            let block_height = rest.ledger.get_height(&block_hash)?;
+            Ok(ErasedJson::pretty(TransactionWithMetadata::<_, N> {
+                transaction,
+                block_hash: Some(block_hash),
+                block_height: Some(block_height),
+            }))
+        } else {
+            Ok(ErasedJson::pretty(transaction))
+        }
     }
 
     /// GET /<network>/transaction/unconfirmed/{transactionID}
@@ -545,22 +648,31 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
         // Return an error if the number of commitments exceeds the maximum allowed.
         if num_commitments > N::MAX_INPUTS {
-            return Err(RestError::unprocessable_entity(anyhow!(
-                "Too many commitments provided (max: {}, got: {})",
-                N::MAX_INPUTS,
-                num_commitments
-            )));
+            return Err(RestError::unprocessable_entity(anyhow!(format!(
+                "Too many commitments provided (max: {}, got: {num_commitments})",
+                N::MAX_INPUTS
+            ))));
         }
 
         // Deserialize the commitments from the query.
-        let commitments = commitments
-            .commitments
-            .iter()
-            .map(|s| {
-                s.parse::<Field<N>>()
-                    .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let commitments = match tokio::task::spawn_blocking(move || {
+            commitments
+                .commitments
+                .iter()
+                .map(|s| {
+                    s.parse::<Field<N>>()
+                        .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        {
+            Ok(Ok(commitments)) => commitments,
+            Ok(Err(err)) => {
+                return Err(RestError::internal_server_error(anyhow!(err).context("Unable to parse commitments")));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
+        };
 
         Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
     }
@@ -792,7 +904,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
 
             // Perform the check.
-            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::thread_rng()).map_err(|err| {
+            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map_err(|err| {
                 match is_within_sync_leniency {
                     // The transaction failed to verify.
                     true => RestError::unprocessable_entity(err.context("Invalid transaction")),
@@ -958,6 +1070,19 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok(ret)
     }
 
+    /// GET /<network>/solution/limits/{prover_address}
+    pub(crate) async fn get_solution_limits_for_prover(
+        State(rest): State<Self>,
+        Path(prover_address): Path<Address<N>>,
+    ) -> Result<ErasedJson, RestError> {
+        Ok(ErasedJson::pretty(json!({
+            "is_limit_reached": rest.ledger.is_solution_limit_reached(&prover_address, 0),
+            "num_remaining_solutions": rest.ledger.num_remaining_solutions(&prover_address, 0),
+            "latest_epoch_hash": rest.ledger.latest_epoch_hash()?,
+            "blocks_until_next_epoch": N::NUM_BLOCKS_PER_EPOCH.saturating_sub(rest.ledger.latest_height() % N::NUM_BLOCKS_PER_EPOCH),
+        })))
+    }
+
     /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
     #[cfg(feature = "history")]
     pub(crate) async fn get_history(
@@ -971,6 +1096,42 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             })?;
 
         Ok((StatusCode::OK, ErasedJson::pretty(value)))
+    }
+
+    /// GET /{network}/program/{id}/mapping/{name}/history/{height}?keys=key1,key2,...
+    #[cfg(feature = "history")]
+    pub(crate) async fn get_history_batch(
+        State(rest): State<Self>,
+        Path((program_id, mapping_name, height)): Path<HistoricalMappingRoute<N>>,
+        Query(historical_keys): Query<HistoricalKeys>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
+
+        let values = match tokio::task::spawn_blocking(move || cfg_into_iter!(historical_keys
+            .keys)
+            .zip(mapping_keys)
+            .map(|(key, mapping_key)| {
+                let value = rest
+                    .ledger
+                    .vm()
+                    .finalize_store()
+                    .get_historical_mapping_value(program_id, mapping_name, mapping_key, height)
+                    .map_err(|err| {
+                        RestError::not_found(err.context(format!(
+                            "Could not load mapping '{mapping_name}/{key}' for program '{program_id}' from block '{height}'"
+                        )))
+                    })?;
+
+                Ok(json!({ "key": key, "value": value }))
+            })
+            .collect::<Result<Vec<_>, RestError>>())
+            .await {
+                Ok(Ok(values)) => values,
+                Ok(Err(err)) => return Err(RestError::internal_server_error(anyhow!(err).context("Unable to get historical mapping values"))),
+                Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+            };
+
+        Ok((StatusCode::OK, ErasedJson::pretty(values)))
     }
 
     /// GET /{network}/staking/rewards/{address}/{height}
@@ -1000,15 +1161,25 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         match rest.consensus {
             Some(consensus) => {
-                // Retrieve the latest committee.
-                let latest_committee = rest.ledger.latest_committee()?;
-                // Retrieve the latest participation scores.
-                let participation_scores = consensus
+                // Retrieve the committee lookback for the latest round.
+                let latest_round = rest.ledger.latest_round();
+                let committee_lookback = rest
+                    .ledger
+                    .get_committee_lookback_for_round(latest_round)?
+                    .ok_or_else(|| RestError::not_found(anyhow!("No committee found for round {latest_round}")))?;
+                // Retrieve the latest participation scores, combining certificate and signature scores.
+                let participation_scores: IndexMap<_, _> = consensus
                     .bft()
                     .primary()
                     .gateway()
                     .validator_telemetry()
-                    .get_participation_scores(&latest_committee);
+                    .get_participation_scores(&committee_lookback)
+                    .into_iter()
+                    .map(|(address, (cert_score, sig_score))| {
+                        let combined = ((0.9 * cert_score + 0.1 * sig_score) * 100.0).round() / 100.0;
+                        (address, combined)
+                    })
+                    .collect();
 
                 // Check if metadata is requested and return the participation scores with metadata if so.
                 if metadata.metadata.unwrap_or(false) {
@@ -1022,5 +1193,116 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
             None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
+    }
+
+    /// GET /{network}/slipstream/plugins
+    #[cfg(feature = "slipstream-plugins")]
+    pub(crate) async fn slipstream_list_plugins(
+        State(rest): State<Self>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        let mgr_guard = mgr_arc.read();
+        let manager = mgr_guard
+            .as_ref()
+            .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
+        let plugins = manager
+            .list_plugins()
+            .map_err(|e: SlipstreamPluginManagerError| RestError::internal_server_error(anyhow!(e)))?;
+        Ok((StatusCode::OK, ErasedJson::pretty(plugins)))
+    }
+
+    /// POST /{network}/slipstream/plugins
+    #[cfg(feature = "slipstream-plugins")]
+    pub(crate) async fn slipstream_load_plugin(
+        State(rest): State<Self>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+
+        let config_file = body
+            .get("config_file")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RestError::bad_request(anyhow!("Missing required field: config_file")))?
+            .to_owned();
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        if mgr_arc.read().is_none() {
+            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
+        }
+        let name = tokio::task::spawn_blocking(move || -> Result<String, SlipstreamPluginManagerError> {
+            // Safety: manager is set exactly once and never cleared; verified Some above.
+            mgr_arc.write().as_mut().expect("plugin manager verified present").load_plugin(&config_file)
+        })
+        .await
+        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
+        .map_err(|e| match e {
+            SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => RestError::unprocessable_entity(anyhow!("{e}")),
+            other => RestError::internal_server_error(anyhow!("{other}")),
+        })?;
+        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "loaded": name }))))
+    }
+
+    /// DELETE /{network}/slipstream/plugins/{name}
+    #[cfg(feature = "slipstream-plugins")]
+    pub(crate) async fn slipstream_unload_plugin(
+        State(rest): State<Self>,
+        Path(name): Path<String>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
+
+        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
+        if mgr_arc.read().is_none() {
+            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
+        }
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            // Safety: manager is set exactly once and never cleared; verified Some above.
+            mgr_arc.write().as_mut().expect("plugin manager verified present").unload_plugin(&name).map_err(
+                |e: SlipstreamPluginManagerError| match e {
+                    SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
+                    other => anyhow!("{other}"),
+                },
+            )
+        })
+        .await
+        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
+        .map_err(|e| {
+            let msg = e.to_string();
+            if let Some(stripped) = msg.strip_prefix("404: ") {
+                RestError::not_found(anyhow!("{stripped}"))
+            } else {
+                RestError::internal_server_error(e)
+            }
+        })?;
+        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "unloaded": true }))))
+    }
+
+    // TODO: PUT /{network}/slipstream/plugins/{name} (reload) is not yet implemented.
+}
+
+#[cfg(all(test, feature = "history"))]
+mod tests {
+    use super::*;
+    use snarkvm::prelude::MainnetV0;
+
+    #[test]
+    fn parse_historical_mapping_keys_rejects_empty() {
+        let err = parse_historical_mapping_keys::<MainnetV0>(&[]).unwrap_err();
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn parse_historical_mapping_keys_rejects_too_many() {
+        let keys = vec![String::from("1field"); MAX_KEYS_PER_REQUEST + 1];
+        let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn parse_historical_mapping_keys_rejects_invalid_key_with_index() {
+        let keys = vec![String::from("1field"), String::from("not_a_plaintext")];
+        let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
+        assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(err.to_string().contains("Invalid key at index 1"));
     }
 }

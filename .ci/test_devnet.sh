@@ -24,7 +24,7 @@ NODE_VERBOSITY=3
 : "${total_clients:=4}" # need at least 4 clients, so each validator has at least one client connected to it.
 : "${network_id:=0}"
 : "${min_height:=60}" # To likely go past the 100 round garbage collection limit.
-: "${max_warnings:=10}"
+: "${max_warnings:=40}"
 
 # shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
@@ -357,5 +357,13 @@ else
   log "❌ Test failed! Not all nodes reached minimum height within 10 minutes."
   log_validator_logs "$log_dir" "$total_validators" "$total_clients"
   log_client_logs "$log_dir" "$total_validators" "$total_clients"
+  exit 1
+fi
+
+# Ensure no errors are generated during the devnet run, as all nodes are
+# expected to operate without failures or interruptions.
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
+  exit 0
+else
   exit 1
 fi

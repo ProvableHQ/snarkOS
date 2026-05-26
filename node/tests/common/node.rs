@@ -37,7 +37,8 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         NodeDataDir::new_test(None),
         false, // Connect to untrusted peers.
         None,
-        SignalHandler::new(),
+        &[], // No Slipstream plugins.
+        SignalHandler::new(None),
     )
     .await
     .expect("couldn't create client instance")
@@ -52,7 +53,7 @@ pub async fn prover() -> Prover<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         NodeDataDir::new_test(None),
         false,
         None,
-        SignalHandler::new(),
+        SignalHandler::new(None),
     )
     .await
     .expect("couldn't create prover instance")
@@ -74,7 +75,9 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         false, // This test requires validators to connect to peers.
         false, // No dev traffic in production mode.
         None,
-        SignalHandler::new(),
+        &[],  // No Slipstream plugins.
+        None, // No dev committee hotswap in production mode.
+        SignalHandler::new(None),
     )
     .await
     .expect("couldn't create validator instance")

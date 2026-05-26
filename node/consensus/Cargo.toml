@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-consensus"
-version = "4.5.1"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node consensus for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -34,11 +34,15 @@ serial = [
   "snarkos-node-metrics/serial",
   "snarkvm/serial"
 ]
+test_network = [ ]
 
 [dependencies.aleo-std]
 workspace = true
 
 [dependencies.anyhow]
+workspace = true
+
+[dependencies.cfg-if]
 workspace = true
 
 [dependencies.colored]

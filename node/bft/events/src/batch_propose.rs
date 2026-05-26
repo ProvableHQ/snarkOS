@@ -62,10 +62,13 @@ impl<N: Network> FromBytes for BatchPropose<N> {
 
 #[cfg(test)]
 pub mod prop_tests {
-    use crate::{BatchPropose, certificate_response::prop_tests::any_batch_header};
+    use crate::{
+        BatchPropose,
+        certificate_response::prop_tests::any_batch_header,
+        committee_prop_tests::CommitteeContext,
+    };
     use snarkvm::{
         console::prelude::{FromBytes, ToBytes},
-        ledger::committee::prop_tests::CommitteeContext,
         prelude::narwhal::Data,
     };
 

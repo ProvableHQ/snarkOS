@@ -21,7 +21,7 @@ use snarkos_account::Account;
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
-use snarkos_node_network::{NodeType, PeerPoolHandling};
+use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -92,6 +92,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         trusted_peers_only: bool,
         dev_txs: bool,
         dev: Option<u16>,
+        _slipstream_configs: &[std::path::PathBuf],
+        #[cfg(feature = "test_network")] dev_num_validators_for_committee_hotswap: Option<u16>,
+        #[cfg(not(feature = "test_network"))] _dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -103,8 +106,32 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         }
         .with_context(|| "Failed to initialize the ledger")?;
 
+        // Initialize the Slipstream plugin manager (if any config files were provided).
+        #[cfg(feature = "slipstream-plugins")]
+        if !_slipstream_configs.is_empty() {
+            let manager =
+                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
+                    .context("Failed to initialize Slipstream plugin manager")?;
+            ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
+            let num_plugins = _slipstream_configs.len();
+            tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
+        }
+
         // Initialize the ledger service.
+        #[cfg(not(feature = "test_network"))]
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
+        #[cfg(feature = "test_network")]
+        // Initialize the ledger service with a deterministic dev committee.
+        let ledger_service = if let Some(dev_num_validators) = dev_num_validators_for_committee_hotswap {
+            Arc::new(CoreLedgerService::new_dev(
+                ledger.clone(),
+                signal_handler.clone(),
+                Some((node_data_dir.clone(), dev_num_validators)),
+            ))
+        // Initialize the ledger service without a deterministic dev committee.
+        } else {
+            Arc::new(CoreLedgerService::new_dev(ledger.clone(), signal_handler.clone(), None))
+        };
 
         // Initialize the node router.
         let router = Router::new(
@@ -121,7 +148,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         .await?;
 
         // Initialize the block synchronization logic.
-        let sync = Arc::new(BlockSync::new(ledger_service.clone()));
+        let sync = Arc::new(BlockSync::new(ledger_service.clone(), ConnectionMode::Gateway));
         let locators = sync.get_block_locators()?;
         let ping = Arc::new(Ping::new(router.clone(), locators));
 
@@ -330,7 +357,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     //                 inputs,
     //                 None,
     //                 None,
-    //                 &mut rand::thread_rng(),
+    //                 &mut rand::rng(),
     //             ) {
     //                 Ok(transaction) => transaction,
     //                 Err(error) => {
@@ -415,24 +442,26 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                 let inputs = [Value::from(Literal::Address(self_.address())), Value::from(Literal::U64(U64::new(1)))];
                 // Execute the transaction.
                 let self__ = self_.clone();
-                let transaction = match spawn_blocking!(
-                    self__
-                        .ledger
-                        .vm()
-                        .execute(
-                            self__.private_key(),
-                            locator,
-                            inputs.into_iter(),
-                            None,
-                            10_000,
-                            None,
-                            &mut rand::thread_rng(),
-                        )
-                        .map_err(|err| err.into())
-                ) {
-                    Ok(transaction) => transaction,
-                    Err(error) => {
+                let transaction = match tokio::task::spawn_blocking(move || {
+                    self__.ledger.vm().execute(
+                        self__.private_key(),
+                        locator,
+                        inputs.into_iter(),
+                        None,
+                        10_000,
+                        None,
+                        &mut rand::rng(),
+                    )
+                })
+                .await
+                {
+                    Ok(Ok(transaction)) => transaction,
+                    Ok(Err(error)) => {
                         error!("Transaction pool encountered an execution error - {error}");
+                        continue;
+                    }
+                    Err(error) => {
+                        error!("Transaction pool encountered an execution error - blocking task failed - {error}");
                         continue;
                     }
                 };
@@ -466,6 +495,18 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
+
+        // Shut down the Slipstream plugin manager.
+        #[cfg(feature = "slipstream-plugins")]
+        if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
+            manager.unload();
+        }
+
+        // Shut down the REST instance.
+        if let Some(rest) = &self.rest {
+            trace!("Shutting down the REST server...");
+            rest.shut_down();
+        }
 
         // Abort the tasks.
         trace!("Shutting down the validator...");
@@ -510,7 +551,7 @@ mod tests {
         let dev_txs = true;
 
         // Initialize an (insecure) fixed RNG.
-        let mut rng = ChaChaRng::seed_from_u64(1234567890u64);
+        let mut rng = ChaChaRng::seed_from_u64(snarkos_utilities::DEVELOPMENT_MODE_RNG_SEED);
         // Initialize the account.
         let account = Account::<CurrentNetwork>::new(&mut rng).unwrap();
         // Initialize a new VM.
@@ -537,7 +578,9 @@ mod tests {
             false,
             dev_txs,
             None,
-            SignalHandler::new(),
+            &[],
+            None,
+            SignalHandler::new(None),
         )
         .await
         .unwrap();
