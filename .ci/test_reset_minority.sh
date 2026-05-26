@@ -20,6 +20,7 @@ network_id=$2
 reset_interval=$3
 final_height=$4
 num_resets=$5
+max_warnings=$6
 
 # Default values if not provided
 : "${total_validators:=7}"
@@ -27,6 +28,7 @@ num_resets=$5
 : "${reset_interval:=20}"
 : "${final_height:=100}"
 : "${num_resets:=3}"
+: "${max_warnings:=40}"
 
 minority=$(( (total_validators - 1) / 3 ))
 network_name=$(get_network_name "$network_id")
@@ -93,9 +95,14 @@ for iter in $(seq 1 "$num_resets"); do
 done
 
 if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" "$max_wait"; then
-  log "SUCCESS!"
-  exit 0
+  log "All nodes reached the final height of $final_height"
 else
   log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
+  exit 1
+fi
+
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+  exit 0
+else
   exit 1
 fi

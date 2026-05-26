@@ -69,7 +69,7 @@ use anyhow::Result;
 use locktick::parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, future::Future, io, net::SocketAddr, ops::Deref, sync::Arc, time::Duration};
+use std::{collections::HashMap, future::Future, io, net::SocketAddr, ops::Deref, sync::Arc};
 use tokio::task::JoinHandle;
 
 /// The default port used by the router.
@@ -147,9 +147,6 @@ impl<N: Network> Router<N> {
     /// The maximum amount of connection attempts within a 10 second threshold.
     #[cfg(not(feature = "test"))]
     const MAX_CONNECTION_ATTEMPTS: usize = 10;
-    /// The duration after which a connected peer is considered inactive or
-    /// disconnected if no message has been received in the meantime.
-    const MAX_RADIO_SILENCE: Duration = Duration::from_secs(150); // 2.5 minutes
 }
 
 impl<N: Network> Router<N> {
@@ -239,6 +236,11 @@ impl<N: Network> Router<N> {
     /// Returns a reference to the cache.
     pub fn cache(&self) -> &Cache<N> {
         &self.cache
+    }
+
+    /// Returns a reference to the ledger.
+    pub fn ledger(&self) -> &Arc<dyn LedgerService<N>> {
+        &self.ledger
     }
 
     /// Returns `true` if the node is only engaging with trusted peers.

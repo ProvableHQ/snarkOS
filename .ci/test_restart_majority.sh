@@ -20,6 +20,7 @@ network_id=$2
 reset_interval=$3
 final_height=$4
 num_resets=$5
+max_warnings=$6
 
 # Default values if not provided
 : "${total_validators:=7}"
@@ -27,6 +28,7 @@ num_resets=$5
 : "${reset_interval:=10}"
 : "${final_height:=20}"
 : "${num_resets:=3}"
+: "${max_warnings:=40}"
 
 max_faulty=$(( (total_validators - 1) / 3 ))
 # AleoBFT needs at least N-f for a quorum, not 2*f+1.
@@ -56,8 +58,6 @@ start=$(now)
 
 # Start all validator nodes in the background
 for validator_index in $(seq 0 $((total_validators-1))); do
-  snarkos clean "--dev=$validator_index" "--network=$network_id" --keep-node-data
-
   run_with_prefix "validator-$validator_index" snarkos start "${common_flags[@]}" "--dev=$validator_index" --validator --logfile="$log_dir/validator-$validator_index.log"
   PIDS[validator_index]=$!
   log "Started validator $validator_index with PID ${PIDS[$validator_index]}"
@@ -97,10 +97,15 @@ for iter in $(seq 1 "$num_resets"); do
   done
 done
 
-if wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
-  log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
+if ! wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
+  log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
+  exit 1
+fi
+
+log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
+
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
   exit 0
 else
-  log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
   exit 1
 fi

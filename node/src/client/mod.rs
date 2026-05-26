@@ -16,13 +16,13 @@
 mod router;
 
 use crate::{
-    bft::{events::DataBlocks, helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
+    bft::{helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
     cdn::CdnBlockSync,
     traits::NodeInterface,
 };
 
 use snarkos_account::Account;
-use snarkos_node_network::NodeType;
+use snarkos_node_network::{ConnectionMode, NodeType};
 use snarkos_node_rest::Rest;
 use snarkos_node_router::{
     Heartbeat,
@@ -32,7 +32,7 @@ use snarkos_node_router::{
     Routing,
     messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::{BLOCK_REQUEST_BATCH_DELAY, BlockSync, Ping, PrepareSyncRequest, locators::BlockLocators};
+use snarkos_node_sync::{BlockSync, Ping};
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
@@ -48,13 +48,11 @@ use snarkvm::{
         store::ConsensusStorage,
     },
     prelude::{VM, block::Transaction},
-    utilities::flatten_error,
 };
 
 use aleo_std::StorageMode;
 use anyhow::{Context, Result};
 use core::future::Future;
-use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 use lru::LruCache;
@@ -146,6 +144,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
+        _slipstream_configs: &[std::path::PathBuf],
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -156,6 +155,17 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
         }
         .with_context(|| "Failed to initialize the ledger")?;
+
+        // Initialize the Slipstream plugin manager (if any config files were provided).
+        #[cfg(feature = "slipstream-plugins")]
+        if !_slipstream_configs.is_empty() {
+            let manager =
+                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
+                    .context("Failed to initialize Slipstream plugin manager")?;
+            ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
+            let num_plugins = _slipstream_configs.len();
+            tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
+        }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
@@ -174,7 +184,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         .await?;
 
         // Initialize the sync module.
-        let sync = Arc::new(BlockSync::new(ledger_service.clone()));
+        let sync = Arc::new(BlockSync::new(ledger_service.clone(), ConnectionMode::Router));
 
         // Set up the ping logic.
         let locators = sync.get_block_locators()?;
@@ -266,6 +276,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         let self_ = self.clone();
         self.spawn(async move {
             while !self_.signal_handler.is_stopped() {
+                // Wait for peer updates or timeout
+                let _ = timeout(Self::MAX_SYNC_INTERVAL, self_.sync.wait_for_peer_update()).await;
+
                 // Perform the sync routine.
                 self_.try_issuing_block_requests().await;
             }
@@ -312,95 +325,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
     /// Client-side version of `snarkvm_node_bft::Sync::try_block_sync()`.
     async fn try_issuing_block_requests(&self) {
-        // Wait for peer updates or timeout
-        let _ = timeout(Self::MAX_SYNC_INTERVAL, self.sync.wait_for_peer_update()).await;
-
-        // For sanity, check that sync height is never below ledger height.
-        // (if the ledger height is lower or equal to the current sync height, this is a noop)
-        self.sync.set_sync_height(self.ledger.latest_height());
-
-        match self.sync.handle_block_request_timeouts(&self.router) {
-            Ok(Some((requests, sync_peers))) => {
-                // Re-request blocks instead of performing regular block sync.
-                self.send_block_requests(requests, sync_peers).await;
-                return;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                // Abort and retry later.
-                error!("{}", flatten_error(&err));
-                return;
-            }
-        }
-
-        // Do not attempt to sync if there are not blocks to sync.
-        // This prevents redundant log messages and performing unnecessary computation.
-        if !self.sync.can_block_sync() {
-            trace!("Nothing to sync. Will not issue new block requests");
-            return;
-        }
-
-        // First, try to advance the ledger with new responses.
-        let has_new_blocks = match self.sync.try_advancing_block_synchronization().await {
-            Ok(val) => val,
-            Err(err) => {
-                error!("{err}");
-                return;
-            }
-        };
-
-        if has_new_blocks {
-            match self.sync.get_block_locators() {
-                Ok(locators) => self.ping.update_block_locators(locators),
-                Err(err) => error!("Failed to get block locators: {err}"),
-            }
-
-            // If these were the last blocks to process, do not continue.
-            if !self.sync.can_block_sync() {
-                return;
-            }
-        }
-
-        // Prepare the block requests, if any.
-        // In the process, we update the state of `is_block_synced` for the sync module.
-        let (block_requests, sync_peers) = self.sync.prepare_block_requests();
-
-        // If there are no block requests, but there are pending block responses in the sync pool,
-        // then try to advance the ledger using these pending block responses.
-        if block_requests.is_empty() {
-            let total_requests = self.sync.num_total_block_requests();
-            let num_outstanding = self.sync.num_outstanding_block_requests();
-            if total_requests > 0 {
-                trace!(
-                    "Not block synced yet, but there are still {total_requests} in-flight requests. {num_outstanding} are still awaiting responses."
-                );
-            } else {
-                // This can happen during peer rotation and should not be a warning.
-                debug!(
-                    "Not block synced yet, and there are no outstanding block requests or \
-                 new block requests to send"
-                );
-            }
-        } else {
-            self.send_block_requests(block_requests, sync_peers).await;
-        }
-    }
-
-    async fn send_block_requests(
-        &self,
-        block_requests: Vec<(u32, PrepareSyncRequest<N>)>,
-        sync_peers: IndexMap<SocketAddr, BlockLocators<N>>,
-    ) {
-        // Issues the block requests in batches.
-        for requests in block_requests.chunks(DataBlocks::<N>::MAXIMUM_NUMBER_OF_BLOCKS as usize) {
-            if !self.sync.send_block_requests(self.router(), &sync_peers, requests).await {
-                // Stop if we fail to process a batch of requests.
-                break;
-            }
-
-            // Sleep to avoid triggering spam detection.
-            tokio::time::sleep(BLOCK_REQUEST_BATCH_DELAY).await;
-        }
+        self.sync.try_issuing_block_requests(self.router()).await;
     }
 
     /// Initializes solution verification.
@@ -524,7 +449,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                             // Also skip the `check_transaction_basic` call if it is already propagated.
                         }
                         // Check the deployment.
-                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::rng()) {
                             Ok(_) => {
                                 // Propagate the `UnconfirmedTransaction`.
                                 _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
@@ -595,7 +520,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                             }
                         }
                         // Check the execution.
-                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::thread_rng()) {
+                        match _node.ledger.check_transaction_basic(&transaction, None, &mut rand::rng()) {
                             Ok(_) => {
                                 // Propagate the `UnconfirmedTransaction`.
                                 _node.propagate(Message::UnconfirmedTransaction(serialized), &[peer_ip]);
@@ -630,6 +555,18 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
+
+        // Shut down the Slipstream plugin service.
+        #[cfg(feature = "slipstream-plugins")]
+        if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
+            manager.unload();
+        }
+
+        // Shut down the REST instance.
+        if let Some(rest) = &self.rest {
+            trace!("Shutting down the REST server...");
+            rest.shut_down();
+        }
 
         // Abort the tasks.
         trace!("Shutting down the client...");

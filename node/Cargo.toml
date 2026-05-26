@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "4.6.3"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -38,8 +38,9 @@ metrics = [
   "snarkos-node-router/metrics",
   "snarkos-node-tcp/metrics"
 ]
-history = [ "snarkos-node-rest/history" ]
-history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards" ]
+history = [ "snarkos-node-rest/history", "snarkvm/history" ]
+history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
+slipstream-plugins = [ "snarkos-node-rest/slipstream-plugins", "snarkvm/slipstream-plugins" ]
 telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",
@@ -56,6 +57,7 @@ serial = [
   "snarkos-node-bft/serial"
 ]
 test = []
+test_network = [ "snarkos-node-bft/test_network", "snarkos-node-consensus/test_network", "snarkos-utilities/test_network" ]
 
 [dependencies.aleo-std]
 workspace = true
@@ -97,8 +99,8 @@ workspace = true
 workspace = true
 
 [dependencies.reqwest]
-version = "0.12"
-features = [ "json", "rustls-tls" ]
+workspace = true
+features = [ "json", "rustls" ]
 
 [dependencies.serde_json]
 workspace = true

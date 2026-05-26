@@ -20,7 +20,10 @@
 use std::{io, net::SocketAddr};
 
 use once_cell::race::OnceBox;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 
 use crate::connections::Connection;
 
@@ -36,13 +39,17 @@ pub use on_connect::OnConnect;
 pub use reading::Reading;
 pub use writing::Writing;
 
+// The value returned to the node by the OnDisconnect protocol is a bit complex,
+// so use an alias to break it down.
+type OnDisconnectBundle = (JoinHandle<()>, oneshot::Receiver<()>);
+
 #[derive(Default)]
 pub(crate) struct Protocols {
     pub(crate) handshake: OnceBox<ProtocolHandler<Connection, io::Result<Connection>>>,
     pub(crate) reading: OnceBox<ProtocolHandler<Connection, io::Result<Connection>>>,
     pub(crate) writing: OnceBox<writing::WritingHandler>,
-    pub(crate) on_connect: OnceBox<ProtocolHandler<SocketAddr, ()>>,
-    pub(crate) disconnect: OnceBox<ProtocolHandler<SocketAddr, ()>>,
+    pub(crate) on_connect: OnceBox<ProtocolHandler<SocketAddr, JoinHandle<()>>>,
+    pub(crate) disconnect: OnceBox<ProtocolHandler<SocketAddr, OnDisconnectBundle>>,
 }
 
 /// An object sent to a protocol handler task; the task assumes control of a protocol-relevant item `T`,
@@ -52,15 +59,15 @@ pub(crate) type ReturnableItem<T, U> = (T, oneshot::Sender<U>);
 
 pub(crate) type ReturnableConnection = ReturnableItem<Connection, io::Result<Connection>>;
 
-pub(crate) struct ProtocolHandler<T, U>(mpsc::UnboundedSender<ReturnableItem<T, U>>);
+pub(crate) struct ProtocolHandler<T, U>(mpsc::Sender<ReturnableItem<T, U>>);
 
 pub(crate) trait Protocol<T, U> {
-    fn trigger(&self, item: ReturnableItem<T, U>);
+    async fn trigger(&self, item: ReturnableItem<T, U>);
 }
 
 impl<T, U> Protocol<T, U> for ProtocolHandler<T, U> {
-    fn trigger(&self, item: ReturnableItem<T, U>) {
+    async fn trigger(&self, item: ReturnableItem<T, U>) {
         // ignore errors; they can only happen if a disconnect interrupts the protocol setup process
-        let _ = self.0.send(item);
+        let _ = self.0.send(item).await;
     }
 }

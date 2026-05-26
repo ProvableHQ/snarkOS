@@ -62,7 +62,7 @@ impl Sign {
     // Sign a message with an Aleo private key
     fn sign<N: Network>(self) -> Result<String> {
         // Sample a random field element.
-        let mut rng = ChaChaRng::from_entropy();
+        let mut rng = ChaChaRng::from_rng(&mut rand::rng());
 
         // Parse the private key
         let private_key = parse_private_key(self.private_key.clone(), self.private_key_file.clone(), self.dev_key)?;

@@ -50,7 +50,7 @@ use indexmap::IndexMap;
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use tokio::{sync::oneshot, task::JoinHandle, time::sleep};
 use tracing::*;
 use tracing_subscriber::{
@@ -105,7 +105,7 @@ pub fn fire_unconfirmed_solutions(
         // A closure to generate a solution ID and solution.
         async fn sample(mut rng: impl Rng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
             // Sample a random fake solution ID.
-            let solution_id = rng.r#gen::<u64>().into();
+            let solution_id = rng.random::<u64>().into();
             // Sample random fake solution bytes.
             let mut vec = vec![0u8; 1024];
             rng.fill_bytes(&mut vec);
@@ -208,7 +208,7 @@ pub fn sample_ledger(
 
 /// Samples a new storage with the given ledger.
 pub fn sample_storage<N: Network>(ledger: Arc<TranslucentLedgerService<N, ConsensusMemory<N>>>) -> Storage<N> {
-    Storage::new(ledger, Arc::new(BFTMemoryService::new()), BatchHeader::<N>::MAX_GC_ROUNDS as u64)
+    Storage::new(ledger, Arc::new(BFTMemoryService::new()), BatchHeader::<N>::MAX_GC_ROUNDS as u64).unwrap()
 }
 
 /// Samples a new gateway with the given ledger.
@@ -232,7 +232,7 @@ pub fn sample_worker<N: Network>(
     // Sample a gateway.
     let gateway = sample_gateway(account, storage.clone(), ledger.clone());
     // Sample a dummy proposed batch.
-    let proposed_batch = Arc::new(RwLock::new(None));
+    let proposed_batch = Arc::new(RwLock::new(Default::default()));
     // Construct the worker instance.
     Worker::new(id, Arc::new(gateway.clone()), storage.clone(), ledger, proposed_batch).unwrap()
 }

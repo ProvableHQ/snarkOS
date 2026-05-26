@@ -17,7 +17,7 @@ use crate::NodeType;
 use snarkvm::prelude::{Address, Network};
 use tracing::*;
 
-use std::{net::SocketAddr, time::Instant};
+use std::{fmt, net::SocketAddr, time::Instant};
 
 /// A peer of any connection status.
 #[derive(Clone, Debug)]
@@ -87,6 +87,15 @@ pub struct ConnectedPeer<N: Network> {
 pub enum ConnectionMode {
     Gateway,
     Router,
+}
+
+impl fmt::Display for ConnectionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectionMode::Gateway => write!(f, "Gateway"),
+            ConnectionMode::Router => write!(f, "Router"),
+        }
+    }
 }
 
 impl<N: Network> Peer<N> {
@@ -209,5 +218,21 @@ impl<N: Network> Peer<N> {
         if let Self::Connected(ConnectedPeer { last_seen, .. }) = self {
             *last_seen = Instant::now();
         }
+    }
+
+    /// Returns a reference to the underlying `ConnectedPeer` if it is connedcted,
+    /// otherwise `None`.
+    pub fn as_connected(&self) -> Option<&ConnectedPeer<N>> {
+        match self {
+            Self::Connected(peer) => Some(peer),
+            _ => None,
+        }
+    }
+}
+
+impl<N: Network> ConnectedPeer<N> {
+    /// Returns `true` if this peer is validator.
+    pub fn is_validator(&self) -> bool {
+        self.node_type == NodeType::Validator
     }
 }

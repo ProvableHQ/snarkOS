@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::LedgerService;
+use crate::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService};
 use snarkvm::{
     ledger::{
         Block,
@@ -21,17 +21,16 @@ use snarkvm::{
         PendingBlock,
         Transaction,
         committee::Committee,
-        narwhal::{BatchCertificate, Data, Subdag, Transmission, TransmissionID},
+        narwhal::{BatchCertificate, Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
     },
     prelude::{Address, ConsensusVersion, Field, Network, Result, Zero, bail},
 };
 
-use indexmap::IndexMap;
 use std::ops::Range;
 
 /// A ledger service for a prover.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct ProverLedgerService<N: Network> {
     _network: std::marker::PhantomData<N>,
 }
@@ -107,12 +106,12 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
         bail!("Solution '{solution_id}' does not exist in prover")
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
         bail!("Transaction '{transaction_id}' does not exist in prover")
     }
 
@@ -173,36 +172,14 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         &self,
         _block: Block<N>,
         _prefix: &[PendingBlock<N>],
-    ) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>> {
-        Err(CheckBlockError::from(anyhow::anyhow!("Cannot check block subDAG in prover")))
-    }
-
-    fn check_block_content(
-        &self,
-        _pending_block: PendingBlock<N>,
-    ) -> std::result::Result<Block<N>, CheckBlockError<N>> {
-        Err(CheckBlockError::from(anyhow::anyhow!("Cannot check block content in prover")))
-    }
-
-    /// Checks the given block is valid next block.
-    fn check_next_block(&self, _block: &Block<N>) -> Result<()> {
-        Ok(())
-    }
-
-    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
-    #[cfg(feature = "ledger-write")]
-    fn prepare_advance_to_next_quorum_block(
-        &self,
-        _subdag: Subdag<N>,
-        _transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
-        bail!("Cannot prepare advance to next quorum block in prover")
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>> {
+        unimplemented!()
     }
 
     /// Adds the given block as the next block in the ledger.
     #[cfg(feature = "ledger-write")]
-    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
-        bail!("Cannot advance to next block in prover - {block}")
+    fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError> {
+        Err(BeginLedgerUpdateError::NotSupportedForProver)
     }
 
     /// Returns the spent cost for a transaction in microcredits.
@@ -212,5 +189,10 @@ impl<N: Network> LedgerService<N> for ProverLedgerService<N> {
         _consensus_version: ConsensusVersion,
     ) -> Result<u64> {
         bail!("Cannot compute spent_cost in prover")
+    }
+
+    fn is_stopped(&self) -> bool {
+        // No ledger to check against.
+        false
     }
 }

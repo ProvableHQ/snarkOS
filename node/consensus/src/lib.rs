@@ -27,7 +27,7 @@ extern crate snarkos_node_metrics as metrics;
 use snarkos_account::Account;
 use snarkos_node_bft::{
     BFT,
-    MAX_BATCH_DELAY_IN_MS,
+    MAX_BATCH_DELAY,
     Primary,
     helpers::{
         ConsensusReceiver,
@@ -46,6 +46,7 @@ use snarkos_utilities::NodeDataDir;
 
 use snarkvm::{
     ledger::{
+        CheckBlockError,
         block::Transaction,
         narwhal::{BatchHeader, Data, Subdag, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
@@ -56,6 +57,7 @@ use snarkvm::{
 
 use aleo_std::StorageMode;
 use anyhow::{Context, Result};
+use cfg_if::cfg_if;
 use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
@@ -63,8 +65,11 @@ use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::{Mutex, RwLock};
-use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{future::Future, net::SocketAddr, num::NonZeroUsize, sync::Arc};
+use tokio::{
+    sync::{Notify, oneshot},
+    task::JoinHandle,
+};
 
 #[cfg(feature = "metrics")]
 use std::collections::HashMap;
@@ -112,6 +117,8 @@ pub struct Consensus<N: Network> {
     ping: Arc<Ping<N>>,
     /// The block sync logic.
     block_sync: Arc<BlockSync<N>>,
+    /// Notifies when a block is committed, and relays it to the primary.
+    block_commit_notify: Arc<Notify>,
 }
 
 impl<N: Network> Consensus<N> {
@@ -134,7 +141,8 @@ impl<N: Network> Consensus<N> {
         // Initialize the Narwhal transmissions.
         let transmissions = Arc::new(BFTPersistentStorage::open(storage_mode.clone())?);
         // Initialize the Narwhal storage.
-        let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64);
+        let storage = NarwhalStorage::new(ledger.clone(), transmissions, BatchHeader::<N>::MAX_GC_ROUNDS as u64)
+            .with_context(|| "Failed to initialize the BFT storage")?;
         // Initialize the BFT.
         let bft = BFT::new(
             account,
@@ -161,6 +169,7 @@ impl<N: Network> Consensus<N> {
             transmissions_tracker: Default::default(),
             handles: Default::default(),
             ping: ping.clone(),
+            block_commit_notify: Arc::new(Notify::new()),
         };
 
         info!("Starting the consensus instance...");
@@ -499,13 +508,19 @@ impl<N: Network> Consensus<N> {
 
         // Process the unconfirmed transactions in the memory pool.
         //
-        // TODO (kaimast): This shouldn't happen periodically but only when new batches/blocks are accepted
-        // by the BFT layer, after which the worker's ready queue may have capacity for more transactions/solutions.
+        // This loop wakes up either when a block is committed (signaled via notify) or after a timeout.
+        // When a block is committed, the BFT workers have freed capacity for more transmissions.
+        // The timeout serves as a fallback for startup or idle periods when blocks are not being produced.
+        //
+        // TODO(kaimast): wake up the loop after a proposal is created, not only when a block commits.
         let self_ = self.clone();
         self.spawn(async move {
             loop {
-                // Sleep briefly.
-                tokio::time::sleep(Duration::from_millis(MAX_BATCH_DELAY_IN_MS)).await;
+                // Wait for either a block commit notification or timeout.
+                tokio::select! {
+                    _ = self_.block_commit_notify.notified() => {}
+                    _ = tokio::time::sleep(MAX_BATCH_DELAY) => {}
+                }
                 // Process the unconfirmed transactions in the memory pool.
                 if let Err(err) = self_.process_unconfirmed_transactions().await {
                     warn!("{}", flatten_error(err.context("Cannot process unconfirmed transactions")));
@@ -519,11 +534,16 @@ impl<N: Network> Consensus<N> {
     }
 
     /// Attempts to build a new block from the given subDAG, and (tries to) advance the legder to it.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the ledger was advanced to the next block.
+    /// - `Ok(false)` if the block may be valide but the ledger already advanced.
+    /// - `Err(anyhow::Error)` for incorrect blocks and any other error.
     async fn process_bft_subdag(
         &self,
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-        callback: oneshot::Sender<Result<()>>,
+        callback: oneshot::Sender<Result<bool>>,
     ) {
         // Try to advance to the next block.
         let self_ = self.clone();
@@ -531,21 +551,28 @@ impl<N: Network> Consensus<N> {
         let result = spawn_blocking! { self_.try_advance_to_next_block(subdag, transmissions_).with_context(|| "Unable to advance to the next block") };
 
         // If the block failed to advance, reinsert the transmissions into the memory pool.
-        if result.is_err() {
-            // On failure, reinsert the transmissions into the memory pool.
-            self.reinsert_transmissions(transmissions).await;
+        match result {
+            Ok(true) => {
+                // On success, notify that the BFT workers have freed capacity for more transmissions.
+                self.block_commit_notify.notify_one();
+            }
+            Ok(false) | Err(_) => self.reinsert_transmissions(transmissions).await,
         }
-        // Send the callback **after** advancing to the next block.
-        // Note: We must await the block to be advanced before sending the callback.
+
         callback.send(result).ok();
     }
 
     /// Attempts to advance the ledger to the next block, and updates the metrics (if enabled) accordingly.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the ledger was advanced to the next block.
+    /// - `Ok(false)` if the block may be valid but the ledger already advanced.
+    /// - `Err(anyhow::Error)` for incorrect blocks and any other error.
     fn try_advance_to_next_block(
         &self,
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         #[cfg(feature = "metrics")]
         let start = subdag.leader_certificate().batch_header().timestamp();
         #[cfg(feature = "metrics")]
@@ -554,20 +581,72 @@ impl<N: Network> Consensus<N> {
         let current_block_timestamp = self.ledger.latest_block().header().metadata().timestamp();
 
         // Create the candidate next block.
-        let next_block = self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions)?;
-        // Check that the block is well-formed.
-        self.ledger.check_next_block(&next_block)?;
+        let ledger_update = self.ledger.begin_ledger_update()?;
+
+        let prepare_instant = std::time::Instant::now();
+        let block = match ledger_update.prepare_advance_to_next_quorum_block(subdag, transmissions) {
+            Ok(block) => block,
+            Err(err) => return Err(err.into_anyhow()),
+        };
+        let prepare_elapsed = prepare_instant.elapsed();
+        trace!("prepare_advance_to_next_quorum_block took {:.3}s", prepare_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::PREPARE_ADVANCE_SECS, prepare_elapsed.as_secs_f64());
+
+        let check_instant = std::time::Instant::now();
+        cfg_if! {
+            if #[cfg(feature = "test_network")] {
+                // If we are using a hotswapped dev committee, skip checking the block.
+                let result = if self.ledger.dev_committee_for_round(block.round())?.is_some() {
+                    Ok(block)
+                } else {
+                    ledger_update.check_next_block(block)
+                };
+            } else {
+                let result = ledger_update.check_next_block(block);
+            }
+        }
+
+        let block = match result {
+            Ok(block) => block,
+            Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                debug!("The given block hash already exists in the ledger");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidHeight { .. }) => {
+                debug!("The ledger advanced while we were constructing the next block");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidRound { new, previous }) => {
+                debug!("The subDAG round is too low. Expected >{previous}, got {new}");
+                return Ok(false);
+            }
+            Err(err) => return Err(err.into_anyhow()),
+        };
+
+        let check_elapsed = check_instant.elapsed();
+        trace!("check_next_block took {:.3}s", check_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::CHECK_NEXT_BLOCK_SECS, check_elapsed.as_secs_f64());
+
+        let block_height = block.height();
+
         // Advance to the next block.
-        self.ledger.advance_to_next_block(&next_block)?;
+        let advance_instant = std::time::Instant::now();
+        ledger_update.advance_to_next_block(&block)?;
+        let advance_elapsed = advance_instant.elapsed();
+        trace!("advance_to_next_block took {:.3}s", advance_elapsed.as_secs_f64());
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_SECS, advance_elapsed.as_secs_f64());
 
         #[cfg(feature = "telemetry")]
-        // Fetch the latest committee.
+        // Fetch the committee lookback for the latest round.
         // Note: Do not abort here if this returns an error, because the committee is only needed for telemetry,
         // not for block advancement itself.
-        let latest_committee = self.ledger.current_committee();
+        let latest_committee = self.ledger.get_committee_lookback_for_round(self.ledger.latest_round());
 
         // If the next block starts a new epoch, clear the existing solutions.
-        if next_block.height() % N::NUM_BLOCKS_PER_EPOCH == 0 {
+        if block_height.is_multiple_of(N::NUM_BLOCKS_PER_EPOCH) {
             // Clear the solutions queue.
             self.solutions_queue.lock().clear();
             // Clear the worker solutions.
@@ -584,7 +663,7 @@ impl<N: Network> Consensus<N> {
         }
 
         // Make block sync aware of the new block.
-        self.block_sync.set_sync_height(next_block.height());
+        self.block_sync.set_sync_height(block_height);
 
         // TODO(kaimast): This should also remove any transmissions/solutions contained in the block from the mempool.
         // Removal currently happens when Consensus eventually passes them to the worker, which then just discards them.
@@ -593,17 +672,17 @@ impl<N: Network> Consensus<N> {
         {
             let now_utc = snarkos_node_bft::helpers::now_utc();
             let elapsed = std::time::Duration::from_secs((now_utc.unix_timestamp() - start) as u64);
-            let next_block_timestamp = next_block.header().metadata().timestamp();
+            let next_block_timestamp = block.header().metadata().timestamp();
             let next_block_utc = snarkos_node_bft::helpers::to_utc_datetime(next_block_timestamp);
             let block_latency = next_block_timestamp - current_block_timestamp;
             let block_lag = (now_utc - next_block_utc).whole_milliseconds();
 
-            let proof_target = next_block.header().proof_target();
-            let coinbase_target = next_block.header().coinbase_target();
-            let cumulative_proof_target = next_block.header().cumulative_proof_target();
+            let proof_target = block.header().proof_target();
+            let coinbase_target = block.header().coinbase_target();
+            let cumulative_proof_target = block.header().cumulative_proof_target();
 
             // Calculate latency for all transmissions included in this block.
-            metrics::add_transmission_latency_metric(&self.transmissions_tracker, &next_block);
+            metrics::add_transmission_latency_metric(&self.transmissions_tracker, &block);
 
             metrics::gauge(metrics::consensus::COMMITTED_CERTIFICATES, num_committed_certificates as f64);
             metrics::histogram(metrics::consensus::CERTIFICATE_COMMIT_LATENCY, elapsed.as_secs_f64());
@@ -615,30 +694,40 @@ impl<N: Network> Consensus<N> {
 
             // If telemetry is enabled, update participation scores.
             #[cfg(feature = "telemetry")]
-            match latest_committee {
-                Ok(latest_committee) => {
-                    // Retrieve the latest participation scores.
-                    let participation_scores = self
-                        .bft()
-                        .primary()
-                        .gateway()
-                        .validator_telemetry()
-                        .get_participation_scores(&latest_committee);
+            {
+                match latest_committee {
+                    Ok(latest_committee) => {
+                        // Retrieve the individual participation scores.
+                        let participation_scores = self
+                            .bft()
+                            .primary()
+                            .gateway()
+                            .validator_telemetry()
+                            .get_participation_scores(&latest_committee);
 
-                    // Log the participation scores.
-                    for (address, participation_score) in participation_scores {
-                        metrics::histogram_label(
-                            metrics::consensus::VALIDATOR_PARTICIPATION,
-                            "validator_address",
-                            address.to_string(),
-                            participation_score,
-                        )
+                        // Export the certificate and signature participation scores as individual gauges.
+                        for (address, (certificate_score, signature_score)) in participation_scores {
+                            let address_str = address.to_string();
+                            metrics::gauge_label(
+                                metrics::consensus::VALIDATOR_CERTIFICATE_PARTICIPATION,
+                                "validator_address",
+                                address_str.clone(),
+                                certificate_score,
+                            );
+                            metrics::gauge_label(
+                                metrics::consensus::VALIDATOR_SIGNATURE_PARTICIPATION,
+                                "validator_address",
+                                address_str,
+                                signature_score,
+                            );
+                        }
                     }
+                    Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
                 }
-                Err(err) => warn!("{}", flatten_error(err.context("Failed to get latest committee for telemetry"))),
             }
         }
-        Ok(())
+
+        Ok(true)
     }
 
     /// Reinserts the given transmissions into the memory pool.
@@ -649,7 +738,7 @@ impl<N: Network> Consensus<N> {
             match self.reinsert_transmission(transmission_id, transmission).await {
                 Ok(true) => {}
                 Ok(false) => debug!(
-                    "Unable to reinsert transmission {}.{} into the memory pool. Already exists.",
+                    "Unable to reinsert transmission {}:{} into the memory pool. Already exists.",
                     fmt_id(transmission_id),
                     fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
                 ),

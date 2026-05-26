@@ -23,7 +23,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use tokio::sync::oneshot;
+use tokio::{runtime::Handle, sync::oneshot};
 
 use tracing::{debug, error, trace};
 
@@ -71,15 +71,19 @@ pub struct SignalHandler {
 
     /// This receiver is used to wait for the node to be stopped.
     stopped_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+
+    /// An optional tokio runtime handle.
+    pub handle: Option<Handle>,
 }
 
 impl SignalHandler {
     /// Spawns a background tasks that listens for Ctrl+C and returns `Self`.
-    pub fn new() -> Arc<Self> {
+    pub fn new(handle: Option<Handle>) -> Arc<Self> {
         let (stopped_sender, stopped_receiver) = oneshot::channel();
         let obj = Arc::new(Self {
             stopped_sender: RwLock::new(Some(stopped_sender)),
             stopped_receiver: Mutex::new(Some(stopped_receiver)),
+            handle,
         });
 
         {

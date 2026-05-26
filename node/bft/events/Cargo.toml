@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft-events"
-version = "4.6.3"
+version = "4.6.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Events for the gateway in a decentralized operating system"
 homepage = "https://aleo.org"
@@ -19,9 +19,18 @@ edition = "2024"
 [features]
 default = [ ]
 metrics = [ "snarkvm/metrics" ]
+test-helpers = [ "dep:rand_chacha", "dep:rand", "dep:proptest" ]
 
 [dependencies.anyhow]
 workspace = true
+
+[dependencies.rand]
+workspace = true
+optional = true
+
+[dependencies.rand_chacha]
+workspace = true
+optional = true
 
 [dependencies.bytes]
 workspace = true
@@ -50,8 +59,9 @@ features = [ "codec" ]
 [dependencies.tracing]
 workspace = true
 
-[dev-dependencies.proptest]
+[dependencies.proptest]
 workspace = true
+optional = true
 
 [dev-dependencies.snarkvm]
 workspace = true
@@ -66,3 +76,7 @@ workspace = true
 [dev-dependencies.snarkos-node-sync-locators]
 workspace = true
 features = [ "test" ]
+
+[dev-dependencies.snarkos-node-bft-events]
+path = "."
+features = [ "test-helpers" ]
