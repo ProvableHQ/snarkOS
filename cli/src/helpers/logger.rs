@@ -80,6 +80,7 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("axum=warn".parse().unwrap())
             .add_directive("ureq=warn".parse().unwrap())
             .add_directive("rustls=warn".parse().unwrap())
+            .add_directive("tokio_postgres=warn".parse().unwrap())
     } else {
         // Disable logs from third-party crates by default.
         filter
@@ -93,6 +94,7 @@ fn parse_log_verbosity(verbosity: u8) -> Result<EnvFilter> {
             .add_directive("axum=off".parse().unwrap())
             .add_directive("ureq=off".parse().unwrap())
             .add_directive("rustls=off".parse().unwrap())
+            .add_directive("tokio_postgres=off".parse().unwrap())
     };
 
     let filter = if verbosity >= 5 {
