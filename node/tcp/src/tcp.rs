@@ -436,10 +436,18 @@ impl Tcp {
                 match listener.accept().await {
                     Ok((stream, addr)) => tcp.handle_connection(stream, addr),
                     Err(e) => {
-                        error!(parent: tcp.span(), "Failed to accept a connection: {e}");
-                        // if we ran out of FDs, sleep to avoid spinning 100% CPU
-                        // while waiting for a slot to free up
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        match e.kind() {
+                            // A peer aborted/reset before accept completed; no backoff - the listener is healthy.
+                            io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset => {
+                                debug!(parent: tcp.span(), "Transient accept error: {e}");
+                            }
+                            // Otherwise, assume fd / memory exhaustion (EMFILE, ENFILE, ENOBUFS, ...)
+                            // and back off so we don't spin at 100% CPU waiting for a slot to free.
+                            _ => {
+                                error!(parent: tcp.span(), "Couldn't accept a connection: {e}");
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
+                        }
                     }
                 }
             }
