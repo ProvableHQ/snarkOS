@@ -35,7 +35,7 @@ use parking_lot::Mutex;
 use tokio::{
     io::split,
     net::{TcpListener, TcpSocket, TcpStream},
-    sync::oneshot,
+    sync::{OwnedSemaphorePermit, Semaphore, oneshot},
     task::{JoinHandle, JoinSet},
     time::timeout,
 };
@@ -426,16 +426,35 @@ impl Tcp {
         // Use a channel to know when the listening task is ready.
         let (tx, rx) = oneshot::channel();
 
+        // Cap the number of in-flight inbound connection handlers; the hard
+        // connection limits are still enforced inside `can_add_connection`;
+        // this bound exists separately to prevent per-SYN task-creation overhead
+        // from being unbounded under flood.
+        let inbound_permits = Arc::new(Semaphore::new(self.config.max_connections as usize));
+
         let tcp = self.clone();
         let listening_task = tokio::spawn(async move {
             trace!(parent: tcp.span(), "Spawned the listening task");
             tx.send(()).unwrap(); // safe; the channel was just opened
 
             loop {
-                // Await for a new connection.
+                // Wait for capacity before accepting.
+                let permit = match inbound_permits.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        // semaphore is never closed in practice; bail defensively
+                        error!(parent: tcp.span(), "Inbound permit semaphore closed unexpectedly");
+                        return;
+                    }
+                };
+
+                // Await connection requests from peers.
                 match listener.accept().await {
-                    Ok((stream, addr)) => tcp.handle_connection(stream, addr),
+                    Ok((stream, addr)) => tcp.handle_connection(stream, addr, permit),
                     Err(e) => {
+                        // Free the permit immediately.
+                        drop(permit);
+
                         match e.kind() {
                             // A peer aborted/reset before accept completed; no backoff - the listener is healthy.
                             io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset => {
@@ -493,7 +512,7 @@ impl Tcp {
     }
 
     /// Handles a new inbound connection.
-    fn handle_connection(&self, stream: TcpStream, addr: SocketAddr) {
+    fn handle_connection(&self, stream: TcpStream, addr: SocketAddr, permit: OwnedSemaphorePermit) {
         debug!(parent: self.span(), "Received a connection from {addr}");
 
         if !self.can_add_connection() || self.is_self_connect(addr) {
@@ -505,6 +524,9 @@ impl Tcp {
 
         let tcp = self.clone();
         tokio::spawn(async move {
+            // The permit is released when the connection is accepted or fails.
+            let _permit = permit;
+
             if let Err(e) = tcp.adapt_stream(stream, addr, ConnectionSide::Responder).await {
                 tcp.connecting.lock().remove(&addr);
                 tcp.known_peers().register_failure(addr.ip());
@@ -826,7 +848,9 @@ mod tests {
 
         // Handle the connection.
         let stream = TcpStream::connect(peer2_ip).await.unwrap();
-        tcp.handle_connection(stream, peer2_ip);
+        let inbound_permits = Arc::new(Semaphore::new(1));
+        let permit = inbound_permits.clone().acquire_owned().await.unwrap();
+        tcp.handle_connection(stream, peer2_ip, permit);
         assert!(!tcp.can_add_connection());
         assert_eq!(tcp.num_connected(), 1);
         assert_eq!(tcp.num_connecting(), 0);
