@@ -4685,7 +4685,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slipstream-plugin-postgres"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ProvableHQ/slipstream-plugin-postgres.git?rev=5aa08d5cd#5aa08d5cd9af709df716a1cd6ce0f2bb9e75cc4b"
+source = "git+ssh://git@github.com/ProvableHQ/slipstream-plugin-postgres.git?rev=aee9ce3c33#aee9ce3c337e5db320f56f6517eabed695b53f9b"
 dependencies = [
  "anyhow",
  "bytes",
