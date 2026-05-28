@@ -709,7 +709,8 @@ impl<N: Network> Consensus<N> {
                         // Note: Exporting all committee members from every validator causes overcounting when
                         // dashboards aggregate these metrics across validator instances.
                         let validator_address = self.bft().primary().gateway().account().address();
-                        if let Some((certificate_score, signature_score)) = participation_scores.get(&validator_address) {
+                        if let Some((certificate_score, signature_score)) = participation_scores.get(&validator_address)
+                        {
                             let address_str = validator_address.to_string();
                             metrics::gauge_label(
                                 metrics::consensus::VALIDATOR_CERTIFICATE_PARTICIPATION,
