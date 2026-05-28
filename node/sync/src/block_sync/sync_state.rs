@@ -24,6 +24,19 @@ pub enum SyncStatus {
     Synced,   // Fully synced with peers
 }
 
+/// Whether the BFT layer is using fast-sync (outside the GC range) or DAG sync (within GC range).
+///
+/// This is `None` for nodes without a BFT layer (clients, provers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BftSyncMode {
+    /// Block-based synchronization when outside the GC range.
+    /// Certificates are not inserted into the DAG.
+    Fast,
+    /// DAG-based synchronization when within the GC range.
+    /// Certificates are inserted into the DAG and consensus runs normally.
+    Dag,
+}
+
 #[derive(Clone)]
 pub(super) struct SyncState {
     /// The height we synced to already
@@ -38,12 +51,21 @@ pub(super) struct SyncState {
     status: SyncStatus,
     /// Last time the sync state changed
     last_change: Instant,
+    /// The BFT sync mode (fast or DAG), set by the BFT layer.
+    /// `None` for nodes without a BFT layer (clients, provers).
+    bft_sync_mode: Option<BftSyncMode>,
 }
 
 impl Default for SyncState {
     fn default() -> Self {
         // `status` is set to `Synced` by default to ensure validators of a newly created chain generate blocks.
-        Self { sync_height: 0, greatest_peer_height: None, status: SyncStatus::Synced, last_change: Instant::now() }
+        Self {
+            sync_height: 0,
+            greatest_peer_height: None,
+            status: SyncStatus::Synced,
+            last_change: Instant::now(),
+            bft_sync_mode: None,
+        }
     }
 }
 
@@ -62,7 +84,7 @@ impl SyncState {
 
     /// Returns `true` if there a blocks to sync from other nodes.
     /// Returns `false` if the node has fully caught up with the rest of the network.
-    pub fn can_block_sync(&self) -> bool {
+    pub fn can_issue_new_block_requests(&self) -> bool {
         // Return true if sync state is false even if we there are no known blocks to fetch,
         // because otherwise nodes will never  switch to synced at startup.
         if let Some(num_behind) = self.num_blocks_behind() {
@@ -87,6 +109,21 @@ impl SyncState {
     /// Returns the greatest block height of any connected peer.
     pub fn get_greatest_peer_height(&self) -> Option<u32> {
         self.greatest_peer_height
+    }
+
+    /// Returns the BFT sync mode, or `None` if no BFT layer is attached.
+    pub fn get_bft_sync_mode(&self) -> Option<BftSyncMode> {
+        self.bft_sync_mode
+    }
+
+    /// Sets the BFT sync mode.
+    ///
+    /// # Returns
+    /// The previous BFT sync mode (if any).
+    pub fn set_bft_sync_mode(&mut self, mode: BftSyncMode) -> Option<BftSyncMode> {
+        let prev = self.bft_sync_mode;
+        self.bft_sync_mode = Some(mode);
+        prev
     }
 
     /// Update the height we are synced to.

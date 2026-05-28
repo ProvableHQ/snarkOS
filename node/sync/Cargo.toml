@@ -24,7 +24,7 @@ locktick = [
   "snarkos-node-router/locktick",
 ]
 serial = ["snarkos-node-bft-ledger-service/serial"]
-metrics = [ "dep:snarkos-node-metrics" ]
+metrics = [ "dep:snarkos-node-metrics", "snarkos-node-network/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]
 test = [ "snarkos-node-sync-locators/test" ]
 

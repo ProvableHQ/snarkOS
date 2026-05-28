@@ -51,15 +51,17 @@ use axum::{
 use axum_extra::response::ErasedJson;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
+use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
+use tracing::Span;
 
 /// The default port used for the REST API
 pub const DEFAULT_REST_PORT: u16 = 3030;
@@ -67,6 +69,9 @@ pub const DEFAULT_REST_PORT: u16 = 3030;
 /// The API version prefixes.
 pub const API_VERSION_V1: &str = "v1";
 pub const API_VERSION_V2: &str = "v2";
+
+/// The capacity of the LRU holding recently requested blocks.
+const BLOCK_CACHE_SIZE: usize = 128;
 
 /// A REST API server for the ledger.
 #[derive(Clone)]
@@ -89,6 +94,8 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     num_verifying_executions: Arc<Semaphore>,
     /// The number of ongoing solution verifications via REST.
     num_verifying_solutions: Arc<Semaphore>,
+    /// A cache containing recently requested blocks.
+    block_cache: Arc<Mutex<LruCache<N::BlockHash, ErasedJson>>>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -113,6 +120,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             num_verifying_deploys: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS)),
             num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
             num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
+            block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
         };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
@@ -131,13 +139,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub const fn handles(&self) -> &Arc<Mutex<Vec<JoinHandle<()>>>> {
         &self.handles
     }
+
+    /// Shuts down the REST instance.
+    pub fn shut_down(&self) {
+        self.handles.lock().iter().for_each(|handle| handle.abort());
+    }
 }
 
 impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn build_routes(&self, rest_rps: u32) -> axum::Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
@@ -159,13 +172,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 .expect("Couldn't set up rate limiting for the REST server!"),
         );
 
-        let routes = axum::Router::new()
-
-            // All the endpoints before the call to `route_layer` are protected with JWT auth.
+        // Build the JWT auth-protected endpoints. #[cfg] cannot appear inside a method chain, so we
+        // build this router as a named binding and conditionally extend it before applying the layer.
+        let auth_routes = axum::Router::new()
             .route("/node/address", get(Self::get_node_address))
             .route("/program/{id}/mapping/{name}", get(Self::get_mapping_values))
-            .route("/db_backup", post(Self::db_backup))
-            .route_layer(middleware::from_fn(auth_middleware))
+            .route("/db_backup", post(Self::db_backup));
+
+        // Slipstream plugin management endpoints require auth.
+        #[cfg(feature = "slipstream-plugins")]
+        let auth_routes = auth_routes
+            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
+            .route(
+                "/slipstream/plugins/{name}",
+                // TODO: PUT (reload) is not yet implemented.
+                axum::routing::delete(Self::slipstream_unload_plugin),
+            );
+
+        let routes = axum::Router::new()
+            .merge(auth_routes.route_layer(middleware::from_fn(auth_middleware)))
+
+            // All endpoints declared after here are not protected
 
              // Get ../consensus_version
             .route("/consensus_version", get(Self::get_consensus_version))
@@ -186,7 +213,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/transaction/unconfirmed/{id}", get(Self::get_unconfirmed_transaction))
             .route("/transaction/broadcast", post(Self::transaction_broadcast))
 
-            // POST ../solution/broadcast
+            // GET and POST ../solution/..
+            .route("/solution/limits/{prover_address}", get(Self::get_solution_limits_for_prover))
             .route("/solution/broadcast", post(Self::solution_broadcast))
 
             // GET ../find/..
@@ -256,26 +284,49 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
         // If the `history` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history")]
-        let routes = routes.route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history));
+        let routes = routes
+            .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
+            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch));
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history-staking-rewards")]
         let routes = routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward));
 
+        let trace_layer = TraceLayer::new_for_http()
+            .make_span_with(|request: &Request<_>| {
+                let addr = request
+                    .extensions()
+                    .get::<ConnectInfo<SocketAddr>>()
+                    .map(|ConnectInfo(addr)| addr.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                // Create a span that includes method, path, and our extracted IP
+                tracing::info_span!(
+                    "REST",
+                    method = %request.method(),
+                    uri = %request.uri().path(),
+                    addr = %addr,
+                )
+            })
+            .on_request(|_request: &Request<_>, _span: &Span| {
+                info!("Received a request");
+            })
+            .on_response(|_response: &Response<_>, latency: Duration, _span: &Span| {
+                info!("Finished request in {:?}", latency);
+            });
+
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
-            // Enable tower-http tracing.
-            .layer(TraceLayer::new_for_http())
-            // Custom logging.
-            .layer(middleware::map_request(log_middleware))
-            // Enable CORS.
-            .layer(cors)
             // Cap the request body size at 512KiB.
             .layer(DefaultBodyLimit::max(512 * 1024))
             .layer(GovernorLayer {
                 config: governor_config.into(),
             })
+            // Enable CORS.
+            .layer(cors)
+            // Enable tower-http tracing.
+            .layer(trace_layer)
     }
 
     async fn spawn_server(&mut self, rest_ip: SocketAddr, rest_rps: u32) -> Result<()> {
@@ -311,12 +362,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         self.handles.lock().push(handle);
         Ok(())
     }
-}
-
-/// Creates a log message for every HTTP request.
-async fn log_middleware(ConnectInfo(addr): ConnectInfo<SocketAddr>, request: Request<Body>) -> Request<Body> {
-    info!("Received '{} {}' from '{addr}'", request.method(), request.uri());
-    request
 }
 
 /// Converts errors to the old style for the v1 API.

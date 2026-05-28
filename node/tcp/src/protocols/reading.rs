@@ -16,6 +16,7 @@
 #[cfg(doc)]
 use crate::{Config, protocols::Handshake};
 use crate::{
+    Connection,
     ConnectionSide,
     P2P,
     Tcp,
@@ -25,10 +26,15 @@ use crate::{
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::StreamExt;
-use std::{io, net::SocketAddr};
+use std::{
+    io,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 use tokio::{
     io::AsyncRead,
     sync::{mpsc, oneshot},
+    time::timeout,
 };
 use tokio_util::codec::{Decoder, FramedRead};
 use tracing::*;
@@ -60,6 +66,9 @@ where
     /// The default value is 1024KiB.
     const INITIAL_BUFFER_SIZE: usize = 1024 * 1024;
 
+    /// The maximum time the node will wait for a new message before considering the connection dead.
+    const IDLE_TIMEOUT: Duration = Duration::from_secs(150);
+
     /// The final (deserialized) type of inbound messages.
     type Message: Send;
 
@@ -68,7 +77,7 @@ where
 
     /// Prepares the node to receive messages.
     async fn enable_reading(&self) {
-        let (conn_sender, mut conn_receiver) = mpsc::unbounded_channel();
+        let (conn_sender, mut conn_receiver) = mpsc::channel(self.tcp().config().max_connections as usize);
 
         // use a channel to know when the reading task is ready
         let (tx_reading, rx_reading) = oneshot::channel();
@@ -110,7 +119,7 @@ trait ReadingInternal: Reading {
     fn map_codec<T: AsyncRead>(
         &self,
         framed: FramedRead<T, Self::Codec>,
-        addr: SocketAddr,
+        conn: &Connection,
     ) -> FramedRead<T, CountingCodec<Self::Codec>>;
 }
 
@@ -121,7 +130,7 @@ impl<R: Reading> ReadingInternal for R {
         let codec = self.codec(addr, !conn.side());
         let reader = conn.reader.take().expect("missing connection reader!");
         let framed = FramedRead::new(reader, codec);
-        let mut framed = self.map_codec(framed, addr);
+        let mut framed = self.map_codec(framed, &conn);
 
         // the connection will notify the reading task once it's fully ready
         let (tx_conn_ready, rx_conn_ready) = oneshot::channel();
@@ -131,25 +140,26 @@ impl<R: Reading> ReadingInternal for R {
             framed.read_buffer_mut().reserve(Self::INITIAL_BUFFER_SIZE);
         }
 
-        let (inbound_message_sender, mut inbound_message_receiver) = mpsc::channel(self.message_queue_depth());
+        let (inbound_message_sender, mut inbound_message_receiver) =
+            mpsc::channel::<(R::Message, QueuedMessageGuard)>(self.message_queue_depth());
 
         // use a channel to know when the processing task is ready
         let (tx_processing, rx_processing) = oneshot::channel::<()>();
 
         // the task for processing parsed messages
         let self_clone = self.clone();
+        let conn_span = conn.span().clone();
         let inbound_processing_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
-            trace!(parent: node.span(), "spawned a task for processing messages from {addr}");
+            trace!(parent: &conn_span, "spawned a task for processing messages");
             tx_processing.send(()).unwrap(); // safe; the channel was just opened
 
-            while let Some(msg) = inbound_message_receiver.recv().await {
+            while let Some((msg, _guard)) = inbound_message_receiver.recv().await {
                 if let Err(e) = self_clone.process_message(addr, msg).await {
-                    error!(parent: node.span(), "can't process a message from {addr}: {e}");
+                    error!(parent: &conn_span, "can't process a message: {e}");
                     node.known_peers().register_failure(addr.ip());
                 }
-                #[cfg(feature = "metrics")]
-                metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
+                // _guard drops here, after process_message completes
             }
         }));
         let _ = rx_processing.await;
@@ -160,35 +170,61 @@ impl<R: Reading> ReadingInternal for R {
 
         // the task for reading messages from a stream
         let node = self.tcp().clone();
+        let conn_span = conn.span().clone();
         let reader_task = tokio::spawn(Box::pin(async move {
-            trace!(parent: node.span(), "spawned a task for reading messages from {addr}");
+            trace!(parent: &conn_span, "spawned a task for reading messages");
             tx_reader.send(()).unwrap(); // safe; the channel was just opened
 
             // postpone reads until the connection is fully established; if the process fails,
             // this task gets aborted, so there is no need for a dedicated timeout
             let _ = rx_conn_ready.await;
 
-            while let Some(bytes) = framed.next().await {
-                match bytes {
-                    Ok(msg) => {
+            // dropped message log suppression helpers
+            let mut dropped_count: usize = 0;
+            let mut last_drop_log = Instant::now();
+
+            loop {
+                let next_frame_future = framed.next();
+                let read_result = match timeout(Self::IDLE_TIMEOUT, next_frame_future).await {
+                    Ok(res) => res, // IO completed (success or error)
+                    Err(_) => {
+                        debug!(parent: &conn_span, "connection timed out due to inactivity");
+                        break;
+                    }
+                };
+                match read_result {
+                    Some(Ok(msg)) => {
                         // send the message for further processing
-                        if let Err(e) = inbound_message_sender.try_send(msg) {
-                            error!(parent: node.span(), "can't process a message from {addr}: {e}");
+                        if let Err(e) = inbound_message_sender.try_send((msg, QueuedMessageGuard::new())) {
                             node.stats().register_failure();
-                            if matches!(e, mpsc::error::TrySendError::Closed(_)) {
-                                break;
+                            match e {
+                                mpsc::error::TrySendError::Full(_) => {
+                                    // avoid log flooding
+                                    dropped_count += 1;
+                                    if last_drop_log.elapsed() >= Duration::from_secs(1) {
+                                        warn_about_dropped_messages(&conn_span, &mut dropped_count, &mut last_drop_log);
+                                    }
+                                }
+                                mpsc::error::TrySendError::Closed(_) => {
+                                    error!(parent: &conn_span, "inbound channel closed");
+                                    break;
+                                }
                             }
+                        } else if dropped_count != 0 {
+                            warn_about_dropped_messages(&conn_span, &mut dropped_count, &mut last_drop_log);
+                            debug!(parent: &conn_span, "the inbound queue is no longer saturated");
                         }
                         #[cfg(feature = "metrics")]
                         metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
                     }
-                    Err(e) => {
-                        error!(parent: node.span(), "can't read from {addr}: {e}");
+                    Some(Err(e)) => {
+                        error!(parent: &conn_span, "can't read: {e}");
                         node.known_peers().register_failure(addr.ip());
                         if node.config().fatal_io_errors.contains(&e.kind()) {
                             break;
                         }
                     }
+                    None => break, // end of stream
                 }
             }
 
@@ -206,9 +242,9 @@ impl<R: Reading> ReadingInternal for R {
     fn map_codec<T: AsyncRead>(
         &self,
         framed: FramedRead<T, Self::Codec>,
-        addr: SocketAddr,
+        conn: &Connection,
     ) -> FramedRead<T, CountingCodec<Self::Codec>> {
-        framed.map_decoder(|codec| CountingCodec { codec, node: self.tcp().clone(), addr, acc: 0 })
+        framed.map_decoder(|codec| CountingCodec { codec, node: self.tcp().clone(), acc: 0, span: conn.span().clone() })
     }
 }
 
@@ -216,8 +252,8 @@ impl<R: Reading> ReadingInternal for R {
 struct CountingCodec<D: Decoder> {
     codec: D,
     node: Tcp,
-    addr: SocketAddr,
     acc: usize,
+    span: Span,
 }
 
 impl<D: Decoder> Decoder for CountingCodec<D> {
@@ -231,11 +267,11 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
         let read_len = initial_buf_len - final_buf_len + self.acc;
 
         if read_len != 0 {
-            trace!(parent: self.node.span(), "read {}B from {}", read_len, self.addr);
+            trace!(parent: &self.span, "read {read_len}B");
 
             if ret.is_some() {
                 self.acc = 0;
-                self.node.known_peers().register_received_message(self.addr.ip(), read_len);
+                // self.node.known_peers().register_received_message(self.addr.ip(), read_len);
                 self.node.stats().register_received_message(read_len);
             } else {
                 self.acc = read_len;
@@ -244,4 +280,37 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
 
         Ok(ret)
     }
+}
+
+/// Decrements the TCP_TASKS gauge on drop. Paired with each queued message so the gauge stays
+/// balanced whether the message is processed normally or discarded when the inbound channel is
+/// dropped (e.g. on connection abort). The caller must hold this guard until processing is
+/// complete; dropping it earlier will decrement the gauge prematurely.
+struct QueuedMessageGuard;
+
+impl QueuedMessageGuard {
+    fn new() -> Self {
+        #[cfg(feature = "metrics")]
+        metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
+        Self
+    }
+}
+
+impl Drop for QueuedMessageGuard {
+    fn drop(&mut self) {
+        #[cfg(feature = "metrics")]
+        metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
+    }
+}
+
+/// Warns that some messages were dropped and resets the related counters.
+fn warn_about_dropped_messages(span: &Span, dropped_count: &mut usize, last_drop_log: &mut Instant) {
+    warn!(
+        parent: span,
+        "dropped {dropped_count} messages due\
+        to inbound queue saturation",
+    );
+    // reset counters
+    *dropped_count = 0;
+    *last_drop_log = Instant::now();
 }

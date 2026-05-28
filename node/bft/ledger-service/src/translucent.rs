@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{CoreLedgerService, LedgerService};
+use crate::{BeginLedgerUpdateError, CoreLedgerService, LedgerService, LedgerUpdateService};
 
 use snarkos_utilities::Stoppable;
 
@@ -25,7 +25,7 @@ use snarkvm::{
         PendingBlock,
         Transaction,
         committee::Committee,
-        narwhal::{Data, Subdag, Transmission, TransmissionID},
+        narwhal::{Data, Transmission, TransmissionID},
         puzzle::{Solution, SolutionID},
         store::ConsensusStorage,
     },
@@ -33,7 +33,6 @@ use snarkvm::{
 };
 
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use std::{fmt, ops::Range, sync::Arc};
 
 pub struct TranslucentLedgerService<N: Network, C: ConsensusStorage<N>> {
@@ -118,12 +117,12 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
     }
 
     /// Returns the solution for the given solution ID.
-    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Solution<N>> {
+    fn get_solution(&self, solution_id: &SolutionID<N>) -> Result<Option<Solution<N>>> {
         self.inner.get_solution(solution_id)
     }
 
     /// Returns the unconfirmed transaction for the given transaction ID.
-    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Transaction<N>> {
+    fn get_unconfirmed_transaction(&self, transaction_id: N::TransactionID) -> Result<Option<Transaction<N>>> {
         self.inner.get_unconfirmed_transaction(transaction_id)
     }
 
@@ -184,31 +183,13 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         &self,
         _block: Block<N>,
         _prefix: &[PendingBlock<N>],
-    ) -> std::result::Result<PendingBlock<N>, CheckBlockError<N>> {
+    ) -> Result<PendingBlock<N>, CheckBlockError<N>> {
         unimplemented!();
     }
 
-    fn check_block_content(&self, _block: PendingBlock<N>) -> std::result::Result<Block<N>, CheckBlockError<N>> {
-        unimplemented!();
-    }
-
-    /// Always succeeds.
-    fn check_next_block(&self, _block: &Block<N>) -> Result<()> {
-        Ok(())
-    }
-
-    /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
-    fn prepare_advance_to_next_quorum_block(
-        &self,
-        subdag: Subdag<N>,
-        transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
-    ) -> Result<Block<N>> {
-        self.inner.prepare_advance_to_next_quorum_block(subdag, transmissions)
-    }
-
-    /// Adds the given block as the next block in the ledger.
-    fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
-        self.inner.advance_to_next_block(block)
+    /// Begins a ledger update.
+    fn begin_ledger_update<'a>(&'a self) -> Result<Box<dyn LedgerUpdateService<N> + 'a>, BeginLedgerUpdateError> {
+        self.inner.begin_ledger_update()
     }
 
     /// Returns the spent cost for a transaction in microcredits.
@@ -218,5 +199,9 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for TranslucentLedgerS
         consensus_version: ConsensusVersion,
     ) -> Result<u64> {
         self.inner.transaction_spend_in_microcredits(transaction, consensus_version)
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.inner.is_stopped()
     }
 }

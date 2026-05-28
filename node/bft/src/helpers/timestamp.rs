@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::MAX_TIMESTAMP_DELTA_IN_SECS;
+use crate::MAX_TIMESTAMP_DELTA;
 use snarkvm::prelude::{Result, bail};
 
 use time::OffsetDateTime;
@@ -36,7 +36,7 @@ pub fn to_utc_datetime(timestamp: i64) -> OffsetDateTime {
 /// Sanity checks the timestamp for liveness.
 pub fn check_timestamp_for_liveness(timestamp: i64) -> Result<()> {
     // Ensure the timestamp is within range.
-    if timestamp > (now() + MAX_TIMESTAMP_DELTA_IN_SECS) {
+    if timestamp > (now() + MAX_TIMESTAMP_DELTA.as_secs() as i64) {
         bail!("Timestamp {timestamp} is too far in the future")
     }
     Ok(())
@@ -45,17 +45,17 @@ pub fn check_timestamp_for_liveness(timestamp: i64) -> Result<()> {
 #[cfg(test)]
 mod prop_tests {
     use super::*;
-    use crate::MAX_TIMESTAMP_DELTA_IN_SECS;
+    use crate::MAX_TIMESTAMP_DELTA;
 
     use proptest::prelude::*;
     use test_strategy::proptest;
 
     fn any_valid_timestamp() -> BoxedStrategy<i64> {
-        (Just(now()), 0..MAX_TIMESTAMP_DELTA_IN_SECS).prop_map(|(now, delta)| now + delta).boxed()
+        (Just(now()), 0..(MAX_TIMESTAMP_DELTA.as_secs() as i64)).prop_map(|(now, delta)| now + delta).boxed()
     }
 
     fn any_invalid_timestamp() -> BoxedStrategy<i64> {
-        (Just(now()), MAX_TIMESTAMP_DELTA_IN_SECS..).prop_map(|(now, delta)| now + delta).boxed()
+        (Just(now()), (MAX_TIMESTAMP_DELTA.as_secs() as i64)..).prop_map(|(now, delta)| now + delta).boxed()
     }
 
     #[proptest]

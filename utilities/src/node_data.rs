@@ -27,8 +27,10 @@ pub const LEGACY_ROUTER_PEER_CACHE_FILE: &str = "cached_router_peers";
 
 /// The filename of the proposal cache.
 pub const CURRENT_PROPOSAL_CACHE_FILE: &str = "current-proposal-cache";
-/// The filename of the validator whitelist.
-pub const VALIDATOR_WHITELIST_FILE: &str = "validator-whitelist";
+
+/// The filename used to persist the hotswapped dev committee's starting round.
+#[cfg(feature = "test_network")]
+pub const DEV_COMMITTEE_STATE_FILE: &str = "dev-committee-state";
 
 /// The filename of the JWT secret for a given address.
 pub fn jwt_secret_file<D: std::fmt::Display>(address: &D) -> PathBuf {
@@ -89,13 +91,15 @@ impl NodeDataDir {
         self.path.join(GATEWAY_PEER_CACHE_FILE)
     }
 
-    pub fn validator_whitelist_path(&self) -> PathBuf {
-        self.path.join(VALIDATOR_WHITELIST_FILE)
-    }
-
     /// The location to store the current proposal cache.
     pub fn current_proposal_cache_path(&self) -> PathBuf {
         self.path.join(CURRENT_PROPOSAL_CACHE_FILE)
+    }
+
+    /// The location used to persist the hotswapped dev committee's starting round.
+    #[cfg(feature = "test_network")]
+    pub fn dev_committee_state_path(&self) -> PathBuf {
+        self.path.join(DEV_COMMITTEE_STATE_FILE)
     }
 
     /// The location to store the JWT secret for a given address.

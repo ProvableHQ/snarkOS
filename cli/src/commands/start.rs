@@ -52,7 +52,7 @@ use clap::Parser;
 use colored::Colorize;
 use core::str::FromStr;
 use indexmap::IndexMap;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaChaRng;
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +64,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use tokio::{
-    runtime::{self, Runtime},
+    runtime::{self, Handle, Runtime},
     sync::mpsc,
     task,
 };
@@ -155,7 +155,7 @@ pub struct Start {
     #[clap(long, requires = "validator")]
     pub bft: Option<SocketAddr>,
 
-    /// Specify the IP address and port of the peer(s) to connect to (as a comma-separated list).
+    /// Specify the host:port address pairs of the peer(s) to connect to (as a comma-separated list).
     ///
     /// These peers will be set as "trusted", which means the node will not disconnect from them when performing peer rotation.
     ///
@@ -163,7 +163,7 @@ pub struct Start {
     #[clap(long, verbatim_doc_comment)]
     pub peers: Option<String>,
 
-    /// Specify the IP address and port of the validator(s) to connect to.
+    /// Specify the host:port address pairs of the validator(s) to connect to.
     #[clap(long)]
     pub validators: Option<String>,
 
@@ -287,16 +287,26 @@ pub struct Start {
     pub dev_num_clients: Option<u16>,
 
     /// If development mode is enabled, specify whether node 0 should generate traffic to drive the network.
-    #[clap(long, group = "dev_flag")]
+    #[clap(long, group = "dev_flags")]
     pub no_dev_txs: bool,
 
     /// If development mode is enabled, specify the custom bonded balances as a JSON object.
     #[clap(long, group = "dev_flags")]
     pub dev_bonded_balances: Option<BondedBalances>,
 
+    /// If development mode is enabled, specify whether to run the node on a production ledger.
+    #[clap(long, group = "dev_flags", requires = "dev_num_validators", default_value_t = false)]
+    pub dev_on_prod: bool,
+
     /// If the flag is set, the node will attempt to automatically migrate the node data to the new format.
     #[clap(long)]
     pub auto_migrate_node_data: bool,
+
+    /// Paths to Slipstream plugin config files (JSON5). May be repeated for multiple plugins.
+    /// Requires the node to be compiled with --features slipstream-plugins.
+    #[cfg(feature = "slipstream-plugins")]
+    #[clap(long = "slipstream-config", value_name = "PATH", verbatim_doc_comment)]
+    pub slipstream_configs: Vec<PathBuf>,
 }
 
 impl Start {
@@ -323,7 +333,9 @@ impl Start {
         }
 
         // Initialize the runtime.
-        Self::runtime().block_on(async move {
+        let runtime = Self::runtime();
+        let handle = runtime.handle().clone();
+        runtime.block_on(async move {
             // Error messages.
             let node_parse_error = || "Failed to start node";
 
@@ -332,9 +344,15 @@ impl Start {
 
             // Parse the node arguments, start it, and block until shutdown.
             match self_.network {
-                MainnetV0::ID => self_.parse_node::<MainnetV0>(log_receiver).await.with_context(node_parse_error)?,
-                TestnetV0::ID => self_.parse_node::<TestnetV0>(log_receiver).await.with_context(node_parse_error)?,
-                CanaryV0::ID => self_.parse_node::<CanaryV0>(log_receiver).await.with_context(node_parse_error)?,
+                MainnetV0::ID => {
+                    self_.parse_node::<MainnetV0>(handle, log_receiver).await.with_context(node_parse_error)?
+                }
+                TestnetV0::ID => {
+                    self_.parse_node::<TestnetV0>(handle, log_receiver).await.with_context(node_parse_error)?
+                }
+                CanaryV0::ID => {
+                    self_.parse_node::<CanaryV0>(handle, log_receiver).await.with_context(node_parse_error)?
+                }
                 _ => panic!("Invalid network ID specified"),
             };
 
@@ -401,7 +419,7 @@ impl Start {
                 }
                 // Ensure the private key is provided to the CLI, except for clients or nodes in development mode.
                 (None, None) => match self.client {
-                    true => Account::new(&mut rand::thread_rng()),
+                    true => Account::new(&mut rand::rng()),
                     false => bail!("Missing the '--private-key' or '--private-key-file' argument"),
                 },
                 // Ensure only one private key flag is provided to the CLI.
@@ -525,7 +543,7 @@ impl Start {
     /// Returns an alternative genesis block if the node is in development mode.
     /// Otherwise, returns the actual genesis block.
     fn parse_genesis<N: Network>(&self) -> Result<Block<N>> {
-        if self.dev.is_some() {
+        if self.dev.is_some() && !self.dev_on_prod {
             // Determine the number of genesis committee members.
             let num_committee_members = self.dev_num_validators;
             ensure!(
@@ -575,7 +593,7 @@ impl Start {
                         members.entry(*validator_address).and_modify(|(stake, _, _)| *stake += amount).or_insert((
                             *amount,
                             true,
-                            rng.gen_range(0..100),
+                            rng.random_range(0..100),
                         ));
                     }
                     // Construct the committee.
@@ -591,7 +609,7 @@ impl Start {
                     // Construct the committee members and distribute stakes evenly among committee members.
                     let members = development_addresses
                         .iter()
-                        .map(|address| (*address, (stake_per_member, true, rng.gen_range(0..100))))
+                        .map(|address| (*address, (stake_per_member, true, rng.random_range(0..100))))
                         .collect::<IndexMap<_, _>>();
 
                     // Construct the bonded balances.
@@ -665,16 +683,15 @@ impl Start {
 
     /// Start the node and blocks until it terminates.
     #[rustfmt::skip]
-    async fn parse_node<N: Network>(&mut self, log_receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
+    async fn parse_node<N: Network>(&mut self, handle: Handle, log_receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
         if !self.nobanner {
             // Print the welcome banner.
             println!("{}", crate::helpers::welcome_message());
         }
 
-        // Check if we are running with the lower coinbase and proof targets. This should only be
-        // allowed in --dev mode and should not be allowed in mainnet mode.
-        if cfg!(feature = "test_network") && self.dev.is_none() {
-            bail!("The 'test_network' feature is enabled, but the '--dev' flag is not set");
+        // Only allow dev mode if we built with the 'test_network' feature.
+        if self.dev.is_some() && cfg!(not(feature = "test_network")) {
+            bail!("The 'dev' flag is set, but the 'test_network' feature is not enabled");
         }
 
         // Parse the trusted peers to connect to.
@@ -836,19 +853,29 @@ impl Start {
             }
         };
 
+        // Determine the number of validators for the committee hotswap.
+        let dev_num_validators_for_committee_hotswap = self.dev_on_prod.then_some(self.dev_num_validators);
+
         // TODO(kaimast): start the display earlier and show sync progress.
         if !self.nodisplay && cdn.is_some() {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
         }
 
         // Register the signal handler.
-        let signal_handler = SignalHandler::new();
+        let signal_handler = SignalHandler::new(Some(handle));
+
+        // Collect slipstream plugin config paths (empty slice when feature is disabled).
+        #[cfg(feature = "slipstream-plugins")]
+        let slipstream_configs: &[PathBuf] = &self.slipstream_configs;
+        #[cfg(not(feature = "slipstream-plugins"))]
+        let slipstream_configs: &[PathBuf] = &[];
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, signal_handler.clone()).await,
+            // NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_num_validators_for_committee_hotswap, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, slipstream_configs, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
@@ -973,14 +1000,20 @@ impl Start {
     }
 }
 
+/// Checks whether a file can only be read/written by the owner. It also allows more restrictive permissions, where only the owner can read it.
 fn check_permissions(path: &PathBuf) -> Result<(), snarkvm::prelude::Error> {
     #[cfg(target_family = "unix")]
     {
         use std::os::unix::fs::PermissionsExt;
         ensure!(path.exists(), "The file '{path:?}' does not exist");
         crate::check_parent_permissions(path)?;
+
         let permissions = path.metadata()?.permissions().mode();
-        ensure!(permissions & 0o777 == 0o600, "The file {path:?} must be readable only by the owner (0600)");
+        ensure!(
+            matches!(permissions & 0o777, 0o400 | 0o600),
+            "The file {} must be readable and writable only by the owner (0600)",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -1101,14 +1134,24 @@ fn load_or_compute_genesis<N: Network>(
     Ok(block)
 }
 
+// Resolve socket addresses (not URLs) in a host:port format compliant with C::getaddrinfo.
 fn resolve_potential_hostnames(ip_or_hostname: &str) -> Result<SocketAddr> {
     let trimmed = ip_or_hostname.trim();
+    // Perform some basic validity checks.
+    if !trimmed.contains(':') {
+        bail!(
+            "The supplied trusted hostname or IP ('{trimmed}') is malformed: missing colon separating the host from the port"
+        );
+    }
+    if trimmed.contains("://") {
+        bail!("The supplied trusted hostname or IP ('{trimmed}') is malformed: URLs are not supported");
+    }
     match trimmed.to_socket_addrs() {
         Ok(mut ip_iter) => {
             // A hostname might resolve to multiple IP addresses. We will use only the first one,
             // assuming this aligns with the user's expectations.
             let Some(ip) = ip_iter.next() else {
-                return Err(anyhow!("The supplied trusted hostname ('{trimmed}') does not reference any ip."));
+                bail!("The supplied trusted hostname ('{trimmed}') does not reference any ip.");
             };
             Ok(ip)
         }

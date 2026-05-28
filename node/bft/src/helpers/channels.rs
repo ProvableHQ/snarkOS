@@ -41,13 +41,13 @@ const MAX_CHANNEL_SIZE: usize = 8192;
 #[derive(Debug)]
 pub struct ConsensusSender<N: Network> {
     pub tx_consensus_subdag:
-        mpsc::Sender<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
+        mpsc::Sender<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 #[derive(Debug)]
 pub struct ConsensusReceiver<N: Network> {
     pub rx_consensus_subdag:
-        mpsc::Receiver<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<()>>)>,
+        mpsc::Receiver<(Subdag<N>, IndexMap<TransmissionID<N>, Transmission<N>>, oneshot::Sender<Result<bool>>)>,
 }
 
 /// Initializes the consensus channels.
@@ -185,7 +185,7 @@ pub struct SyncSender<N: Network> {
         Option<ConsensusVersion>,
         oneshot::Sender<Result<(), InsertBlockResponseError<N>>>,
     )>,
-    pub tx_block_sync_remove_peer: mpsc::Sender<SocketAddr>,
+    pub tx_block_sync_remove_peer: mpsc::Sender<(SocketAddr, oneshot::Sender<()>)>,
     pub tx_block_sync_update_peer_locators: mpsc::Sender<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub tx_certificate_request: mpsc::Sender<(SocketAddr, CertificateRequest<N>)>,
     pub tx_certificate_response: mpsc::Sender<(SocketAddr, CertificateResponse<N>)>,
@@ -242,7 +242,7 @@ pub struct SyncReceiver<N: Network> {
         Option<ConsensusVersion>,
         oneshot::Sender<Result<(), InsertBlockResponseError<N>>>,
     )>,
-    pub rx_block_sync_remove_peer: mpsc::Receiver<SocketAddr>,
+    pub rx_block_sync_remove_peer: mpsc::Receiver<(SocketAddr, oneshot::Sender<()>)>,
     pub rx_block_sync_update_peer_locators: mpsc::Receiver<(SocketAddr, BlockLocators<N>, oneshot::Sender<Result<()>>)>,
     pub rx_certificate_request: mpsc::Receiver<(SocketAddr, CertificateRequest<N>)>,
     pub rx_certificate_response: mpsc::Receiver<(SocketAddr, CertificateResponse<N>)>,

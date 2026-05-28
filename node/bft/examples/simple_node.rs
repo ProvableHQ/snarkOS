@@ -28,6 +28,7 @@ use snarkos_node_bft::{
 };
 use snarkos_node_bft_ledger_service::TranslucentLedgerService;
 use snarkos_node_bft_storage_service::BFTMemoryService;
+use snarkos_node_network::ConnectionMode;
 use snarkos_node_sync::BlockSync;
 use snarkos_utilities::{NodeDataDir, SimpleStoppable};
 
@@ -60,7 +61,7 @@ use axum::{
 use axum_extra::response::ErasedJson;
 use clap::{Parser, ValueEnum};
 use indexmap::IndexMap;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::{CryptoRng, Rng, RngExt, SeedableRng};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -134,7 +135,7 @@ pub async fn start_bft(
         ledger.clone(),
         Arc::new(BFTMemoryService::new()),
         BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
-    );
+    )?;
     // Initialize the gateway IP and storage mode.
     let ip = match peers.get(&node_id) {
         Some(ip) => Some(*ip),
@@ -149,7 +150,7 @@ pub async fn start_bft(
     // Initialize the consensus receiver handler.
     consensus_handler(consensus_receiver);
     // Initialize the BFT instance.
-    let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+    let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
     let mut bft = BFT::<CurrentNetwork>::new(
         account,
         storage,
@@ -188,7 +189,7 @@ pub async fn start_primary(
         ledger.clone(),
         Arc::new(BFTMemoryService::new()),
         BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS as u64,
-    );
+    )?;
     // Initialize the gateway IP and storage mode.
     let ip = match peers.get(&node_id) {
         Some(ip) => Some(*ip),
@@ -199,7 +200,7 @@ pub async fn start_primary(
     let trusted_validators = trusted_validators(node_id, num_nodes, peers);
     let trusted_peers_only = false;
     // Initialize the primary instance.
-    let block_sync = Arc::new(BlockSync::new(ledger.clone()));
+    let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
     let primary = Primary::<CurrentNetwork>::new(
         account,
         storage,
@@ -249,7 +250,7 @@ fn genesis_block(
     genesis_private_key: PrivateKey<CurrentNetwork>,
     committee: Committee<CurrentNetwork>,
     public_balances: IndexMap<Address<CurrentNetwork>, u64>,
-    rng: &mut (impl Rng + CryptoRng),
+    rng: &mut impl CryptoRng,
 ) -> Block<CurrentNetwork> {
     // Initialize the store.
     let store = ConsensusStore::<_, ConsensusMemory<_>>::open(StorageMode::new_test(None)).unwrap();
@@ -266,7 +267,7 @@ fn genesis_ledger(
     committee: Committee<CurrentNetwork>,
     public_balances: IndexMap<Address<CurrentNetwork>, u64>,
     node_id: u16,
-    rng: &mut (impl Rng + CryptoRng),
+    rng: &mut impl CryptoRng,
 ) -> CurrentLedger {
     let cache_key =
         to_bytes_le![genesis_private_key, committee, public_balances.iter().collect::<Vec<(_, _)>>()].unwrap();
@@ -338,7 +339,7 @@ fn consensus_handler(receiver: ConsensusReceiver<CurrentNetwork>) {
             // Sleep for the determined amount of time.
             tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
             // Call the callback.
-            callback.send(Ok(())).ok();
+            callback.send(Ok(true)).ok();
         }
     });
 }
@@ -392,9 +393,9 @@ fn fire_unconfirmed_solutions(sender: &PrimarySender<CurrentNetwork>, node_id: u
         // A closure to generate a solution ID and solution.
         fn sample(mut rng: impl Rng) -> (SolutionID<CurrentNetwork>, Data<Solution<CurrentNetwork>>) {
             // Sample a random fake solution ID.
-            let solution_id = rng.r#gen::<u64>().into();
+            let solution_id = rng.random::<u64>().into();
             // Sample random fake solution bytes.
-            let solution = Data::Buffer(Bytes::from((0..1024).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+            let solution = Data::Buffer(Bytes::from((0..1024).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
             // Return the ID and solution.
             (solution_id, solution)
         }
@@ -437,7 +438,7 @@ fn fire_unconfirmed_transactions(sender: &PrimarySender<CurrentNetwork>, node_id
             // Sample a random fake transaction ID.
             let id = Field::<CurrentNetwork>::rand(&mut rng).into();
             // Sample random fake transaction bytes.
-            let transaction = Data::Buffer(Bytes::from((0..1024).map(|_| rng.r#gen::<u8>()).collect::<Vec<_>>()));
+            let transaction = Data::Buffer(Bytes::from((0..1024).map(|_| rng.random::<u8>()).collect::<Vec<_>>()));
             // Return the ID and transaction.
             (id, transaction)
         }

@@ -13,14 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::MAX_FETCH_TIMEOUT_IN_MS;
+use crate::{Gateway, MAX_FETCH_TIMEOUT};
 use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_network::PeerPoolHandling;
 use snarkvm::{
     console::network::{Network, consensus_config_value},
     prelude::Result,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
@@ -35,8 +36,8 @@ use time::OffsetDateTime;
 use tokio::sync::oneshot;
 
 /// The maximum number of seconds to wait before expiring a callback.
-/// We ensure that we don't truncate `MAX_FETCH_TIMEOUT_IN_MS` when converting to seconds.
-pub(crate) const CALLBACK_EXPIRATION_IN_SECS: i64 = MAX_FETCH_TIMEOUT_IN_MS.div_ceil(1000) as i64;
+/// We ensure that we don't truncate `MAX_FETCH_TIMEOUT` when converting to seconds.
+pub(crate) const CALLBACK_EXPIRATION_IN_SECS: i64 = MAX_FETCH_TIMEOUT.as_secs() as i64;
 
 /// Returns the maximum number of redundant requests for the number of validators in the specified round.
 pub fn max_redundant_requests<N: Network>(ledger: Arc<dyn LedgerService<N>>, round: u64) -> Result<usize> {
@@ -109,6 +110,13 @@ impl<T: Copy + Clone + PartialEq + Eq + Hash, V: Clone> Pending<T, V> {
     /// Returns the peer IPs for the specified `item`.
     pub fn get_peers(&self, item: impl Into<T>) -> Option<HashSet<SocketAddr>> {
         self.pending.read().get(&item.into()).map(|map| map.keys().cloned().collect())
+    }
+
+    /// Returns the peer IPs for the specified `item` who have received a request for it.
+    pub fn get_sent_peers(&self, item: impl Into<T>) -> Option<HashSet<SocketAddr>> {
+        self.pending.read().get(&item.into()).map(|map| {
+            map.iter().filter_map(|(addr, cbs)| cbs.iter().any(|(_, _, sent)| *sent).then_some(*addr)).collect()
+        })
     }
 
     /// Returns the number of pending callbacks for the specified `item`.
@@ -244,16 +252,39 @@ impl<T: Copy + Clone + PartialEq + Eq + Hash, V: Clone> Pending<T, V> {
             !peer_map.is_empty()
         });
     }
+
+    /// Ensures that the combined stake of the peers that have received the request is
+    /// greater than the redundancy threshold (33%).
+    pub fn request_stake_redundancy_reached<N: Network>(&self, gateway: &Gateway<N>, desired_item: T) -> Result<bool> {
+        let committee = match gateway.ledger().current_committee() {
+            Ok(c) => c,
+            Err(err) => {
+                bail!("Failed to get current committee: {err}");
+            }
+        };
+
+        let total_stake = committee.total_stake();
+        let pending_providers = self.get_sent_peers(desired_item);
+        let mut stake_of_providers = 0;
+        for addr in pending_providers.iter().flatten() {
+            let Some(aleo_addr) = gateway.resolve_to_aleo_addr(*addr) else { continue };
+            let individual_stake = committee.get_stake(aleo_addr);
+            stake_of_providers += individual_stake;
+            if stake_of_providers as f64 / total_stake as f64 > 0.33 {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snarkvm::{
-        ledger::narwhal::TransmissionID,
-        prelude::{Rng, TestRng},
-    };
+    use snarkvm::{ledger::narwhal::TransmissionID, prelude::TestRng};
 
+    use rand::RngExt;
     use std::{thread, time::Duration};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -273,20 +304,20 @@ mod tests {
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_3 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_4 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the SocketAddrs.
@@ -327,8 +358,8 @@ mod tests {
         assert!(!pending.contains_peer_with_sent_request(solution_id_4, addr_4));
 
         let unknown_id = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         assert!(!pending.contains(unknown_id));
 
@@ -363,8 +394,8 @@ mod tests {
 
         // Initialize the solution ID.
         let solution_id_1 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the SocketAddrs.
@@ -412,8 +443,8 @@ mod tests {
         for _ in 0..ITERATIONS {
             // Generate a solution ID.
             let solution_id = TransmissionID::Solution(
-                rng.r#gen::<u64>().into(),
-                rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+                rng.random::<u64>().into(),
+                rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
             );
             // Check if the number of sent requests is correct.
             let mut expected_num_sent_requests = 0;
@@ -423,7 +454,7 @@ mod tests {
                 // Initialize a callback.
                 let (callback_sender, _) = oneshot::channel();
                 // Randomly determine if the callback is associated with a sent request.
-                let is_sent_request = rng.r#gen();
+                let is_sent_request = rng.random();
                 // Increment the expected number of sent requests.
                 if is_sent_request {
                     expected_num_sent_requests += 1;
@@ -449,12 +480,12 @@ mod tests {
 
         // Initialize the solution IDs.
         let solution_id_1 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
         let solution_id_2 = TransmissionID::Solution(
-            rng.r#gen::<u64>().into(),
-            rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>(),
+            rng.random::<u64>().into(),
+            rng.random::<<CurrentNetwork as Network>::TransmissionChecksum>(),
         );
 
         // Initialize the SocketAddrs.

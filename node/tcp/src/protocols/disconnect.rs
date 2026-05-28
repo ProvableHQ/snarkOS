@@ -13,14 +13,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+    time::timeout,
+};
 use tracing::*;
 
 #[cfg(doc)]
 use crate::{Connection, protocols::Writing};
-use crate::{P2P, protocols::ProtocolHandler};
+use crate::{P2P, connections::create_connection_span, protocols::ProtocolHandler};
 
 /// Can be used to automatically perform some extra actions when the node disconnects from its
 /// peer, which is especially practical if the disconnect is triggered automatically, e.g. due
@@ -31,10 +35,18 @@ pub trait Disconnect: P2P
 where
     Self: Clone + Send + Sync + 'static,
 {
+    /// The maximum time allowed for the on_disconnect hook to execute.
+    /// If the hook exceeds this time, it will be aborted to ensure the node cleans up
+    /// resources promptly.
+    const TIMEOUT: Duration = Duration::from_secs(3);
+
     /// Attaches the behavior specified in [`Disconnect::handle_disconnect`] to every occurrence of the
     /// node disconnecting from a peer.
     async fn enable_disconnect(&self) {
-        let (from_node_sender, mut from_node_receiver) = mpsc::unbounded_channel::<(SocketAddr, oneshot::Sender<()>)>();
+        let (from_node_sender, mut from_node_receiver) = mpsc::channel::<(
+            SocketAddr,
+            oneshot::Sender<(JoinHandle<()>, oneshot::Receiver<()>)>,
+        )>(self.tcp().config().max_connections as usize);
 
         // use a channel to know when the disconnect task is ready
         let (tx, rx) = oneshot::channel::<()>();
@@ -47,13 +59,21 @@ where
 
             while let Some((peer_addr, notifier)) = from_node_receiver.recv().await {
                 let self_clone2 = self_clone.clone();
-                tokio::spawn(async move {
+                // create a channel for waiting on completion
+                let (done_tx, done_rx) = oneshot::channel();
+                let handle = tokio::spawn(async move {
                     // perform the specified extra actions
-                    self_clone2.handle_disconnect(peer_addr).await;
+                    if timeout(Self::TIMEOUT, self_clone2.handle_disconnect(peer_addr)).await.is_err() {
+                        let conn_span = create_connection_span(peer_addr, self_clone2.tcp().span());
+                        warn!(parent: conn_span, "Disconnect logic timed out");
+                    }
                     // notify the node that the extra actions have concluded
                     // and that the related connection can be dropped
-                    let _ = notifier.send(()); // can't really fail
+                    let _ = done_tx.send(());
                 });
+                // provide the node with a handle to the scheduled task,
+                // and a receiver that will notify it of its completion
+                let _ = notifier.send((handle, done_rx)); // can't really fail
             }
         });
         let _ = rx.await;

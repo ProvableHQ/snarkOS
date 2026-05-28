@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc};
+use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures_util::sink::SinkExt;
@@ -24,6 +24,7 @@ use parking_lot::RwLock;
 use tokio::{
     io::AsyncWrite,
     sync::{mpsc, oneshot},
+    time::timeout,
 };
 use tokio_util::codec::{Encoder, FramedWrite};
 use tracing::*;
@@ -34,6 +35,7 @@ use crate::{
     Connection,
     ConnectionSide,
     P2P,
+    connections::create_connection_span,
     protocols::{Protocol, ProtocolHandler, ReturnableConnection},
 };
 
@@ -55,6 +57,10 @@ where
         1024
     }
 
+    /// The maximum time (in milliseconds) allowed for a single message write to flush
+    /// to the underlying stream before the connection is considered dead.
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
     /// The type of the outbound messages; unless their serialization is expensive and the message
     /// is broadcasted (in which case it would get serialized multiple times), serialization should
     /// be done in the implementation of [`Self::Codec`].
@@ -65,7 +71,7 @@ where
 
     /// Prepares the node to send messages.
     async fn enable_writing(&self) {
-        let (conn_sender, mut conn_receiver) = mpsc::unbounded_channel();
+        let (conn_sender, mut conn_receiver) = mpsc::channel(self.tcp().config().max_connections as usize);
 
         // the conn_senders are used to send messages from the Tcp to individual connections
         let conn_senders: WritingSenders = Default::default();
@@ -117,7 +123,8 @@ where
                 sender
                     .try_send(msg)
                     .map_err(|e| {
-                        error!(parent: self.tcp().span(), "can't send a message to {}: {}", addr, e);
+                        let conn_span = create_connection_span(addr, self.tcp().span());
+                        error!(parent: conn_span, "can't send a message: {e}");
                         self.tcp().stats().register_failure();
                         io::ErrorKind::Other.into()
                     })
@@ -148,7 +155,8 @@ where
             for (addr, message_sender) in senders {
                 let (msg, _delivery) = WrappedMessage::new(Box::new(message.clone()));
                 let _ = message_sender.try_send(msg).map_err(|e| {
-                    error!(parent: self.tcp().span(), "can't send a message to {}: {}", addr, e);
+                    let conn_span = create_connection_span(addr, self.tcp().span());
+                    error!(parent: conn_span, "can't send a message: {e}");
                     self.tcp().stats().register_failure();
                 });
             }
@@ -183,9 +191,12 @@ impl<W: Writing> WritingInternal for W {
     ) -> Result<usize, <Self::Codec as Encoder<Self::Message>>::Error> {
         writer.feed(message).await?;
         let len = writer.write_buffer().len();
-        writer.flush().await?;
-
-        Ok(len)
+        // Guard against write starvation
+        match timeout(W::TIMEOUT, writer.flush()).await {
+            Ok(Ok(())) => Ok(len),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "write timed out")),
+        }
     }
 
     async fn handle_new_connection(
@@ -211,9 +222,10 @@ impl<W: Writing> WritingInternal for W {
 
         // the task for writing outbound messages
         let self_clone = self.clone();
+        let conn_span = conn.span().clone();
         let writer_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
-            trace!(parent: node.span(), "spawned a task for writing messages to {}", addr);
+            trace!(parent: &conn_span, "spawned a task for writing messages");
             tx_writer.send(()).unwrap(); // safe; the channel was just opened
 
             // move the cleanup into the task that gets aborted on disconnect
@@ -225,13 +237,13 @@ impl<W: Writing> WritingInternal for W {
                 match self_clone.write_to_stream(*msg, &mut framed).await {
                     Ok(len) => {
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
-                        node.known_peers().register_sent_message(addr.ip(), len);
+                        // node.known_peers().register_sent_message(addr.ip(), len);
                         node.stats().register_sent_message(len);
-                        trace!(parent: node.span(), "sent {}B to {}", len, addr);
+                        trace!(parent: &conn_span, "sent {len}B");
                     }
                     Err(e) => {
                         node.known_peers().register_failure(addr.ip());
-                        error!(parent: node.span(), "couldn't send a message to {}: {}", addr, e);
+                        error!(parent: &conn_span, "couldn't send a message: {e}");
                         let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
                         let _ = wrapped_msg.delivery_notification.send(Err(e));
                         if is_fatal {
@@ -275,8 +287,8 @@ pub(crate) struct WritingHandler {
 }
 
 impl Protocol<Connection, io::Result<Connection>> for WritingHandler {
-    fn trigger(&self, item: ReturnableConnection) {
-        self.handler.trigger(item);
+    async fn trigger(&self, item: ReturnableConnection) {
+        self.handler.trigger(item).await;
     }
 }
 
