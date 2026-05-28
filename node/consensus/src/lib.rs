@@ -705,20 +705,23 @@ impl<N: Network> Consensus<N> {
                             .validator_telemetry()
                             .get_participation_scores(&latest_committee);
 
-                        // Export the certificate and signature participation scores as individual gauges.
-                        for (address, (certificate_score, signature_score)) in participation_scores {
-                            let address_str = address.to_string();
+                        // Export the certificate and signature participation scores for this validator only.
+                        // Note: Exporting all committee members from every validator causes overcounting when
+                        // dashboards aggregate these metrics across validator instances.
+                        let validator_address = self.bft().primary().gateway().account().address();
+                        if let Some((certificate_score, signature_score)) = participation_scores.get(&validator_address) {
+                            let address_str = validator_address.to_string();
                             metrics::gauge_label(
                                 metrics::consensus::VALIDATOR_CERTIFICATE_PARTICIPATION,
                                 "validator_address",
                                 address_str.clone(),
-                                certificate_score,
+                                *certificate_score,
                             );
                             metrics::gauge_label(
                                 metrics::consensus::VALIDATOR_SIGNATURE_PARTICIPATION,
                                 "validator_address",
                                 address_str,
-                                signature_score,
+                                *signature_score,
                             );
                         }
                     }
