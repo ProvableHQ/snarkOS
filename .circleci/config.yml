@@ -727,6 +727,22 @@ jobs:
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
 
+  check-cargo-semver-checks:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.twoxlarge >>
+    steps:
+      - checkout:
+          method: full
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-cargo-semver-checks-cache
+      - run:
+          name: Check for semver violations
+          no_output_timeout: 15m
+          command: |
+            bash ./.circleci/semver-checks.sh
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-cargo-semver-checks-cache
+
   check-clippy:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
@@ -846,6 +862,14 @@ workflows:
             branches:
               only:
                 - mainnet-release-v460
+                - canary
+                - testnet
+                - mainnet
+                - staging
+      - check-cargo-semver-checks:
+          filters:
+            branches:
+              only:
                 - canary
                 - testnet
                 - mainnet
