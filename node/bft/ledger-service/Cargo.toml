@@ -18,7 +18,7 @@ edition = "2024"
 
 [features]
 default = [ ]
-ledger = [ "parking_lot", "rand", "rand_chacha", "rayon", "tokio", "tracing" ]
+ledger = [ "parking_lot", "rand", "rayon", "tokio", "tracing" ]
 ledger-write = [ ]
 locktick = [
   "dep:locktick",
@@ -63,10 +63,6 @@ workspace = true
 optional = true
 
 [dependencies.rand]
-workspace = true
-optional = true
-
-[dependencies.rand_chacha]
 workspace = true
 optional = true
 
