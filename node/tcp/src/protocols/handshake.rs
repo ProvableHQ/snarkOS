@@ -41,7 +41,7 @@ where
     /// The maximum time allowed for a connection to perform a handshake before it is rejected.
     ///
     /// The default value is 5s.
-    const TIMEOUT_MS: u64 = 5_000;
+    const TIMEOUT_MS: u64 = 10_000;
 
     /// Prepares the node to perform specified network handshakes.
     async fn enable_handshake(&self) {
