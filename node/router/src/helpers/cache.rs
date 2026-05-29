@@ -74,7 +74,7 @@ impl<N: Network> Default for Cache<N> {
 impl<N: Network> Cache<N> {
     const INBOUND_BLOCK_REQUEST_INTERVAL: i64 = 60;
     const INBOUND_PUZZLE_REQUEST_INTERVAL: i64 = 60;
-    const INBOUND_UNCONFIRMED_SOLUTION_INTERVAL: i64 = 5;
+    const INBOUND_UNCONFIRMED_SOLUTION_INTERVAL: i64 = 60;
 
     /// Initializes a new instance of the cache.
     pub fn new() -> Self {
