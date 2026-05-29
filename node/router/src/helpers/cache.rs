@@ -46,6 +46,8 @@ pub struct Cache<N: Network> {
     seen_inbound_puzzle_requests: RwLock<HashMap<SocketAddr, VecDeque<OffsetDateTime>>>,
     /// The map of peer IPs to their recent timestamps.
     seen_inbound_block_requests: RwLock<HashMap<SocketAddr, VecDeque<OffsetDateTime>>>,
+    /// The map of peer IPs to their recent unconfirmed solution timestamps.
+    seen_inbound_unconfirmed_solutions: RwLock<HashMap<SocketAddr, VecDeque<OffsetDateTime>>>,
     /// The map of solution IDs to their last seen timestamp.
     seen_inbound_solutions: RwLock<LinkedHashMap<SolutionKey<N>, OffsetDateTime>>,
     /// The map of transaction IDs to their last seen timestamp.
@@ -72,6 +74,7 @@ impl<N: Network> Default for Cache<N> {
 impl<N: Network> Cache<N> {
     const INBOUND_BLOCK_REQUEST_INTERVAL: i64 = 60;
     const INBOUND_PUZZLE_REQUEST_INTERVAL: i64 = 60;
+    const INBOUND_UNCONFIRMED_SOLUTION_INTERVAL: i64 = 60;
 
     /// Initializes a new instance of the cache.
     pub fn new() -> Self {
@@ -80,6 +83,7 @@ impl<N: Network> Cache<N> {
             seen_inbound_messages: Default::default(),
             seen_inbound_puzzle_requests: Default::default(),
             seen_inbound_block_requests: Default::default(),
+            seen_inbound_unconfirmed_solutions: Default::default(),
             seen_inbound_solutions: RwLock::new(LinkedHashMap::with_capacity(MAX_CACHE_SIZE)),
             seen_inbound_transactions: RwLock::new(LinkedHashMap::with_capacity(MAX_CACHE_SIZE)),
             seen_outbound_block_requests: Default::default(),
@@ -110,6 +114,15 @@ impl<N: Network> Cache<N> {
     /// Inserts a new timestamp for the given peer IP, returning the number of recent block requests.
     pub fn insert_inbound_block_request(&self, peer_ip: SocketAddr) -> usize {
         Self::retain_and_insert(&self.seen_inbound_block_requests, peer_ip, Self::INBOUND_BLOCK_REQUEST_INTERVAL)
+    }
+
+    /// Inserts a new timestamp for the given peer IP, returning the number of recent unconfirmed solutions.
+    pub fn insert_inbound_unconfirmed_solution(&self, peer_ip: SocketAddr) -> usize {
+        Self::retain_and_insert(
+            &self.seen_inbound_unconfirmed_solutions,
+            peer_ip,
+            Self::INBOUND_UNCONFIRMED_SOLUTION_INTERVAL,
+        )
     }
 
     /// Inserts a solution ID into the cache, returning the previously seen timestamp if it existed.
@@ -327,6 +340,15 @@ mod tests {
 
         // Check that the cache contains the block requests.
         assert!(cache.contains_inbound_block_request(&peer_ip));
+    }
+
+    #[test]
+    fn test_inbound_unconfirmed_solution() {
+        let cache = Cache::<CurrentNetwork>::default();
+        let peer_ip = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+
+        assert_eq!(cache.insert_inbound_unconfirmed_solution(peer_ip), 1);
+        assert_eq!(cache.insert_inbound_unconfirmed_solution(peer_ip), 2);
     }
 
     #[test]
