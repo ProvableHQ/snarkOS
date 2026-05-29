@@ -49,7 +49,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     const MAXIMUM_PUZZLE_REQUESTS_PER_INTERVAL: usize = 5;
     /// The maximum number of block requests per interval.
     const MAXIMUM_BLOCK_REQUESTS_PER_INTERVAL: usize = 256;
-    /// The maximum number of unconfirmed solutions per interval.
+    /// The maximum number of unconfirmed solutions per interval (~2000 per hour at 60s interval).
     const MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL: usize = 33;
     /// The duration in seconds to sleep in between ping requests with a connected peer.
     const PING_SLEEP_IN_SECS: u64 = 20; // 20 seconds
