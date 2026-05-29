@@ -49,6 +49,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     const MAXIMUM_PUZZLE_REQUESTS_PER_INTERVAL: usize = 5;
     /// The maximum number of block requests per interval.
     const MAXIMUM_BLOCK_REQUESTS_PER_INTERVAL: usize = 256;
+    /// The maximum number of unconfirmed solutions per interval.
+    const MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL: usize = 200;
     /// The duration in seconds to sleep in between ping requests with a connected peer.
     const PING_SLEEP_IN_SECS: u64 = 20; // 20 seconds
     /// The time frame to enforce the `MESSAGE_LIMIT`.
@@ -242,6 +244,13 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
             }
             Message::UnconfirmedSolution(message) => {
+                // Insert the unconfirmed solution for the peer, and fetch the recent frequency.
+                let frequency = self.router().cache.insert_inbound_unconfirmed_solution(peer_ip);
+                // Check if the number of unconfirmed solutions is within the limit.
+                if frequency > Self::MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL {
+                    bail!("Peer '{peer_ip}' is not following the protocol (excessive unconfirmed solutions)")
+                }
+
                 // Do not process unconfirmed solutions if the node is too far behind.
                 if !self.is_within_sync_leniency() {
                     trace!("Skipped processing unconfirmed solution '{}' (node is syncing)", message.solution_id);

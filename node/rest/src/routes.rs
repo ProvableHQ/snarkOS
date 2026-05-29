@@ -969,6 +969,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let is_within_sync_leniency = rest.routing.is_within_sync_leniency();
         // Determine if we need to check the solution.
         let check_solution = check_solution.check_solution.unwrap_or(false);
+        // Check if the prover has reached their solution limit.
+        // While snarkVM will ultimately abort any excess solutions for safety, performing this check
+        // here prevents the to-be aborted solutions from propagating through the network.
+        let prover_address = solution.address();
+        if rest.ledger.is_solution_limit_reached(&prover_address, 0) {
+            return Err(RestError::unprocessable_entity(anyhow!(
+                "Invalid solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch",
+                fmt_id(solution.id())
+            )));
+        }
 
         if check_solution {
             // Try to acquire a slot.
@@ -983,16 +993,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             let proof_target = rest.ledger.latest_proof_target();
             // Ensure that the solution is valid for the given epoch.
             let puzzle = rest.ledger.puzzle().clone();
-            // Check if the prover has reached their solution limit.
-            // While snarkVM will ultimately abort any excess solutions for safety, performing this check
-            // here prevents the to-be aborted solutions from propagating through the network.
-            let prover_address = solution.address();
-            if rest.ledger.is_solution_limit_reached(&prover_address, 0) {
-                return Err(RestError::unprocessable_entity(anyhow!(
-                    "Invalid solution '{}' - Prover '{prover_address}' has reached their solution limit for the current epoch",
-                    fmt_id(solution.id())
-                )));
-            }
             // Verify the solution in a blocking task.
             let res: Result<(), anyhow::Error> =
                 match tokio::task::spawn_blocking(move || puzzle.check_solution(&solution, epoch_hash, proof_target))
