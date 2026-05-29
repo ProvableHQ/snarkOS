@@ -1764,7 +1764,10 @@ impl<N: Network> Primary<N> {
 
         // Store the certified batch.
         let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-        spawn_blocking!(storage.insert_certificate(certificate_, transmissions, Default::default()))?;
+        tokio::task::spawn_blocking(move || {
+            storage.insert_certificate(certificate_, transmissions, Default::default())
+        })
+        .await??;
         debug!("Stored a batch certificate for round {}", certificate.round());
         // The batch is now in storage, so late-arriving signatures can find it via contains_batch.
         // Transition from Certified back to None.
@@ -1860,18 +1863,30 @@ impl<N: Network> Primary<N> {
             self.sync_with_batch_header_from_peer::<IS_SYNCING, false>(peer_ip, batch_header).await?;
 
         // Check if the certificate needs to be stored.
-        if !self.storage.contains_certificate(certificate.id()) {
-            // Store the batch certificate.
-            let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-            spawn_blocking!(storage.insert_certificate(certificate_, missing_transmissions, Default::default()))?;
-            debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
-            // If a BFT sender was provided, send the round and certificate to the BFT.
-            if let Some(cb) = self.primary_callback.get() {
-                cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
+        // Store the batch certificate.
+        let (storage, certificate_) = (self.storage.clone(), certificate.clone());
+        match tokio::task::spawn_blocking(move || {
+            storage.insert_certificate(certificate_, missing_transmissions, Default::default())
+        })
+        .await
+        {
+            Ok(Ok(_)) => {} // continue
+            Ok(Err(err)) if err.is_benign() => {
+                trace!("Skipping insertion for certificate - {err}");
+                return Ok(());
             }
-            // Wake the round-increment task to re-check quorum.
-            self.round_increment_notify.notify_one();
+            Ok(Err(err)) => return Err(anyhow!("{err}")),
+            Err(err) => return Err(anyhow!("[tokio::spawn_blocking] {err}")),
         }
+
+        debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
+        // If a BFT sender was provided, send the round and certificate to the BFT.
+        if let Some(cb) = self.primary_callback.get() {
+            cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
+        }
+        // Wake the round-increment task to re-check quorum.
+        self.round_increment_notify.notify_one();
+
         Ok(())
     }
 

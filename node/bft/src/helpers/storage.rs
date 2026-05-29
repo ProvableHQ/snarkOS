@@ -43,6 +43,33 @@ use std::{
     },
 };
 
+/// Errors returned by [`Storage::check_certificate`] (and therefore [`Storage::insert_certificate`]).
+///
+/// The `SameCertificate` and `SameAuthorAndRound` variants describe benign races: concurrent sync
+/// paths regularly try to insert the same certificate, and the loser of that race should treat its
+/// failure as a no-op (the certificate is in fact present in storage) rather than a hard error.
+#[derive(Debug, thiserror::Error)]
+pub enum CheckCertificateError {
+    #[error("Certificate round {round} already exists in storage (gc_round = {gc_round})")]
+    SameCertificate { round: u64, gc_round: u64 },
+    #[error("Certificate with this author in round {round} is already in storage (gc_round = {gc_round})")]
+    SameAuthorAndRound { round: u64, gc_round: u64 },
+    #[error("Certificate round {round} is at or below the GC round {gc_round}")]
+    RoundTooLow { round: u64, gc_round: u64 },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl CheckCertificateError {
+    /// Whether the error indicates the certificate is already in storage (a benign sync race
+    /// rather than a hard failure). Callers should not log benign errors at ERROR.
+    pub fn is_benign(&self) -> bool {
+        //TODO(kaimast): `SameAuthorRound` should not be benign as it could be a different certificate ID.
+        // However, we do not hold any locks while performing these checks, so the error can also be caused by benign race conditions.
+        matches!(self, Self::SameCertificate { .. } | Self::SameAuthorAndRound { .. } | Self::RoundTooLow { .. })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Storage<N: Network>(Arc<StorageInner<N>>);
 
@@ -589,6 +616,11 @@ impl<N: Network> Storage<N> {
     /// - `transmissions`: The transmissions contained in the certificate.
     /// - `aborted_transmissions`: The aborted transmission contained in the certificate.
     ///
+    /// # Errors
+    /// Returns [`CheckCertificateError::SameCertificate`] or [`CheckCertificateError::SameAuthorAndRound`]
+    /// if the certificate (or one from the same author for the same round) is already in storage.
+    /// These are benign during concurrent sync; callers should not log them at ERROR.
+    ///
     /// # Invariants
     /// This method ensures the following invariants:
     /// - The certificate ID does not already exist in storage.
@@ -608,7 +640,7 @@ impl<N: Network> Storage<N> {
         certificate: &BatchCertificate<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
+    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>, CheckCertificateError> {
         // Retrieve the round.
         let round = certificate.round();
         // Retrieve the GC round.
@@ -618,19 +650,19 @@ impl<N: Network> Storage<N> {
 
         // Ensure the certificate ID does not already exist in storage.
         if self.contains_certificate(certificate.id()) {
-            bail!("Certificate for round {round} already exists in storage {gc_log}")
+            return Err(CheckCertificateError::SameCertificate { round, gc_round });
         }
 
         // Ensure the storage does not already contain a certificate for this author in this round.
         if self.contains_certificate_in_round_from(round, certificate.author()) {
-            bail!("Certificate with this author for round {round} already exists in storage {gc_log}")
+            return Err(CheckCertificateError::SameAuthorAndRound { round, gc_round });
         }
 
         // Ensure the batch header is well-formed.
         let Some(missing_transmissions) =
             self.check_batch_header(certificate.batch_header(), transmissions, aborted_transmissions)?
         else {
-            bail!("Certificate for round {round} already exists in storage {gc_log}")
+            return Err(CheckCertificateError::SameCertificate { round, gc_round });
         };
 
         // Check the timestamp for liveness.
@@ -638,7 +670,7 @@ impl<N: Network> Storage<N> {
 
         // Retrieve the committee lookback for the batch round.
         let Ok(committee_lookback) = self.ledger.get_committee_lookback_for_round(round) else {
-            bail!("Storage failed to retrieve the committee for round {round} {gc_log}")
+            return Err(anyhow!("Storage failed to retrieve the committee for round {round} {gc_log}").into());
         };
 
         // Initialize a set of the signers.
@@ -652,7 +684,7 @@ impl<N: Network> Storage<N> {
             let signer = signature.to_address();
             // Ensure the signer is in the committee.
             if !committee_lookback.is_committee_member(signer) {
-                bail!("Signer {signer} is not in the committee for round {round} {gc_log}")
+                return Err(anyhow!("Signer {signer} is not in the committee for round {round} {gc_log}").into());
             }
             // Append the signer.
             signers.insert(signer);
@@ -660,7 +692,9 @@ impl<N: Network> Storage<N> {
 
         // Ensure the signatures have reached the quorum threshold.
         if !committee_lookback.is_quorum_threshold_reached(&signers) {
-            bail!("Signatures for a batch in round {round} did not reach quorum threshold {gc_log}")
+            return Err(
+                anyhow!("Signatures for a batch in round {round} did not reach quorum threshold {gc_log}").into()
+            );
         }
 
         Ok(missing_transmissions)
@@ -688,9 +722,11 @@ impl<N: Network> Storage<N> {
         certificate: BatchCertificate<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<()> {
+    ) -> Result<(), CheckCertificateError> {
         // Ensure the certificate round is above the GC round.
-        ensure!(certificate.round() > self.gc_round(), "Certificate round is at or below the GC round");
+        if certificate.round() <= self.gc_round() {
+            return Err(CheckCertificateError::RoundTooLow { round: certificate.round(), gc_round: self.gc_round() });
+        }
         // Ensure the certificate and its transmissions are valid.
         let missing_transmissions =
             self.check_certificate(&certificate, transmissions, aborted_transmissions.clone())?;

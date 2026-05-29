@@ -159,6 +159,9 @@ features = [ "codec" ]
 [dependencies.tracing]
 workspace = true
 
+[dependencies.thiserror]
+workspace = true
+
 [dev-dependencies.axum]
 workspace = true
 

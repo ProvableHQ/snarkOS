@@ -4785,6 +4785,7 @@ dependencies = [
  "snarkvm",
  "test-log",
  "test-strategy 0.4.5",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-stream",
