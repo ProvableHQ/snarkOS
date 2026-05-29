@@ -66,6 +66,9 @@ pub use validators_response::ValidatorsResponse;
 mod worker_ping;
 pub use worker_ping::WorkerPing;
 
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod committee_prop_tests;
+
 use snarkos_node_sync_locators::BlockLocators;
 use snarkvm::{
     console::prelude::{FromBytes, Network, Read, ToBytes, Write, error, io_error},
@@ -268,7 +271,7 @@ pub mod prop_tests {
     use snarkvm::{
         console::{network::Network, types::Field},
         ledger::{narwhal::TransmissionID, puzzle::SolutionID},
-        prelude::{FromBytes, Rng, ToBytes, Uniform},
+        prelude::{FromBytes, ToBytes, Uniform},
     };
 
     use proptest::{
@@ -276,6 +279,8 @@ pub mod prop_tests {
         prop_oneof,
         sample::Selector,
     };
+    use rand::SeedableRng;
+    use rand_chacha::ChaChaRng;
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -286,18 +291,20 @@ pub mod prop_tests {
     }
 
     pub fn any_solution_id() -> BoxedStrategy<SolutionID<CurrentNetwork>> {
-        // TODO(kaimast): remove once we upgrade the rand crate
-        Just(0).prop_perturb(|_, mut rng| rng.r#gen::<u64>().into()).boxed()
+        any::<u64>().prop_map(|x| x.into()).boxed()
     }
 
     pub fn any_transaction_id() -> BoxedStrategy<<CurrentNetwork as Network>::TransactionID> {
-        Just(0)
-            .prop_perturb(|_, mut rng| <CurrentNetwork as Network>::TransactionID::from(Field::rand(&mut rng)))
+        any::<u64>()
+            .prop_map(|seed| {
+                let rng = &mut ChaChaRng::seed_from_u64(seed);
+                <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng))
+            })
             .boxed()
     }
 
     pub fn any_transmission_checksum() -> BoxedStrategy<<CurrentNetwork as Network>::TransmissionChecksum> {
-        Just(0).prop_perturb(|_, mut rng| rng.r#gen::<<CurrentNetwork as Network>::TransmissionChecksum>()).boxed()
+        any::<<CurrentNetwork as Network>::TransmissionChecksum>().boxed()
     }
 
     pub fn any_transmission_id() -> BoxedStrategy<TransmissionID<CurrentNetwork>> {

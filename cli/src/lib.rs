@@ -34,6 +34,7 @@ use std::{
     path::Path,
 };
 
+/// Checks whether the parent directory of a file can only be read and modified by the owner.
 #[cfg(unix)]
 pub fn check_parent_permissions<T: AsRef<Path>>(path: T) -> Result<()> {
     use anyhow::{bail, ensure};
@@ -41,7 +42,11 @@ pub fn check_parent_permissions<T: AsRef<Path>>(path: T) -> Result<()> {
 
     if let Some(parent) = path.as_ref().parent() {
         let permissions = parent.metadata()?.permissions().mode();
-        ensure!(permissions & 0o777 == 0o700, "The folder {parent:?} must be readable only by the owner (0700)");
+        ensure!(
+            permissions & 0o777 == 0o700,
+            "The folder {} must be readable and writeable only by the owner (0700)",
+            parent.display()
+        );
     } else {
         let path = path.as_ref();
         bail!("Parent does not exist for path={}", path.display());

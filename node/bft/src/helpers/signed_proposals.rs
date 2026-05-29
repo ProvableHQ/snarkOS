@@ -106,12 +106,11 @@ impl<N: Network> Default for SignedProposals<N> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use rand::RngExt;
     use snarkvm::{
         console::{account::PrivateKey, network::MainnetV0},
         utilities::{TestRng, Uniform},
     };
-
-    use rand::Rng;
 
     type CurrentNetwork = MainnetV0;
 
@@ -127,7 +126,7 @@ pub(crate) mod tests {
             let address = Address::try_from(&private_key).unwrap();
 
             // Add the signed proposal to the map.
-            let round = rng.r#gen();
+            let round = rng.random();
             let batch_id = Field::rand(rng);
             let signature = signer.sign(&[batch_id], rng).unwrap();
             signed_proposals.insert(address, (round, batch_id, signature));

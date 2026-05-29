@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-sync"
-version = "4.6.4"
+version = "4.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A synchronization module for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -24,7 +24,7 @@ locktick = [
   "snarkos-node-router/locktick",
 ]
 serial = ["snarkos-node-bft-ledger-service/serial"]
-metrics = [ "dep:snarkos-node-metrics" ]
+metrics = [ "dep:snarkos-node-metrics", "snarkos-node-network/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-bft-ledger-service/cuda", "snarkos-node-router/cuda" ]
 test = [ "snarkos-node-sync-locators/test" ]
 

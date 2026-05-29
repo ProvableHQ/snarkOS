@@ -7,6 +7,9 @@
 # Ensures we use IPv4 localhost everywhere.
 localhost="127.0.0.1"
 
+# Tracked node PIDs (declared before any function so callers using `set -u` never see PIDS unbound).
+declare -a PIDS=()
+
 # How many cores should each node use?
 # (Should be half of the number of (v)CPUs)
 # NOTE: when you update this, update TASKSET1/2 as well.
@@ -202,10 +205,53 @@ function log() {
 # Helper functions to set up and stop nodes 
 ###########################################
 
-# Array to store PIDs of all node processes.
-declare -a PIDS
+# Wait until the given PID is no longer running, or until timeout seconds elapse.
+# Returns 0 if the process exited, 1 on timeout.
+function wait_for_pid_exit() {
+  local pid="$1"
+  local timeout="$2"
+  local start
+  start=$(now)
+  while (( $(elapsed_since "$start") < timeout )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
 
-# Stops all running processe in the given list.
+# Stop a process with SIGINT, then SIGTERM, then SIGKILL if needed.
+function graceful_stop_pid() {
+  local pid="$1"
+  local label="$2"
+
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  log "Stopping ${label} (pid=${pid}) with SIGINT"
+  kill -INT "$pid" 2>/dev/null || true
+  if wait_for_pid_exit "$pid" 60; then
+    return 0
+  fi
+
+  log "${label} did not exit after SIGINT; sending SIGTERM"
+  kill -TERM "$pid" 2>/dev/null || true
+  if wait_for_pid_exit "$pid" 20; then
+    return 0
+  fi
+
+  log "${label} did not exit after SIGTERM; sending SIGKILL"
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+# Stops all running processes in the given list (graceful shutdown per PID).
 function stop_nodes() {
   log "🚨 Cleaning up ${#PIDS[@]} process(es)…"
   for pid in "${PIDS[@]}"; do
@@ -298,12 +344,12 @@ function check_logs() {
   # The maximum number of warnings allow in each node's log file.
   # Nodes may create some warnings at startup because they cannot connect to each other yet.
   local max_warnings=$4
-
  
   local all_reached=true
   local highest_height=0
 
-  for validator_index in $(seq 0 $((total_validators-1))); do 
+  # Don't use `seq` here as `total_validators` can be 0.
+  for ((validator_index = 0; validator_index < validator_index; validator_index++)); do
     if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
       log "❌ Test failed! Validator #${validator_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -324,7 +370,8 @@ function check_logs() {
     fi
   done
 
-  for client_index in $(seq 0 $((total_clients-1))); do
+  # Don't use `seq` here as `total_clients` can be 0.
+  for ((client_index = 0; client_index < total_clients; client_index++)); do
     if [ ! -s "$log_dir/client-${client_index}.log" ]; then
       log "❌ Test failed! Client #${client_index} did not create any logs in \"$log_dir\"."
       return 1
@@ -874,20 +921,40 @@ function get_consensus_version {
   fi
 }
 
+# Latest block height from REST (port + network). Prints height or empty on failure; no logging.
+# Optional third argument: curl --max-time seconds (omit for no per-request timeout).
+function get_block_height_by_port() {
+  local port="$1"
+  local network_name="$2"
+  local max_time="${3-}"
+  local result
+  if [[ -n "$max_time" ]]; then
+    result=$(curl -s --max-time "$max_time" "http://$localhost:$port/v2/$network_name/block/height/latest" || true)
+  else
+    result=$(curl -s "http://$localhost:$port/v2/$network_name/block/height/latest" || true)
+  fi
+  if is_integer "$result"; then
+    echo "$result"
+  else
+    echo ""
+  fi
+}
+
 # Get the block height of the specified node
 function get_block_height {
   local node_index=$1
   local network_name=$2
+  local port
+  local result
 
   port=$((3030+node_index))
-  result=$(curl -s "http://$localhost:$port/v2/$network_name/block/height/latest")
+  result=$(get_block_height_by_port "$port" "$network_name")
 
-  if ! is_integer "$result"; then
+  if [[ -z "$result" ]]; then
     log "❌ Failed to retrieve block height for node #${node_index}"
     return 1
-  else
-    echo "$result"
-    return 0
   fi
+  echo "$result"
+  return 0
 }
 

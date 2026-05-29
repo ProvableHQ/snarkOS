@@ -147,6 +147,8 @@ commands:
             - ~/.cache/sccache
             # Store the cargo registry
             - ~/.cargo
+            # Store the Aleo parameters
+            - ~/.aleo/resources
 
   run_serial:
     description: "Build and run tests"
@@ -504,6 +506,14 @@ jobs:
           workspace_member: node/consensus
           cache_key: node-consensus
 
+  node-network:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.large >>
+    steps:
+      - run_serial:
+          workspace_member: node/network
+          cache_key: node-network
+
   node-rest:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
@@ -579,6 +589,23 @@ jobs:
           command: |
             ./.ci/test_devnet.sh
 
+  dev-on-prod-restart-test:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.xlarge >>
+    steps:
+      - checkout
+      - setup_environment:
+          cache_key: v4.2.0-rust-1.88.0-dev-on-prod-restart-test-cache
+      - install_snarkos
+      - run:
+          name: "Run dev-on-prod restart test"
+          timeout: 40m
+          no_output_timeout: 15m
+          command: |
+            ./.ci/test_dev_on_prod_restart.sh
+      - clear_environment:
+          cache_key: v4.2.0-rust-1.88.0-dev-on-prod-restart-test-cache
+
   chaotic-minority-reset-test:
     executor: ubuntu-vm
     resource_class: << pipeline.parameters.twoxlarge >>
@@ -647,6 +674,7 @@ jobs:
           name: Check snarkos-display crate
           no_output_timeout: 10m
           command: cargo check --package=snarkos-node-metrics --all-features
+
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
 
@@ -782,14 +810,23 @@ workflows:
     jobs:
       - devnet-test
 
-  chaotic-devnet-workflow:
+  merge-devnet-workflow:
     jobs:
+      - dev-on-prod-restart-test:
+          filters:
+            branches:
+              only:
+                - test_fixed_dev_committee
+                - canary
+                - testnet
+                - mainnet
+                - staging
+
       - chaotic-minority-reset-test:
           filters:
             branches:
               only:
-                - mainnet-release-v460
-                - fix/mainnet/sync-invalid-subdag
+                - release-v4.7.0
                 - canary
                 - testnet
                 - mainnet
@@ -799,21 +836,16 @@ workflows:
           filters:
             branches:
               only:
-                - mainnet-release-v460
-                - fix/mainnet/sync-invalid-subdag
+                - release-v4.7.0
                 - canary
                 - testnet
                 - mainnet
                 - staging
-
-  upgrade-workflow:
-    jobs:
       - upgrade-test:
           filters:
             branches:
               only:
-                - mainnet-release-v460
-                - fix/mainnet/sync-invalid-subdag
+                - release-v4.7.0
                 - canary
                 - testnet
                 - mainnet

@@ -13,4 +13,6 @@ ignore = [
   "RUSTSEC-2026-0002",
   # TODO remove once we migrate away from bincode, or it becomes maintained again.
   "RUSTSEC-2025-0141",
+  # TODO remove once termwiz/terminfo update to phf 0.13+, which drops the rand 0.8 dependency.
+  "RUSTSEC-2026-0097",
 ]

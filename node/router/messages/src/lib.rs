@@ -108,7 +108,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 9] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 10] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -116,12 +116,9 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V10, 21),
         (ConsensusVersion::V11, 22),
         (ConsensusVersion::V12, 23),
-        // Historical note: ConsensusVersion::V13, we forgot to run CI and
-        // increment the message version before the canary release, so canary
-        // nodes need to jump from 23 to 25, whereas for testnet/mainnet we can
-        // then jump from 24 to 25 as usual.
         (ConsensusVersion::V13, 24),
         (ConsensusVersion::V14, 25),
+        (ConsensusVersion::V15, 26),
     ];
 
     /// Returns the latest message version.
@@ -297,14 +294,14 @@ mod tests {
         }
     }
 
-    // /// Ensure that *message versions* are unique and incrementing by 1.
-    // fn consensus_constants_increasing_heights<N: Network>() {
-    //     let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
-    //     for (_consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
-    //         assert_eq!(*message_version, previous_message_version + 1);
-    //         previous_message_version = *message_version;
-    //     }
-    // }
+    /// Ensure that *message versions* are unique and incrementing by 1.
+    fn consensus_constants_increasing_heights<N: Network>() {
+        let mut previous_message_version = Message::<N>::VERSIONS.first().unwrap().1;
+        for (_consensus_version, message_version) in Message::<N>::VERSIONS.iter().skip(1) {
+            assert_eq!(*message_version, previous_message_version + 1);
+            previous_message_version = *message_version;
+        }
+    }
 
     #[test]
     #[allow(clippy::assertions_on_constants)]
@@ -317,10 +314,9 @@ mod tests {
         consensus_versions::<TestnetV0>();
         consensus_versions::<CanaryV0>();
 
-        // TODO: re-enable for testnet V14
-        // consensus_constants_increasing_heights::<MainnetV0>();
-        // consensus_constants_increasing_heights::<TestnetV0>();
-        // consensus_constants_increasing_heights::<CanaryV0>();
+        consensus_constants_increasing_heights::<MainnetV0>();
+        consensus_constants_increasing_heights::<TestnetV0>();
+        consensus_constants_increasing_heights::<CanaryV0>();
     }
 
     #[test]

@@ -27,6 +27,7 @@
   * [6.2 Operations](#62-operations)
   * [6.3 Local Devnet](#63-local-devnet)
   * [6.4 Feature Flags](#64-feature-flags)
+  * [6.5 Local Backups](#65-local-backups)
 * [7. Contributors](#7-contributors)
 * [8. License](#8-license)
 
@@ -601,9 +602,11 @@ By default, the metrics feature is turned on for some internal crates.
 * **test_targets** -
   This feature allows the lowering of coinbase and proof targets for testing.
 
-## 6.5 Local backups
+## 6.5 Local Backups
 
 The snarkOS node implementation uses rocksdb under the hood. By using its native checkpointing mechanism, you can create backups locally and efficiently. The backups leverage hard links on your filesystem, thereby incurring only a marginal amount of extra space. The aim of these local backups is for you to be able to recover quickly in case your node were to halt.
+
+Note: in order for the backups to be incremental and lightweight, they need to be stored at the same filesystem (this includes `btrfs` subvolumes) as the ledger; otherwise, they become full copies.
 
 You can find a basic sample script in `scripts/backup.sh` which you can run as a cron-job e.g. every minute. Each run of the script creates a new backup folder with a timestamp postfix. It will ensure a backup is kept which is 1 minute old, 5 minutes old, 1 hour old and 1 day old. In more detail, on each run it will:
 - always overwrite the latest backup

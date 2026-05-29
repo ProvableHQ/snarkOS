@@ -16,8 +16,8 @@
 /// Generates a string containing all continuous sequenences within the list of numbers.
 ///
 /// The function expects the input to already be sorted.
-pub fn rangify_heights(heights: &[u32]) -> String {
-    let mut iter = heights.iter().copied().peekable();
+pub fn rangify_heights(heights: impl IntoIterator<Item = u32>) -> String {
+    let mut iter = heights.into_iter().peekable();
     let mut ret = String::from("[");
     let mut first = true;
 
@@ -57,9 +57,9 @@ mod tests {
 
     #[test]
     fn test_rangify_heights_empty() {
-        let heights = &[];
+        let heights: &[u32] = &[];
 
-        let rangified = rangify_heights(heights);
+        let rangified = rangify_heights(heights.iter().copied());
         assert_eq!(rangified, "[]");
     }
 
@@ -67,7 +67,7 @@ mod tests {
     fn test_rangify_heights_single_value() {
         let heights = &[52425];
 
-        let rangified = rangify_heights(heights);
+        let rangified = rangify_heights(heights.iter().copied());
         assert_eq!(rangified, "[52425]");
     }
 
@@ -76,9 +76,9 @@ mod tests {
         let start = 16353;
         let end = start + 52414;
 
-        let heights: Vec<u32> = (start..=end).collect();
+        let heights = start..=end;
 
-        let rangified = rangify_heights(&heights);
+        let rangified = rangify_heights(heights);
         assert_eq!(rangified, format!("[{start}-{end}]"));
     }
 
@@ -97,7 +97,7 @@ mod tests {
             heights.push(end);
         }
 
-        let rangified = rangify_heights(&heights);
+        let rangified = rangify_heights(heights);
         let expected = format!("[{}]", expected.join(", "));
 
         assert_eq!(rangified, expected);
@@ -107,7 +107,7 @@ mod tests {
     fn test_rangify_heights_multiple_ranges() {
         let heights = &[0, 1, 3, 4, 5, 6, 7, 10, 11, 12, 20, 22, 23, 24, 25, 27, 28];
 
-        let rangified = rangify_heights(heights);
+        let rangified = rangify_heights(*heights);
         assert_eq!(rangified, "[0-1, 3-7, 10-12, 20, 22-25, 27-28]");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-utilities"
-version = "4.6.4"
+version = "4.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Utilities for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -15,6 +15,9 @@ keywords = [
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
+
+[features]
+test_network = [ ]
 
 [dependencies.anyhow]
 workspace = true

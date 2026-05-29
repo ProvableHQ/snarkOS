@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-cdn"
-version = "4.6.4"
+version = "4.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A CDN client for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -60,8 +60,8 @@ workspace = true
 workspace = true
 
 [dependencies.reqwest]
-version = "0.12"
-features = [ "rustls-tls" ]
+workspace = true
+features = [ "rustls" ]
 
 [dependencies.serde]
 workspace = true

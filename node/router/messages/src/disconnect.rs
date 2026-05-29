@@ -78,7 +78,7 @@ mod tests {
             DisconnectReason::TooManyFailures,
             DisconnectReason::TooManyPeers,
             DisconnectReason::YouNeedToSyncFirst,
-            DisconnectReason::YourPortIsClosed(TestRng::default().r#gen()),
+            DisconnectReason::YourPortIsClosed(TestRng::default().random()),
         ];
 
         for reason in all_reasons.iter() {

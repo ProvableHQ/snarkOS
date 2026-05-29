@@ -36,7 +36,7 @@ use tokio::{
     io::split,
     net::{TcpListener, TcpSocket, TcpStream},
     sync::oneshot,
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
     time::timeout,
 };
 use tracing::*;
@@ -46,7 +46,7 @@ use crate::{
     Config,
     KnownPeers,
     Stats,
-    connections::{Connection, ConnectionSide, Connections},
+    connections::{Connection, ConnectionSide, Connections, create_connection_span},
     protocols::{Protocol, Protocols},
 };
 
@@ -274,10 +274,17 @@ impl Tcp {
         if let Some(listening_task) = tasks.next() {
             listening_task.abort(); // abort the listening task first
         }
+
         // Disconnect from all connected peers.
+        let mut disconnect_tasks = JoinSet::new();
         for addr in self.connected_addrs() {
-            self.disconnect(addr).await;
+            let node = self.clone();
+            disconnect_tasks.spawn(async move {
+                node.disconnect(addr).await;
+            });
         }
+        while disconnect_tasks.join_next().await.is_some() {}
+
         // Abort all remaining tasks.
         for handle in tasks {
             handle.abort();
@@ -369,26 +376,33 @@ impl Tcp {
 
         if let Some(handler) = self.protocols.disconnect.get() {
             let (sender, receiver) = oneshot::channel();
-            handler.trigger((addr, sender));
-            let _ = receiver.await; // can't really fail
+            handler.trigger((addr, sender)).await;
+            if let Ok((handle, waiter)) = receiver.await {
+                // register the associated task with the connection, in case
+                // it gets terminated before its completion
+                if let Some(conn) = self.connections.0.write().get_mut(&addr) {
+                    conn.tasks.push(handle);
+                }
+                // wait for the OnDisconnect protocol to perform its specified actions
+                let _ = waiter.await;
+            }
         }
 
         let conn = self.connections.remove(addr);
+        let disconnected = conn.is_some();
 
-        if let Some(ref conn) = conn {
-            debug!(parent: self.span(), "Disconnecting from {}", conn.addr());
+        if let Some(conn) = conn {
+            debug!(parent: self.span(), "Disconnecting from {addr}");
 
             // Shut down the associated tasks of the peer.
-            for task in conn.tasks.iter().rev() {
-                task.abort();
-            }
+            drop(conn);
 
-            debug!(parent: self.span(), "Disconnected from {}", conn.addr());
+            debug!(parent: self.span(), "Disconnected from {addr}");
         } else {
             warn!(parent: self.span(), "Failed to disconnect, was not connected to {addr}");
         }
 
-        conn.is_some()
+        disconnected
     }
 }
 
@@ -421,7 +435,12 @@ impl Tcp {
                 // Await for a new connection.
                 match listener.accept().await {
                     Ok((stream, addr)) => tcp.handle_connection(stream, addr),
-                    Err(e) => error!(parent: tcp.span(), "Failed to accept a connection: {e}"),
+                    Err(e) => {
+                        error!(parent: tcp.span(), "Failed to accept a connection: {e}");
+                        // if we ran out of FDs, sleep to avoid spinning 100% CPU
+                        // while waiting for a slot to free up
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
                 }
             }
         });
@@ -534,7 +553,8 @@ impl Tcp {
             }
         }
 
-        let connection = Connection::new(peer_addr, stream, !own_side);
+        let conn_span = create_connection_span(peer_addr, self.span());
+        let connection = Connection::new(peer_addr, stream, !own_side, conn_span);
 
         // Enact the enabled protocols.
         let mut connection = self.enable_protocols(connection).await?;
@@ -553,8 +573,17 @@ impl Tcp {
         // If enabled, enact OnConnect.
         if let Some(handler) = self.protocols.on_connect.get() {
             let (sender, receiver) = oneshot::channel();
-            handler.trigger((peer_addr, sender));
-            let _ = receiver.await; // can't really fail
+            handler.trigger((peer_addr, sender)).await;
+            // Receive the handle for the running task.
+            if let Ok(handle) = receiver.await {
+                // Add the task to the connection so it gets aborted on disconnect.
+                if let Some(conn) = self.connections.0.write().get_mut(&peer_addr) {
+                    conn.tasks.push(handle);
+                } else {
+                    // The connection has just been terminated; abort the OnConnect work.
+                    handle.abort();
+                }
+            }
         }
 
         Ok(())
@@ -568,7 +597,7 @@ impl Tcp {
                 if let Some(handler) = $node.protocols.$handler_type.get() {
                     let (conn_returner, conn_retriever) = oneshot::channel();
 
-                    handler.trigger(($conn, conn_returner));
+                    handler.trigger(($conn, conn_returner)).await;
 
                     match conn_retriever.await {
                         Ok(Ok(conn)) => conn,
@@ -714,7 +743,7 @@ mod tests {
 
         // Simulate an active connection.
         let stream = TcpStream::connect(peer_ip).await.unwrap();
-        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Initiator));
+        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Initiator, Span::none()));
         assert!(!tcp.can_add_connection());
 
         // Ensure that we cannot invoke connect() successfully in this case.
@@ -742,7 +771,7 @@ mod tests {
 
         // Simulate an active and a pending connection (this case should never occur).
         let stream = TcpStream::connect(peer_ip).await.unwrap();
-        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Responder));
+        tcp.connections.add(Connection::new(peer_ip, stream, ConnectionSide::Responder, Span::none()));
         tcp.connecting.lock().insert(peer_ip);
         assert!(!tcp.can_add_connection());
 
@@ -771,7 +800,7 @@ mod tests {
 
         // Simulate an active connection.
         let stream = TcpStream::connect(peer1_ip).await.unwrap();
-        tcp.connections.add(Connection::new(peer1_ip, stream, ConnectionSide::Responder));
+        tcp.connections.add(Connection::new(peer1_ip, stream, ConnectionSide::Responder, Span::none()));
         assert!(!tcp.can_add_connection());
         assert_eq!(tcp.num_connected(), 1);
         assert_eq!(tcp.num_connecting(), 0);

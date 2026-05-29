@@ -83,18 +83,16 @@ impl<N: Network, C: ConsensusStorage<N>> Disconnect for Validator<N, C> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr) {
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
-            let was_connected = self.router.downgrade_peer_to_candidate(peer_ip);
+            self.router.downgrade_peer_to_candidate(peer_ip);
 
-            // Only remove the peer from sync if the handshake was successful.
-            // This handles the cases where a validator unsuccessfully tries to connect to another validator using the router.
-            if was_connected {
-                self.sync.remove_peer(&peer_ip);
-            }
+            // Validators do not sync from clients in the current design, so do not remove the peer from sync here.
 
             // Clear cached entries applicable to the peer.
             self.router.cache().clear_peer_entries(peer_ip);
             #[cfg(feature = "metrics")]
             self.router.update_metrics();
+        } else {
+            warn!("Got disconnect for a peer '{peer_addr}' that is not in the peer pool");
         }
     }
 }

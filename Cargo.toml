@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.6.4"
+version = "4.7.1"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -48,9 +48,10 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 #git = "https://github.com/ProvableHQ/snarkVM.git"
-#rev = "f761f01"
-version = "=4.6.4"
+#rev = "d41232f"
+version = "=4.7.1"
 default-features = false
+
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -75,6 +76,9 @@ version = "0.8"
 features = ["git2"]
 
 [workspace.dependencies.bytes]
+version = "1"
+
+[workspace.dependencies.cfg-if]
 version = "1"
 
 [workspace.dependencies.clap]
@@ -107,7 +111,8 @@ version = "1"
 version = "1"
 
 [workspace.dependencies.proptest]
-version = "=1.6.0" # Remove this once we upgrade to rand 0.9
+# Pin to 1.6 to match the version used in snarkVM. Avoids pulling in rand >=0.9.
+version = "1.6"
 
 [workspace.dependencies.rayon]
 version = "1"
@@ -125,7 +130,8 @@ version = "1.48"
 version = "0.7"
 
 [workspace.dependencies.http]
-version = "1"
+# Pin to 1.3.1 until https://github.com/ProvableHQ/snarkOS/issues/4275 is fixed
+version = "=1.3.1"
 
 [workspace.dependencies.itertools]
 version = "0.14"
@@ -145,15 +151,18 @@ version = "1"
 version = "0.12"
 
 [workspace.dependencies.rand]
-version = "0.8"
+version = "0.10"
 default-features = false
 
 [workspace.dependencies.rand_chacha]
-version = "0.3"
+version = "0.10"
 default-features = false
 
 [workspace.dependencies.rand_distr]
-version = "0.4"
+version = "0.6"
+
+[workspace.dependencies.reqwest]
+version = "0.13"
 
 [workspace.dependencies.smol_str]
 version = "=0.3.2" # Update after Rust >1.88
@@ -178,84 +187,84 @@ version = "0.2"
 
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.6.4"
+version = "=4.7.1"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [workspace.dependencies.snarkos-utilities]
 path = "utilities"
-version = "=4.6.4"
+version = "=4.7.1"
 
 [[bin]]
 name = "snarkos"
@@ -265,6 +274,7 @@ path = "snarkos/main.rs"
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history" ]
 history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
+slipstream-plugins = [ "snarkos-node/slipstream-plugins", "snarkos-cli/slipstream-plugins" ]
 telemetry = [ "snarkos-node/telemetry" ]
 cuda = [
   "snarkos-account/cuda",
@@ -302,7 +312,7 @@ serial = [
 ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
-test_network = [ "snarkos-cli/test_network" ]
+test_network = [ "snarkos-cli/test_network", "snarkos-node/test_network" ]
 tokio_console = [ "snarkos-cli/tokio_console" ]
 
 [dependencies.clap]
@@ -356,6 +366,14 @@ tikv-jemallocator = "0.6"
 [dependencies.tracing]
 workspace = true
 
+# Pinned to =0.14.0-rc.29 because k256 v0.14.0-rc.8 does not implement the
+# MulVartime/MulByGeneratorVartime traits added in elliptic-curve v0.14.0-rc.31.
+# Adding this as a direct dependency forces cargo to resolve the exact version
+# and prevents automatic upgrades to incompatible RC releases.
+[dependencies.elliptic-curve]
+version = "=0.14.0-rc.29"
+default-features = false
+
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
@@ -372,9 +390,14 @@ version = "2"
 opt-level = 3
 lto = "thin"
 incremental = true
-# uncomment the 2 lines below when building with the locktick feature
+# uncomment the 2 lines below when building with the locktick feature or use the `release-locktick` profile
 # debug = "line-tables-only"
 # strip = "none"
+
+[profile.release-locktick]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
 
 [profile.bench]
 opt-level = 3
@@ -398,6 +421,7 @@ debug-assertions = true
 
 [package.metadata.cargo-machete]
 ignored = [
+  "elliptic-curve", # Needed to pin the crate to a specific version
   "snarkos-account", # Needed for cuda feature
   "snarkos-node", # Needed for metrics feature
   "snarkos-node-bft", # Needed for cuda and locktick features

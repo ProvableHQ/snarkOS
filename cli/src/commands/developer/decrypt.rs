@@ -78,7 +78,7 @@ mod tests {
     };
 
     use indexmap::IndexMap;
-    use rand::Rng;
+    use rand::RngExt;
 
     type CurrentNetwork = MainnetV0;
 
@@ -91,7 +91,7 @@ mod tests {
     ) -> Result<Record<N, Ciphertext<N>>> {
         // Prepare the record.
         let randomizer = Scalar::rand(rng);
-        let version = match rng.r#gen() {
+        let version = match rng.random() {
             true => U8::<N>::one(),
             false => U8::<N>::zero(),
         };
