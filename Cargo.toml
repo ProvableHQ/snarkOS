@@ -312,8 +312,10 @@ serial = [
 ]
 test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
-test_network = [ "snarkos-cli/test_network", "snarkos-node/test_network" ]
+devnet = [ "snarkos-cli/devnet", "snarkos-node/devnet" ]
 tokio_console = [ "snarkos-cli/tokio_console" ]
+# Deprecated alias for "devnet".
+test_network = [ "devnet" ]
 
 [dependencies.clap]
 workspace = true

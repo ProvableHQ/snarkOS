@@ -34,7 +34,7 @@ serial = [
   "snarkos-node-metrics/serial",
   "snarkvm/serial"
 ]
-test_network = [ ]
+devnet = [ ]
 
 [dependencies.aleo-std]
 workspace = true

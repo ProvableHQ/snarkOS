@@ -29,7 +29,7 @@ pub const LEGACY_ROUTER_PEER_CACHE_FILE: &str = "cached_router_peers";
 pub const CURRENT_PROPOSAL_CACHE_FILE: &str = "current-proposal-cache";
 
 /// The filename used to persist the hotswapped dev committee's starting round.
-#[cfg(feature = "test_network")]
+#[cfg(feature = "devnet")]
 pub const DEV_COMMITTEE_STATE_FILE: &str = "dev-committee-state";
 
 /// The filename of the JWT secret for a given address.
@@ -97,7 +97,7 @@ impl NodeDataDir {
     }
 
     /// The location used to persist the hotswapped dev committee's starting round.
-    #[cfg(feature = "test_network")]
+    #[cfg(feature = "devnet")]
     pub fn dev_committee_state_path(&self) -> PathBuf {
         self.path.join(DEV_COMMITTEE_STATE_FILE)
     }

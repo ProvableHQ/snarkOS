@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # USAGE examples: 
   # CLI with env vars: PEERS=core_client_ip_1:4130,core_client_ip_2:4130,core_client_ip_3:4130,outer_client_ip_1:4130,... ./run-outer-client.sh
@@ -17,7 +17,7 @@ else
   COMMAND="cargo run --release -- start --nodisplay --client --node 0.0.0.0:4130 --peers ${PEERS} --verbosity 1 --rest 0.0.0.0:3030"
 fi
 
-for word in $*;
+for word in "$@";
 do
   COMMAND="${COMMAND} ${word}"
 done

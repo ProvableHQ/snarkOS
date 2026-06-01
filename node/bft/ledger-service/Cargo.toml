@@ -33,7 +33,7 @@ serial = [
   "snarkvm/serial"
 ]
 test = [ "mock", "translucent" ]
-test_network = [ ]
+devnet = [ ]
 translucent = [ "ledger" ]
 
 [dependencies.anyhow]

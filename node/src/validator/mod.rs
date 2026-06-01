@@ -93,8 +93,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         dev_txs: bool,
         dev: Option<u16>,
         _slipstream_configs: &[std::path::PathBuf],
-        #[cfg(feature = "test_network")] dev_num_validators_for_committee_hotswap: Option<u16>,
-        #[cfg(not(feature = "test_network"))] _dev_num_validators_for_committee_hotswap: Option<u16>,
+        #[cfg(feature = "devnet")] dev_num_validators_for_committee_hotswap: Option<u16>,
+        #[cfg(not(feature = "devnet"))] _dev_num_validators_for_committee_hotswap: Option<u16>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         // Initialize the ledger.
@@ -118,9 +118,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         }
 
         // Initialize the ledger service.
-        #[cfg(not(feature = "test_network"))]
+        #[cfg(not(feature = "devnet"))]
         let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
-        #[cfg(feature = "test_network")]
+        #[cfg(feature = "devnet")]
         // Initialize the ledger service with a deterministic dev committee.
         let ledger_service = if let Some(dev_num_validators) = dev_num_validators_for_committee_hotswap {
             Arc::new(CoreLedgerService::new_dev(

@@ -87,7 +87,7 @@ commands:
             CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
             CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
             CARGO_PROFILE_RELEASE_DEBUG=0 \
-            cargo install --locked --path . --features test_network
+            cargo install --locked --path . --features devnet
 
   setup_environment:
     description: "Setup testing environment"
@@ -760,7 +760,7 @@ jobs:
       - run:
           name: Lint scripts
           command: |
-            shellcheck -x .ci/*.sh
+            shellcheck -x .ci/*.sh scripts/*.sh
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
 
