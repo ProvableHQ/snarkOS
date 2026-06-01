@@ -38,9 +38,14 @@ metrics = [
   "snarkos-node-router/metrics",
   "snarkos-node-tcp/metrics"
 ]
-history = [ "snarkos-node-rest/history", "snarkvm/history" ]
-history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
-slipstream-plugins = [ "snarkos-node-rest/slipstream-plugins", "snarkvm/slipstream-plugins" ]
+history = [ "snarkos-node-rest/history" ]
+history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards" ]
+slipstream-plugins = [
+    "snarkvm/slipstream-plugins",
+    "dep:slipstream-plugin-postgres",
+    "dep:json5",
+    "dep:inventory",
+]
 telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",
@@ -138,6 +143,19 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
+
+[dependencies.slipstream-plugin-postgres]
+git = "ssh://git@github.com/ProvableHQ/slipstream-plugin-postgres.git"
+rev = "0cafd01966"
+optional = true
+
+[dependencies.json5]
+version = "0.4"
+optional = true
+
+[dependencies.inventory]
+version = "0.3"
+optional = true
 
 [dependencies.time]
 workspace = true

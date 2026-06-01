@@ -50,6 +50,27 @@ pub use node::*;
 mod traits;
 pub use traits::*;
 
+/// Returns a boxed static slipstream plugin instance for the given config, or
+/// `None` if the plugin name is not recognized.
+///
+/// The config is already parsed from the JSON5 file; the `name` field selects
+/// the plugin to instantiate. Plugins self-register via `inventory::submit!` at
+/// link time — no per-plugin code is needed here.
+// Force the linker to include each plugin crate so their inventory::submit!
+// registrations are not dead-stripped from the final binary.
+#[cfg(feature = "slipstream-plugins")]
+extern crate slipstream_plugin_postgres;
+
+#[cfg(feature = "slipstream-plugins")]
+pub(crate) fn build_static_slipstream_plugin(
+    config: &serde_json::Value,
+) -> Option<Box<dyn snarkvm::slipstream_plugin_interface::slipstream_plugin_interface::SlipstreamPlugin>>
+{
+    use snarkvm::slipstream_plugin_interface::slipstream_plugin_interface::PluginRegistration;
+    let name = config.get("name").and_then(|v| v.as_str())?;
+    inventory::iter::<PluginRegistration>().find(|r| r.name == name).map(|r| (r.factory)())
+}
+
 use aleo_std::StorageMode;
 
 /// A helper to log instructions to recover.

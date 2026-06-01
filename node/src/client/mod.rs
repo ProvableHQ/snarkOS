@@ -144,8 +144,9 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_data_dir: NodeDataDir,
         trusted_peers_only: bool,
         dev: Option<u16>,
-        _slipstream_configs: &[std::path::PathBuf],
         signal_handler: Arc<SignalHandler>,
+        #[cfg(feature = "slipstream-plugins")] slipstream_plugin_configs: Vec<std::path::PathBuf>,
+        #[cfg(not(feature = "slipstream-plugins"))] _slipstream_plugin_configs: Vec<std::path::PathBuf>,
     ) -> Result<Self> {
         // Initialize the ledger.
         let ledger = {
@@ -156,15 +157,24 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         }
         .with_context(|| "Failed to initialize the ledger")?;
 
-        // Initialize the Slipstream plugin manager (if any config files were provided).
+        // Initialize slipstream plugins (if any are configured).
         #[cfg(feature = "slipstream-plugins")]
-        if !_slipstream_configs.is_empty() {
-            let manager =
-                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(_slipstream_configs)
-                    .context("Failed to initialize Slipstream plugin manager")?;
+        if !slipstream_plugin_configs.is_empty() {
+            let mut manager = snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::new();
+            for config_path in &slipstream_plugin_configs {
+                let raw = std::fs::read_to_string(config_path)
+                    .with_context(|| format!("Failed to read slipstream config {config_path:?}"))?;
+                let val: serde_json::Value = json5::from_str(&raw)
+                    .with_context(|| format!("Invalid JSON5 in slipstream config {config_path:?}"))?;
+                let plugin = crate::build_static_slipstream_plugin(&val).ok_or_else(|| {
+                    let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("<missing>");
+                    anyhow::anyhow!("Unknown static slipstream plugin '{name}' in {config_path:?}")
+                })?;
+                manager
+                    .register(plugin, config_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to register slipstream plugin: {e}"))?;
+            }
             ledger.vm().finalize_store().set_slipstream_plugin_manager(manager);
-            let num_plugins = _slipstream_configs.len();
-            tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
         }
 
         // Initialize the ledger service.

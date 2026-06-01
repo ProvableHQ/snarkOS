@@ -150,7 +150,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     fn build_routes(&self, rest_rps: u32) -> axum::Router {
         let cors = CorsLayer::new()
             .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
@@ -182,12 +182,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Slipstream plugin management endpoints require auth.
         #[cfg(feature = "slipstream-plugins")]
         let auth_routes = auth_routes
-            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
-            .route(
-                "/slipstream/plugins/{name}",
-                // TODO: PUT (reload) is not yet implemented.
-                axum::routing::delete(Self::slipstream_unload_plugin),
-            );
+            .route("/slipstream/plugins", get(Self::slipstream_list_plugins));
 
         let routes = axum::Router::new()
             .merge(auth_routes.route_layer(middleware::from_fn(auth_middleware)))
