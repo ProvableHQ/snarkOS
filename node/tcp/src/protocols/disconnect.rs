@@ -24,7 +24,7 @@ use tracing::*;
 
 #[cfg(doc)]
 use crate::{Connection, protocols::Writing};
-use crate::{P2P, protocols::ProtocolHandler};
+use crate::{P2P, connections::create_connection_span, protocols::ProtocolHandler};
 
 /// Can be used to automatically perform some extra actions when the node disconnects from its
 /// peer, which is especially practical if the disconnect is triggered automatically, e.g. due
@@ -64,7 +64,8 @@ where
                 let handle = tokio::spawn(async move {
                     // perform the specified extra actions
                     if timeout(Self::TIMEOUT, self_clone2.handle_disconnect(peer_addr)).await.is_err() {
-                        warn!(parent: self_clone2.tcp().span(), "Disconnect logic timed out for {peer_addr}");
+                        let conn_span = create_connection_span(peer_addr, self_clone2.tcp().span());
+                        warn!(parent: conn_span, "Disconnect logic timed out");
                     }
                     // notify the node that the extra actions have concluded
                     // and that the related connection can be dropped

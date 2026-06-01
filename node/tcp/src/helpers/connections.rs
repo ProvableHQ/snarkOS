@@ -27,6 +27,7 @@ use tokio::{
     sync::oneshot,
     task::JoinHandle,
 };
+use tracing::*;
 
 #[cfg(doc)]
 use crate::protocols::{Handshake, Reading, Writing};
@@ -89,11 +90,13 @@ pub struct Connection {
     pub(crate) disconnecting: AtomicBool,
     /// Handles to tasks spawned for the connection.
     pub(crate) tasks: Vec<JoinHandle<()>>,
+    /// The tracing span.
+    pub(crate) span: Span,
 }
 
 impl Connection {
     /// Creates a [`Connection`] with placeholders for protocol-related objects.
-    pub(crate) fn new(addr: SocketAddr, stream: TcpStream, side: ConnectionSide) -> Self {
+    pub(crate) fn new(addr: SocketAddr, stream: TcpStream, side: ConnectionSide, span: Span) -> Self {
         Self {
             addr,
             stream: Some(stream),
@@ -103,6 +106,7 @@ impl Connection {
             disconnecting: Default::default(),
             side,
             tasks: Default::default(),
+            span,
         }
     }
 
@@ -115,6 +119,12 @@ impl Connection {
     /// and `ConnectionSide::Responder` if the connection request was initiated by Tcp.
     pub fn side(&self) -> ConnectionSide {
         self.side
+    }
+
+    /// Returns the tracing [`Span`] associated with the connection.
+    #[inline]
+    pub const fn span(&self) -> &Span {
+        &self.span
     }
 }
 
@@ -144,4 +154,20 @@ impl Drop for Connection {
             task.abort();
         }
     }
+}
+
+pub(crate) fn create_connection_span(addr: SocketAddr, parent: &Span) -> Span {
+    macro_rules! try_span {
+        ($lvl:expr) => {
+            let s = span!(parent: parent, $lvl, "conn", addr = %addr);
+            if !s.is_disabled() {
+                return s;
+            }
+        };
+    }
+    try_span!(Level::TRACE);
+    try_span!(Level::DEBUG);
+    try_span!(Level::INFO);
+    try_span!(Level::WARN);
+    error_span!(parent: parent, "conn", addr = %addr)
 }

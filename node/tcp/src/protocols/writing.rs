@@ -35,6 +35,7 @@ use crate::{
     Connection,
     ConnectionSide,
     P2P,
+    connections::create_connection_span,
     protocols::{Protocol, ProtocolHandler, ReturnableConnection},
 };
 
@@ -122,7 +123,8 @@ where
                 sender
                     .try_send(msg)
                     .map_err(|e| {
-                        error!(parent: self.tcp().span(), "can't send a message to {}: {}", addr, e);
+                        let conn_span = create_connection_span(addr, self.tcp().span());
+                        error!(parent: conn_span, "can't send a message: {e}");
                         self.tcp().stats().register_failure();
                         io::ErrorKind::Other.into()
                     })
@@ -153,7 +155,8 @@ where
             for (addr, message_sender) in senders {
                 let (msg, _delivery) = WrappedMessage::new(Box::new(message.clone()));
                 let _ = message_sender.try_send(msg).map_err(|e| {
-                    error!(parent: self.tcp().span(), "can't send a message to {}: {}", addr, e);
+                    let conn_span = create_connection_span(addr, self.tcp().span());
+                    error!(parent: conn_span, "can't send a message: {e}");
                     self.tcp().stats().register_failure();
                 });
             }
@@ -219,9 +222,10 @@ impl<W: Writing> WritingInternal for W {
 
         // the task for writing outbound messages
         let self_clone = self.clone();
+        let conn_span = conn.span().clone();
         let writer_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
-            trace!(parent: node.span(), "spawned a task for writing messages to {}", addr);
+            trace!(parent: &conn_span, "spawned a task for writing messages");
             tx_writer.send(()).unwrap(); // safe; the channel was just opened
 
             // move the cleanup into the task that gets aborted on disconnect
@@ -233,13 +237,13 @@ impl<W: Writing> WritingInternal for W {
                 match self_clone.write_to_stream(*msg, &mut framed).await {
                     Ok(len) => {
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
-                        node.known_peers().register_sent_message(addr.ip(), len);
+                        // node.known_peers().register_sent_message(addr.ip(), len);
                         node.stats().register_sent_message(len);
-                        trace!(parent: node.span(), "sent {}B to {}", len, addr);
+                        trace!(parent: &conn_span, "sent {len}B");
                     }
                     Err(e) => {
                         node.known_peers().register_failure(addr.ip());
-                        error!(parent: node.span(), "couldn't send a message to {}: {}", addr, e);
+                        error!(parent: &conn_span, "couldn't send a message: {e}");
                         let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
                         let _ = wrapped_msg.delivery_notification.send(Err(e));
                         if is_fatal {
