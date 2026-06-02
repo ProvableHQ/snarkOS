@@ -83,7 +83,7 @@ pub const BLOCK_REQUEST_BATCH_DELAY: Duration = Duration::from_millis(10);
 const EXTRA_REDUNDANCY_FACTOR: usize = REDUNDANCY_FACTOR * 3;
 const NUM_SYNC_CANDIDATE_PEERS: usize = REDUNDANCY_FACTOR * 5;
 
-const BLOCK_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const BLOCK_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The maximum number of outstanding block requests.
 /// Once a node hits this limit, it will not issue any new requests until existing requests time out or receive responses.
