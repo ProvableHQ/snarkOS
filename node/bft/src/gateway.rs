@@ -53,7 +53,7 @@ use snarkos_node_network::{
     log_repo_sha_comparison,
     shorten_snarkos_sha,
 };
-use snarkos_node_sync::{MAX_BLOCKS_BEHIND, communication_service::CommunicationService};
+use snarkos_node_sync::communication_service::CommunicationService;
 use snarkos_node_tcp::{
     Config,
     ConnectError,
@@ -451,7 +451,7 @@ impl<N: Network> Gateway<N> {
         }
 
         // Retrieve the previous block height to consider from the sync tolerance.
-        let previous_block_height = self.ledger.latest_block_height().saturating_sub(MAX_BLOCKS_BEHIND);
+        let previous_block_height = self.ledger.latest_block_height().saturating_sub(1);
         // Determine if the validator is in any of the previous committee lookbacks.
         match self.ledger.get_block_round(previous_block_height) {
             Ok(block_round) => (block_round..self.storage.current_round()).step_by(2).any(|round| {
