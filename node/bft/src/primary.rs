@@ -72,7 +72,7 @@ use snarkvm::{
 use anyhow::Context;
 use colored::Colorize;
 use futures::{
-    future::join_all,
+    future::try_join_all,
     stream::{FuturesUnordered, StreamExt},
 };
 use indexmap::{IndexMap, IndexSet};
@@ -1949,17 +1949,11 @@ impl<N: Network> Primary<N> {
             }
         });
 
-        // Check if any of the fetches failed. If so, return an error.
-        let mut latest_error = None;
-        for result in join_all(futures).await.into_iter() {
-            if let Err(err) = result {
-                let err = err.context("Failed to fetch previous certificate");
-                error!("{}", flatten_error(&err));
-                latest_error = Some(err);
-            }
-        }
+        // Run all fetches concurrently, failing fast on the first error and
+        // cancelling the remaining futures.
+        try_join_all(futures).await.context("Failed to fetch previous certificate")?;
 
-        if let Some(err) = latest_error { Err(err) } else { Ok(missing_transmissions) }
+        Ok(missing_transmissions)
     }
 
     /// Fetches any missing transmissions for the specified batch header.
