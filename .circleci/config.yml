@@ -826,7 +826,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-v4.7.0
+                - release-mainnet-4.7.3
                 - canary
                 - testnet
                 - mainnet
@@ -836,7 +836,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-v4.7.0
+                - release-mainnet-4.7.3
                 - canary
                 - testnet
                 - mainnet
@@ -845,7 +845,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-v4.7.0
+                - release-mainnet-4.7.3
                 - canary
                 - testnet
                 - mainnet
