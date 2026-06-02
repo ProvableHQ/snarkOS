@@ -1951,7 +1951,11 @@ impl<N: Network> Primary<N> {
 
         // Run all fetches concurrently, failing fast on the first error and
         // cancelling the remaining futures.
-        try_join_all(futures).await.context("Failed to fetch previous certificate")?;
+        try_join_all(futures).await.map_err(|err| {
+            let err = err.context("Failed to fetch previous certificate");
+            error!("{}", flatten_error(&err));
+            err
+        })?;
 
         Ok(missing_transmissions)
     }
