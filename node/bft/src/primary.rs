@@ -71,10 +71,7 @@ use snarkvm::{
 
 use anyhow::Context;
 use colored::Colorize;
-use futures::{
-    future::join_all,
-    stream::{FuturesUnordered, StreamExt},
-};
+use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::{
@@ -1931,35 +1928,21 @@ impl<N: Network> Primary<N> {
             missing_previous_certificates_handle,
         ).with_context(|| format!("Failed to fetch missing transmissions and previous certificates for round {batch_round} from '{peer_ip}"))?;
 
-        // Process all missing previous certificates in parallel, so that their
-        // recursive fetches (for level R-2, R-3, ...) all fire concurrently
-        // rather than being serialized one certificate at a time.
-        let futures = missing_previous_certificates.into_iter().map(|batch_certificate| {
-            let self_ = self.clone();
-            async move {
-                // Check if the missing previous certificate is valid. This is only
-                // needed if we are processing an incoming batch header from a peer.
-                // For incoming certificates, validity is assured by checking the
-                // root certificate in `process_batch_certificate_from_peer`.
-                if CHECK_PREVIOUS_CERTIFICATES {
-                    self_.storage.check_incoming_certificate(&batch_certificate)?;
-                }
-                // Store the batch certificate (recursively fetching any missing previous certificates).
-                self_.sync_with_certificate_from_peer::<IS_SYNCING>(peer_ip, batch_certificate).await
+        // Iterate through the missing previous certificates sequentially.
+        // This is done sequentially to avoid requesting a large number of certificates from peers all at once.
+        // TODO (raychu86): Optimize this by parallelizing requests, but avoiding duplicated requests since certificates are likely shared across batches.
+        for batch_certificate in missing_previous_certificates {
+            // Check if the missing previous certificate is valid. This is only
+            // needed if we are processing an incoming batch header from a peer.
+            // For incoming certificates, validity is assured by checking the
+            // root certificate in `process_batch_certificate_from_peer`.
+            if CHECK_PREVIOUS_CERTIFICATES {
+                self.storage.check_incoming_certificate(&batch_certificate)?;
             }
-        });
-
-        // Check if any of the fetches failed. If so, return an error.
-        let mut latest_error = None;
-        for result in join_all(futures).await.into_iter() {
-            if let Err(err) = result {
-                let err = err.context("Failed to fetch previous certificate");
-                error!("{}", flatten_error(&err));
-                latest_error = Some(err);
-            }
+            // Store the batch certificate (recursively fetching any missing previous certificates).
+            self.sync_with_certificate_from_peer::<IS_SYNCING>(peer_ip, batch_certificate).await?;
         }
-
-        if let Some(err) = latest_error { Err(err) } else { Ok(missing_transmissions) }
+        Ok(missing_transmissions)
     }
 
     /// Fetches any missing transmissions for the specified batch header.
