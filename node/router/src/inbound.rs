@@ -244,12 +244,12 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 }
             }
             Message::UnconfirmedSolution(message) => {
-                // Insert the unconfirmed solution for the peer, and fetch the recent frequency.
-                let frequency = self.router().cache.insert_inbound_unconfirmed_solution(peer_ip);
-                // Check if the number of unconfirmed solutions is within the limit.
-                if frequency > Self::MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL {
-                    bail!("Peer '{peer_ip}' is not following the protocol (excessive unconfirmed solutions)")
-                }
+                // // Insert the unconfirmed solution for the peer, and fetch the recent frequency.
+                // let frequency = self.router().cache.insert_inbound_unconfirmed_solution(peer_ip);
+                // // Check if the number of unconfirmed solutions is within the limit.
+                // if frequency > Self::MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL {
+                //     bail!("Peer '{peer_ip}' is not following the protocol (excessive unconfirmed solutions)")
+                // }
 
                 // Do not process unconfirmed solutions if the node is too far behind.
                 if !self.is_within_sync_leniency() {
