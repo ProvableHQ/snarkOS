@@ -1379,6 +1379,8 @@ impl<N: Network> Writing for Gateway<N> {
 impl<N: Network> Disconnect for Gateway<N> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr, origin: DisconnectOrigin) {
+        debug!("Psysically disconnecting from {peer_addr}; origin: {origin:?}");
+
         if let Some(peer_ip) = self.resolve_to_listener(&peer_addr) {
             // TODO(kaimast): This can, in theory, still lead to race conditions, if we immediately reconnect to the same peer.
             // In practice, there should always be a significant delay between those two delays, so it is not an immediate issue.
