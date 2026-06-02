@@ -248,7 +248,7 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 let frequency = self.router().cache.insert_inbound_unconfirmed_solution(peer_ip);
                 // Check if the number of unconfirmed solutions is within the limit.
                 if frequency > Self::MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL {
-                    trace!("Peer '{peer_ip}' is not following the protocol (excessive unconfirmed solutions)");
+                    debug!("Peer '{peer_ip}' is not following the protocol (excessive unconfirmed solutions)");
                     return Ok(true);
                 }
 
