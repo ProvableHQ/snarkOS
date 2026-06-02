@@ -175,13 +175,13 @@ pub(crate) fn create_connection_span(addr: SocketAddr, parent: &Span) -> Span {
     error_span!(parent: parent, "conn", addr = %addr)
 }
 
-/// Describes what triggered a disconnect, as delivered to [`Disconnect::on_disconnect`].
+/// Describes what triggered a disconnect, as delivered to [`Disconnect::handle_disconnect`].
 ///
 /// note: Handshake failures do not appear here. A failed handshake prevents the connection
 /// from ever being registered, so there is no connection to disconnect.
 ///
 /// note: When several events would race to trigger a disconnect on the same connection,
-/// only the first to claim it is delivered to [`Disconnect::on_disconnect`]; subsequent
+/// only the first to claim it is delivered to [`Disconnect::handle_disconnect`]; subsequent
 /// claims are silently dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DisconnectOrigin {

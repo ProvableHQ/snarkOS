@@ -82,7 +82,7 @@ where
 impl<N: Network, C: ConsensusStorage<N>> Disconnect for Validator<N, C> {
     /// Any extra operations to be performed during a disconnect.
     async fn handle_disconnect(&self, peer_addr: SocketAddr, origin: DisconnectOrigin) {
-        debug!("Psysically disconnecting from {peer_addr}; origin: {origin:?}");
+        debug!("Physically disconnecting from {peer_addr}; origin: {origin:?}");
 
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
             self.router.downgrade_peer_to_candidate(peer_ip);
