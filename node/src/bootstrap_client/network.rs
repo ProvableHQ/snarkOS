@@ -25,7 +25,7 @@ use crate::{
         MAX_PEERS_TO_SEND,
         messages::{self, Message},
     },
-    tcp::{ConnectionSide, P2P, Tcp, protocols::*},
+    tcp::{ConnectionSide, P2P, Tcp, connections::DisconnectOrigin, protocols::*},
 };
 use snarkvm::prelude::Network;
 
@@ -101,7 +101,7 @@ impl<N: Network> OnConnect for BootstrapClient<N> {
 #[async_trait]
 impl<N: Network> Disconnect for BootstrapClient<N> {
     /// Any extra operations to be performed during a disconnect.
-    async fn handle_disconnect(&self, peer_addr: SocketAddr) {
+    async fn handle_disconnect(&self, peer_addr: SocketAddr, origin: DisconnectOrigin) {
         if let Some(listener_addr) = self.resolve_to_listener(peer_addr) {
             self.downgrade_peer_to_candidate(listener_addr);
         }

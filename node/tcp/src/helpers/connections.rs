@@ -30,7 +30,10 @@ use tokio::{
 use tracing::*;
 
 #[cfg(doc)]
-use crate::protocols::{Handshake, Reading, Writing};
+use crate::{
+    Tcp,
+    protocols::{Disconnect, Handshake, OnConnect, Reading, Writing},
+};
 
 /// A map of all currently connected addresses to their associated connection.
 #[derive(Default)]
@@ -170,4 +173,39 @@ pub(crate) fn create_connection_span(addr: SocketAddr, parent: &Span) -> Span {
     try_span!(Level::INFO);
     try_span!(Level::WARN);
     error_span!(parent: parent, "conn", addr = %addr)
+}
+
+/// Describes what triggered a disconnect, as delivered to [`Disconnect::on_disconnect`].
+///
+/// note: Handshake failures do not appear here. A failed handshake prevents the connection
+/// from ever being registered, so there is no connection to disconnect.
+///
+/// note: When several events would race to trigger a disconnect on the same connection,
+/// only the first to claim it is delivered to [`Disconnect::on_disconnect`]; subsequent
+/// claims are silently dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DisconnectOrigin {
+    /// The [`OnConnect`] task terminated abnormally before defusing its connection cleanup.
+    /// In practice this almost always means the user's [`OnConnect::on_connect`] implementation
+    /// panicked, and the disconnect is a side effect of that panic unwinding past the cleanup
+    /// guard.
+    OnConnectAbort,
+    /// The reader task for this connection terminated. Typical causes are the peer closing
+    /// its end of the socket, a decode error from the user-supplied [`Reading::Codec`], or
+    /// no message arriving within [`Reading::IDLE_TIMEOUT_MS`]. Often (but not always)
+    /// indicates a peer-side issue.
+    Reading,
+    /// The disconnect was initiated by [`Tcp::shut_down`], which tears down every active
+    /// connection as part of stopping the node. Unlike [`DisconnectOrigin::User`], this
+    /// signals that the entire node is going away - reconnection is not meaningful.
+    Shutdown,
+    /// The disconnect was explicitly requested via [`Tcp::disconnect`]. This is the only
+    /// origin produced directly by user code; the others all reflect events the library
+    /// detected internally.
+    User,
+    /// The writer task for this connection terminated. Typical causes are a [`Writing::TIMEOUT_MS`]
+    /// timeout while flushing, an underlying socket write error, or the message channel being
+    /// closed. Often correlates with the peer disappearing, but can also reflect local-side
+    /// pipeline problems (slow consumer, broken pipe).
+    Writing,
 }

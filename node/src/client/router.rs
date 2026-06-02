@@ -30,7 +30,7 @@ use snarkos_node_router::{
         UnconfirmedTransaction,
     },
 };
-use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
+use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp, connections::DisconnectOrigin};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::{block::Transaction, narwhal::Data},
@@ -86,7 +86,7 @@ impl<N: Network, C: ConsensusStorage<N>> OnConnect for Client<N, C> {
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Disconnect for Client<N, C> {
     /// Any extra operations to be performed during a disconnect.
-    async fn handle_disconnect(&self, peer_addr: SocketAddr) {
+    async fn handle_disconnect(&self, peer_addr: SocketAddr, origin: DisconnectOrigin) {
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
             let was_fully_connected = self.router.downgrade_peer_to_candidate(peer_ip);
 
