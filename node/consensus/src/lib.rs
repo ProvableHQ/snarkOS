@@ -31,6 +31,8 @@ use snarkos_node_bft::{
     Primary,
     helpers::{
         ConsensusReceiver,
+        ConsensusSender,
+        PrimaryReceiver,
         PrimarySender,
         Storage as NarwhalStorage,
         fmt_id,
@@ -56,7 +58,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use cfg_if::cfg_if;
 use colored::Colorize;
 use indexmap::IndexMap;
@@ -86,6 +88,8 @@ const CAPACITY_FOR_SOLUTIONS: usize = 1 << 10;
 /// The **suggested** maximum number of deployments in each interval.
 /// Note: This is an inbound queue limit, not a Narwhal-enforced limit.
 const MAX_DEPLOYMENTS_PER_INTERVAL: usize = 1;
+
+type BftRunArgs<N> = Arc<Mutex<Option<(ConsensusSender<N>, PrimaryReceiver<N>)>>>;
 
 /// Wrapper around `BFT` that adds additional functionality, such as a mempool.
 ///
@@ -119,10 +123,14 @@ pub struct Consensus<N: Network> {
     block_sync: Arc<BlockSync<N>>,
     /// Notifies when a block is committed, and relays it to the primary.
     block_commit_notify: Arc<Notify>,
+    /// Holds the consensus receiver until [`Self::start_consensus_handlers`] is called.
+    consensus_receiver: Arc<Mutex<Option<ConsensusReceiver<N>>>>,
+    /// Holds the arguments for `BFT::run` until [`Self::start_consensus_handlers`] is called.
+    bft_run_args: BftRunArgs<N>,
 }
 
 impl<N: Network> Consensus<N> {
-    /// Initializes a new instance of consensus and spawn its background tasks.
+    /// Initializes a new instance of consensus.
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         account: Account<N>,
@@ -155,8 +163,11 @@ impl<N: Network> Consensus<N> {
             node_data_dir,
             dev,
         )?;
+        // Initialize the consensus channels.
+        let (consensus_sender, consensus_receiver) = init_consensus_channels();
+
         // Create a new instance of Consensus.
-        let mut _self = Self {
+        let _self = Self {
             ledger,
             bft,
             block_sync,
@@ -170,16 +181,9 @@ impl<N: Network> Consensus<N> {
             handles: Default::default(),
             ping: ping.clone(),
             block_commit_notify: Arc::new(Notify::new()),
+            consensus_receiver: Arc::new(Mutex::new(Some(consensus_receiver))),
+            bft_run_args: Arc::new(Mutex::new(Some((consensus_sender, primary_receiver)))),
         };
-
-        info!("Starting the consensus instance...");
-
-        // First, initialize the consensus channels.
-        let (consensus_sender, consensus_receiver) = init_consensus_channels();
-        // Then, start the consensus handlers.
-        _self.start_handlers(consensus_receiver);
-        // Lastly, also start BFTs handlers.
-        _self.bft.run(Some(ping), Some(consensus_sender), _self.primary_sender.clone(), primary_receiver).await?;
 
         Ok(_self)
     }
@@ -492,10 +496,27 @@ impl<N: Network> Consensus<N> {
 }
 
 impl<N: Network> Consensus<N> {
-    /// Starts the consensus handlers.
+    /// Starts the BFT and consensus handlers.
     ///
-    /// This is only invoked once, in the constructor.
-    fn start_handlers(&self, consensus_receiver: ConsensusReceiver<N>) {
+    /// This consumes the deferred state stored during construction and must only be invoked once,
+    /// after the node has finished syncing from the CDN, so that no blocks are committed during
+    /// the initial sync.
+    pub async fn start_consensus_handlers(&self) -> Result<()> {
+        info!("Starting the consensus instance...");
+
+        // Take the BFT run arguments stored during construction and start the BFT handlers.
+        let Some((consensus_sender, primary_receiver)) = self.bft_run_args.lock().take() else {
+            bail!("The consensus handlers have already been started");
+        };
+        self.bft
+            .clone()
+            .run(Some(self.ping.clone()), Some(consensus_sender), self.primary_sender.clone(), primary_receiver)
+            .await?;
+
+        // Take the consensus receiver stored during construction and start the consensus handlers.
+        let Some(consensus_receiver) = self.consensus_receiver.lock().take() else {
+            bail!("The consensus handlers have already been started");
+        };
         let ConsensusReceiver { mut rx_consensus_subdag } = consensus_receiver;
 
         // Process the committed subdag and transmissions from the BFT.
@@ -531,6 +552,8 @@ impl<N: Network> Consensus<N> {
                 }
             }
         });
+
+        Ok(())
     }
 
     /// Attempts to build a new block from the given subDAG, and (tries to) advance the legder to it.
