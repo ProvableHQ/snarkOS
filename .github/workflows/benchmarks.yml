@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - 'staging'
-      - 'release-mainnet-4.6.3'
+      - 'release-mainnet-4.7.3'
   workflow_dispatch:
 
 jobs:
