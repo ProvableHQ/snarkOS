@@ -4602,7 +4602,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos"
-version = "4.7.1"
+version = "4.7.4"
 dependencies = [
  "built",
  "clap",
@@ -4629,7 +4629,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-account"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "colored 3.1.1",
  "snarkvm",
@@ -4637,7 +4637,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-cli"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aleo-std",
  "anstyle",
@@ -4680,7 +4680,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-display"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -4693,7 +4693,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4736,7 +4736,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4790,7 +4790,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft-events"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4811,7 +4811,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft-ledger-service"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4830,7 +4830,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-bft-storage-service"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4844,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-cdn"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4866,7 +4866,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-consensus"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4893,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-metrics"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "built",
  "locktick",
@@ -4907,7 +4907,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-network"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "built",
@@ -4925,7 +4925,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-rest"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aleo-std",
  "anyhow",
@@ -4961,7 +4961,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-router"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4997,7 +4997,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-router-messages"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "bytes",
  "proptest",
@@ -5013,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-sync"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "futures",
@@ -5039,7 +5039,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-sync-communication-service"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "async-trait",
  "tokio",
@@ -5047,7 +5047,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-sync-locators"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "indexmap 2.14.0",
@@ -5058,7 +5058,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-node-tcp"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5076,7 +5076,7 @@ dependencies = [
 
 [[package]]
 name = "snarkos-utilities"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "anyhow",
  "locktick",
@@ -6096,9 +6096,9 @@ dependencies = [
 
 [[package]]
 name = "sppark"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c900139f3f6fdc8db217881a946adf00e935102fdd82b0e1bc19bacbffa311"
+checksum = "bfae3f3e0559cf04e9d9abce56d1db0dab58e03874cf4db5546540710740cfea"
 dependencies = [
  "cc",
  "which 4.4.2",
