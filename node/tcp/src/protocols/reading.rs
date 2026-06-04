@@ -214,6 +214,8 @@ impl<R: Reading> ReadingInternal for R {
                             warn_about_dropped_messages(&conn_span, &mut dropped_count, &mut last_drop_log);
                             debug!(parent: &conn_span, "the inbound queue is no longer saturated");
                         }
+                        #[cfg(feature = "metrics")]
+                        metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
                     }
                     Some(Err(e)) => {
                         error!(parent: &conn_span, "can't read: {e}");

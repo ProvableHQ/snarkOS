@@ -826,7 +826,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/recursive-cert-fetch
+                - release-v4.7.0
                 - canary
                 - testnet
                 - mainnet
@@ -836,7 +836,7 @@ workflows:
           filters:
             branches:
               only:
-                - fix/recursive-cert-fetch
+                - release-v4.7.0
                 - canary
                 - testnet
                 - mainnet
@@ -845,7 +845,7 @@ workflows:
           filters:
             branches:
               only:
-                - mainnet-release-v460
+                - release-v4.7.0
                 - canary
                 - testnet
                 - mainnet
