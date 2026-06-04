@@ -202,16 +202,16 @@ Once enabled, telemetry metrics are available through:
     // GET /{network}/validators/participation?metadata={true}
     ```
 
-Telemetry is enabled by default, but you can still opt in explicitly with the `telemetry` feature flag:
+Telemetry is enabled by default, and you can still explicitly specify the `telemetry` feature flag:
 
-#### 1. Enable via [installation](#2.3-installation)
+#### 1. [Installation](#2.3-installation)
 
 Use the default installation command:
 ```
 cargo install --locked --path .
 ```
 
-#### 2. Enable via `./run-validator.sh`
+#### 2. `./run-validator.sh`
 
 Telemetry is included by default when running `./scripts/run-validator.sh`.
 
