@@ -25,7 +25,7 @@ jobs:
       - name: Install required Debian packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y lld python3-pip
+          sudo apt-get install -y lld libclang-dev python3-pip
 
       - name: Set up Python virtual environment
         run: |
