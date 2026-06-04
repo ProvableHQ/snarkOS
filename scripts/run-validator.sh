@@ -42,17 +42,8 @@ then
   exit 1
 fi
 
-# Ask the user if they want to enable validator telemetry
-read -r -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
-enable_telemetry=${enable_telemetry:-y}
-
 # Start building the base command
 COMMAND="cargo run --release"
-
-# Add telemetry feature if enabled
-if [[ $enable_telemetry == "y" ]]; then
-  COMMAND+=" --features telemetry"
-fi
 
 # Add the arguments after the '--'
 COMMAND+=" -- start --nodisplay --validator --bft 0.0.0.0:5000 --node 0.0.0.0:4130 --peers ${PEERS} --validators ${VALIDATORS} --norest --private-key ${VALIDATOR_PRIVATE_KEY}"
