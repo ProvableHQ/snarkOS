@@ -124,7 +124,7 @@ commands:
           name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang libclang-dev llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
       - restore_cache:
           keys:
             - << parameters.cache_key >>
