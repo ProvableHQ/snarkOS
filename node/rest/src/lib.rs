@@ -318,8 +318,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
-            // Cap the request body size at 512KiB.
-            .layer(DefaultBodyLimit::max(512 * 1024))
+            // Cap the request body size at 1.5MiB.
+            .layer(DefaultBodyLimit::max(2 * 768 * 1024))
             .layer(GovernorLayer {
                 config: governor_config.into(),
             })
