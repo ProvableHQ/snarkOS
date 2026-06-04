@@ -4,7 +4,8 @@
 . ./.ci/utils.sh
 
 # Change this to increase/decrease log verbosity
-log_verbosity=2
+log_verbosity=4
+max_validator_log_size_bytes=$((150 * 1024 * 1024))
 
 # Network parameters
 total_validators=4
@@ -134,7 +135,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
       done
 
       if (( remaining_checkpoints == 0 )); then
-        if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+        if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes"; then
           exit 0
         else
           exit 1
@@ -154,4 +155,3 @@ done
 # The main loop has expired by now
 log "❌ Test failed!"
 exit 1
-

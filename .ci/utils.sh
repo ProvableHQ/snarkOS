@@ -344,26 +344,38 @@ function check_logs() {
   # The maximum number of warnings allow in each node's log file.
   # Nodes may create some warnings at startup because they cannot connect to each other yet.
   local max_warnings=$4
+  # Optional max logfile size in bytes.
+  local max_validator_log_size_bytes=${5:-}
+  local max_client_log_size_bytes=${6:-}
  
   local all_reached=true
   local highest_height=0
 
   # Don't use `seq` here as `total_validators` can be 0.
-  for ((validator_index = 0; validator_index < validator_index; validator_index++)); do
-    if [ ! -s "$log_dir/validator-${validator_index}.log" ]; then
+  for ((validator_index = 0; validator_index < total_validators; validator_index++)); do
+    validator_log="$log_dir/validator-${validator_index}.log"
+    if [ ! -s "$validator_log" ]; then
       log "❌ Test failed! Validator #${validator_index} did not create any logs in \"$log_dir\"."
       return 1
     fi
 
+    if [ -n "$max_validator_log_size_bytes" ]; then
+      validator_log_size_bytes=$(wc -c < "$validator_log")
+      if (( validator_log_size_bytes > max_validator_log_size_bytes )); then
+        log "❌ Test failed! Validator #${validator_index} logfile is too large (${validator_log_size_bytes}B > ${max_validator_log_size_bytes}B)."
+        return 1
+      fi
+    fi
+
     #TODO(kaimast): remove the grep -v "already exists in the ledger" once spurious sync errors are gone.
-    if grep "ERROR" "$log_dir/validator-${validator_index}.log" | grep -qv "already exists in the ledger"; then
+    if grep "ERROR" "$validator_log" | grep -qv "already exists in the ledger"; then
       log "❌ Test failed! Validator #${validator_index} logs contain errors."
       # Print the errors to the console.
-      grep "ERROR" "$log_dir/validator-${validator_index}.log" | grep -v "already exists in the ledger"
+      grep "ERROR" "$validator_log" | grep -v "already exists in the ledger"
       return 1
     fi
 
-    num_warnings=$(grep -c "WARN" "$log_dir/validator-${validator_index}.log")
+    num_warnings=$(grep -c "WARN" "$validator_log")
     if (( num_warnings > max_warnings )); then
       echo "❌ Test failed! Validator #${validator_index} logs contain more than ${max_warnings} warnings."
       return 1
@@ -372,19 +384,28 @@ function check_logs() {
 
   # Don't use `seq` here as `total_clients` can be 0.
   for ((client_index = 0; client_index < total_clients; client_index++)); do
-    if [ ! -s "$log_dir/client-${client_index}.log" ]; then
+    client_log="$log_dir/client-${client_index}.log"
+    if [ ! -s "$client_log" ]; then
       log "❌ Test failed! Client #${client_index} did not create any logs in \"$log_dir\"."
       return 1
     fi
 
-    if grep "ERROR" "$log_dir/client-${client_index}.log" | grep -qv "already exists in the ledger"; then
+    if [ -n "$max_client_log_size_bytes" ]; then
+      client_log_size_bytes=$(wc -c < "$client_log")
+      if (( client_log_size_bytes > max_client_log_size_bytes )); then
+        log "❌ Test failed! Client #${client_index} logfile is too large (${client_log_size_bytes}B > ${max_client_log_size_bytes}B)."
+        return 1
+      fi
+    fi
+
+    if grep "ERROR" "$client_log" | grep -qv "already exists in the ledger"; then
       log "❌ Test failed! Client #${client_index} logs contain errors."
       # Print the errors to the console.
-      grep "ERROR" "$log_dir/client-${client_index}.log" | grep -v "already exists in the ledger"
+      grep "ERROR" "$client_log" | grep -v "already exists in the ledger"
       return 1
     fi
 
-    num_warnings=$(grep -c "WARN" "$log_dir/client-${client_index}.log")
+    num_warnings=$(grep -c "WARN" "$client_log")
     if (( num_warnings > max_warnings )); then
       echo "❌ Test failed! Client #${client_index} logs contain more than ${max_warnings} warnings."
       return 1
@@ -957,4 +978,3 @@ function get_block_height {
   echo "$result"
   return 0
 }
-
