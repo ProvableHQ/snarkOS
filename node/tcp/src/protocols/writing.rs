@@ -35,8 +35,8 @@ use crate::{
     Connection,
     ConnectionSide,
     P2P,
-    connections::create_connection_span,
-    protocols::{Protocol, ProtocolHandler, ReturnableConnection},
+    connections::{DisconnectOrigin, create_connection_span},
+    protocols::{DisconnectOnDrop, Protocol, ProtocolHandler, ReturnableConnection},
 };
 
 type WritingSenders = Arc<RwLock<HashMap<SocketAddr, mpsc::Sender<WrappedMessage>>>>;
@@ -215,7 +215,7 @@ impl<W: Writing> WritingInternal for W {
         conn_senders.write().insert(addr, outbound_message_sender);
 
         // this will automatically drop the sender upon a disconnect
-        let auto_cleanup = SenderCleanup { addr, senders: Arc::clone(conn_senders) };
+        let sender_cleanup = SenderCleanup { addr, senders: Arc::clone(conn_senders) };
 
         // use a channel to know when the writer task is ready
         let (tx_writer, rx_writer) = oneshot::channel();
@@ -229,7 +229,10 @@ impl<W: Writing> WritingInternal for W {
             tx_writer.send(()).unwrap(); // safe; the channel was just opened
 
             // move the cleanup into the task that gets aborted on disconnect
-            let _auto_cleanup = auto_cleanup;
+            let _sender_cleanup = sender_cleanup;
+
+            // disconnect automatically regardless of how this task concludes
+            let _conn_cleanup = DisconnectOnDrop::new(node.clone(), addr, DisconnectOrigin::Writing);
 
             while let Some(wrapped_msg) = outbound_message_receiver.recv().await {
                 let msg = wrapped_msg.msg.downcast().unwrap();
@@ -252,8 +255,6 @@ impl<W: Writing> WritingInternal for W {
                     }
                 }
             }
-
-            node.disconnect(addr).await;
         }));
         let _ = rx_writer.await;
         conn.tasks.push(writer_task);

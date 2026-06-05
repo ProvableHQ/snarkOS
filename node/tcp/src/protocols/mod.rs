@@ -17,7 +17,7 @@
 //! node's lifetime and handles a specific functionality. The communication with these tasks is done via dedicated
 //! handler objects.
 
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, sync::atomic::Ordering};
 
 use once_cell::race::OnceBox;
 use tokio::{
@@ -25,7 +25,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::connections::Connection;
+use crate::{
+    Tcp,
+    connections::{Connection, DisconnectOrigin},
+};
 
 mod disconnect;
 mod handshake;
@@ -49,7 +52,7 @@ pub(crate) struct Protocols {
     pub(crate) reading: OnceBox<ProtocolHandler<Connection, io::Result<Connection>>>,
     pub(crate) writing: OnceBox<writing::WritingHandler>,
     pub(crate) on_connect: OnceBox<ProtocolHandler<SocketAddr, JoinHandle<()>>>,
-    pub(crate) disconnect: OnceBox<ProtocolHandler<SocketAddr, OnDisconnectBundle>>,
+    pub(crate) disconnect: OnceBox<ProtocolHandler<(SocketAddr, DisconnectOrigin), OnDisconnectBundle>>,
 }
 
 /// An object sent to a protocol handler task; the task assumes control of a protocol-relevant item `T`,
@@ -69,5 +72,32 @@ impl<T, U> Protocol<T, U> for ProtocolHandler<T, U> {
     async fn trigger(&self, item: ReturnableItem<T, U>) {
         // ignore errors; they can only happen if a disconnect interrupts the protocol setup process
         let _ = self.0.send(item).await;
+    }
+}
+
+/// This object is used to ensure that the related peer is going to be disconnected from
+/// even if the owning task panics due to a user implementation error.
+pub(crate) struct DisconnectOnDrop {
+    pub(crate) node: Option<Tcp>,
+    pub(crate) addr: SocketAddr,
+    pub(crate) origin: DisconnectOrigin,
+}
+
+impl DisconnectOnDrop {
+    pub(crate) fn new(node: Tcp, addr: SocketAddr, origin: DisconnectOrigin) -> Self {
+        Self { node: Some(node), addr, origin }
+    }
+}
+
+impl Drop for DisconnectOnDrop {
+    fn drop(&mut self) {
+        if let Some(node) = self.node.take() {
+            let (addr, origin) = (self.addr, self.origin);
+            let needs_recovery =
+                node.connections.0.read().get(&addr).is_some_and(|c| !c.disconnecting.load(Ordering::Acquire));
+            if needs_recovery {
+                tokio::spawn(async move { node.disconnect_w_origin(addr, origin).await });
+            }
+        }
     }
 }

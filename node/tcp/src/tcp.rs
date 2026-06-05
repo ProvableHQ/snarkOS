@@ -46,7 +46,7 @@ use crate::{
     Config,
     KnownPeers,
     Stats,
-    connections::{Connection, ConnectionSide, Connections, create_connection_span},
+    connections::{Connection, ConnectionSide, Connections, DisconnectOrigin, create_connection_span},
     protocols::{Protocol, Protocols},
 };
 
@@ -144,7 +144,7 @@ pub struct InnerTcp {
     /// A set of connections that have not been finalized yet.
     connecting: Mutex<HashSet<SocketAddr>>,
     /// Contains objects related to the node's active connections.
-    connections: Connections,
+    pub(crate) connections: Connections,
     /// Collects statistics related to the node's peers.
     known_peers: KnownPeers,
     /// Contains the set of currently banned peers.
@@ -280,7 +280,7 @@ impl Tcp {
         for addr in self.connected_addrs() {
             let node = self.clone();
             disconnect_tasks.spawn(async move {
-                node.disconnect(addr).await;
+                node.disconnect_w_origin(addr, DisconnectOrigin::Shutdown).await;
             });
         }
         while disconnect_tasks.join_next().await.is_some() {}
@@ -363,6 +363,10 @@ impl Tcp {
     ///
     /// Returns true if the we were connected to the given address.
     pub async fn disconnect(&self, addr: SocketAddr) -> bool {
+        self.disconnect_w_origin(addr, DisconnectOrigin::User).await
+    }
+
+    pub(crate) async fn disconnect_w_origin(&self, addr: SocketAddr, origin: DisconnectOrigin) -> bool {
         // claim the disconnect to avoid duplicate executions, or return early if already claimed
         if let Some(conn) = self.connections.0.read().get(&addr) {
             if conn.disconnecting.swap(true, AcqRel) {
@@ -376,7 +380,7 @@ impl Tcp {
 
         if let Some(handler) = self.protocols.disconnect.get() {
             let (sender, receiver) = oneshot::channel();
-            handler.trigger((addr, sender)).await;
+            handler.trigger(((addr, origin), sender)).await;
             if let Ok((handle, waiter)) = receiver.await {
                 // register the associated task with the connection, in case
                 // it gets terminated before its completion
