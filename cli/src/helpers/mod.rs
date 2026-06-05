@@ -71,16 +71,32 @@ pub fn check_open_files_limit(minimum: u64) {
 
 /// Spawns a background task that periodically checks whether a new file can be opened,
 /// and logs an error if it cannot (e.g. the open-file-descriptor limit has been reached).
+/// Errors are only logged when the state transitions from success to failure (and back)
+/// to avoid flooding the logs.
 pub fn spawn_open_files_monitor() {
     tokio::spawn(async move {
+        // Track whether the last probe succeeded so we only log on state transitions.
+        let mut last_ok = true;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            if let Err(err) = tempfile::NamedTempFile::new() {
-                tracing::error!("Failed to open a new file: {err}");
-                tracing::error!(
-                    "This may indicate the open files limit has been reached. \
-                     See the `ulimit` command and `/etc/security/limits.conf` for more details."
-                );
+            // NamedTempFile is automatically deleted when it is dropped.
+            match tempfile::NamedTempFile::new() {
+                Ok(_) => {
+                    if !last_ok {
+                        tracing::info!("Open files limit: file creation succeeded again.");
+                        last_ok = true;
+                    }
+                }
+                Err(err) => {
+                    if last_ok {
+                        tracing::error!("Failed to open a new file: {err}");
+                        tracing::error!(
+                            "This may indicate the open files limit has been reached. \
+                             See the `ulimit` command and `/etc/security/limits.conf` for more details."
+                        );
+                        last_ok = false;
+                    }
+                }
             }
         }
     });
