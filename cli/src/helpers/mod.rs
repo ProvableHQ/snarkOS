@@ -39,7 +39,7 @@ use colored::*;
 #[cfg(target_family = "unix")]
 use nix::sys::resource::{Resource, getrlimit};
 
-/// Check if process's open files limit is above minimum and warn if not.
+/// Check if process's open files limit is above minimum and panic if not.
 #[cfg(target_family = "unix")]
 pub fn check_open_files_limit(minimum: u64) {
     // Acquire current limits.
@@ -47,16 +47,11 @@ pub fn check_open_files_limit(minimum: u64) {
         Ok((soft_limit, _)) => {
             // Check if requirements are met.
             if soft_limit < minimum {
-                // Warn about too low limit.
-                let warning = [
-                    format!("⚠️  The open files limit ({soft_limit}) for this process is lower than recommended."),
-                    format!("  • To ensure correct behavior of the node, please raise it to at least {minimum}."),
-                    "  • See the `ulimit` command and `/etc/security/limits.conf` for more details.".to_owned(),
-                ]
-                .join("\n")
-                .yellow()
-                .bold();
-                eprintln!("{warning}\n");
+                panic!(
+                    "The open files limit ({soft_limit}) for this process is too low (minimum: {minimum}).\n  \
+                     • Please raise it to at least {minimum}.\n  \
+                     • See the `ulimit` command and `/etc/security/limits.conf` for more details."
+                );
             }
         }
         Err(err) => {
@@ -72,6 +67,23 @@ pub fn check_open_files_limit(minimum: u64) {
             eprintln!("{warning}\n");
         }
     };
+}
+
+/// Spawns a background task that periodically checks whether a new file can be opened,
+/// and logs an error if it cannot (e.g. the open-file-descriptor limit has been reached).
+pub fn spawn_open_files_monitor() {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            if let Err(err) = tempfile::NamedTempFile::new() {
+                tracing::error!("Failed to open a new file: {err}");
+                tracing::error!(
+                    "This may indicate the open files limit has been reached. \
+                     See the `ulimit` command and `/etc/security/limits.conf` for more details."
+                );
+            }
+        }
+    });
 }
 
 /// Returns the RAM memory in GiB.

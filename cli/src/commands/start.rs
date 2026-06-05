@@ -884,6 +884,9 @@ impl Start {
             Display::start(node.clone(), log_receiver, signal_handler.clone()).with_context(|| "Failed to start the display")?;
         }
 
+        // Spawn a background task that periodically checks if a new file can be opened.
+        crate::helpers::spawn_open_files_monitor();
+
         node.wait_for_signals(&signal_handler).await;
         Ok(())
     }

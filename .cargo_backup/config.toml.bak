@@ -1,0 +1,9 @@
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    # LLD is generally faster and might be the default for Rust in the future.
+    # See here: https://github.com/rust-lang/rust/issues/71515
+    "-C", "link-arg=-fuse-ld=lld",
+]
+
+[env]
+CXXFLAGS = "-include cstdint" #TODO: remove once RocksDB 0.24 is released
