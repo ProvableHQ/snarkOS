@@ -264,7 +264,10 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
         let initial_buf_len = src.len();
         let ret = self.codec.decode(src)?;
         let final_buf_len = src.len();
-        let read_len = initial_buf_len - final_buf_len + self.acc;
+        // defensive: the Decoder trait does not strictly forbid an inner codec from
+        // growing `src`; use saturating_sub to guard against such a possibility
+        let consumed = initial_buf_len.saturating_sub(final_buf_len);
+        let read_len = consumed + self.acc;
 
         if read_len != 0 {
             trace!(parent: &self.span, "read {read_len}B");
