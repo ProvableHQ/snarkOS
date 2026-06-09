@@ -22,6 +22,9 @@ use log_writer::*;
 mod dynamic_format;
 use dynamic_format::*;
 
+mod fd_check;
+pub use fd_check::*;
+
 pub(crate) mod args;
 
 pub mod logger;

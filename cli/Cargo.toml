@@ -87,6 +87,9 @@ workspace = true
 features = [ "parking_lot" ]
 optional = true
 
+[target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
+nix = { version = "0.29", features = ["fs"] }
+
 [dependencies.num_cpus]
 workspace = true
 
@@ -101,6 +104,9 @@ workspace = true
 
 [dependencies.rayon]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rlimit = "0.11"
 
 [dependencies.rpassword]
 version = "7.4.0"
