@@ -22,7 +22,9 @@ use log_writer::*;
 mod dynamic_format;
 use dynamic_format::*;
 
+#[cfg(target_family = "unix")]
 mod fd_check;
+#[cfg(target_family = "unix")]
 pub use fd_check::*;
 
 pub(crate) mod args;
@@ -51,8 +53,8 @@ pub fn check_open_files_limit(minimum: u64) {
             // Check if requirements are met.
             if soft_limit < minimum {
                 panic!(
-                    "The open files limit ({soft_limit}) for this process is too low.\n\
-                    Please raise it to at least {minimum}\n\
+                    "The open files limit ({soft_limit}) for this process is too low. \
+                    Please raise it to at least {minimum} \
                     See the `ulimit` command and `/etc/security/limits.conf` for more details.",
                 );
             }

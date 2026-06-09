@@ -110,6 +110,8 @@ pub fn system_fd_usage() -> std::io::Result<SystemFd> {
     let (cur_oid, max_oid) = ("kern.num_files", "kern.maxfiles");
     #[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
     let (cur_oid, max_oid) = ("kern.nfiles", "kern.maxfiles");
+    #[cfg(not(any(target_os = "freebsd", target_os = "macos", target_os = "openbsd", target_os = "netbsd")))]
+    return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "system fd probe unsupported on this OS"));
 
     fn read(oid: &str) -> std::io::Result<u64> {
         let out = std::process::Command::new("sysctl").arg("-n").arg(oid).output()?;
