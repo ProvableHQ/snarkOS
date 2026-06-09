@@ -39,11 +39,16 @@ use rayon::prelude::*;
 use version::VersionInfo;
 
 #[cfg(feature = "history")]
+use snarkvm::prelude::Value;
+
+#[cfg(feature = "history")]
 const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
 #[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
 #[cfg(feature = "history")]
 type HistoricalMappingRoute<N> = (ProgramID<N>, Identifier<N>, u32);
+#[cfg(feature = "history")]
+type ViewFunctionRoute<N> = (ProgramID<N>, Identifier<N>, u32);
 
 #[cfg(feature = "history")]
 fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plaintext<N>>, RestError> {
@@ -66,6 +71,20 @@ fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plai
         .map(|(index, key)| {
             key.parse::<Plaintext<N>>().map_err(|err| {
                 RestError::unprocessable_entity(err.context(format!("Invalid key at index {index}: {key}")))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+/// Parses a list of strings into a `Vec<Value<N>>` for use as view function inputs.
+#[cfg(feature = "history")]
+fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, RestError> {
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            input.parse::<Value<N>>().map_err(|err| {
+                RestError::unprocessable_entity(err.context(format!("Invalid input at index {index}: {input}")))
             })
         })
         .collect::<Result<Vec<_>, _>>()
@@ -1132,6 +1151,52 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             };
 
         Ok((StatusCode::OK, ErasedJson::pretty(values)))
+    }
+
+    /// POST /{network}/program/{id}/view/{functionName}/{height}
+    ///
+    /// Evaluates a view function against the ledger state at the given block `height`.
+    /// The request body must be a JSON array of string-encoded inputs, e.g.:
+    ///
+    /// ```json
+    /// ["aleo1...", "10u64"]
+    /// ```
+    ///
+    /// Returns the outputs as a JSON array of string-encoded values.
+    #[cfg(feature = "history")]
+    pub(crate) async fn evaluate_view(
+        State(rest): State<Self>,
+        Path((program_id, view_name, height)): Path<ViewFunctionRoute<N>>,
+        json_result: Result<Json<Vec<String>>, JsonRejection>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Parse the inputs from the request body.
+        let Json(raw_inputs) = match json_result {
+            Ok(json) => json,
+            Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),
+        };
+
+        // Parse the inputs into `Value<N>`.
+        let inputs = parse_view_inputs::<N>(&raw_inputs)?;
+
+        // Evaluate the view function in a blocking task.
+        let outputs = match tokio::task::spawn_blocking(move || {
+            rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
+        })
+        .await
+        {
+            Ok(Ok(outputs)) => outputs,
+            Ok(Err(err)) => {
+                return Err(RestError::bad_request(
+                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at height {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+
+        // Encode each output as a string.
+        let output_strings: Vec<String> = outputs.iter().map(|v| v.to_string()).collect();
+
+        Ok((StatusCode::OK, ErasedJson::pretty(output_strings)))
     }
 
     /// GET /{network}/staking/rewards/{address}/{height}
