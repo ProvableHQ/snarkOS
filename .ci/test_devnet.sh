@@ -136,7 +136,7 @@ function main:
     add r0 r1 into r2;
     output r2 as u32.private;
 
-view get_value:
+view compute_sum:
     add 1u32 2u32 into r0;
     output r0 as u32.public;
 
@@ -196,7 +196,7 @@ log "● Testing view function evaluation at latest height..."
 view_response=$(curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '[]' \
-  "http://localhost:3030/v2/$network_name/program/${program_name}/view/get_value")
+  "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum")
 view_output=$(jq -r '.[0]' <<< "$view_response")
 if [ "$view_output" = "3u32" ]; then
   log "✅ View function returned expected output at latest height: $view_output"
@@ -211,7 +211,7 @@ current_height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/la
 view_response=$(curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '[]' \
-  "http://localhost:3030/v2/$network_name/program/${program_name}/view/get_value/${current_height}")
+  "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum/${current_height}")
 view_output=$(jq -r '.[0]' <<< "$view_response")
 if [ "$view_output" = "3u32" ]; then
   log "✅ View function returned expected output at height ${current_height}: $view_output"

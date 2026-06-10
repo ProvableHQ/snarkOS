@@ -1215,9 +1215,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Path((program_id, view_name)): Path<(ProgramID<N>, Identifier<N>)>,
         json_result: Result<Json<Vec<String>>, JsonRejection>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
-        // Capture the latest height at the time of the request.
-        let height = rest.ledger.latest_height();
-
         // Parse the inputs from the request body.
         let Json(raw_inputs) = match json_result {
             Ok(json) => json,
@@ -1228,7 +1225,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let inputs = parse_view_inputs::<N>(&raw_inputs)?;
 
         // Evaluate the view function in a blocking task.
+        // The latest height is captured inside the task to minimize the window between
+        // height sampling and evaluation.
         let outputs = match tokio::task::spawn_blocking(move || {
+            let height = rest.ledger.latest_height();
             rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
         })
         .await
@@ -1236,7 +1236,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Ok(Ok(outputs)) => outputs,
             Ok(Err(err)) => {
                 return Err(RestError::bad_request(
-                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at height {height}")),
+                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at the latest height")),
                 ));
             }
             Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
