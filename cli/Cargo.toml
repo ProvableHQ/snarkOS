@@ -181,7 +181,7 @@ features = [ "test-helpers" ]
 [target."cfg(target_family = \"unix\")".dependencies.nix]
 version = "0.30"
 default-features = false
-features = [ "fs", "resource" ]
+features = [ "resource" ]
 
 [target.'cfg(unix)'.dependencies]
 rlimit = "0.11"

@@ -67,13 +67,15 @@ fn count_open_fds(_limit: Option<u64>) -> io::Result<u64> {
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
-fn count_open_fds(limit: Option<u64>) -> io::Result<u64> {
-    // Portable fallback (macOS, *BSD, ...): probe each slot with
-    // fcntl(F_GETFD). O(limit) syscalls, no /proc dependency.
-    use nix::fcntl::{FcntlArg, fcntl};
-    let max = limit.unwrap_or(65_536).min(i32::MAX as u64) as i32;
-    let n = (0..max).filter(|&fd| fcntl(fd, FcntlArg::F_GETFD).is_ok()).count();
-    Ok(n as u64)
+fn count_open_fds(_limit: Option<u64>) -> io::Result<u64> {
+    // macOS and most BSDs expose open fds via /dev/fd (same idea as Linux's /proc/self/fd).
+    // The directory handle itself holds one fd while we iterate, so subtract it back out.
+    let mut n: u64 = 0;
+    for entry in std::fs::read_dir("/dev/fd")? {
+        entry?;
+        n += 1;
+    }
+    Ok(n.saturating_sub(1))
 }
 
 /// System-wide (whole machine) fd use.
