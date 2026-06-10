@@ -3959,6 +3959,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlimit"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f35ee2729c56bb610f6dba436bf78135f728b7373bdffae2ec815b2d3eb98cc3"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rocksdb"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4655,6 +4664,7 @@ dependencies = [
  "rand 0.10.1",
  "rand_chacha 0.10.0",
  "rayon",
+ "rlimit",
  "rpassword",
  "self_update",
  "serde",
