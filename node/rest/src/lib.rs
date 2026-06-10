@@ -287,6 +287,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let routes = routes
             .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
             .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch))
+            .route("/program/{id}/view/{function}", post(Self::evaluate_view_latest))
             .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view));
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.

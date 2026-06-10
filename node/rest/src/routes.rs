@@ -1199,6 +1199,55 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok((StatusCode::OK, ErasedJson::pretty(output_strings)))
     }
 
+    /// POST /{network}/program/{id}/view/{functionName}
+    ///
+    /// Evaluates a view function against the ledger state at the latest block height.
+    /// The request body must be a JSON array of string-encoded inputs, e.g.:
+    ///
+    /// ```json
+    /// ["aleo1...", "10u64"]
+    /// ```
+    ///
+    /// Returns the outputs as a JSON array of string-encoded values.
+    #[cfg(feature = "history")]
+    pub(crate) async fn evaluate_view_latest(
+        State(rest): State<Self>,
+        Path((program_id, view_name)): Path<(ProgramID<N>, Identifier<N>)>,
+        json_result: Result<Json<Vec<String>>, JsonRejection>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Capture the latest height at the time of the request.
+        let height = rest.ledger.latest_height();
+
+        // Parse the inputs from the request body.
+        let Json(raw_inputs) = match json_result {
+            Ok(json) => json,
+            Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),
+        };
+
+        // Parse the inputs into `Value<N>`.
+        let inputs = parse_view_inputs::<N>(&raw_inputs)?;
+
+        // Evaluate the view function in a blocking task.
+        let outputs = match tokio::task::spawn_blocking(move || {
+            rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
+        })
+        .await
+        {
+            Ok(Ok(outputs)) => outputs,
+            Ok(Err(err)) => {
+                return Err(RestError::bad_request(
+                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at height {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+
+        // Encode each output as a string.
+        let output_strings: Vec<String> = outputs.iter().map(|v| v.to_string()).collect();
+
+        Ok((StatusCode::OK, ErasedJson::pretty(output_strings)))
+    }
+
     /// GET /{network}/staking/rewards/{address}/{height}
     #[cfg(feature = "history-staking-rewards")]
     pub(crate) async fn get_staking_reward(

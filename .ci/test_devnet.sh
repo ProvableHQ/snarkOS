@@ -136,6 +136,10 @@ function main:
     add r0 r1 into r2;
     output r2 as u32.private;
 
+view get_value:
+    add 1u32 2u32 into r0;
+    output r0 as u32.public;
+
 constructor:
     assert.eq true true;
 " > program/main.aleo
@@ -184,6 +188,35 @@ if (( status_code == 404 )); then
   log "✅ Only program edition 0 exists on the node"
 else
   log "❌ Test failed! Invalid edition returnd ${status_code}, not 404."
+  exit 1
+fi
+
+# Query the view function at the latest height.
+log "● Testing view function evaluation at latest height..."
+view_response=$(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d '[]' \
+  "http://localhost:3030/v2/$network_name/program/${program_name}/view/get_value")
+view_output=$(jq -r '.[0]' <<< "$view_response")
+if [ "$view_output" = "3u32" ]; then
+  log "✅ View function returned expected output at latest height: $view_output"
+else
+  log "❌ Test failed! View function returned unexpected output at latest height: $view_response"
+  exit 1
+fi
+
+# Query the view function at a specific block height.
+log "● Testing view function evaluation at specific block height..."
+current_height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
+view_response=$(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d '[]' \
+  "http://localhost:3030/v2/$network_name/program/${program_name}/view/get_value/${current_height}")
+view_output=$(jq -r '.[0]' <<< "$view_response")
+if [ "$view_output" = "3u32" ]; then
+  log "✅ View function returned expected output at height ${current_height}: $view_output"
+else
+  log "❌ Test failed! View function returned unexpected output at height ${current_height}: $view_response"
   exit 1
 fi
 
