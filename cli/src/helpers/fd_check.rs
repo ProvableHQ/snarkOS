@@ -166,7 +166,7 @@ pub fn spawn_fd_monitor() {
                 Err(e) => error!(error = %e, "process fd probe failed"),
             }
 
-            // (2) whole-machine fds
+            // (2) whole-machine fds are allowed 5 percentage points more leeway.
             match system_fd_usage() {
                 Ok(s) => {
                     let (pct, left) = (s.ratio() * 100.0, s.max.saturating_sub(s.allocated));
