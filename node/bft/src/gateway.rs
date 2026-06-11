@@ -1076,7 +1076,7 @@ impl<N: Network> Gateway<N> {
             .collect();
 
         if !handles.is_empty() {
-            info!("Reconnnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
+            info!("Reconnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
         }
     }
 
