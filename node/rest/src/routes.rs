@@ -21,7 +21,18 @@ use snarkos_node_sync::BftSyncMode;
 use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
-    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, block::Transaction},
+    prelude::{
+        Address,
+        ConsensusVersion,
+        Identifier,
+        LimitedWriter,
+        Plaintext,
+        Program,
+        ToBytes,
+        Value,
+        block::Transaction,
+    },
+    synthesizer::program::{FinalizeGlobalState, StackTrait},
 };
 
 use axum::{Json, extract::rejection::JsonRejection};
@@ -37,9 +48,6 @@ use std::{collections::HashMap, fs};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use version::VersionInfo;
-
-#[cfg(feature = "history")]
-use snarkvm::prelude::Value;
 
 #[cfg(feature = "history")]
 const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
@@ -77,7 +85,6 @@ fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plai
 }
 
 /// Parses a list of strings into a `Vec<Value<N>>` for use as view function inputs.
-#[cfg(feature = "history")]
 fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, RestError> {
     inputs
         .iter()
@@ -1209,12 +1216,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// ```
     ///
     /// Returns the outputs as a JSON array of string-encoded values.
-    #[cfg(feature = "history")]
+    /// Optionally, append `?metadata=true` to also return the block height at which the
+    /// view was evaluated (same semantics as the mapping-read endpoints).
     pub(crate) async fn evaluate_view_latest(
         State(rest): State<Self>,
         Path((program_id, view_name)): Path<(ProgramID<N>, Identifier<N>)>,
+        metadata: Query<Metadata>,
         json_result: Result<Json<Vec<String>>, JsonRejection>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
+    ) -> Result<ErasedJson, RestError> {
         // Parse the inputs from the request body.
         let Json(raw_inputs) = match json_result {
             Ok(json) => json,
@@ -1225,19 +1234,41 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let inputs = parse_view_inputs::<N>(&raw_inputs)?;
 
         // Evaluate the view function in a blocking task.
-        // The latest height is captured inside the task to minimize the window between
-        // height sampling and evaluation.
-        let outputs = match tokio::task::spawn_blocking(move || {
-            let height = rest.ledger.latest_height();
-            rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
+        // The latest block's state is captured inside the task to minimise the window
+        // between state sampling and evaluation.
+        let (outputs, height) = match tokio::task::spawn_blocking(move || {
+            // Capture the latest block to build a consistent `FinalizeGlobalState`.
+            let block = rest.ledger.latest_block();
+            let height = block.height();
+
+            // Reconstruct the `FinalizeGlobalState` for the latest block. The block timestamp
+            // is only included from `ConsensusVersion::V12` onward, matching the consensus path.
+            let block_timestamp =
+                (height >= N::CONSENSUS_HEIGHT(ConsensusVersion::V12).unwrap_or_default()).then_some(block.timestamp());
+            let state = FinalizeGlobalState::new::<N>(
+                block.round(),
+                height,
+                block_timestamp,
+                block.cumulative_weight(),
+                block.cumulative_proof_target(),
+                block.previous_hash(),
+            )?;
+
+            // Get the current (latest-edition) stack for the program.
+            let stack = rest.ledger.vm().process().get_stack(program_id)?;
+
+            // Evaluate the view against the current finalize store.
+            let outputs = stack.evaluate_view(state, rest.ledger.vm().finalize_store(), &view_name, inputs)?;
+
+            Ok::<_, anyhow::Error>((outputs, height))
         })
         .await
         {
-            Ok(Ok(outputs)) => outputs,
+            Ok(Ok(result)) => result,
             Ok(Err(err)) => {
-                return Err(RestError::bad_request(
-                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at the latest height")),
-                ));
+                return Err(RestError::bad_request(err.context(format!(
+                    "Failed to evaluate view '{view_name}' for '{program_id}' at the latest height"
+                ))));
             }
             Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
         };
@@ -1245,7 +1276,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Encode each output as a string.
         let output_strings: Vec<String> = outputs.iter().map(|v| v.to_string()).collect();
 
-        Ok((StatusCode::OK, ErasedJson::pretty(output_strings)))
+        // Check if metadata is requested and return the outputs with the sampled height if so.
+        if metadata.metadata.unwrap_or(false) {
+            return Ok(ErasedJson::pretty(json!({
+                "data": output_strings,
+                "height": height,
+            })));
+        }
+
+        Ok(ErasedJson::pretty(output_strings))
     }
 
     /// GET /{network}/staking/rewards/{address}/{height}
