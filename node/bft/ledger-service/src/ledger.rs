@@ -546,7 +546,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
         match transaction {
             Transaction::Deploy(_, _, _, deployment, _) => {
                 let (_, cost_details) = deployment_cost(self.ledger.vm().process(), deployment, consensus_version)?;
-                let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version)?;
+                let compute_spend = deploy_compute_cost_in_microcredits(cost_details, consensus_version);
                 ensure!(
                     compute_spend <= transaction_spend_limit,
                     "Transaction '{id}' exceeds the transaction spend limit with compute_spend: '{compute_spend}'"
@@ -555,7 +555,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             }
             Transaction::Execute(_, _, execution, _) => {
                 let (_, cost_details) = execution_cost(self.ledger.vm().process(), execution, consensus_version)?;
-                let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version)?;
+                let compute_spend = execute_compute_cost_in_microcredits(cost_details, consensus_version);
                 if consensus_version >= ConsensusVersion::V11 {
                     // From V11, add this check for consistency with our deployment checks.
                     ensure!(
