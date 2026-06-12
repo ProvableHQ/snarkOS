@@ -173,17 +173,16 @@ mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-/// Sets the build information metric with version details as labels.
+/// Sets the build information metric with version details as a composite label.
 /// The resulting metric will show as:
-/// snarkos_build_info{version="4.2.1",git_commit="abc123",git_branch="main",features="cuda,metrics"} 1
+/// snarkos_build_info{info="version=4.2.1,commit=abc123,branch=main,features=cuda,metrics"} 1
 pub fn set_build_info() {
     let version = env!("SNARKOS_VERSION");
     let git_commit = built_info::GIT_COMMIT_HASH.unwrap_or("unknown");
     let git_branch = built_info::GIT_HEAD_REF.unwrap_or("unknown");
     let features = built_info::FEATURES_LOWERCASE_STR.replace(' ', "");
 
-    ::metrics::gauge!(build::BUILD_INFO, "version" => version.to_string()).set(1.0);
-    ::metrics::gauge!(build::BUILD_INFO, "git_commit" => git_commit.to_string()).set(1.0);
-    ::metrics::gauge!(build::BUILD_INFO, "git_branch" => git_branch.to_string()).set(1.0);
-    ::metrics::gauge!(build::BUILD_INFO, "features" => features).set(1.0);
+    let build_info = format!("version={},commit={},branch={},features={}", version, git_commit, git_branch, features);
+
+    ::metrics::gauge!(build::BUILD_INFO, "info" => build_info).set(1.0);
 }
