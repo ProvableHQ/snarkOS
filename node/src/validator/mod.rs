@@ -218,6 +218,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             }
         }
 
+        // Start the BFT and consensus handlers now that CDN sync is complete. This ensures that
+        // committed subdags are only processed after the initial sync from the CDN has finished.
+        node.start_consensus_handlers().await?;
         // Initialize the routing.
         node.initialize_routing().await;
         // Initialize the notification message loop.
@@ -240,6 +243,11 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     /// Returns the router.
     pub fn router(&self) -> &Router<N> {
         &self.router
+    }
+
+    /// Starts the BFT and consensus handlers.
+    async fn start_consensus_handlers(&self) -> Result<()> {
+        self.consensus.start_consensus_handlers().await
     }
 
     // /// Initialize the transaction pool.
