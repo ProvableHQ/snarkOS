@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - 'staging'
-      - 'release-mainnet-4.7.3'
+      - 'copilot/feature-expose-new-api-endpoint'
   workflow_dispatch:
 
 jobs:

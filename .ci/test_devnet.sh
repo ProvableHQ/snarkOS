@@ -136,6 +136,10 @@ function main:
     add r0 r1 into r2;
     output r2 as u32.private;
 
+view compute_sum:
+    add 1u32 2u32 into r0;
+    output r0 as u32.public;
+
 constructor:
     assert.eq true true;
 " > program/main.aleo
@@ -186,6 +190,36 @@ else
   log "❌ Test failed! Invalid edition returnd ${status_code}, not 404."
   exit 1
 fi
+
+# Query the view function at the latest height.
+log "● Testing view function evaluation at latest height..."
+view_response=$(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d '[]' \
+  "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum")
+view_output=$(jq -r '.[0]' <<< "$view_response")
+if [ "$view_output" = "3u32" ]; then
+  log "✅ View function returned expected output at latest height: $view_output"
+else
+  log "❌ Test failed! View function returned unexpected output at latest height: $view_response"
+  exit 1
+fi
+
+# Query the view function at a specific block height.
+# Requires history feature.
+# log "● Testing view function evaluation at specific block height..."
+# current_height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
+# view_response=$(curl -s -X POST \
+#   -H "Content-Type: application/json" \
+#   -d '[]' \
+#   "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum/${current_height}")
+# view_output=$(jq -r '.[0]' <<< "$view_response")
+# if [ "$view_output" = "3u32" ]; then
+#   log "✅ View function returned expected output at height ${current_height}: $view_output"
+# else
+#   log "❌ Test failed! View function returned unexpected output at height ${current_height}: $view_response"
+#   exit 1
+# fi
 
 # Execute a function in the deployed program and wait for the execution to be processed.
 log "● Testing program execution with V2 API..."
