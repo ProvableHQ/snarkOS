@@ -206,19 +206,20 @@ else
 fi
 
 # Query the view function at a specific block height.
-log "● Testing view function evaluation at specific block height..."
-current_height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
-view_response=$(curl -s -X POST \
-  -H "Content-Type: application/json" \
-  -d '[]' \
-  "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum/${current_height}")
-view_output=$(jq -r '.[0]' <<< "$view_response")
-if [ "$view_output" = "3u32" ]; then
-  log "✅ View function returned expected output at height ${current_height}: $view_output"
-else
-  log "❌ Test failed! View function returned unexpected output at height ${current_height}: $view_response"
-  exit 1
-fi
+# Requires history feature.
+# log "● Testing view function evaluation at specific block height..."
+# current_height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
+# view_response=$(curl -s -X POST \
+#   -H "Content-Type: application/json" \
+#   -d '[]' \
+#   "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum/${current_height}")
+# view_output=$(jq -r '.[0]' <<< "$view_response")
+# if [ "$view_output" = "3u32" ]; then
+#   log "✅ View function returned expected output at height ${current_height}: $view_output"
+# else
+#   log "❌ Test failed! View function returned unexpected output at height ${current_height}: $view_response"
+#   exit 1
+# fi
 
 # Execute a function in the deployed program and wait for the execution to be processed.
 log "● Testing program execution with V2 API..."
