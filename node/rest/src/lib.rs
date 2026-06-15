@@ -282,11 +282,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             None => routes,
         };
 
-        // If the `history` feature is enabled, enable the additional endpoint.
+        // Register the view-at-latest-height endpoint (always available, no history required).
+        let routes = routes.route("/program/{id}/view/{function}", post(Self::evaluate_view_latest));
+
+        // If the `history` feature is enabled, enable the additional endpoints.
         #[cfg(feature = "history")]
         let routes = routes
             .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
-            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch));
+            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch))
+            .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view));
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history-staking-rewards")]

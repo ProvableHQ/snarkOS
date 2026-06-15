@@ -108,7 +108,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 10] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 11] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -119,6 +119,7 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V13, 24),
         (ConsensusVersion::V14, 25),
         (ConsensusVersion::V15, 26),
+        (ConsensusVersion::V16, 27),
     ];
 
     /// Returns the latest message version.

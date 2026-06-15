@@ -124,7 +124,7 @@ commands:
           name: Install Debian packages
           command: |
             DEBIAN_FRONTEND=noninteractive sudo apt-get update
-            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang libclang-dev llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
       - restore_cache:
           keys:
             - << parameters.cache_key >>
@@ -760,7 +760,7 @@ jobs:
       - run:
           name: Lint scripts
           command: |
-            shellcheck -x .ci/*.sh
+            shellcheck -x .ci/*.sh scripts/*.sh
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
 
@@ -816,7 +816,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_fixed_dev_committee
+                - copilot/feature-expose-new-api-endpoint
                 - canary
                 - testnet
                 - mainnet
@@ -826,7 +826,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-mainnet-4.7.3
+                - copilot/feature-expose-new-api-endpoint
                 - canary
                 - testnet
                 - mainnet
@@ -836,7 +836,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-mainnet-4.7.3
+                - copilot/feature-expose-new-api-endpoint
                 - canary
                 - testnet
                 - mainnet
@@ -845,7 +845,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-mainnet-4.7.3
+                - copilot/feature-expose-new-api-endpoint
                 - canary
                 - testnet
                 - mainnet

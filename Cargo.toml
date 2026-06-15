@@ -48,10 +48,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "0aa6c6931"
+rev = "9d8ed0ce1"
 #version = "=4.7.3"
-default-features = false
-
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -271,7 +269,7 @@ name = "snarkos"
 path = "snarkos/main.rs"
 
 [features]
-default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
+default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics", "telemetry" ]
 history = [ "snarkos-node/history" ]
 history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
 slipstream-plugins = [ "snarkos-node/slipstream-plugins", "snarkos-cli/slipstream-plugins" ]

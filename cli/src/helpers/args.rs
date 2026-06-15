@@ -42,8 +42,7 @@ pub(crate) fn prepare_endpoint(endpoint: Uri) -> Result<Uri> {
     }
 
     if parts.path_and_query.is_none() {
-        // An empty path is fine for the base URL.
-        parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
+        parts.path_and_query = Some(uri::PathAndQuery::from_static("/"));
     }
 
     // Given that the input URI is valid and the scheme we assign is valid, this should never fail.

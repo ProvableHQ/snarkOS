@@ -24,7 +24,11 @@ use tracing::*;
 
 #[cfg(doc)]
 use crate::{Connection, protocols::Writing};
-use crate::{P2P, connections::create_connection_span, protocols::ProtocolHandler};
+use crate::{
+    P2P,
+    connections::{DisconnectOrigin, create_connection_span},
+    protocols::ProtocolHandler,
+};
 
 /// Can be used to automatically perform some extra actions when the node disconnects from its
 /// peer, which is especially practical if the disconnect is triggered automatically, e.g. due
@@ -44,7 +48,7 @@ where
     /// node disconnecting from a peer.
     async fn enable_disconnect(&self) {
         let (from_node_sender, mut from_node_receiver) = mpsc::channel::<(
-            SocketAddr,
+            (SocketAddr, DisconnectOrigin),
             oneshot::Sender<(JoinHandle<()>, oneshot::Receiver<()>)>,
         )>(self.tcp().config().max_connections as usize);
 
@@ -57,13 +61,13 @@ where
             trace!(parent: self_clone.tcp().span(), "spawned the Disconnect handler task");
             tx.send(()).unwrap(); // safe; the channel was just opened
 
-            while let Some((peer_addr, notifier)) = from_node_receiver.recv().await {
+            while let Some(((peer_addr, origin), notifier)) = from_node_receiver.recv().await {
                 let self_clone2 = self_clone.clone();
                 // create a channel for waiting on completion
                 let (done_tx, done_rx) = oneshot::channel();
                 let handle = tokio::spawn(async move {
                     // perform the specified extra actions
-                    if timeout(Self::TIMEOUT, self_clone2.handle_disconnect(peer_addr)).await.is_err() {
+                    if timeout(Self::TIMEOUT, self_clone2.handle_disconnect(peer_addr, origin)).await.is_err() {
                         let conn_span = create_connection_span(peer_addr, self_clone2.tcp().span());
                         warn!(parent: conn_span, "Disconnect logic timed out");
                     }
@@ -90,5 +94,5 @@ where
     /// Any extra actions to be executed during a disconnect; in order to still be able to
     /// communicate with the peer in the usual manner (i.e. via [`Writing`]), only its [`SocketAddr`]
     /// (as opposed to the related [`Connection`] object) is provided as an argument.
-    async fn handle_disconnect(&self, peer_addr: SocketAddr);
+    async fn handle_disconnect(&self, peer_addr: SocketAddr, origin: DisconnectOrigin);
 }

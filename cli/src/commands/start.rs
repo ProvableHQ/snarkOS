@@ -27,7 +27,7 @@ use snarkos_node::{
     rest::DEFAULT_REST_PORT,
     router::DEFAULT_NODE_PORT,
 };
-use snarkos_utilities::{NodeDataDir, SignalHandler, jwt_secret_file, node_data};
+use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler, jwt_secret_file, node_data};
 
 use snarkvm::{
     console::{
@@ -853,8 +853,10 @@ impl Start {
             }
         };
 
-        // Determine the number of validators for the committee hotswap.
-        let dev_num_validators_for_committee_hotswap = self.dev_on_prod.then_some(self.dev_num_validators);
+        // Determine the dev committee hotswap configuration.
+        let dev_hotswap_config = self.dev_on_prod.then_some(DevHotswapConfig {
+            dev_num_validators: self.dev_num_validators,
+        });
 
         // TODO(kaimast): start the display earlier and show sync progress.
         if !self.nodisplay && cdn.is_some() {
@@ -872,8 +874,7 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            // NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, signal_handler.clone()).await,
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_num_validators_for_committee_hotswap, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_hotswap_config, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
             NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, slipstream_configs, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
