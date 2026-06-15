@@ -18,5 +18,4 @@ mod version_env;
 
 fn main() {
     version_env::emit_version_env();
-    built::write_built_file().expect("Failed to acquire build-time information");
 }

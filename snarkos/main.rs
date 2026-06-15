@@ -187,12 +187,13 @@ fn check_for_version() {
     if let Some(first_arg) = env::args().nth(1)
         && ["--version", "-V"].contains(&&*first_arg)
     {
+        let version = env!("SNARKOS_VERSION");
         let branch = GIT_HEAD_REF.unwrap_or("unknown_branch");
         let commit = GIT_COMMIT_HASH.unwrap_or("unknown_commit");
         let mut features = FEATURES_LOWERCASE_STR.to_owned();
         features.retain(|c| c != ' ');
 
-        print_info!("snarkos {branch} {commit} features=[{features}]");
+        print_info!("snarkos {version} {branch} {commit} features=[{features}]");
 
         exit(0);
     }

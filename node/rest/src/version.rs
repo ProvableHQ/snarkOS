@@ -50,7 +50,7 @@ impl VersionInfo {
         let consensus_heights: Vec<u32> = N::CONSENSUS_VERSION_HEIGHTS().iter().map(|(_, height)| *height).collect();
 
         VERSION_INFO.get_or_init(|| VersionInfo {
-            version: built_info::PKG_VERSION.to_string(),
+            version: env!("SNARKOS_VERSION").to_string(),
             git_commit: built_info::GIT_COMMIT_HASH.unwrap_or("unknown").to_string(),
             git_branch: built_info::GIT_HEAD_REF.unwrap_or("unknown").to_string(),
             latest_consensus_version: latest_num,

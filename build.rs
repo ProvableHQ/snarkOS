@@ -25,6 +25,9 @@ use std::{
 use toml::Value;
 use walkdir::WalkDir;
 
+#[path = "version_env.rs"]
+mod version_env;
+
 // The following license text that should be present at the beginning of every source file.
 const EXPECTED_LICENSE_TEXT: &[u8] = include_bytes!(".resources/license_header");
 
@@ -312,6 +315,8 @@ fn main() {
     // Check if the tokio_console feature is correctly enabled.
     check_tokio_console_flags();
 
+    // Register the release version for runtime version reporting.
+    version_env::emit_version_env();
     // Register build-time information.
     built::write_built_file().expect("Failed to acquire build-time information");
 }

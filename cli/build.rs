@@ -13,10 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[path = "../../version_env.rs"]
+#[path = "../version_env.rs"]
 mod version_env;
 
 fn main() {
     version_env::emit_version_env();
-    built::write_built_file().expect("Failed to acquire build-time information");
 }

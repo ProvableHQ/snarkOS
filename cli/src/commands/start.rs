@@ -339,6 +339,10 @@ impl Start {
             // Error messages.
             let node_parse_error = || "Failed to start node";
 
+            // Periodically check if the number of file descriptors isn't becoming insufficient.
+            #[cfg(unix)]
+            crate::helpers::spawn_fd_monitor();
+
             // Clone the configurations.
             let mut self_ = self.clone();
 
