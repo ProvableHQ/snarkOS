@@ -182,7 +182,7 @@ pub fn set_build_info() {
     let git_branch = built_info::GIT_HEAD_REF.unwrap_or("unknown");
     let features = built_info::FEATURES_LOWERCASE_STR.replace(' ', "");
 
-    let build_info = format!("version={},commit={},branch={},features={}", version, git_commit, git_branch, features);
+    let build_info = format!("version={version},commit={git_commit},branch={git_branch},features={features}");
 
     ::metrics::gauge!(build::BUILD_INFO, "info" => build_info).set(1.0);
 }
