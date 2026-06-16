@@ -302,35 +302,48 @@ commands:
             echo "==> test-threads override: ${TEST_THREADS:-<none>}"
             echo "==> jobs: ${JOBS}"
 
-            # If flags explicitly include --no-run, fall back to plain cargo test
-            if printf '%s' " $BUILD_FLAGS_SANITIZED " | grep -q ' --no-run '; then
-              cargo test $PKG_ARGS $BUILD_FLAGS_SANITIZED | tee "$OUT"
-              : > "$CSV"; : > "$TOP"
-            else
-              cargo nextest run \
-                $PKG_ARGS $BUILD_FLAGS_SANITIZED \
-                --profile ci -j "${JOBS}" "${CFG_ARGS[@]}" \
-                --status-level fail --hide-progress-bar \
-                --no-tests=pass \
-                ${FILTER_EXPR:+--filter-expr "$FILTER_EXPR"} \
-                2>&1 | tee "$OUT"
-
-              if [ -f "$JUNIT" ]; then
-                awk -v RS='<testcase ' '
-                  NR>1 {
-                    name=""; classname=""; time="";
-                    start=index($0,"classname=\""); if(start>0){ start+=11; rest=substr($0,start); end=index(rest,"\""); if(end>0) classname=substr(rest,1,end-1) }
-                    start=index($0,"name=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) name=substr(rest,1,end-1) }
-                    start=index($0,"time=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) time=substr(rest,1,end-1) }
-                    if(name!="" && time!=""){ full=(classname!=""?classname"::"name:name); printf "%s,%s\n", full, time }
-                  }
-                ' "$JUNIT" > "$CSV" || true
-
-                sort -t, -k2,2nr "$CSV" | head -n 30 > "$TOP" || true
+            # --- Logic to run tests and catch sccache failure ---
+            run_nextest() {
+              if printf '%s' " $BUILD_FLAGS_SANITIZED " | grep -q ' --no-run '; then
+                cargo test $PKG_ARGS $BUILD_FLAGS_SANITIZED
               else
-                echo "WARN: $JUNIT not found; no timings extracted." >&2
-                : > "$CSV"; : > "$TOP"
+                cargo nextest run \
+                  $PKG_ARGS $BUILD_FLAGS_SANITIZED \
+                  --profile ci -j "${JOBS}" "${CFG_ARGS[@]}" \
+                  --status-level fail --hide-progress-bar \
+                  --no-tests=pass \
+                  ${FILTER_EXPR:+--filter-expr "$FILTER_EXPR"}
               fi
+            }
+
+            if ! run_nextest 2>&1 | tee "$OUT"; then
+              if grep -q "sccache" "$OUT" && grep -q "exit status: 2" "$OUT"; then
+                echo "⚠️ Detected sccache crash. Cleaning up and retrying..."
+                [ -f "$HOME/.bin/sccache" ] && "$HOME/.bin/sccache" --stop-server || true
+                rm -rf "$HOME/.cache/sccache"
+                rm -rf target
+                mkdir -p target/nextest/ci
+                run_nextest 2>&1 | tee "$OUT"
+              else
+                exit 1
+              fi
+            fi
+
+            if [ -f "$JUNIT" ]; then
+              awk -v RS='<testcase ' '
+                NR>1 {
+                  name=""; classname=""; time="";
+                  start=index($0,"classname=\""); if(start>0){ start+=11; rest=substr($0,start); end=index(rest,"\""); if(end>0) classname=substr(rest,1,end-1) }
+                  start=index($0,"name=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) name=substr(rest,1,end-1) }
+                  start=index($0,"time=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) time=substr(rest,1,end-1) }
+                  if(name!="" && time!=""){ full=(classname!=""?classname"::"name:name); printf "%s,%s\n", full, time }
+                }
+              ' "$JUNIT" > "$CSV" || true
+
+              sort -t, -k2,2nr "$CSV" | head -n 30 > "$TOP" || true
+            else
+              echo "WARN: $JUNIT not found; no timings extracted." >&2
+              : > "$CSV"; : > "$TOP"
             fi
 
       - store_artifacts:
