@@ -5,7 +5,7 @@
 
 # Change this to increase/decrease log verbosity
 log_verbosity=4
-max_validator_log_size_bytes=$((150 * 1024 * 1024))
+max_validator_log_size_bytes=$((2 * 1024 * 1024))
 
 # Network parameters
 total_validators=4

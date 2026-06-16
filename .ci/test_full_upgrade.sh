@@ -29,8 +29,8 @@ max_warnings=$4
 # Node verbosity
 NODE_VERBOSITY=4
 # Max logfile sizes (bytes) for regression checks.
-MAX_VALIDATOR_LOG_SIZE_BYTES=$((250 * 1024 * 1024))
-MAX_CLIENT_LOG_SIZE_BYTES=$((250 * 1024 * 1024))
+MAX_VALIDATOR_LOG_SIZE_BYTES=$((8 * 1024 * 1024))
+MAX_CLIENT_LOG_SIZE_BYTES=$((1 * 1024 * 1024))
 
 
 # How long to wait between upgrades (seconds); used for block-height window

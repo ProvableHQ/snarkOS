@@ -19,8 +19,8 @@ max_warnings=$5
 # The verbosity of snarkos nodes.
 NODE_VERBOSITY=4
 # Max logfile sizes (bytes) for regression checks.
-MAX_VALIDATOR_LOG_SIZE_BYTES=$((200 * 1024 * 1024))
-MAX_CLIENT_LOG_SIZE_BYTES=$((200 * 1024 * 1024))
+MAX_VALIDATOR_LOG_SIZE_BYTES=$((2 * 1024 * 1024))
+MAX_CLIENT_LOG_SIZE_BYTES=$((1 * 1024 * 1024))
 
 # Default values if not provided
 : "${total_validators:=4}"
