@@ -322,6 +322,7 @@ commands:
                 [ -f "$HOME/.bin/sccache" ] && "$HOME/.bin/sccache" --stop-server || true
                 rm -rf "$HOME/.cache/sccache"
                 rm -rf target
+                mkdir -p target/nextest/ci
                 run_nextest 2>&1 | tee "$OUT"
               else
                 exit 1
