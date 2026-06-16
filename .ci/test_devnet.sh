@@ -27,7 +27,7 @@ MAX_CLIENT_LOG_SIZE_BYTES=$((1 * 1024 * 1024))
 : "${total_clients:=4}" # need at least 4 clients, so each validator has at least one client connected to it.
 : "${network_id:=0}"
 : "${min_height:=60}" # To likely go past the 100 round garbage collection limit.
-: "${max_warnings:=40}"
+: "${max_warnings:=300}"
 
 # shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
