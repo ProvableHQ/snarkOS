@@ -17,7 +17,7 @@ checkpoint_height=3
 rollback_height=10
 num_checkpoints=0
 remaining_checkpoints=2
-max_warnings=40
+max_warnings=300
 
 # Create log directory
 init_log_dir
