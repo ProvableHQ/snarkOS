@@ -909,7 +909,7 @@ impl<N: Network> Gateway<N> {
         #[cfg(feature = "telemetry")]
         self.log_participation_scores();
         // Keep the trusted validators connected.
-        self.handle_trusted_validators();
+        self.handle_trusted_validators().await;
         // Keep the bootstrap peers within the allowed range.
         self.handle_bootstrap_peers().await;
         // Removes any validators that not in the current committee.
@@ -1054,16 +1054,36 @@ impl<N: Network> Gateway<N> {
     }
 
     /// This function attempts to connect to any disconnected trusted validators.
-    fn handle_trusted_validators(&self) {
-        let trusted_peers = self.trusted_peers();
+    async fn handle_trusted_validators(&self) {
+        // Collect trusted peer addresses that genuinely need a reconnection attempt.
+        // Skip peers whose last known Aleo address is already connected via a different IP,
+        // which prevents spurious reconnection attempts when a validator's IP changes.
+        let trusted_peers: Vec<_> = {
+            let pool = self.peer_pool().read();
+            pool.iter()
+                .filter_map(|(addr, peer)| {
+                    if !peer.is_trusted() {
+                        return None;
+                    }
+                    if let Peer::Candidate(c) = peer {
+                        if let Some(aleo_addr) = c.last_known_aleo_addr {
+                            if self.is_connected_address(aleo_addr) {
+                                return None;
+                            }
+                        }
+                    }
+                    Some(*addr)
+                })
+                .collect()
+        };
 
         // Attempt to re-establish connections with any trusted peer that is not connected already.
-        let handles: Vec<JoinHandle<_>> = trusted_peers
+        let (addrs, handles): (Vec<_>, Vec<JoinHandle<_>>) = trusted_peers
             .iter()
             .filter_map(|validator_ip| {
                 // Attempt to connect to the trusted validator.
                 match self.connect(*validator_ip) {
-                    Ok(hdl) => Some(hdl),
+                    Ok(hdl) => Some((*validator_ip, hdl)),
                     Err(ConnectError::SelfConnect { .. })
                     | Err(ConnectError::AlreadyConnected { .. })
                     | Err(ConnectError::AlreadyConnecting { .. }) => None,
@@ -1073,10 +1093,15 @@ impl<N: Network> Gateway<N> {
                     }
                 }
             })
-            .collect();
+            .unzip();
 
         if !handles.is_empty() {
-            info!("Reconnnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
+            info!("Reconnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
+            for (addr, result) in addrs.into_iter().zip(join_all(handles).await) {
+                if let Err(err) = result {
+                    warn!("{CONTEXT} Failed to connect to trusted validator at '{addr}' - {err}");
+                }
+            }
         }
     }
 
@@ -1503,6 +1528,17 @@ impl<N: Network> Handshake for Gateway<N> {
                             cr.snarkos_sha,
                             ConnectionMode::Gateway,
                         );
+                    }
+                    // Warn if this validator was previously known under a different trusted address.
+                    for (candidate_addr, peer) in self.peer_pool.read().iter() {
+                        if let Peer::Candidate(c) = peer {
+                            if c.trusted && c.last_known_aleo_addr == Some(cr.address) && *candidate_addr != addr {
+                                warn!(
+                                    "{CONTEXT} Validator '{addr}' ({}) is connected but is also configured as trusted peer '{candidate_addr}' - the addresses differ",
+                                    cr.address
+                                );
+                            }
+                        }
                     }
                     info!("{CONTEXT} Connected to '{addr}'");
                 }

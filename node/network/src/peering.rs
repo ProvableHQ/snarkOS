@@ -622,7 +622,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of candidate peers.
-    fn get_candidate_peers(&self) -> Vec<CandidatePeer> {
+    fn get_candidate_peers(&self) -> Vec<CandidatePeer<N>> {
         self.peer_pool()
             .read()
             .values()
@@ -631,7 +631,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of trusted candidate peers.
-    fn get_trusted_candidate_peers(&self) -> Vec<CandidatePeer> {
+    fn get_trusted_candidate_peers(&self) -> Vec<CandidatePeer<N>> {
         self.peer_pool()
             .read()
             .values()
