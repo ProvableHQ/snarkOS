@@ -1076,7 +1076,7 @@ impl<N: Network> Gateway<N> {
             .collect();
 
         if !handles.is_empty() {
-            info!("Reconnnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
+            info!("Reconnecting to {} out of {} trusted validators", handles.len(), trusted_peers.len());
         }
     }
 
@@ -1492,7 +1492,24 @@ impl<N: Network> Handshake for Gateway<N> {
                         NodeType::Validator
                     };
 
-                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                    let mut peer_pool = self.peer_pool.write();
+
+                    // Validators may change their listening address, but not the Aleo address; traverse
+                    // the peer pool, and retain previously connected (the prior Aleo address is known)
+                    // candidate peers with the same Aleo address only if their listening address is the
+                    // same; otherwise, it may be concluded that a known validator has changed their
+                    // listening address, and thus the old entry should be removed as outdated.
+                    peer_pool.retain(|_, peer| {
+                        if let Peer::Candidate(peer) = peer
+                            && let Some(old_aleo_addr) = peer.last_known_aleo_addr
+                        {
+                            old_aleo_addr != cr.address || peer.listener_addr == addr
+                        } else {
+                            true
+                        }
+                    });
+
+                    if let Some(peer) = peer_pool.get_mut(&addr) {
                         self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
                         peer.upgrade_to_connected(
                             peer_addr,

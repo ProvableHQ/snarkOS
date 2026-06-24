@@ -15,169 +15,6 @@
 
 use crate::{CandidatePeer, ConnectedPeer, ConnectionMode, NodeType, Peer, Resolver};
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Peer;
-    use snarkos_node_tcp::{Config, P2P, Tcp};
-    use snarkvm::{prelude::Rng, utilities::TestRng};
-
-    use std::{collections::HashMap, net::SocketAddr, time::Instant};
-
-    type CurrentNetwork = snarkvm::prelude::MainnetV0;
-
-    struct MockPeerPool<N: Network> {
-        tcp: Tcp,
-        peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
-        resolver: RwLock<Resolver<N>>,
-    }
-
-    impl<N: Network> MockPeerPool<N> {
-        fn new() -> Self {
-            let config = Config { listener_ip: None, ..Default::default() };
-            Self { tcp: Tcp::new(config), peer_pool: Default::default(), resolver: Default::default() }
-        }
-    }
-
-    impl<N: Network> P2P for MockPeerPool<N> {
-        fn tcp(&self) -> &Tcp {
-            &self.tcp
-        }
-    }
-
-    impl<N: Network> PeerPoolHandling<N> for MockPeerPool<N> {
-        const MAXIMUM_POOL_SIZE: usize = 100;
-        const OWNER: &str = "MockPeerPool";
-        const PEER_SLASHING_COUNT: usize = 10;
-
-        fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
-            &self.peer_pool
-        }
-
-        fn resolver(&self) -> &RwLock<Resolver<N>> {
-            &self.resolver
-        }
-
-        fn is_dev(&self) -> bool {
-            false
-        }
-
-        fn trusted_peers_only(&self) -> bool {
-            false
-        }
-
-        fn node_type(&self) -> NodeType {
-            NodeType::Client
-        }
-    }
-
-    fn make_connected_peer(port: u16, node_type: NodeType, rng: &mut TestRng) -> (SocketAddr, Peer<CurrentNetwork>) {
-        use snarkvm::prelude::Address;
-        let listener_addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let connected_addr = SocketAddr::from(([127, 0, 0, 1], port + 10000));
-        let now = Instant::now();
-        let peer = Peer::Connected(ConnectedPeer {
-            listener_addr,
-            connected_addr,
-            connection_mode: ConnectionMode::Router,
-            trusted: false,
-            aleo_addr: Address::<CurrentNetwork>::new(rng.random()),
-            node_type,
-            version: 1,
-            snarkos_sha: None,
-            last_height_seen: None,
-            first_seen: now,
-            last_seen: now,
-        });
-        (listener_addr, peer)
-    }
-
-    #[test]
-    fn test_peer_state_transitions() {
-        use snarkvm::prelude::Address;
-
-        let pool = MockPeerPool::<CurrentNetwork>::new();
-        let mut rng = TestRng::default();
-
-        let listener_addr = SocketAddr::from(([192, 0, 2, 1], 4000));
-        let connected_addr = SocketAddr::from(([192, 0, 2, 1], 14000));
-        let aleo_addr = Address::<CurrentNetwork>::new(rng.random());
-
-        // Step 1: insert as a candidate.
-        pool.peer_pool().write().insert(listener_addr, Peer::new_candidate(listener_addr, false));
-
-        assert_eq!(pool.number_of_candidate_peers(), 1);
-        assert_eq!(pool.number_of_connecting_peers(), Some(0));
-        assert_eq!(pool.number_of_connected_peers(), 0);
-        assert!(!pool.is_connecting(listener_addr));
-        assert!(!pool.is_connected(listener_addr));
-
-        // Step 2: promote to connecting.
-        assert!(pool.add_connecting_peer(listener_addr).is_ok());
-
-        assert_eq!(pool.number_of_candidate_peers(), 0);
-        assert_eq!(pool.number_of_connecting_peers(), Some(1));
-        assert_eq!(pool.number_of_connected_peers(), 0);
-        assert!(pool.is_connecting(listener_addr));
-        assert!(!pool.is_connected(listener_addr));
-
-        // Step 3: complete the handshake — upgrade to connected.
-        pool.peer_pool().write().get_mut(&listener_addr).unwrap().upgrade_to_connected(
-            connected_addr,
-            listener_addr.port(),
-            aleo_addr,
-            NodeType::Validator,
-            1,
-            None,
-            ConnectionMode::Router,
-        );
-
-        assert_eq!(pool.number_of_candidate_peers(), 0);
-        assert_eq!(pool.number_of_connecting_peers(), Some(0));
-        assert_eq!(pool.number_of_connected_peers(), 1);
-        assert!(!pool.is_connecting(listener_addr));
-        assert!(pool.is_connected(listener_addr));
-        assert_eq!(pool.number_of_connected_validators(), Some(1));
-
-        // Verify the connected peer's fields.
-        let connected = pool.get_connected_peer(listener_addr).expect("peer should be connected");
-        assert_eq!(connected.listener_addr, listener_addr);
-        assert_eq!(connected.connected_addr, connected_addr);
-        assert_eq!(connected.aleo_addr, aleo_addr);
-        assert_eq!(connected.node_type, NodeType::Validator);
-    }
-
-    #[test]
-    fn test_number_of_connected_validators() {
-        let pool = MockPeerPool::<CurrentNetwork>::new();
-        let mut rng = TestRng::default();
-
-        // Empty pool: no validators.
-        assert_eq!(pool.number_of_connected_validators(), Some(0));
-
-        // Insert 2 validators and 1 client.
-        let (addr1, peer1) = make_connected_peer(3000, NodeType::Validator, &mut rng);
-        let (addr2, peer2) = make_connected_peer(3001, NodeType::Validator, &mut rng);
-        let (addr3, peer3) = make_connected_peer(3002, NodeType::Client, &mut rng);
-        {
-            let mut pool_write = pool.peer_pool().write();
-            pool_write.insert(addr1, peer1);
-            pool_write.insert(addr2, peer2);
-            pool_write.insert(addr3, peer3);
-        }
-
-        assert_eq!(pool.number_of_connected_validators(), Some(2));
-        assert_eq!(pool.number_of_connected_peers(), 3);
-
-        // A candidate peer should not be counted as a validator.
-        let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 3003));
-        pool.peer_pool().write().insert(candidate_addr, Peer::new_candidate(candidate_addr, false));
-
-        assert_eq!(pool.number_of_connected_validators(), Some(2));
-        assert_eq!(pool.number_of_connected_peers(), 3);
-    }
-}
-
 use snarkos_node_tcp::{ConnectError, P2P, is_bogon_ip, is_unspecified_or_broadcast_ip};
 use snarkvm::prelude::{Address, Network};
 
@@ -622,7 +459,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of candidate peers.
-    fn get_candidate_peers(&self) -> Vec<CandidatePeer> {
+    fn get_candidate_peers(&self) -> Vec<CandidatePeer<N>> {
         self.peer_pool()
             .read()
             .values()
@@ -631,7 +468,7 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the list of trusted candidate peers.
-    fn get_trusted_candidate_peers(&self) -> Vec<CandidatePeer> {
+    fn get_trusted_candidate_peers(&self) -> Vec<CandidatePeer<N>> {
         self.peer_pool()
             .read()
             .values()
@@ -769,5 +606,168 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     /// Insert or update a banned IP.
     fn update_ip_ban(&self, ip: IpAddr) {
         self.tcp().banned_peers().update_ip_ban(ip);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Peer;
+    use snarkos_node_tcp::{Config, P2P, Tcp};
+    use snarkvm::{prelude::Rng, utilities::TestRng};
+
+    use std::{collections::HashMap, net::SocketAddr, time::Instant};
+
+    type CurrentNetwork = snarkvm::prelude::MainnetV0;
+
+    struct MockPeerPool<N: Network> {
+        tcp: Tcp,
+        peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
+        resolver: RwLock<Resolver<N>>,
+    }
+
+    impl<N: Network> MockPeerPool<N> {
+        fn new() -> Self {
+            let config = Config { listener_ip: None, ..Default::default() };
+            Self { tcp: Tcp::new(config), peer_pool: Default::default(), resolver: Default::default() }
+        }
+    }
+
+    impl<N: Network> P2P for MockPeerPool<N> {
+        fn tcp(&self) -> &Tcp {
+            &self.tcp
+        }
+    }
+
+    impl<N: Network> PeerPoolHandling<N> for MockPeerPool<N> {
+        const MAXIMUM_POOL_SIZE: usize = 100;
+        const OWNER: &str = "MockPeerPool";
+        const PEER_SLASHING_COUNT: usize = 10;
+
+        fn peer_pool(&self) -> &RwLock<HashMap<SocketAddr, Peer<N>>> {
+            &self.peer_pool
+        }
+
+        fn resolver(&self) -> &RwLock<Resolver<N>> {
+            &self.resolver
+        }
+
+        fn is_dev(&self) -> bool {
+            false
+        }
+
+        fn trusted_peers_only(&self) -> bool {
+            false
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Client
+        }
+    }
+
+    fn make_connected_peer(port: u16, node_type: NodeType, rng: &mut TestRng) -> (SocketAddr, Peer<CurrentNetwork>) {
+        use snarkvm::prelude::Address;
+        let listener_addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let connected_addr = SocketAddr::from(([127, 0, 0, 1], port + 10000));
+        let now = Instant::now();
+        let peer = Peer::Connected(ConnectedPeer {
+            listener_addr,
+            connected_addr,
+            connection_mode: ConnectionMode::Router,
+            trusted: false,
+            aleo_addr: Address::<CurrentNetwork>::new(rng.random()),
+            node_type,
+            version: 1,
+            snarkos_sha: None,
+            last_height_seen: None,
+            first_seen: now,
+            last_seen: now,
+        });
+        (listener_addr, peer)
+    }
+
+    #[test]
+    fn test_peer_state_transitions() {
+        use snarkvm::prelude::Address;
+
+        let pool = MockPeerPool::<CurrentNetwork>::new();
+        let mut rng = TestRng::default();
+
+        let listener_addr = SocketAddr::from(([192, 0, 2, 1], 4000));
+        let connected_addr = SocketAddr::from(([192, 0, 2, 1], 14000));
+        let aleo_addr = Address::<CurrentNetwork>::new(rng.random());
+
+        // Step 1: insert as a candidate.
+        pool.peer_pool().write().insert(listener_addr, Peer::new_candidate(listener_addr, false));
+
+        assert_eq!(pool.number_of_candidate_peers(), 1);
+        assert_eq!(pool.number_of_connecting_peers(), Some(0));
+        assert_eq!(pool.number_of_connected_peers(), 0);
+        assert!(!pool.is_connecting(listener_addr));
+        assert!(!pool.is_connected(listener_addr));
+
+        // Step 2: promote to connecting.
+        assert!(pool.add_connecting_peer(listener_addr).is_ok());
+
+        assert_eq!(pool.number_of_candidate_peers(), 0);
+        assert_eq!(pool.number_of_connecting_peers(), Some(1));
+        assert_eq!(pool.number_of_connected_peers(), 0);
+        assert!(pool.is_connecting(listener_addr));
+        assert!(!pool.is_connected(listener_addr));
+
+        // Step 3: complete the handshake — upgrade to connected.
+        pool.peer_pool().write().get_mut(&listener_addr).unwrap().upgrade_to_connected(
+            connected_addr,
+            listener_addr.port(),
+            aleo_addr,
+            NodeType::Validator,
+            1,
+            None,
+            ConnectionMode::Router,
+        );
+
+        assert_eq!(pool.number_of_candidate_peers(), 0);
+        assert_eq!(pool.number_of_connecting_peers(), Some(0));
+        assert_eq!(pool.number_of_connected_peers(), 1);
+        assert!(!pool.is_connecting(listener_addr));
+        assert!(pool.is_connected(listener_addr));
+        assert_eq!(pool.number_of_connected_validators(), Some(1));
+
+        // Verify the connected peer's fields.
+        let connected = pool.get_connected_peer(listener_addr).expect("peer should be connected");
+        assert_eq!(connected.listener_addr, listener_addr);
+        assert_eq!(connected.connected_addr, connected_addr);
+        assert_eq!(connected.aleo_addr, aleo_addr);
+        assert_eq!(connected.node_type, NodeType::Validator);
+    }
+
+    #[test]
+    fn test_number_of_connected_validators() {
+        let pool = MockPeerPool::<CurrentNetwork>::new();
+        let mut rng = TestRng::default();
+
+        // Empty pool: no validators.
+        assert_eq!(pool.number_of_connected_validators(), Some(0));
+
+        // Insert 2 validators and 1 client.
+        let (addr1, peer1) = make_connected_peer(3000, NodeType::Validator, &mut rng);
+        let (addr2, peer2) = make_connected_peer(3001, NodeType::Validator, &mut rng);
+        let (addr3, peer3) = make_connected_peer(3002, NodeType::Client, &mut rng);
+        {
+            let mut pool_write = pool.peer_pool().write();
+            pool_write.insert(addr1, peer1);
+            pool_write.insert(addr2, peer2);
+            pool_write.insert(addr3, peer3);
+        }
+
+        assert_eq!(pool.number_of_connected_validators(), Some(2));
+        assert_eq!(pool.number_of_connected_peers(), 3);
+
+        // A candidate peer should not be counted as a validator.
+        let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 3003));
+        pool.peer_pool().write().insert(candidate_addr, Peer::new_candidate(candidate_addr, false));
+
+        assert_eq!(pool.number_of_connected_validators(), Some(2));
+        assert_eq!(pool.number_of_connected_peers(), 3);
     }
 }
