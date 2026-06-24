@@ -211,6 +211,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/transaction/{id}", get(Self::get_transaction))
             .route("/transaction/confirmed/{id}", get(Self::get_confirmed_transaction))
             .route("/transaction/unconfirmed/{id}", get(Self::get_unconfirmed_transaction))
+            .route("/transaction/rejected/{id}/reason", get(Self::get_transaction_rejection_reason))
             .route("/transaction/broadcast", post(Self::transaction_broadcast))
 
             // GET and POST ../solution/..
