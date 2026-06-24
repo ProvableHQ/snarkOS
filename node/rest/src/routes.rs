@@ -443,6 +443,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         })?))
     }
 
+    /// GET /<network>/transaction/rejected/{transactionID}/reason
+    pub(crate) async fn get_transaction_rejection_reason(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        let rejection_reason = rest.ledger.vm().finalize_store().get_rejected_reason(&*tx_id)?;
+        match rejection_reason {
+            Some(reason) => Ok(ErasedJson::pretty(reason)),
+            None => Err(RestError::not_found(anyhow!("Rejection reason not found for transaction {tx_id}"))),
+        }
+    }
+
     /// GET /<network>/memoryPool/transmissions
     pub(crate) async fn get_memory_pool_transmissions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
         match rest.consensus {
