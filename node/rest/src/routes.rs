@@ -21,7 +21,18 @@ use snarkos_node_sync::BftSyncMode;
 use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
-    prelude::{Address, Identifier, LimitedWriter, Plaintext, Program, ToBytes, block::Transaction},
+    prelude::{
+        Address,
+        ConsensusVersion,
+        Identifier,
+        LimitedWriter,
+        Plaintext,
+        Program,
+        ToBytes,
+        Value,
+        block::Transaction,
+    },
+    synthesizer::program::{FinalizeGlobalState, StackTrait},
 };
 
 use axum::{Json, extract::rejection::JsonRejection};
@@ -44,6 +55,8 @@ const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
 #[cfg(feature = "history")]
 type HistoricalMappingRoute<N> = (ProgramID<N>, Identifier<N>, u32);
+#[cfg(feature = "history")]
+type ViewFunctionRoute<N> = (ProgramID<N>, Identifier<N>, u32);
 
 #[cfg(feature = "history")]
 fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plaintext<N>>, RestError> {
@@ -66,6 +79,19 @@ fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plai
         .map(|(index, key)| {
             key.parse::<Plaintext<N>>().map_err(|err| {
                 RestError::unprocessable_entity(err.context(format!("Invalid key at index {index}: {key}")))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+/// Parses a list of strings into a `Vec<Value<N>>` for use as view function inputs.
+fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, RestError> {
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            input.parse::<Value<N>>().map_err(|err| {
+                RestError::unprocessable_entity(err.context(format!("Invalid input at index {index}: {input}")))
             })
         })
         .collect::<Result<Vec<_>, _>>()
@@ -415,6 +441,49 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok(ErasedJson::pretty(rest.ledger.get_unconfirmed_transaction(&tx_id).map_err(|err| {
             if err.to_string().contains("Missing") { RestError::not_found(err) } else { RestError::from(err) }
         })?))
+    }
+
+    /// GET /<network>/transaction/rejected/{transactionID}/reason
+    pub(crate) async fn get_transaction_rejection_reason(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        let rejection_reason = Self::lookup_transaction_rejection_reason(&rest, &tx_id)?;
+        match rejection_reason {
+            Some(reason) => Ok(ErasedJson::pretty(reason)),
+            None => Err(RestError::not_found(anyhow!("Rejection reason not found for transaction {tx_id}"))),
+        }
+    }
+
+    /// Looks up the rejection reason for a transaction ID.
+    ///
+    /// Rejection reasons are stored under the confirmed (fee) transaction ID. Callers may provide
+    /// either the unconfirmed transaction ID or the confirmed rejected transaction ID.
+    fn lookup_transaction_rejection_reason(
+        rest: &Self,
+        tx_id: &N::TransactionID,
+    ) -> Result<Option<snarkvm::prelude::block::transactions::RejectedReason<N>>, RestError> {
+        let store = rest.ledger.vm().finalize_store();
+
+        if let Some(reason) = store.get_rejected_reason(tx_id)? {
+            return Ok(Some(reason));
+        }
+
+        // Fall back to the unconfirmed transaction ID.
+        if let Some(unconfirmed) = rest.ledger.try_get_unconfirmed_transaction(tx_id)? {
+            if let Some(reason) = store.get_rejected_reason(&*unconfirmed.id())? {
+                return Ok(Some(reason));
+            }
+        }
+
+        // Fall back to the confirmed (fee) transaction ID.
+        if let Some(confirmed) = rest.ledger.try_get_confirmed_transaction(tx_id)? {
+            if let Some(reason) = store.get_rejected_reason(&*confirmed.id())? {
+                return Ok(Some(reason));
+            }
+        }
+
+        Ok(None)
     }
 
     /// GET /<network>/memoryPool/transmissions
@@ -1132,6 +1201,134 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             };
 
         Ok((StatusCode::OK, ErasedJson::pretty(values)))
+    }
+
+    /// POST /{network}/program/{id}/view/{functionName}/{height}
+    ///
+    /// Evaluates a view function against the ledger state at the given block `height`.
+    /// The request body must be a JSON array of string-encoded inputs, e.g.:
+    ///
+    /// ```json
+    /// ["aleo1...", "10u64"]
+    /// ```
+    ///
+    /// Returns the outputs as a JSON array of string-encoded values.
+    #[cfg(feature = "history")]
+    pub(crate) async fn evaluate_view(
+        State(rest): State<Self>,
+        Path((program_id, view_name, height)): Path<ViewFunctionRoute<N>>,
+        json_result: Result<Json<Vec<String>>, JsonRejection>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        // Parse the inputs from the request body.
+        let Json(raw_inputs) = match json_result {
+            Ok(json) => json,
+            Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),
+        };
+
+        // Parse the inputs into `Value<N>`.
+        let inputs = parse_view_inputs::<N>(&raw_inputs)?;
+
+        // Evaluate the view function in a blocking task.
+        let outputs = match tokio::task::spawn_blocking(move || {
+            rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
+        })
+        .await
+        {
+            Ok(Ok(outputs)) => outputs,
+            Ok(Err(err)) => {
+                return Err(RestError::bad_request(
+                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at height {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+
+        // Encode each output as a string.
+        let output_strings: Vec<String> = outputs.iter().map(|v| v.to_string()).collect();
+
+        Ok((StatusCode::OK, ErasedJson::pretty(output_strings)))
+    }
+
+    /// POST /{network}/program/{id}/view/{functionName}
+    ///
+    /// Evaluates a view function against the ledger state at the latest block height.
+    /// The request body must be a JSON array of string-encoded inputs, e.g.:
+    ///
+    /// ```json
+    /// ["aleo1...", "10u64"]
+    /// ```
+    ///
+    /// Returns the outputs as a JSON array of string-encoded values.
+    /// Optionally, append `?metadata=true` to also return the block height at which the
+    /// view was evaluated (same semantics as the mapping-read endpoints).
+    pub(crate) async fn evaluate_view_latest(
+        State(rest): State<Self>,
+        Path((program_id, view_name)): Path<(ProgramID<N>, Identifier<N>)>,
+        metadata: Query<Metadata>,
+        json_result: Result<Json<Vec<String>>, JsonRejection>,
+    ) -> Result<ErasedJson, RestError> {
+        // Parse the inputs from the request body.
+        let Json(raw_inputs) = match json_result {
+            Ok(json) => json,
+            Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),
+        };
+
+        // Parse the inputs into `Value<N>`.
+        let inputs = parse_view_inputs::<N>(&raw_inputs)?;
+
+        // Evaluate the view function in a blocking task.
+        // The latest block's state is captured inside the task to minimise the window
+        // between state sampling and evaluation.
+        let (outputs, height) = match tokio::task::spawn_blocking(move || {
+            // Capture the latest block to build a consistent `FinalizeGlobalState`.
+            let block = rest.ledger.latest_block();
+            let height = block.height();
+
+            // Reconstruct the `FinalizeGlobalState` for the latest block. The block timestamp
+            // is only included from `ConsensusVersion::V12` onward, matching the consensus path.
+            let block_timestamp =
+                (height >= N::CONSENSUS_HEIGHT(ConsensusVersion::V12).unwrap_or_default()).then_some(block.timestamp());
+            let state = FinalizeGlobalState::new::<N>(
+                block.round(),
+                height,
+                block_timestamp,
+                block.cumulative_weight(),
+                block.cumulative_proof_target(),
+                block.previous_hash(),
+                None,
+            )?;
+
+            // Get the current (latest-edition) stack for the program.
+            let stack = rest.ledger.vm().process().get_stack(program_id)?;
+
+            // Evaluate the view against the current finalize store.
+            let outputs = stack.evaluate_view(state, rest.ledger.vm().finalize_store(), &view_name, inputs)?;
+
+            Ok::<_, anyhow::Error>((outputs, height))
+        })
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
+                return Err(RestError::bad_request(err.context(format!(
+                    "Failed to evaluate view '{view_name}' for '{program_id}' at the latest height"
+                ))));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+
+        // Encode each output as a string.
+        let output_strings: Vec<String> = outputs.iter().map(|v| v.to_string()).collect();
+
+        // Check if metadata is requested and return the outputs with the sampled height if so.
+        if metadata.metadata.unwrap_or(false) {
+            return Ok(ErasedJson::pretty(json!({
+                "data": output_strings,
+                "height": height,
+            })));
+        }
+
+        Ok(ErasedJson::pretty(output_strings))
     }
 
     /// GET /{network}/staking/rewards/{address}/{height}

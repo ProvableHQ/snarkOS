@@ -26,7 +26,7 @@ use snarkos_node_router::messages::{
     PuzzleRequest,
     UnconfirmedTransaction,
 };
-use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp};
+use snarkos_node_tcp::{ConnectError, Connection, ConnectionSide, Tcp, connections::DisconnectOrigin};
 use snarkvm::{
     console::network::{ConsensusVersion, Network},
     ledger::block::Transaction,
@@ -85,7 +85,9 @@ where
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> Disconnect for Prover<N, C> {
     /// Any extra operations to be performed during a disconnect.
-    async fn handle_disconnect(&self, peer_addr: SocketAddr) {
+    async fn handle_disconnect(&self, peer_addr: SocketAddr, origin: DisconnectOrigin) {
+        debug!("Physically disconnecting from {peer_addr}; origin: {origin:?}");
+
         if let Some(peer_ip) = self.router.resolve_to_listener(peer_addr) {
             let was_fully_connected = self.router.downgrade_peer_to_candidate(peer_ip);
             // Only remove the peer from sync if the handshake was successful.

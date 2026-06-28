@@ -21,7 +21,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install required Debian pacakges
-        run: sudo apt install -y lld
+        run: sudo apt install -y lld libclang-dev
  
       - name: Build snarkOS
         run: |

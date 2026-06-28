@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Set strict mode and IFS to catch unset vars, pipeline failures and whitespace issues.
 set -euo pipefail

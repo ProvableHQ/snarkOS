@@ -35,7 +35,7 @@ use parking_lot::Mutex;
 use tokio::{
     io::split,
     net::{TcpListener, TcpSocket, TcpStream},
-    sync::oneshot,
+    sync::{OwnedSemaphorePermit, Semaphore, oneshot},
     task::{JoinHandle, JoinSet},
     time::timeout,
 };
@@ -46,7 +46,7 @@ use crate::{
     Config,
     KnownPeers,
     Stats,
-    connections::{Connection, ConnectionSide, Connections, create_connection_span},
+    connections::{Connection, ConnectionSide, Connections, DisconnectOrigin, create_connection_span},
     protocols::{Protocol, Protocols},
 };
 
@@ -144,7 +144,7 @@ pub struct InnerTcp {
     /// A set of connections that have not been finalized yet.
     connecting: Mutex<HashSet<SocketAddr>>,
     /// Contains objects related to the node's active connections.
-    connections: Connections,
+    pub(crate) connections: Connections,
     /// Collects statistics related to the node's peers.
     known_peers: KnownPeers,
     /// Contains the set of currently banned peers.
@@ -280,7 +280,7 @@ impl Tcp {
         for addr in self.connected_addrs() {
             let node = self.clone();
             disconnect_tasks.spawn(async move {
-                node.disconnect(addr).await;
+                node.disconnect_w_origin(addr, DisconnectOrigin::Shutdown).await;
             });
         }
         while disconnect_tasks.join_next().await.is_some() {}
@@ -363,9 +363,13 @@ impl Tcp {
     ///
     /// Returns true if the we were connected to the given address.
     pub async fn disconnect(&self, addr: SocketAddr) -> bool {
+        self.disconnect_w_origin(addr, DisconnectOrigin::User).await
+    }
+
+    pub(crate) async fn disconnect_w_origin(&self, addr: SocketAddr, origin: DisconnectOrigin) -> bool {
         // claim the disconnect to avoid duplicate executions, or return early if already claimed
         if let Some(conn) = self.connections.0.read().get(&addr) {
-            if conn.disconnecting.swap(true, Relaxed) {
+            if conn.disconnecting.swap(true, AcqRel) {
                 // valid connection, but someone else is already disconnecting it
                 return false;
             }
@@ -376,7 +380,7 @@ impl Tcp {
 
         if let Some(handler) = self.protocols.disconnect.get() {
             let (sender, receiver) = oneshot::channel();
-            handler.trigger((addr, sender)).await;
+            handler.trigger(((addr, origin), sender)).await;
             if let Ok((handle, waiter)) = receiver.await {
                 // register the associated task with the connection, in case
                 // it gets terminated before its completion
@@ -426,20 +430,47 @@ impl Tcp {
         // Use a channel to know when the listening task is ready.
         let (tx, rx) = oneshot::channel();
 
+        // Cap the number of in-flight inbound connection handlers; the hard
+        // connection limits are still enforced inside `can_add_connection`;
+        // this bound exists separately to prevent per-SYN task-creation overhead
+        // from being unbounded under flood.
+        let inbound_permits = Arc::new(Semaphore::new(self.config.max_connections as usize));
+
         let tcp = self.clone();
         let listening_task = tokio::spawn(async move {
             trace!(parent: tcp.span(), "Spawned the listening task");
             tx.send(()).unwrap(); // safe; the channel was just opened
 
             loop {
-                // Await for a new connection.
+                // Wait for capacity before accepting.
+                let permit = match inbound_permits.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        // semaphore is never closed in practice; bail defensively
+                        error!(parent: tcp.span(), "Inbound permit semaphore closed unexpectedly");
+                        return;
+                    }
+                };
+
+                // Await connection requests from peers.
                 match listener.accept().await {
-                    Ok((stream, addr)) => tcp.handle_connection(stream, addr),
+                    Ok((stream, addr)) => tcp.handle_connection(stream, addr, permit),
                     Err(e) => {
-                        error!(parent: tcp.span(), "Failed to accept a connection: {e}");
-                        // if we ran out of FDs, sleep to avoid spinning 100% CPU
-                        // while waiting for a slot to free up
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        // Free the permit immediately.
+                        drop(permit);
+
+                        match e.kind() {
+                            // A peer aborted/reset before accept completed; no backoff - the listener is healthy.
+                            io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset => {
+                                debug!(parent: tcp.span(), "Transient accept error: {e}");
+                            }
+                            // Otherwise, assume fd / memory exhaustion (EMFILE, ENFILE, ENOBUFS, ...)
+                            // and back off so we don't spin at 100% CPU waiting for a slot to free.
+                            _ => {
+                                error!(parent: tcp.span(), "Couldn't accept a connection: {e}");
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
+                        }
                     }
                 }
             }
@@ -485,7 +516,7 @@ impl Tcp {
     }
 
     /// Handles a new inbound connection.
-    fn handle_connection(&self, stream: TcpStream, addr: SocketAddr) {
+    fn handle_connection(&self, stream: TcpStream, addr: SocketAddr, permit: OwnedSemaphorePermit) {
         debug!(parent: self.span(), "Received a connection from {addr}");
 
         if !self.can_add_connection() || self.is_self_connect(addr) {
@@ -497,6 +528,9 @@ impl Tcp {
 
         let tcp = self.clone();
         tokio::spawn(async move {
+            // The permit is released when the connection is accepted or fails.
+            let _permit = permit;
+
             if let Err(e) = tcp.adapt_stream(stream, addr, ConnectionSide::Responder).await {
                 tcp.connecting.lock().remove(&addr);
                 tcp.known_peers().register_failure(addr.ip());
@@ -818,7 +852,9 @@ mod tests {
 
         // Handle the connection.
         let stream = TcpStream::connect(peer2_ip).await.unwrap();
-        tcp.handle_connection(stream, peer2_ip);
+        let inbound_permits = Arc::new(Semaphore::new(1));
+        let permit = inbound_permits.clone().acquire_owned().await.unwrap();
+        tcp.handle_connection(stream, peer2_ip, permit);
         assert!(!tcp.can_add_connection());
         assert_eq!(tcp.num_connected(), 1);
         assert_eq!(tcp.num_connecting(), 0);

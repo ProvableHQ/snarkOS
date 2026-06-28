@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 if [[ -n "$TMUX" ]]; then
   echo "Detected nested tmux session. Try again after unsetting \$TMUX, e.g., using \`unset TMUX\` in bash."
@@ -6,23 +6,23 @@ if [[ -n "$TMUX" ]]; then
 fi
 
 # Read the total number of validators from the user or use a default value of 4
-read -p "Enter the total number of validators (default: 4): " total_validators
+read -r -p "Enter the total number of validators (default: 4): " total_validators
 total_validators=${total_validators:-4}
 
 # Read the total number of clients from the user or use a default value of 2
-read -p "Enter the total number of clients (default: 2): " total_clients
+read -r -p "Enter the total number of clients (default: 2): " total_clients
 total_clients=${total_clients:-2}
 
 # Read the network ID from user or use a default value of 1
-read -p "Enter the network ID (mainnet = 0, testnet = 1, canary = 2) (default: 1): " network_id
+read -r -p "Enter the network ID (mainnet = 0, testnet = 1, canary = 2) (default: 1): " network_id
 network_id=${network_id:-1}
 
 # Ask the user if they want to run 'cargo install --locked --path .' or use a pre-installed binary
-read -p "Do you want to run 'cargo install --locked --path .' to build the binary? (y/n, default: y): " build_binary
+read -r -p "Do you want to run 'cargo install --locked --path .' to build the binary? (y/n, default: y): " build_binary
 build_binary=${build_binary:-y}
 
 # Ask the user whether to clear the existing ledger history
-read -p "Do you want to clear the existing ledger history? (y/n, default: n): " clear_ledger
+read -r -p "Do you want to clear the existing ledger history? (y/n, default: n): " clear_ledger
 clear_ledger=${clear_ledger:-n}
 
 # Log verbosity is set to 1 (DEBUG) by default.
@@ -32,30 +32,16 @@ verbosity=1
 binary_path=""
 
 if [[ $build_binary == "y" ]]; then
-  # Ask the user if they want to enable validator telemetry
-  read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
-  enable_telemetry=${enable_telemetry:-y}
-
   # Ask the user for additional crate features (comma-separated)
-  read -p "Enter crate features to enable (comma separated, default: test_network): " crate_features
-  crate_features=${crate_features:-test_network}
+  read -r -p "Enter crate features to enable (comma separated, default: test_network): " crate_features
+  crate_features=${crate_features:-devnet}
 
   # Build command
   build_cmd="cargo install --locked --path ."
 
-  # Add the telemetry feature if requested
-  if [[ $enable_telemetry == "y" ]]; then
-    build_cmd+=" --features telemetry"
-  fi
-
   # Add any extra features if provided
   if [[ -n $crate_features ]]; then
-    # If telemetry was also enabled, append with a comma separator
-    if [[ $enable_telemetry == "y" ]]; then
-      build_cmd+=",${crate_features}"
-    else
-      build_cmd+=" --features ${crate_features}"
-    fi
+    build_cmd+=" --features ${crate_features}"
   fi
 
   # Build command
@@ -63,7 +49,7 @@ if [[ $build_binary == "y" ]]; then
   eval "$build_cmd" || exit 1
 else
   # Ask the user whether to use a custom relative path
-  read -p "Do you want to run snarkos from a relative path? (e.g. ./target/debug/, defaults to the installed binary): " binary_path
+  read -r -p "Do you want to run snarkos from a relative path? (e.g. ./target/debug/, defaults to the installed binary): " binary_path
   binary_path=${binary_path:-""}
 fi
 
@@ -91,8 +77,7 @@ log_dir=".logs-$(date +"%Y%m%d%H%M%S")"
 mkdir -p "$log_dir"
 
 # Create a new tmux session named "devnet"
-tmux new-session -d -s "devnet" -n "validator-0"
-if [[ $? -ne 0 ]]; then
+if ! tmux new-session -d -s "devnet" -n "validator-0"; then
   echo "Failed to create new TMUX session."
   exit 1
 fi
@@ -105,6 +90,8 @@ if [ -z "$index_offset" ]; then
 fi
 
 # Generate validator indices from 0 to (total_validators - 1)
+# (mapfile would be cleaner but is unavailable on the bash 3.2 shipped with macOS)
+# shellcheck disable=SC2207
 validator_indices=($(seq 0 $((total_validators - 1))))
 
 # Loop through the list of validator indices and create a new window for each
@@ -117,7 +104,7 @@ for validator_index in "${validator_indices[@]}"; do
 
   if [ "$validator_index" -ne 0 ]; then
     # We don't need to create a window for the first validator because the tmux session already starts with one window.
-    tmux new-window -t "devnet:$window_index" -n $name
+    tmux new-window -t "devnet:$window_index" -n "$name"
   fi
 
   # Send the command to start the validator to the new window and capture output to the log file
@@ -126,6 +113,7 @@ done
 
 if [ "$total_clients" -ne 0 ]; then
   # Generate client indices from 0 to (total_clients - 1)
+  # shellcheck disable=SC2207
   client_indices=($(seq 0 $((total_clients - 1))))
 
   # Loop through the list of client indices and create a new window for each
@@ -137,7 +125,7 @@ if [ "$total_clients" -ne 0 ]; then
     window_index=$((client_index + total_validators + index_offset))
 
     # Create a new window with a unique name
-    tmux new-window -t "devnet:$window_index" -n $name
+    tmux new-window -t "devnet:$window_index" -n "$name"
 
     # Send the command to start the client to the new window and capture output to the log file
     tmux send-keys -t "devnet:$window_index" "${binary_path}snarkos start --nodisplay --network $network_id --dev $window_index --dev-num-validators $total_validators --client --logfile $log_file  --verbosity $verbosity" C-m

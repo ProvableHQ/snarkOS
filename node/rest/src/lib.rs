@@ -211,6 +211,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .route("/transaction/{id}", get(Self::get_transaction))
             .route("/transaction/confirmed/{id}", get(Self::get_confirmed_transaction))
             .route("/transaction/unconfirmed/{id}", get(Self::get_unconfirmed_transaction))
+            .route("/transaction/rejected/{id}/reason", get(Self::get_transaction_rejection_reason))
             .route("/transaction/broadcast", post(Self::transaction_broadcast))
 
             // GET and POST ../solution/..
@@ -282,11 +283,15 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             None => routes,
         };
 
-        // If the `history` feature is enabled, enable the additional endpoint.
+        // Register the view-at-latest-height endpoint (always available, no history required).
+        let routes = routes.route("/program/{id}/view/{function}", post(Self::evaluate_view_latest));
+
+        // If the `history` feature is enabled, enable the additional endpoints.
         #[cfg(feature = "history")]
         let routes = routes
             .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
-            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch));
+            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch))
+            .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view));
 
         // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
         #[cfg(feature = "history-staking-rewards")]
@@ -318,8 +323,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
-            // Cap the request body size at 512KiB.
-            .layer(DefaultBodyLimit::max(512 * 1024))
+            // Cap the request body size at 1.5MiB.
+            .layer(DefaultBodyLimit::max(2 * 768 * 1024))
             .layer(GovernorLayer {
                 config: governor_config.into(),
             })

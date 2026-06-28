@@ -18,6 +18,8 @@ mod router;
 use crate::traits::NodeInterface;
 
 use snarkos_account::Account;
+#[cfg(feature = "test_network")]
+use snarkos_node_bft::ledger_service::{persist_dev_committee_start_round_if_unwritten, prepare_dev_committee_options};
 use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
@@ -36,7 +38,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{NodeDataDir, SignalHandler};
+use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{
     Ledger,
@@ -48,6 +50,7 @@ use snarkvm::prelude::{
 
 use aleo_std::StorageMode;
 use anyhow::{Context, Result};
+use cfg_if::cfg_if;
 use core::future::Future;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
@@ -93,16 +96,28 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         dev_txs: bool,
         dev: Option<u16>,
         _slipstream_configs: &[std::path::PathBuf],
-        #[cfg(feature = "test_network")] dev_num_validators_for_committee_hotswap: Option<u16>,
-        #[cfg(not(feature = "test_network"))] _dev_num_validators_for_committee_hotswap: Option<u16>,
+        #[cfg(feature = "test_network")] dev_hotswap_config: Option<DevHotswapConfig>,
+        #[cfg(not(feature = "test_network"))] _dev_hotswap_config: Option<DevHotswapConfig>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
-        // Initialize the ledger.
+        // Initialize the ledger, installing the dev committee override (when configured)
+        // so that snarkVM's block-sync path honors the hotswap.
         let ledger = {
             let storage_mode = storage_mode.clone();
             let genesis = genesis.clone();
 
-            spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+            cfg_if! {
+                if #[cfg(feature = "test_network")] {
+                    if let Some(config) = dev_hotswap_config
+                        .map(|cfg| prepare_dev_committee_options(&node_data_dir, cfg)) {
+                            spawn_blocking!(Ledger::<N, C>::load_with_dev_committee(genesis, storage_mode, config?))
+                    } else {
+                         spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+                    }
+                }  else {
+                    spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
+                }
+            }
         }
         .with_context(|| "Failed to initialize the ledger")?;
 
@@ -117,21 +132,15 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             tracing::info!(target: "slipstream", "Slipstream plugin manager registered ({num_plugins} plugin(s))");
         }
 
-        // Initialize the ledger service.
-        #[cfg(not(feature = "test_network"))]
-        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
+        // If snarkVM picked the start round itself (no CLI flag and no persisted file),
+        // record it now so subsequent restarts are stable.
         #[cfg(feature = "test_network")]
-        // Initialize the ledger service with a deterministic dev committee.
-        let ledger_service = if let Some(dev_num_validators) = dev_num_validators_for_committee_hotswap {
-            Arc::new(CoreLedgerService::new_dev(
-                ledger.clone(),
-                signal_handler.clone(),
-                Some((node_data_dir.clone(), dev_num_validators)),
-            ))
-        // Initialize the ledger service without a deterministic dev committee.
-        } else {
-            Arc::new(CoreLedgerService::new_dev(ledger.clone(), signal_handler.clone(), None))
-        };
+        if let Some(committee) = ledger.dev_committee() {
+            persist_dev_committee_start_round_if_unwritten(&node_data_dir, committee.starting_round())?;
+        }
+
+        // Initialize the ledger service.
+        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
 
         // Initialize the node router.
         let router = Router::new(
@@ -209,6 +218,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             }
         }
 
+        // Start the BFT and consensus handlers now that CDN sync is complete. This ensures that
+        // committed subdags are only processed after the initial sync from the CDN has finished.
+        node.start_consensus_handlers().await?;
         // Initialize the routing.
         node.initialize_routing().await;
         // Initialize the notification message loop.
@@ -231,6 +243,11 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     /// Returns the router.
     pub fn router(&self) -> &Router<N> {
         &self.router
+    }
+
+    /// Starts the BFT and consensus handlers.
+    async fn start_consensus_handlers(&self) -> Result<()> {
+        self.consensus.start_consensus_handlers().await
     }
 
     // /// Initialize the transaction pool.

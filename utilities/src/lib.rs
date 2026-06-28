@@ -26,3 +26,10 @@ pub use callback_handle::CallbackHandle;
 
 /// Seed used for deterministic RNG in development mode.
 pub const DEVELOPMENT_MODE_RNG_SEED: u64 = 1234567890u64;
+
+/// Configuration for the deterministic dev committee hotswap (`--dev-on-prod`).
+#[derive(Clone, Copy, Debug)]
+pub struct DevHotswapConfig {
+    /// Number of validators in the dev committee.
+    pub dev_num_validators: u16,
+}

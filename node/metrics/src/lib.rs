@@ -177,7 +177,7 @@ mod built_info {
 /// The resulting metric will show as:
 /// snarkos_build_info{version="4.2.1",git_commit="abc123",git_branch="main",features="cuda,metrics"} 1
 pub fn set_build_info() {
-    let version = built_info::PKG_VERSION;
+    let version = env!("SNARKOS_VERSION");
     let git_commit = built_info::GIT_COMMIT_HASH.unwrap_or("unknown");
     let git_branch = built_info::GIT_HEAD_REF.unwrap_or("unknown");
     let features = built_info::FEATURES_LOWERCASE_STR.replace(' ', "");

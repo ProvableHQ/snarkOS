@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # USAGE examples:
   # CLI with env vars: VALIDATOR_PRIVATE_KEY=APrivateKey1... PEERS=core_client_ip_1:4130,core_client_ip_2:4130,... VALIDATORS=validator_ip_1:5000,validator_ip_2:5000,... ./run-validator.sh
   # CLI with prompts for vars:  ./run-validator.sh
@@ -42,22 +42,13 @@ then
   exit 1
 fi
 
-# Ask the user if they want to enable validator telemetry
-read -p "Do you want to enable validator telemetry? (y/n, default: y): " enable_telemetry
-enable_telemetry=${enable_telemetry:-y}
-
 # Start building the base command
 COMMAND="cargo run --release"
-
-# Add telemetry feature if enabled
-if [[ $enable_telemetry == "y" ]]; then
-  COMMAND+=" --features telemetry"
-fi
 
 # Add the arguments after the '--'
 COMMAND+=" -- start --nodisplay --validator --bft 0.0.0.0:5000 --node 0.0.0.0:4130 --peers ${PEERS} --validators ${VALIDATORS} --norest --private-key ${VALIDATOR_PRIVATE_KEY}"
 
-for word in $*;
+for word in "$@";
 do
   COMMAND="${COMMAND} ${word}"
 done

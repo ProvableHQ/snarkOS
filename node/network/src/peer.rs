@@ -133,7 +133,11 @@ impl<N: Network> Peer<N> {
         // Logic check: this can only happen during the handshake. This isn't a fatal
         // error, but should not be triggered.
         if !matches!(self, Self::Connecting(_)) {
-            warn!("Peer '{listener_addr}' is being upgraded to Connected, but isn't Connecting");
+            warn!(
+                "Peer '{listener_addr}' is being upgraded to Connected, but isn't Connecting \
+                - it is {}",
+                if self.is_connected() { "already Connected" } else { "only a Candidate" }
+            );
         }
 
         *self = Self::Connected(ConnectedPeer {

@@ -20,7 +20,8 @@ use crate::{
     ConnectionSide,
     P2P,
     Tcp,
-    protocols::{ProtocolHandler, ReturnableConnection},
+    connections::DisconnectOrigin,
+    protocols::{DisconnectOnDrop, ProtocolHandler, ReturnableConnection},
 };
 
 use async_trait::async_trait;
@@ -154,6 +155,9 @@ impl<R: Reading> ReadingInternal for R {
             trace!(parent: &conn_span, "spawned a task for processing messages");
             tx_processing.send(()).unwrap(); // safe; the channel was just opened
 
+            // disconnect automatically regardless of how this task concludes
+            let _conn_cleanup = DisconnectOnDrop::new(node.clone(), addr, DisconnectOrigin::Reading);
+
             while let Some((msg, _guard)) = inbound_message_receiver.recv().await {
                 if let Err(e) = self_clone.process_message(addr, msg).await {
                     error!(parent: &conn_span, "can't process a message: {e}");
@@ -178,6 +182,9 @@ impl<R: Reading> ReadingInternal for R {
             // postpone reads until the connection is fully established; if the process fails,
             // this task gets aborted, so there is no need for a dedicated timeout
             let _ = rx_conn_ready.await;
+
+            // disconnect automatically regardless of how this task concludes
+            let _conn_cleanup = DisconnectOnDrop::new(node.clone(), addr, DisconnectOrigin::Reading);
 
             // dropped message log suppression helpers
             let mut dropped_count: usize = 0;
@@ -227,8 +234,6 @@ impl<R: Reading> ReadingInternal for R {
                     None => break, // end of stream
                 }
             }
-
-            let _ = node.disconnect(addr).await;
         }));
         let _ = rx_reader.await;
         conn.tasks.push(reader_task);
@@ -264,7 +269,10 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
         let initial_buf_len = src.len();
         let ret = self.codec.decode(src)?;
         let final_buf_len = src.len();
-        let read_len = initial_buf_len - final_buf_len + self.acc;
+        // defensive: the Decoder trait does not strictly forbid an inner codec from
+        // growing `src`; use saturating_sub to guard against such a possibility
+        let consumed = initial_buf_len.saturating_sub(final_buf_len);
+        let read_len = consumed + self.acc;
 
         if read_len != 0 {
             trace!(parent: &self.span, "read {read_len}B");

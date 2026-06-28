@@ -23,7 +23,11 @@ use crate::{
     Connection,
     protocols::{Reading, Writing},
 };
-use crate::{P2P, protocols::ProtocolHandler};
+use crate::{
+    P2P,
+    connections::DisconnectOrigin,
+    protocols::{DisconnectOnDrop, ProtocolHandler},
+};
 
 /// Can be used to automatically perform some initial actions once the connection with a peer is
 /// fully established.
@@ -56,8 +60,13 @@ where
             while let Some((addr, notifier)) = from_node_receiver.recv().await {
                 let self_clone2 = self_clone.clone();
                 let handle = tokio::spawn(async move {
+                    // disconnect automatically if the OnConnect impl panics
+                    let mut conn_cleanup =
+                        DisconnectOnDrop::new(self_clone2.tcp().clone(), addr, DisconnectOrigin::OnConnectAbort);
                     // perform the specified initial actions
                     self_clone2.on_connect(addr).await;
+                    // if there was no panic, do not disconnect - this "defuses" the auto-cleanup
+                    conn_cleanup.node.take();
                 });
                 // notify the node that the initial actions have concluded
                 let _ = notifier.send(handle); // can't really fail

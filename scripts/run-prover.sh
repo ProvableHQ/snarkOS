@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # USAGE examples:
   # CLI with env vars: PROVER_PRIVATE_KEY=APrivateKey1...  ./run-prover.sh
   # CLI with prompts for vars:  ./run-prover.sh
