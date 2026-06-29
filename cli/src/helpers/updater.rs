@@ -47,7 +47,7 @@ impl Updater {
             .repo_owner(Self::SNARKOS_REPO_OWNER)
             .repo_name(Self::SNARKOS_REPO_NAME)
             .bin_name(Self::SNARKOS_BIN_NAME)
-            .current_version(env!("CARGO_PKG_VERSION"))
+            .current_version(env!("SNARKOS_VERSION"))
             .show_download_progress(show_output)
             .no_confirm(true)
             .show_output(show_output);
@@ -66,7 +66,7 @@ impl Updater {
             .repo_owner(Self::SNARKOS_REPO_OWNER)
             .repo_name(Self::SNARKOS_REPO_NAME)
             .bin_name(Self::SNARKOS_BIN_NAME)
-            .current_version(env!("CARGO_PKG_VERSION"))
+            .current_version(env!("SNARKOS_VERSION"))
             .build()?;
 
         let current_version = updater.current_version();
@@ -89,6 +89,23 @@ impl Updater {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    #[test]
+    fn snarkos_version_matches_release_version() {
+        let release_version = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .map(|dir| dir.join(".cargo").join("release-version"))
+            .find(|path| path.is_file())
+            .map(|path| fs::read_to_string(path).unwrap())
+            .unwrap();
+
+        assert_eq!(env!("SNARKOS_VERSION"), release_version.trim().trim_start_matches('v'));
     }
 }
 

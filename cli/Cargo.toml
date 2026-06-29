@@ -42,6 +42,7 @@ test_consensus_heights = [ "snarkvm/test_consensus_heights" ]
 test_network = [
   "test_targets", 
   "test_consensus_heights",
+  "snarkvm/dev-committee",
   "snarkvm/dev-print"
 ]
 serial = [
@@ -181,3 +182,6 @@ features = [ "test-helpers" ]
 version = "0.30"
 default-features = false
 features = [ "resource" ]
+
+[target.'cfg(unix)'.dependencies]
+rlimit = "0.11"

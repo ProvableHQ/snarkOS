@@ -57,7 +57,7 @@ pub const CDN_BASE_URL: &str = "https://cdn.provable.com/v0/blocks";
 
 /// Returns the user-agent string for CDN requests.
 const fn cdn_user_agent() -> &'static str {
-    concat!("snarkos/", env!("CARGO_PKG_VERSION"))
+    concat!("snarkos/", env!("SNARKOS_VERSION"))
 }
 
 /// Updates the metrics during CDN sync.

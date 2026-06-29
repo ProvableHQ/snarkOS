@@ -136,6 +136,10 @@ function main:
     add r0 r1 into r2;
     output r2 as u32.private;
 
+view compute_sum:
+    add 1u32 2u32 into r0;
+    output r0 as u32.public;
+
 constructor:
     assert.eq true true;
 " > program/main.aleo
@@ -187,6 +191,36 @@ else
   exit 1
 fi
 
+# Query the view function at the latest height.
+log "● Testing view function evaluation at latest height..."
+view_response=$(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d '[]' \
+  "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum")
+view_output=$(jq -r '.[0]' <<< "$view_response")
+if [ "$view_output" = "3u32" ]; then
+  log "✅ View function returned expected output at latest height: $view_output"
+else
+  log "❌ Test failed! View function returned unexpected output at latest height: $view_response"
+  exit 1
+fi
+
+# Query the view function at a specific block height.
+# Requires history feature.
+# log "● Testing view function evaluation at specific block height..."
+# current_height=$(curl -s "http://localhost:3030/v2/$network_name/block/height/latest")
+# view_response=$(curl -s -X POST \
+#   -H "Content-Type: application/json" \
+#   -d '[]' \
+#   "http://localhost:3030/v2/$network_name/program/${program_name}/view/compute_sum/${current_height}")
+# view_output=$(jq -r '.[0]' <<< "$view_response")
+# if [ "$view_output" = "3u32" ]; then
+#   log "✅ View function returned expected output at height ${current_height}: $view_output"
+# else
+#   log "❌ Test failed! View function returned unexpected output at height ${current_height}: $view_response"
+#   exit 1
+# fi
+
 # Execute a function in the deployed program and wait for the execution to be processed.
 log "● Testing program execution with V2 API..."
 execute_result=$(cd program && snarkos developer execute --dev-key 0 --network "$network_id" --broadcast --endpoint=http://localhost:3030 \
@@ -231,6 +265,47 @@ if [ "$rest_status" != "accepted" ]; then
   printf "❌ Test failed! Rest API did not mark the transaction as \"accepted\". Status was: \"%s\" \nFull JSON: %s\n" "$rest_status" "$rest_confirmed"
   exit 1
 fi
+
+log "✅ Confirmed transaction endpoint returned status \"accepted\""
+
+# Broadcast a transfer_public with an impossibly large amount so the transaction is rejected on finalize.
+log "● Testing transaction rejection reason endpoint..."
+recipient=$(curl -s "http://$localhost:3030/v2/$network_name/committee/latest" | jq -r '.members | keys[1]')
+if [ -z "$recipient" ] || [ "$recipient" = "null" ]; then
+  log "❌ Test failed! Could not retrieve a recipient address from the committee."
+  exit 1
+fi
+
+rejected_execute_result=$(snarkos developer execute --dev-key 0 --network "$network_id" \
+  --broadcast --endpoint="http://$localhost:3030" --wait --timeout 60 \
+  credits.aleo transfer_public "$recipient" 18446744073709551615u64)
+rejected_tx=$(echo "$rejected_execute_result" | tail -n 1)
+
+rest_rejected=$(curl -s "http://$localhost:3030/v2/$network_name/transaction/confirmed/$rejected_tx")
+rest_status=$(jq --raw-output '.status' <<< "$rest_rejected")
+if [ "$rest_status" != "rejected" ]; then
+  printf "❌ Test failed! Expected transaction to be rejected, but status was: \"%s\"\nFull JSON: %s\n" \
+    "$rest_status" "$rest_rejected"
+  exit 1
+fi
+
+rejection_reason=$(curl -s "http://$localhost:3030/v2/$network_name/transaction/rejected/$rejected_tx/reason")
+rejection_reason_status=$(curl -s -o /dev/null -w "%{http_code}" \
+  "http://$localhost:3030/v2/$network_name/transaction/rejected/$rejected_tx/reason")
+if (( rejection_reason_status != 200 )); then
+  log "❌ Test failed! Rejection reason endpoint returned $rejection_reason_status instead of 200: $rejection_reason"
+  exit 1
+fi
+
+rejection_type=$(jq --raw-output '.type' <<< "$rejection_reason")
+rejection_program=$(jq --raw-output '.program_id' <<< "$rejection_reason")
+rejection_resource=$(jq --raw-output '.resource' <<< "$rejection_reason")
+if [ "$rejection_type" != "finalize" ] || [ "$rejection_program" != "credits.aleo" ] || [ "$rejection_resource" != "transfer_public" ]; then
+  log "❌ Test failed! Unexpected rejection reason: $rejection_reason"
+  exit 1
+fi
+
+log "✅ Rejection reason retrieved successfully for rejected transfer_public transaction"
 
 log "ℹ️Testing REST API and REST Error Handling"
 

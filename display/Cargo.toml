@@ -29,6 +29,8 @@ workspace = true
 
 [dependencies.ratatui]
 version = "0.30"
+default-features = false
+features = ["crossterm", "layout-cache", "macros", "underline-color"]
 
 [dependencies.snarkos-node]
 workspace = true
