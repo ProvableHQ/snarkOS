@@ -43,6 +43,22 @@ pub const fn max(a: usize, b: usize) -> usize {
     }
 }
 
+fn calculate_surplus_peer_count(
+    total_connected: usize,
+    total_provers: usize,
+    max_peers: usize,
+    max_provers: usize,
+) -> (usize, usize) {
+    // Compute the number of surplus peers.
+    let num_surplus_peers = total_connected.saturating_sub(max_peers);
+    // Compute the number of surplus provers.
+    let num_surplus_provers = total_provers.saturating_sub(max_provers);
+    // Compute the number of surplus clients and validators.
+    let num_surplus_others = num_surplus_peers.saturating_sub(num_surplus_provers);
+
+    (num_surplus_provers, num_surplus_others)
+}
+
 #[async_trait]
 pub trait Heartbeat<N: Network>: Outbound<N> {
     /// The duration in seconds to sleep in between heartbeat executions.
@@ -189,16 +205,12 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         let num_connected_provers = self.router().filter_connected_peers(|peer| peer.node_type.is_prover()).len();
 
         // Determine the maximum number of peers and provers to keep.
-        let (max_peers, max_provers) = (Self::MAXIMUM_NUMBER_OF_PEERS, Self::MAXIMUM_NUMBER_OF_PROVERS);
-
-        // Compute the number of surplus peers.
-        let num_surplus_peers = num_connected.saturating_sub(max_peers);
-        // Compute the number of surplus provers.
-        let num_surplus_provers = num_connected_provers.saturating_sub(max_provers);
-        // Compute the number of provers remaining connected.
-        let num_remaining_provers = num_connected_provers.saturating_sub(num_surplus_provers);
-        // Compute the number of surplus clients and validators.
-        let num_surplus_clients_validators = num_surplus_peers.saturating_sub(num_remaining_provers);
+        let (num_surplus_provers, num_surplus_clients_validators) = calculate_surplus_peer_count(
+            num_connected,
+            num_connected_provers,
+            Self::MAXIMUM_NUMBER_OF_PEERS,
+            Self::MAXIMUM_NUMBER_OF_PROVERS,
+        );
 
         if num_surplus_provers > 0 || num_surplus_clients_validators > 0 {
             debug!(
@@ -372,5 +384,31 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.router().tcp().banned_peers().remove_old_bans(Self::IP_BAN_TIME_IN_SECS);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn surplus_counts_cover_all_regimes() {
+        let cases = [
+            // (total_connected, total_provers, max_peers, max_provers, (surplus_provers, surplus_others))
+            (26, 3, 21, 5, (0, 5), "normal: provers under cap, total over"),
+            (30, 20, 21, 5, (15, 0), "prover-heavy: dropping prover surplus alone clears the total cap "),
+            (10, 2, 21, 5, (0, 0), "no surplus at all, disconnect nothing"),
+            (22, 22, 21, 5, (17, 0), "all provers; strict cap binds others stay 0"),
+        ];
+        for &(total_connected, total_provers, max_peers, max_provers, expected, label) in &cases {
+            let got = calculate_surplus_peer_count(total_connected, total_provers, max_peers, max_provers);
+            assert_eq!(got, expected, "case: {label}");
+            // invariant: surplus_provers + surplus_others = max(surplus_peers, surplus_provers)
+            assert_eq!(
+                got.0 + got.1,
+                max(total_connected.saturating_sub(max_peers), total_provers.saturating_sub(max_provers)),
+                "invariant: {label}"
+            );
+        }
     }
 }
