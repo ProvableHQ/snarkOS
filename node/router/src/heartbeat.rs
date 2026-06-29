@@ -43,6 +43,10 @@ pub const fn max(a: usize, b: usize) -> usize {
     }
 }
 
+/// Computes how many peers to disconnect to satisfy both caps.
+///
+/// Returns `(num_surplus_provers, num_surplus_clients_validators)`: provers are trimmed to
+/// `max_provers`, then non-provers are trimmed until the total is within `max_peers`.
 fn calculate_surplus_peer_count(
     total_connected: usize,
     total_provers: usize,
