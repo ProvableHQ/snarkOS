@@ -1103,7 +1103,7 @@ impl<N: Network> BlockSync<N> {
 
                 let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start_height) else {
                     // This generally shouldn't happen, because there cannot be outstanding requests when no peers are connected.
-                    error!("Cannot re-request blocks because no or not enough peers are connected");
+                    warn!("Cannot re-request blocks because no or not enough peers are connected");
                     return result;
                 };
 
