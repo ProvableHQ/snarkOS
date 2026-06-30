@@ -1296,6 +1296,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 block.cumulative_proof_target(),
                 block.previous_hash(),
                 None,
+                None,
             )?;
 
             // Get the current (latest-edition) stack for the program.
