@@ -35,8 +35,9 @@ max_faulty=$(( (total_validators - 1) / 3 ))
 majority=$((total_validators - max_faulty))
 network_name=$(get_network_name "$network_id")
 
-# Keep verbosity low as we are running many nodes.
-verbosity=0
+# Use verbosity 4 so logfile size checks are consistent across CI runs.
+verbosity=4
+max_validator_log_size_bytes=$((3 * 1024 * 1024))
 
 # The time that is used to determine the total timeout for the test.
 # Set this higher than the interval for the minority test, as more nodes need to sync.
@@ -104,7 +105,7 @@ fi
 
 log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes"; then
   exit 0
 else
   exit 1

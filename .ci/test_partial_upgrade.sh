@@ -30,7 +30,9 @@ max_warnings=$3
 : "${max_warnings:=40}"
 
 # Node verbosity
-NODE_VERBOSITY=1
+NODE_VERBOSITY=4
+# Max logfile size (bytes) for regression checks.
+MAX_VALIDATOR_LOG_SIZE_BYTES=$((4 * 1024 * 1024))
 
 # How long to wait between upgrades (seconds); used for block-height window
 WAIT_BETWEEN_UPGRADES="${WAIT_BETWEEN_UPGRADES:-60}"
@@ -294,7 +296,7 @@ fi
 
 log "🎉 Test passed! Node synced to new consensus height ($new_consensus_height) after another node was upgraded."
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES"; then
   exit 0
 else
   exit 1

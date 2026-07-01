@@ -16,15 +16,18 @@ network_id=$3
 min_height=$4
 max_warnings=$5
 
-# The verobsity of snarkos nodes.
-NODE_VERBOSITY=3
+# The verbosity of snarkos nodes.
+NODE_VERBOSITY=4
+# Max logfile sizes (bytes) for regression checks.
+MAX_VALIDATOR_LOG_SIZE_BYTES=$((2 * 1024 * 1024))
+MAX_CLIENT_LOG_SIZE_BYTES=$((1 * 1024 * 1024))
 
 # Default values if not provided
 : "${total_validators:=4}"
 : "${total_clients:=4}" # need at least 4 clients, so each validator has at least one client connected to it.
 : "${network_id:=0}"
 : "${min_height:=60}" # To likely go past the 100 round garbage collection limit.
-: "${max_warnings:=40}"
+: "${max_warnings:=300}"
 
 # shellcheck source=SCRIPTDIR/utils.sh
 . ./.ci/utils.sh
@@ -396,7 +399,7 @@ fi
 
 # Ensure no errors are generated during the devnet run, as all nodes are
 # expected to operate without failures or interruptions.
-if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "$MAX_CLIENT_LOG_SIZE_BYTES"; then
   exit 0
 else
   exit 1

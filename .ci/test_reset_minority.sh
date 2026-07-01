@@ -32,7 +32,8 @@ max_warnings=$6
 
 minority=$(( (total_validators - 1) / 3 ))
 network_name=$(get_network_name "$network_id")
-verbosity=0
+verbosity=4
+max_validator_log_size_bytes=$((6 * 1024 * 1024))
 
 # The time that is used to determine the total timeout for the test
 max_wait_per_block=10
@@ -101,7 +102,7 @@ else
   exit 1
 fi
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes"; then
   exit 0
 else
   exit 1
