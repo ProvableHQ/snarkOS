@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1782314594960,
+  "lastUpdate": 1782894059304,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -14094,6 +14094,72 @@ window.BENCHMARK_DATA = {
             "value": 1.55,
             "unit": "blocks/s",
             "extra": "total_wait=161s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f15b8339770c5f09f4af738d108be3242ffa9fe0",
+          "message": "Merge pull request #4305 from ProvableHQ/copilot/add-tests-log-size-regressions\n\nAdd CI log-size regression checks with verbosity 4 and per-test/node thresholds",
+          "timestamp": "2026-07-01T09:53:29+02:00",
+          "tree_id": "69b2ef11ce4d3d53118897cf328080c1af88ab51",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f15b8339770c5f09f4af738d108be3242ffa9fe0"
+        },
+        "date": 1782894058462,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.572636721052188,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=55.99210786819458, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 9685.446696726169,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=8.259815216064453, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3013.079076817531,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.26550912857055664, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.51,
+            "unit": "blocks/s",
+            "extra": "total_wait=165s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.890489,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=160, mean_speed=1.050417, max_speed=2.416667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.32,
+            "unit": "blocks/s",
+            "extra": "total_wait=188s, target_height=250, connect_time=1, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.49,
+            "unit": "blocks/s",
+            "extra": "total_wait=167s, target_height=250"
           }
         ]
       }
