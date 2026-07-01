@@ -443,6 +443,49 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         })?))
     }
 
+    /// GET /<network>/transaction/rejected/{transactionID}/reason
+    pub(crate) async fn get_transaction_rejection_reason(
+        State(rest): State<Self>,
+        Path(tx_id): Path<N::TransactionID>,
+    ) -> Result<ErasedJson, RestError> {
+        let rejection_reason = Self::lookup_transaction_rejection_reason(&rest, &tx_id)?;
+        match rejection_reason {
+            Some(reason) => Ok(ErasedJson::pretty(reason)),
+            None => Err(RestError::not_found(anyhow!("Rejection reason not found for transaction {tx_id}"))),
+        }
+    }
+
+    /// Looks up the rejection reason for a transaction ID.
+    ///
+    /// Rejection reasons are stored under the confirmed (fee) transaction ID. Callers may provide
+    /// either the unconfirmed transaction ID or the confirmed rejected transaction ID.
+    fn lookup_transaction_rejection_reason(
+        rest: &Self,
+        tx_id: &N::TransactionID,
+    ) -> Result<Option<snarkvm::prelude::block::transactions::RejectedReason<N>>, RestError> {
+        let store = rest.ledger.vm().finalize_store();
+
+        if let Some(reason) = store.get_rejected_reason(tx_id)? {
+            return Ok(Some(reason));
+        }
+
+        // Fall back to the unconfirmed transaction ID.
+        if let Some(unconfirmed) = rest.ledger.try_get_unconfirmed_transaction(tx_id)? {
+            if let Some(reason) = store.get_rejected_reason(&*unconfirmed.id())? {
+                return Ok(Some(reason));
+            }
+        }
+
+        // Fall back to the confirmed (fee) transaction ID.
+        if let Some(confirmed) = rest.ledger.try_get_confirmed_transaction(tx_id)? {
+            if let Some(reason) = store.get_rejected_reason(&*confirmed.id())? {
+                return Ok(Some(reason));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// GET /<network>/memoryPool/transmissions
     pub(crate) async fn get_memory_pool_transmissions(State(rest): State<Self>) -> Result<ErasedJson, RestError> {
         match rest.consensus {
@@ -1252,6 +1295,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 block.cumulative_weight(),
                 block.cumulative_proof_target(),
                 block.previous_hash(),
+                None,
                 None,
             )?;
 

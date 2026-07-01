@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.7.4"
+version = "4.8.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "9d8ed0ce1"
+rev = "2021b4498"
 #version = "=4.7.3"
 
 [workspace.dependencies.anyhow]
@@ -372,6 +372,12 @@ workspace = true
 version = "=0.14.0-rc.29"
 default-features = false
 
+# Pinned alongside elliptic-curve to avoid resolving yanked crypto-bigint releases.
+[dependencies.crypto-bigint]
+version = "=0.7.5"
+default-features = false
+features = ["hybrid-array", "rand_core", "subtle", "zeroize"]
+
 [dev-dependencies.rusty-hook]
 version = "0.11.2"
 
@@ -420,6 +426,7 @@ debug-assertions = true
 [package.metadata.cargo-machete]
 ignored = [
   "elliptic-curve", # Needed to pin the crate to a specific version
+  "crypto-bigint", # Needed to pin the crate to a specific version
   "snarkos-account", # Needed for cuda feature
   "snarkos-node", # Needed for metrics feature
   "snarkos-node-bft", # Needed for cuda and locktick features

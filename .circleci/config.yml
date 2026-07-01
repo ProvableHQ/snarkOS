@@ -87,7 +87,7 @@ commands:
             CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
             CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
             CARGO_PROFILE_RELEASE_DEBUG=0 \
-            cargo install --locked --path . --features test_network
+            cargo install --locked --path . --features test_network,history
 
   setup_environment:
     description: "Setup testing environment"
@@ -829,7 +829,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - main_net_v48 
                 - canary
                 - testnet
                 - mainnet
@@ -839,7 +839,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - main_net_v48 
                 - canary
                 - testnet
                 - mainnet
@@ -849,7 +849,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - main_net_v48 
                 - canary
                 - testnet
                 - mainnet
@@ -858,7 +858,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - main_net_v48 
                 - canary
                 - testnet
                 - mainnet
