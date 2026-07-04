@@ -1524,16 +1524,22 @@ mod route_error_tests {
 
     #[test]
     fn missing_resource_errors_map_to_not_found() {
-        let err = anyhow::anyhow!("Missing block hash for block 10");
-        assert_eq!(map_missing_resource_error(err), StatusCode::NOT_FOUND);
+        let message = "Missing block hash for block 10";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert_eq!(err.to_string(), message);
 
-        let err = anyhow::anyhow!("Block 10 does not exist in storage");
-        assert_eq!(map_missing_resource_error(err), StatusCode::NOT_FOUND);
+        let message = "Block 10 does not exist in storage";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert_eq!(err.to_string(), message);
     }
 
     #[test]
     fn non_missing_resource_errors_remain_internal_server_error() {
-        let err = anyhow::anyhow!("disk I/O failed");
-        assert_eq!(map_missing_resource_error(err), StatusCode::INTERNAL_SERVER_ERROR);
+        let message = "disk I/O failed";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err.to_string(), message);
     }
 }
