@@ -97,6 +97,15 @@ fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, Res
         .collect::<Result<Vec<_>, _>>()
 }
 
+fn map_missing_resource_error(err: anyhow::Error) -> RestError {
+    let error_message = err.to_string();
+    if error_message.contains("Missing") || error_message.contains("does not exist in storage") {
+        RestError::not_found(err)
+    } else {
+        RestError::from(err)
+    }
+}
+
 /// Deserialize a CSV string into a vector of strings.
 fn de_csv<'de, D>(de: D) -> std::result::Result<Vec<String>, D::Error>
 where
@@ -225,7 +234,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Manually parse the height or the height of the hash, axum doesn't support different types
         // for the same path param.
         let hash = if let Ok(height) = height_or_hash.parse::<u32>() {
-            rest.ledger.get_hash(height).with_context(|| "Failed to get a block's hash")?
+            rest.ledger
+                .get_hash(height)
+                .with_context(|| "Failed to get a block's hash")
+                .map_err(map_missing_resource_error)?
         } else if let Ok(hash) = height_or_hash.parse::<N::BlockHash>() {
             hash
         } else {
@@ -284,7 +296,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Prepare a closure for the blocking work.
         let get_json_blocks = move || -> Result<ErasedJson, RestError> {
             let blocks = cfg_into_iter!(start_height..end_height)
-                .map(|height| rest.ledger.get_block(height))
+                .map(|height| rest.ledger.get_block(height).map_err(map_missing_resource_error))
                 .collect::<Result<Vec<_>, _>>()?;
 
             Ok(ErasedJson::pretty(blocks))
@@ -1502,5 +1514,32 @@ mod tests {
         let err = parse_historical_mapping_keys::<MainnetV0>(&keys).unwrap_err();
         assert_eq!(err, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(err.to_string().contains("Invalid key at index 1"));
+    }
+}
+
+#[cfg(test)]
+mod route_error_tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn missing_resource_errors_map_to_not_found() {
+        let message = "Missing block hash for block 10";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert_eq!(err.to_string(), message);
+
+        let message = "Block 10 does not exist in storage";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert_eq!(err.to_string(), message);
+    }
+
+    #[test]
+    fn non_missing_resource_errors_remain_internal_server_error() {
+        let message = "disk I/O failed";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err.to_string(), message);
     }
 }
