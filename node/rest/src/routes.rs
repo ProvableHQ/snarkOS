@@ -99,7 +99,10 @@ fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, Res
 
 fn map_missing_resource_error(err: anyhow::Error) -> RestError {
     let error_message = err.to_string();
-    if error_message.contains("Missing") || error_message.contains("does not exist in storage") {
+    if error_message.contains("Missing")
+        || error_message.contains("does not exist in storage")
+        || error_message.contains("Failed to find")
+    {
         RestError::not_found(err)
     } else {
         RestError::from(err)
@@ -909,7 +912,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(input_or_output_id): Path<Field<N>>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.find_transition_id(&input_or_output_id)?))
+        Ok(ErasedJson::pretty(rest.ledger.find_transition_id(&input_or_output_id).map_err(map_missing_resource_error)?))
     }
 
     /// POST /<network>/transaction/broadcast
@@ -1530,6 +1533,11 @@ mod route_error_tests {
         assert_eq!(err.to_string(), message);
 
         let message = "Block 10 does not exist in storage";
+        let err = map_missing_resource_error(anyhow::anyhow!(message));
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert_eq!(err.to_string(), message);
+
+        let message = "Failed to find the transition ID for the given input or output ID '123field'";
         let err = map_missing_resource_error(anyhow::anyhow!(message));
         assert_eq!(err, StatusCode::NOT_FOUND);
         assert_eq!(err.to_string(), message);
