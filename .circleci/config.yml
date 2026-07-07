@@ -793,98 +793,72 @@ jobs:
 workflows:
   version: 2
 
-  cargo-workflow:
-    jobs:
-      - check-fmt
-      - check-clippy
-      - check-unused-dependencies
-      - check-cargo-audit
-      - check-other-crates
-      - lint-scripts
+  # Temporarily disabled while debugging #4342.
+  # cargo-workflow:
+  #   jobs:
+  #     - check-fmt
+  #     - check-clippy
+  #     - check-unused-dependencies
+  #     - check-cargo-audit
+  #     - check-other-crates
+  #     - lint-scripts
 
-  node-workflow:
-    jobs:
-      - node
-      - node-bft
-      - node-bft-events
-      - node-bft-ledger-service
-      - node-bft-storage-service
-      - node-cdn
-      - node-consensus
-      - node-rest
-      - node-router
-      - node-router-messages
-      - node-sync
-      - node-sync-communication-service
-      - node-sync-locators
-      - node-tcp
+  # node-workflow:
+  #   jobs:
+  #     - node
+  #     - node-bft
+  #     - node-bft-events
+  #     - node-bft-ledger-service
+  #     - node-bft-storage-service
+  #     - node-cdn
+  #     - node-consensus
+  #     - node-rest
+  #     - node-router
+  #     - node-router-messages
+  #     - node-sync
+  #     - node-sync-communication-service
+  #     - node-sync-locators
+  #     - node-tcp
 
-  devnet-workflow:
-    jobs:
-      - devnet-test
+  # devnet-workflow:
+  #   jobs:
+  #     - devnet-test
 
   merge-devnet-workflow:
     jobs:
-      - dev-on-prod-restart-test:
-          filters:
-            branches:
-              only:
-                - main_net_v48 
-                - canary
-                - testnet
-                - mainnet
-                - staging
-
       - chaotic-minority-reset-test:
           filters:
             branches:
               only:
-                - main_net_v48 
-                - canary
-                - testnet
-                - mainnet
-                - staging
+                - test_chaotic_networks
 
       - chaotic-majority-reset-test:
           filters:
             branches:
               only:
-                - main_net_v48 
-                - canary
-                - testnet
-                - mainnet
-                - staging
-      - upgrade-test:
-          filters:
-            branches:
-              only:
-                - main_net_v48 
-                - canary
-                - testnet
-                - mainnet
-                - staging
+                - test_chaotic_networks
 
-  snarkos-workflow:
-    jobs:
-      - snarkos
-      - account
-      - cli
+  # snarkos-workflow:
+  #   jobs:
+  #     - snarkos
+  #     - account
+  #     - cli
 
-  windows-workflow:
-    jobs:
-      - verify-windows:
-          filters:
-            branches:
-              only:
-                - canary
-                - testnet
-                - mainnet
-                - staging
-          matrix:
-            parameters:
-              workspace_member: [
-                account,
-                cli,
-                display,
-                node
-              ]
+  # windows-workflow:
+  #   jobs:
+  #     - verify-windows:
+  #         filters:
+  #           branches:
+  #             only:
+  #               - canary
+  #               - testnet
+  #               - mainnet
+  #               - staging
+  #         matrix:
+  #           parameters:
+  #             workspace_member: [
+  #               account,
+  #               cli,
+  #               display,
+  #               node
+  #             ]

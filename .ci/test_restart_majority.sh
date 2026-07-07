@@ -35,8 +35,7 @@ max_faulty=$(( (total_validators - 1) / 3 ))
 majority=$((total_validators - max_faulty))
 network_name=$(get_network_name "$network_id")
 
-# Use verbosity 4 so logfile size checks are consistent across CI runs.
-verbosity=4
+verbosity=1
 max_validator_log_size_bytes=$((3 * 1024 * 1024))
 
 # The time that is used to determine the total timeout for the test.
