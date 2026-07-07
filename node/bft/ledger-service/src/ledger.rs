@@ -13,7 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{BeginLedgerUpdateError, LedgerService, LedgerUpdateService, fmt_id, spawn_blocking};
+use crate::{
+    BeginLedgerUpdateError,
+    LedgerService,
+    LedgerUpdateService,
+    deserialize_solution_strict,
+    deserialize_transaction_strict,
+    fmt_id,
+    spawn_blocking,
+};
 
 use snarkos_utilities::Stoppable;
 #[cfg(feature = "test_network")]
@@ -37,7 +45,6 @@ use snarkvm::{
         Address,
         ConsensusVersion,
         Field,
-        FromBytes,
         Network,
         Result,
         bail,
@@ -63,7 +70,7 @@ use parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 
-use std::{fmt, io::Read, ops::Range, sync::Arc};
+use std::{fmt, ops::Range, sync::Arc};
 
 /// A core ledger service.
 #[allow(clippy::type_complexity)]
@@ -388,12 +395,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 Transmission::Transaction(transaction_data),
             ) => {
                 // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                let transaction = match transaction_data.clone() {
-                    Data::Object(transaction) => transaction,
-                    Data::Buffer(bytes) => {
-                        Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?
-                    }
-                };
+                let transaction = deserialize_transaction_strict(transaction_data.clone())?;
                 // Ensure the transaction ID matches the expected transaction ID.
                 if transaction.id() != expected_transaction_id {
                     bail!(
@@ -424,7 +426,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
                 TransmissionID::Solution(expected_solution_id, expected_checksum),
                 Transmission::Solution(solution_data),
             ) => {
-                match solution_data.clone().deserialize_blocking() {
+                match deserialize_solution_strict(solution_data.clone()) {
                     Ok(solution) => {
                         if solution.id() != expected_solution_id {
                             bail!(
@@ -462,7 +464,7 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
     /// Checks the given solution is well-formed.
     async fn check_solution_basic(&self, solution_id: SolutionID<N>, solution: Data<Solution<N>>) -> Result<()> {
         // Deserialize the solution.
-        let solution = spawn_blocking!(solution.deserialize_blocking())?;
+        let solution = spawn_blocking!(deserialize_solution_strict(solution))?;
         // Ensure the solution ID matches in the solution.
         if solution_id != solution.id() {
             bail!("Invalid solution - expected {solution_id}, found {}", solution.id());
