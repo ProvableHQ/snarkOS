@@ -687,7 +687,7 @@ impl<N: Network> Gateway<N> {
                             let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
 
                             let msg = flatten_error(&err);
-                            error!("{msg}");
+                            warn!("{msg}");
                             self.ip_ban_peer(peer_ip, Some(&msg));
                             Err(err)
                         }

@@ -243,7 +243,7 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
                 let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
 
                 let msg = flatten_error(&err);
-                error!("{msg}");
+                warn!("{msg}");
                 self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
 
                 false
