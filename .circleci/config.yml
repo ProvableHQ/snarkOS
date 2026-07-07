@@ -816,7 +816,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - test_history_read_fix
                 - canary
                 - testnet
                 - mainnet
@@ -826,7 +826,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - test_history_read_fix
                 - canary
                 - testnet
                 - mainnet
@@ -836,7 +836,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - test_history_read_fix
                 - canary
                 - testnet
                 - mainnet
@@ -845,7 +845,7 @@ workflows:
           filters:
             branches:
               only:
-                - copilot/feature-expose-new-api-endpoint
+                - test_history_read_fix
                 - canary
                 - testnet
                 - mainnet
