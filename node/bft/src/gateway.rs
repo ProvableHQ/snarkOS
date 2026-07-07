@@ -682,12 +682,20 @@ impl<N: Network> Gateway<N> {
                             debug!("{}", flatten_error(err));
                             Ok(true)
                         }
-                        Err(err) if err.is_invalid_consensus_version() => {
+                        Err(err) if err.is_consensus_version_ahead() => {
+                            let err: anyhow::Error = err.into();
+                            let err = err.context(format!(
+                                "Peer sent a block response with a newer consensus version '{peer_ip}'"
+                            ));
+                            warn!("{}", flatten_error(&err));
+                            Ok(true)
+                        }
+                        Err(err) if err.is_consensus_version_behind() => {
                             let err: anyhow::Error = err.into();
                             let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
 
                             let msg = flatten_error(&err);
-                            warn!("{msg}");
+                            error!("{msg}");
                             self.ip_ban_peer(peer_ip, Some(&msg));
                             Err(err)
                         }

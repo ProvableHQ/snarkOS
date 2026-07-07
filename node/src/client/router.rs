@@ -237,13 +237,19 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
                 debug!("{}", flatten_error(err.context(format!("Ignoring block response from peer '{peer_ip}'"))));
                 true
             }
-            Err(err) if err.is_invalid_consensus_version() => {
+            Err(err) if err.is_consensus_version_ahead() => {
+                let err: anyhow::Error = err.into();
+                let err = err.context(format!("Peer sent a block response with a newer consensus version '{peer_ip}'"));
+                warn!("{}", flatten_error(&err));
+                true
+            }
+            Err(err) if err.is_consensus_version_behind() => {
                 // If the error indicates the peer missed an upgrade and forked, ban it.
                 let err: anyhow::Error = err.into();
                 let err = err.context(format!("Peer sent an invalid block response '{peer_ip}'"));
 
                 let msg = flatten_error(&err);
-                warn!("{msg}");
+                error!("{msg}");
                 self.router().ip_ban_peer(peer_ip, Some(&err.to_string()));
 
                 false
