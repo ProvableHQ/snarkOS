@@ -95,6 +95,9 @@ for iter in $(seq 1 "$num_resets"); do
   done
 done
 
+# Sleep for a few seconds to make sure the nodes are fully restarted and connected.
+sleep 5
+
 log_check_since=$(epoch_now)
 latest_height=$(get_block_height 0 "$network_name")
 final_height=$((latest_height + final_height_advance))
