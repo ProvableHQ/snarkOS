@@ -381,18 +381,6 @@ commands:
         type: string
       cache_key:
         type: string
-      validators:
-        type: integer
-        default: 4
-      clients:
-        type: integer
-        default: 2
-      network_id:
-        type: integer
-        default: 0
-      min_height:
-        type: integer
-        default: 45
     steps:
       - checkout
       - restore_cache:
@@ -404,17 +392,13 @@ commands:
       - run:
           name: "Run full upgrade test"
           timeout: 30m  # Allow 30 minutes total
-          environment:
-            WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/test_full_upgrade.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/test_full_upgrade.sh
       - run:
           name: "Run partial upgrade test"
           timeout: 30m  # Allow 30 minutes total
-          environment:
-            WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/test_partial_upgrade.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
+            ./.ci/test_partial_upgrade.sh
       - save_cache:
           key: v1-snarkos-release-
           paths:
@@ -637,7 +621,7 @@ jobs:
         name: "Run Reset Minority Devnet Test"
         no_output_timeout: 5m 
         command: |
-          ./.ci/test_reset_minority.sh 7 0 50 250 3
+          ./.ci/test_reset_minority.sh
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
 
@@ -659,7 +643,7 @@ jobs:
           name: "Run Restart Majority Devnet Test"
           no_output_timeout: 5m 
           command: |
-            ./.ci/test_restart_majority.sh 7 0 20 250 3
+            ./.ci/test_restart_majority.sh
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache 
 
@@ -839,7 +823,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - test_chaotic_networks
                 - canary
                 - testnet
                 - mainnet
@@ -849,7 +833,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - test_chaotic_networks
                 - canary
                 - testnet
                 - mainnet
