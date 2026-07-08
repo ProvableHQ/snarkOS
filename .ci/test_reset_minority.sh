@@ -28,7 +28,7 @@ max_warnings=$6
 : "${reset_interval:=50}"
 : "${final_height:=250}"
 : "${num_resets:=3}"
-: "${max_warnings:=40}"
+: "${max_warnings:=4000}" # Allow lots of warnings as we're doing funky stuff in this test.
 
 minority=$(( (total_validators - 1) / 3 ))
 network_name=$(get_network_name "$network_id")
