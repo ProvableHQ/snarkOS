@@ -15,7 +15,10 @@
 
 use std::io;
 
-use tokio::time::{Duration, MissedTickBehavior, interval};
+use tokio::{
+    task,
+    time::{Duration, MissedTickBehavior, interval},
+};
 use tracing::*;
 
 /// Node-scale fd use.
@@ -129,7 +132,7 @@ pub fn system_fd_usage() -> std::io::Result<SystemFd> {
     Ok(SystemFd { allocated: read(cur_oid)?, max: read(max_oid)? })
 }
 
-pub fn spawn_fd_monitor() {
+pub fn spawn_fd_monitor() -> task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = interval(Duration::from_secs(30));
         tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -193,5 +196,5 @@ pub fn spawn_fd_monitor() {
                 Err(e) => error!(error = %e, "system fd probe failed"),
             }
         }
-    });
+    })
 }
