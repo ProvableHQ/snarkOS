@@ -61,8 +61,10 @@ pub trait NodeInterface<N: Network>: Routing<N> {
         // Check if there are any stragglers left.
         if let Some(handle) = &handler.handle {
             let live_tasks = handle.metrics().num_alive_tasks();
-            if live_tasks != 0 {
-                error!("There are still {live_tasks} live tasks");
+            // The 1 "extra" task comes from the FD monitor, which is aborted once
+            // wait_for_signals concludes its work.
+            if live_tasks != 1 {
+                error!("There are still {} live tasks", live_tasks - 1);
             }
         }
     }
