@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783523992726,
+  "lastUpdate": 1783525392571,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -14556,6 +14556,72 @@ window.BENCHMARK_DATA = {
             "value": 1.55,
             "unit": "blocks/s",
             "extra": "total_wait=161s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d8125c9cb2e3ce22cb1a3b19c4385415d5c02e04",
+          "message": "Merge pull request #4346 from ProvableHQ/fix/abort_fd_monitor_on_shutdown\n\n[Fix] Abort the FD monitor task on shutdown",
+          "timestamp": "2026-07-08T16:55:22+02:00",
+          "tree_id": "54d75c0043583919de52f78ddae2a62e1c8b551d",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/d8125c9cb2e3ce22cb1a3b19c4385415d5c02e04"
+        },
+        "date": 1783525391281,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.977790341952133,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=53.46527171134949, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7006.666667501926,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.417697429656982, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3243.547305069705,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2466435432434082, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.59,
+            "unit": "blocks/s",
+            "extra": "total_wait=157s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 0.947347,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=153, mean_speed=1.148802, max_speed=2.483333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.46,
+            "unit": "blocks/s",
+            "extra": "total_wait=171s, target_height=250, connect_time=12, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=159s, target_height=250"
           }
         ]
       }
