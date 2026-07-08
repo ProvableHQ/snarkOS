@@ -823,7 +823,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - test_chaotic_networks
                 - canary
                 - testnet
                 - mainnet
@@ -833,7 +833,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - test_chaotic_networks
                 - canary
                 - testnet
                 - mainnet
