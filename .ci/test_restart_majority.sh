@@ -18,17 +18,18 @@ init_log_dir
 total_validators=$1
 network_id=$2
 reset_interval=$3
-final_height=$4
-num_resets=$5
-max_warnings=$6
+num_resets=$4
+max_warnings=$5
 
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
 : "${reset_interval:=20}"
-: "${final_height:=250}"
 : "${num_resets:=3}"
 : "${max_warnings:=40}"
+
+# Blocks to advance after all restarts complete.
+final_height_advance=20
 
 max_faulty=$(( (total_validators - 1) / 3 ))
 # AleoBFT needs at least N-f for a quorum, not 2*f+1.
@@ -67,9 +68,6 @@ done
 
 wait_for_nodes "$total_validators" 0 "$network_name" 180
 
-# Wait longer if there are more blocks to reach.
-max_wait=$((final_height * max_wait_per_block))
-
 for iter in $(seq 1 "$num_resets"); do
   reset_height=$(( iter * reset_interval ));
 
@@ -97,14 +95,21 @@ for iter in $(seq 1 "$num_resets"); do
   done
 done
 
-if ! wait_for_heights 0 "$total_validators" "$final_height" "$network_name" $(( max_wait - $(elapsed_since "$start") )); then
+log_check_since=$(epoch_now)
+latest_height=$(get_block_height 0 "$network_name")
+final_height=$((latest_height + final_height_advance))
+max_wait=$((final_height_advance * max_wait_per_block))
+
+log "All restarts complete at height ${latest_height}. Waiting for final height ${final_height}..."
+
+if ! wait_for_heights 0 "$total_validators" "$final_height" "$network_name" "$max_wait"; then
   log "❌ Test failed! Not all nodes reached final height of $final_height within $max_wait seconds."
   exit 1
 fi
 
 log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes"; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes" "" "$log_check_since"; then
   exit 0
 else
   exit 1

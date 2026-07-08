@@ -79,6 +79,48 @@ function elapsed_since() {
   echo $((SECONDS - start))
 }
 
+# Get the current Unix epoch timestamp in seconds.
+function epoch_now() {
+  date +%s
+}
+
+# Convert a Unix epoch timestamp to an ISO-8601 prefix used by snarkOS log lines.
+function epoch_to_iso() {
+  local epoch=$1
+  if date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%S >/dev/null 2>&1; then
+    date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%S
+  else
+    date -u -r "${epoch}" +%Y-%m-%dT%H:%M:%S
+  fi
+}
+
+# Return log lines at or after the given Unix epoch timestamp.
+# When since_epoch is empty, returns the full log file.
+function log_lines_since() {
+  local log_file=$1
+  local since_epoch=$2
+
+  if [ -z "$since_epoch" ]; then
+    cat "$log_file"
+    return 0
+  fi
+
+  local since_prefix
+  since_prefix=$(epoch_to_iso "$since_epoch")
+
+  awk -v since="$since_prefix" '
+    BEGIN { from = 0 }
+    /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}/ {
+      if (substr($1, 1, 19) >= since) {
+        from = 1
+      } else {
+        from = 0
+      }
+    }
+    from { print }
+  ' "$log_file"
+}
+
 # Determine network name based on network_id
 function get_network_name() {
   local network_id=$1
@@ -347,7 +389,13 @@ function check_logs() {
   # Optional max logfile size in bytes.
   local max_validator_log_size_bytes=${5:-}
   local max_client_log_size_bytes=${6:-}
- 
+  # Optional Unix epoch timestamp; only log lines at or after this time are checked.
+  local since_epoch=${7:-}
+
+  if [ -n "$since_epoch" ]; then
+    log "Only checking log lines at or after $(epoch_to_iso "$since_epoch")"
+  fi
+
   local all_reached=true
   local highest_height=0
 
@@ -367,15 +415,17 @@ function check_logs() {
       fi
     fi
 
+    validator_log_content=$(log_lines_since "$validator_log" "$since_epoch")
+
     #TODO(kaimast): remove the grep -v "already exists in the ledger" once spurious sync errors are gone.
-    if grep "ERROR" "$validator_log" | grep -qv "already exists in the ledger"; then
+    if echo "$validator_log_content" | grep "ERROR" | grep -qv "already exists in the ledger"; then
       log "❌ Test failed! Validator #${validator_index} logs contain errors."
       # Print the errors to the console.
-      grep "ERROR" "$validator_log" | grep -v "already exists in the ledger"
+      echo "$validator_log_content" | grep "ERROR" | grep -v "already exists in the ledger"
       return 1
     fi
 
-    num_warnings=$(grep -c "WARN" "$validator_log")
+    num_warnings=$(echo "$validator_log_content" | grep -c "WARN" || true)
     if (( num_warnings > max_warnings )); then
       echo "❌ Test failed! Validator #${validator_index} logs contain more than ${max_warnings} warnings."
       return 1
@@ -398,14 +448,16 @@ function check_logs() {
       fi
     fi
 
-    if grep "ERROR" "$client_log" | grep -qv "already exists in the ledger"; then
+    client_log_content=$(log_lines_since "$client_log" "$since_epoch")
+
+    if echo "$client_log_content" | grep "ERROR" | grep -qv "already exists in the ledger"; then
       log "❌ Test failed! Client #${client_index} logs contain errors."
       # Print the errors to the console.
-      grep "ERROR" "$client_log" | grep -v "already exists in the ledger"
+      echo "$client_log_content" | grep "ERROR" | grep -v "already exists in the ledger"
       return 1
     fi
 
-    num_warnings=$(grep -c "WARN" "$client_log")
+    num_warnings=$(echo "$client_log_content" | grep -c "WARN" || true)
     if (( num_warnings > max_warnings )); then
       echo "❌ Test failed! Client #${client_index} logs contain more than ${max_warnings} warnings."
       return 1
