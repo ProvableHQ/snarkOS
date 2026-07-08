@@ -26,7 +26,7 @@ max_warnings=$5
 : "${network_id:=0}"
 : "${reset_interval:=20}"
 : "${num_resets:=3}"
-: "${max_warnings:=40}"
+: "${max_warnings:=4000}" # Allow lots of warnings as we're doing funky stuff in this test.
 
 # Blocks to advance after all restarts complete.
 final_height_advance=20
