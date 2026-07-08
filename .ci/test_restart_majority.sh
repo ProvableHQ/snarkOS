@@ -25,8 +25,8 @@ max_warnings=$6
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
-: "${reset_interval:=10}"
-: "${final_height:=20}"
+: "${reset_interval:=20}"
+: "${final_height:=250}"
 : "${num_resets:=3}"
 : "${max_warnings:=40}"
 

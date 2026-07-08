@@ -24,7 +24,7 @@ max_warnings=$4
 : "${total_validators:=4}"
 : "${total_clients:=2}"
 : "${network_id:=0}"
-: "${max_warnings:=40}"
+: "${max_warnings:=45}"
 
 # Node verbosity
 NODE_VERBOSITY=4
