@@ -25,9 +25,6 @@ use std::{
 use toml::Value;
 use walkdir::WalkDir;
 
-#[path = "version_env.rs"]
-mod version_env;
-
 // The following license text that should be present at the beginning of every source file.
 const EXPECTED_LICENSE_TEXT: &[u8] = include_bytes!(".resources/license_header");
 
@@ -305,6 +302,30 @@ fn check_tokio_console_flags() {
 }
 
 // The build script.
+
+// Emits the `SNARKOS_VERSION` environment variable, sourced from the repository's
+// `.cargo/release-version` file. Published packages cannot include files outside
+// of the crate directory, so they fall back to the crate version, which is kept
+// in sync with the release version.
+fn emit_version_env() {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Failed to read CARGO_MANIFEST_DIR");
+    let release_version = Path::new(&manifest_dir)
+        .ancestors()
+        .map(|dir| dir.join(".cargo").join("release-version"))
+        .find(|path| path.is_file());
+    let version = match &release_version {
+        Some(path) => {
+            println!("cargo:rerun-if-changed={}", path.display());
+            fs::read_to_string(path).unwrap_or_else(|err| panic!("Failed to read '{}': {err}", path.display()))
+        }
+        None => env::var("CARGO_PKG_VERSION").expect("Failed to read CARGO_PKG_VERSION"),
+    };
+    let version = version.trim();
+    let version = version.strip_prefix('v').unwrap_or(version);
+    assert!(!version.is_empty(), "The snarkOS version is empty");
+    println!("cargo:rustc-env=SNARKOS_VERSION={version}");
+}
+
 fn main() {
     // Check licenses in the current folder.
     check_file_licenses(".");
@@ -316,7 +337,7 @@ fn main() {
     check_tokio_console_flags();
 
     // Register the release version for runtime version reporting.
-    version_env::emit_version_env();
+    emit_version_env();
     // Register build-time information.
     built::write_built_file().expect("Failed to acquire build-time information");
 }
