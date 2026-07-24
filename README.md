@@ -10,7 +10,7 @@
     <a href="https://GitHub.com/ProvableHQ/snarkOS"><img src="https://img.shields.io/badge/contributors-59-ee8449"/></a>
 </p>
 
-## <a name='TableofContents'></a>Table of Contents
+## <a name='TableofContents'></a>Table of Contents 
 
 * [1. Overview](#1-overview)
 * [2. Build Guide](#2-build-guide)

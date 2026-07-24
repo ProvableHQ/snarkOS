@@ -67,6 +67,7 @@ use snarkvm::prelude::{
     Address,
     ConsensusVersion,
     FromBytes,
+    MainnetV0,
     Network,
     Signature,
     ToBytes,
@@ -76,6 +77,19 @@ use snarkvm::prelude::{
 };
 
 use std::{borrow::Cow, io, net::SocketAddr};
+
+// A compile-time compatibility check for the Message.
+const _: () = {
+    let msg_versions = Message::<MainnetV0>::VERSIONS;
+    let net_versions = MainnetV0::_CONSENSUS_VERSION_HEIGHTS;
+
+    let message_version = msg_versions[msg_versions.len() - 1].0;
+    let expected_version = net_versions[net_versions.len() - 1].0;
+
+    if message_version as u16 != expected_version as u16 {
+        panic!("Message <> ConsensusVersion mismatch!");
+    }
+};
 
 pub trait MessageTrait: ToBytes + FromBytes {
     /// Returns the message name.
@@ -108,7 +122,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 12] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 13] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -121,6 +135,7 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V15, 26),
         (ConsensusVersion::V16, 27),
         (ConsensusVersion::V17, 28),
+        (ConsensusVersion::V18, 29),
     ];
 
     /// Returns the latest message version.
@@ -319,20 +334,5 @@ mod tests {
         consensus_constants_increasing_heights::<MainnetV0>();
         consensus_constants_increasing_heights::<TestnetV0>();
         consensus_constants_increasing_heights::<CanaryV0>();
-    }
-
-    #[test]
-    fn test_latest_consensus_version() {
-        let message_consensus_version = Message::<MainnetV0>::VERSIONS.last().unwrap().0;
-        let expected_consensus_version = MainnetV0::CONSENSUS_VERSION_HEIGHTS().last().unwrap().0;
-        assert_eq!(message_consensus_version, expected_consensus_version);
-
-        let message_consensus_version = Message::<TestnetV0>::VERSIONS.last().unwrap().0;
-        let expected_consensus_version = TestnetV0::CONSENSUS_VERSION_HEIGHTS().last().unwrap().0;
-        assert_eq!(message_consensus_version, expected_consensus_version);
-
-        let message_consensus_version = Message::<CanaryV0>::VERSIONS.last().unwrap().0;
-        let expected_consensus_version = CanaryV0::CONSENSUS_VERSION_HEIGHTS().last().unwrap().0;
-        assert_eq!(message_consensus_version, expected_consensus_version);
     }
 }

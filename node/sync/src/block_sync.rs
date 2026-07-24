@@ -133,9 +133,13 @@ pub enum InsertBlockResponseError<N: Network> {
     #[error("The peer did not send a consensus version")]
     NoConsensusVersion,
     #[error(
-        "The peer's consensus version for height {last_height} does not match ours: expected {expected_version}, got {peer_version}"
+        "The peer's consensus version for height {last_height} is ahead of ours: expected {expected_version}, got {peer_version}"
     )]
-    ConsensusVersionMismatch { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
+    ConsensusVersionAhead { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
+    #[error(
+        "The peer's consensus version for height {last_height} is behind ours: expected {expected_version}, got {peer_version}"
+    )]
+    ConsensusVersionBehind { peer_version: ConsensusVersion, expected_version: ConsensusVersion, last_height: u32 },
     #[error("Block Sync already advanced to block {height}")]
     BlockSyncAlreadyAdvanced { height: u32 },
     #[error("No such request for height {height}")]
@@ -160,9 +164,14 @@ impl<N: Network> InsertBlockResponseError<N> {
         matches!(self, Self::NoSuchRequest { .. } | Self::BlockSyncAlreadyAdvanced { .. })
     }
 
-    // Returns true if the error is about an invalid consensus version.
-    pub fn is_invalid_consensus_version(&self) -> bool {
-        matches!(self, Self::ConsensusVersionMismatch { .. } | Self::NoConsensusVersion)
+    // Returns true if the peer's consensus version is ahead of ours.
+    pub fn is_consensus_version_ahead(&self) -> bool {
+        matches!(self, Self::ConsensusVersionAhead { .. })
+    }
+
+    // Returns true if the peer's consensus version is behind ours or missing.
+    pub fn is_consensus_version_behind(&self) -> bool {
+        matches!(self, Self::ConsensusVersionBehind { .. } | Self::NoConsensusVersion)
     }
 }
 
@@ -662,10 +671,18 @@ impl<N: Network> BlockSync<N> {
             if expected_consensus_version >= ConsensusVersion::V12 {
                 if let Some(peer_version) = latest_consensus_version {
                     if peer_version != expected_consensus_version {
-                        break 'outer Err(InsertBlockResponseError::ConsensusVersionMismatch {
-                            peer_version,
-                            expected_version: expected_consensus_version,
-                            last_height,
+                        break 'outer Err(if peer_version > expected_consensus_version {
+                            InsertBlockResponseError::ConsensusVersionAhead {
+                                peer_version,
+                                expected_version: expected_consensus_version,
+                                last_height,
+                            }
+                        } else {
+                            InsertBlockResponseError::ConsensusVersionBehind {
+                                peer_version,
+                                expected_version: expected_consensus_version,
+                                last_height,
+                            }
                         });
                     }
                 } else {
@@ -1103,7 +1120,7 @@ impl<N: Network> BlockSync<N> {
 
                 let Some((sync_peers, min_common_ancestor)) = self.find_sync_peers_inner(start_height) else {
                     // This generally shouldn't happen, because there cannot be outstanding requests when no peers are connected.
-                    error!("Cannot re-request blocks because no or not enough peers are connected");
+                    warn!("Cannot re-request blocks because no or not enough peers are connected");
                     return result;
                 };
 

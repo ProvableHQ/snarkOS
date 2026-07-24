@@ -341,7 +341,7 @@ impl Start {
 
             // Periodically check if the number of file descriptors isn't becoming insufficient.
             #[cfg(unix)]
-            crate::helpers::spawn_fd_monitor();
+            let fd_check_handle = crate::helpers::spawn_fd_monitor();
 
             // Clone the configurations.
             let mut self_ = self.clone();
@@ -359,6 +359,9 @@ impl Start {
                 }
                 _ => panic!("Invalid network ID specified"),
             };
+
+            #[cfg(unix)]
+            fd_check_handle.abort();
 
             Ok(String::new())
         })
