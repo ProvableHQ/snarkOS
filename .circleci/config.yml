@@ -813,7 +813,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
@@ -823,7 +823,7 @@ workflows:
           filters:
             branches:
               only:
-                - relax_warns
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
@@ -833,7 +833,7 @@ workflows:
           filters:
             branches:
               only:
-                - relax_warns
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
@@ -842,7 +842,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
