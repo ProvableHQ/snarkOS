@@ -13,9 +13,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[path = "../../version_env.rs"]
-mod version_env;
+// Emits the `SNARKOS_VERSION` environment variable, sourced from the repository's
+// `.cargo/release-version` file. Published packages cannot include files outside
+// of the crate directory, so they fall back to the crate version, which is kept
+// in sync with the release version.
+fn emit_version_env() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("Failed to read CARGO_MANIFEST_DIR");
+    let release_version = std::path::Path::new(&manifest_dir)
+        .ancestors()
+        .map(|dir| dir.join(".cargo").join("release-version"))
+        .find(|path| path.is_file());
+    let version = match &release_version {
+        Some(path) => {
+            println!("cargo:rerun-if-changed={}", path.display());
+            std::fs::read_to_string(path).unwrap_or_else(|err| panic!("Failed to read '{}': {err}", path.display()))
+        }
+        None => std::env::var("CARGO_PKG_VERSION").expect("Failed to read CARGO_PKG_VERSION"),
+    };
+    let version = version.trim();
+    let version = version.strip_prefix('v').unwrap_or(version);
+    assert!(!version.is_empty(), "The snarkOS version is empty");
+    println!("cargo:rustc-env=SNARKOS_VERSION={version}");
+}
 
 fn main() {
-    version_env::emit_version_env();
+    emit_version_env();
 }

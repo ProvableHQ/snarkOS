@@ -320,7 +320,7 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     /// Helper function that attempts to connect the given peers.
     ///
     /// Used by [`Self::handle_trusted_peers`] and [`Self::handle_connected_peers`].
-    async fn try_connect_to_peers(&self, peers: impl Iterator<Item = CandidatePeer> + Send + 'static) {
+    async fn try_connect_to_peers(&self, peers: impl Iterator<Item = CandidatePeer<N>> + Send + 'static) {
         let (peer_info, hdls): (Vec<_>, Vec<_>) = peers
             .filter_map(|peer| {
                 let peer_type = if peer.trusted { "trusted peer" } else { "peer" };

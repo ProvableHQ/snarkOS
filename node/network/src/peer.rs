@@ -23,7 +23,7 @@ use std::{fmt, net::SocketAddr, time::Instant};
 #[derive(Clone, Debug)]
 pub enum Peer<N: Network> {
     /// A candidate peer that's currently not connected to.
-    Candidate(CandidatePeer),
+    Candidate(CandidatePeer<N>),
     /// A peer that's currently being connected to (the handshake is in progress).
     Connecting(ConnectingPeer),
     /// A fully connected (post-handshake) peer.
@@ -41,7 +41,7 @@ pub struct ConnectingPeer {
 
 /// A candidate peer.
 #[derive(Clone, Debug)]
-pub struct CandidatePeer {
+pub struct CandidatePeer<N: Network> {
     /// The listening address of a candidate peer.
     pub listener_addr: SocketAddr,
     /// Indicates whether the peer is considered trusted.
@@ -53,6 +53,9 @@ pub struct CandidatePeer {
     pub last_connection_attempt: Option<Instant>,
     /// The total number of connection attempts, since the peer was last connected.
     pub total_connection_attempts: u32,
+    /// The last known Aleo address of this peer, carried over from a prior connection.
+    /// Used to detect when a validator reconnects from a different IP address.
+    pub last_known_aleo_addr: Option<Address<N>>,
 }
 
 /// A fully connected peer.
@@ -100,13 +103,14 @@ impl fmt::Display for ConnectionMode {
 
 impl<N: Network> Peer<N> {
     /// Create a candidate peer.
-    pub const fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
+    pub fn new_candidate(listener_addr: SocketAddr, trusted: bool) -> Self {
         Self::Candidate(CandidatePeer {
             listener_addr,
             trusted,
             last_height_seen: None,
             last_connection_attempt: None,
             total_connection_attempts: 0,
+            last_known_aleo_addr: None,
         })
     }
 
@@ -157,12 +161,18 @@ impl<N: Network> Peer<N> {
 
     /// Demote a peer to candidate status, marking it as disconnected.
     pub fn downgrade_to_candidate(&mut self, listener_addr: SocketAddr) {
+        let last_known_aleo_addr = match self {
+            Self::Connected(p) => Some(p.aleo_addr),
+            _ => None,
+        };
+
         *self = Self::Candidate(CandidatePeer {
             listener_addr,
             trusted: self.is_trusted(),
             last_height_seen: self.last_height_seen(),
             last_connection_attempt: None,
             total_connection_attempts: 0,
+            last_known_aleo_addr,
         });
     }
 

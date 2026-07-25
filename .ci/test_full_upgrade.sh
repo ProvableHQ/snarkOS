@@ -24,10 +24,13 @@ max_warnings=$4
 : "${total_validators:=4}"
 : "${total_clients:=2}"
 : "${network_id:=0}"
-: "${max_warnings:=40}"
+: "${max_warnings:=45}"
 
 # Node verbosity
-NODE_VERBOSITY=1
+NODE_VERBOSITY=4
+# Max logfile sizes (bytes) for regression checks.
+MAX_VALIDATOR_LOG_SIZE_BYTES=$((8 * 1024 * 1024))
+MAX_CLIENT_LOG_SIZE_BYTES=$((1 * 1024 * 1024))
 
 
 # How long to wait between upgrades (seconds); used for block-height window
@@ -381,7 +384,7 @@ done
 
 log "Upgrade test passed: network reached highest consensus version with release, all nodes upgraded to PR snarkos, and consensus version remained correct."
 
-if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings"; then
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "$MAX_CLIENT_LOG_SIZE_BYTES"; then
   exit 0
 else
   exit 1

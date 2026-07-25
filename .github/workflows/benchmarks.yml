@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - 'staging'
-      - 'copilot/feature-expose-new-api-endpoint'
+      - 'main_net_v48'
   workflow_dispatch:
 
 jobs:

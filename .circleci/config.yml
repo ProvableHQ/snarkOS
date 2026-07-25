@@ -87,7 +87,7 @@ commands:
             CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
             CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
             CARGO_PROFILE_RELEASE_DEBUG=0 \
-            cargo install --locked --path . --features test_network
+            cargo install --locked --path . --features test_network,history
 
   setup_environment:
     description: "Setup testing environment"
@@ -302,35 +302,48 @@ commands:
             echo "==> test-threads override: ${TEST_THREADS:-<none>}"
             echo "==> jobs: ${JOBS}"
 
-            # If flags explicitly include --no-run, fall back to plain cargo test
-            if printf '%s' " $BUILD_FLAGS_SANITIZED " | grep -q ' --no-run '; then
-              cargo test $PKG_ARGS $BUILD_FLAGS_SANITIZED | tee "$OUT"
-              : > "$CSV"; : > "$TOP"
-            else
-              cargo nextest run \
-                $PKG_ARGS $BUILD_FLAGS_SANITIZED \
-                --profile ci -j "${JOBS}" "${CFG_ARGS[@]}" \
-                --status-level fail --hide-progress-bar \
-                --no-tests=pass \
-                ${FILTER_EXPR:+--filter-expr "$FILTER_EXPR"} \
-                2>&1 | tee "$OUT"
-
-              if [ -f "$JUNIT" ]; then
-                awk -v RS='<testcase ' '
-                  NR>1 {
-                    name=""; classname=""; time="";
-                    start=index($0,"classname=\""); if(start>0){ start+=11; rest=substr($0,start); end=index(rest,"\""); if(end>0) classname=substr(rest,1,end-1) }
-                    start=index($0,"name=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) name=substr(rest,1,end-1) }
-                    start=index($0,"time=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) time=substr(rest,1,end-1) }
-                    if(name!="" && time!=""){ full=(classname!=""?classname"::"name:name); printf "%s,%s\n", full, time }
-                  }
-                ' "$JUNIT" > "$CSV" || true
-
-                sort -t, -k2,2nr "$CSV" | head -n 30 > "$TOP" || true
+            # --- Logic to run tests and catch sccache failure ---
+            run_nextest() {
+              if printf '%s' " $BUILD_FLAGS_SANITIZED " | grep -q ' --no-run '; then
+                cargo test $PKG_ARGS $BUILD_FLAGS_SANITIZED
               else
-                echo "WARN: $JUNIT not found; no timings extracted." >&2
-                : > "$CSV"; : > "$TOP"
+                cargo nextest run \
+                  $PKG_ARGS $BUILD_FLAGS_SANITIZED \
+                  --profile ci -j "${JOBS}" "${CFG_ARGS[@]}" \
+                  --status-level fail --hide-progress-bar \
+                  --no-tests=pass \
+                  ${FILTER_EXPR:+--filter-expr "$FILTER_EXPR"}
               fi
+            }
+
+            if ! run_nextest 2>&1 | tee "$OUT"; then
+              if grep -q "sccache" "$OUT" && grep -q "exit status: 2" "$OUT"; then
+                echo "⚠️ Detected sccache crash. Cleaning up and retrying..."
+                [ -f "$HOME/.bin/sccache" ] && "$HOME/.bin/sccache" --stop-server || true
+                rm -rf "$HOME/.cache/sccache"
+                rm -rf target
+                mkdir -p target/nextest/ci
+                run_nextest 2>&1 | tee "$OUT"
+              else
+                exit 1
+              fi
+            fi
+
+            if [ -f "$JUNIT" ]; then
+              awk -v RS='<testcase ' '
+                NR>1 {
+                  name=""; classname=""; time="";
+                  start=index($0,"classname=\""); if(start>0){ start+=11; rest=substr($0,start); end=index(rest,"\""); if(end>0) classname=substr(rest,1,end-1) }
+                  start=index($0,"name=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) name=substr(rest,1,end-1) }
+                  start=index($0,"time=\"");      if(start>0){ start+=6;  rest=substr($0,start); end=index(rest,"\""); if(end>0) time=substr(rest,1,end-1) }
+                  if(name!="" && time!=""){ full=(classname!=""?classname"::"name:name); printf "%s,%s\n", full, time }
+                }
+              ' "$JUNIT" > "$CSV" || true
+
+              sort -t, -k2,2nr "$CSV" | head -n 30 > "$TOP" || true
+            else
+              echo "WARN: $JUNIT not found; no timings extracted." >&2
+              : > "$CSV"; : > "$TOP"
             fi
 
       - store_artifacts:
@@ -368,18 +381,6 @@ commands:
         type: string
       cache_key:
         type: string
-      validators:
-        type: integer
-        default: 4
-      clients:
-        type: integer
-        default: 2
-      network_id:
-        type: integer
-        default: 0
-      min_height:
-        type: integer
-        default: 45
     steps:
       - checkout
       - restore_cache:
@@ -391,17 +392,13 @@ commands:
       - run:
           name: "Run full upgrade test"
           timeout: 30m  # Allow 30 minutes total
-          environment:
-            WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/test_full_upgrade.sh << parameters.validators >> << parameters.clients >> << parameters.network_id >> << parameters.min_height >>
+            ./.ci/test_full_upgrade.sh
       - run:
           name: "Run partial upgrade test"
           timeout: 30m  # Allow 30 minutes total
-          environment:
-            WAIT_BETWEEN_UPGRADES: "60"
           command: |
-            ./.ci/test_partial_upgrade.sh << parameters.validators >> << parameters.network_id >> << parameters.min_height >> 
+            ./.ci/test_partial_upgrade.sh
       - save_cache:
           key: v1-snarkos-release-
           paths:
@@ -624,7 +621,7 @@ jobs:
         name: "Run Reset Minority Devnet Test"
         no_output_timeout: 5m 
         command: |
-          ./.ci/test_reset_minority.sh 7 0 50 250 3
+          ./.ci/test_reset_minority.sh
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
 
@@ -646,7 +643,7 @@ jobs:
           name: "Run Restart Majority Devnet Test"
           no_output_timeout: 5m 
           command: |
-            ./.ci/test_restart_majority.sh 7 0 20 250 3
+            ./.ci/test_restart_majority.sh
      - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache 
 
@@ -816,7 +813,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_history_read_fix
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
@@ -826,7 +823,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_history_read_fix
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
@@ -836,7 +833,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_history_read_fix
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet
@@ -845,7 +842,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_history_read_fix
+                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet

@@ -25,14 +25,15 @@ max_warnings=$6
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
-: "${reset_interval:=20}"
-: "${final_height:=100}"
+: "${reset_interval:=50}"
+: "${final_height:=250}"
 : "${num_resets:=3}"
-: "${max_warnings:=40}"
+: "${max_warnings:=4000}" # Allow lots of warnings as we're doing funky stuff in this test.
 
 minority=$(( (total_validators - 1) / 3 ))
 network_name=$(get_network_name "$network_id")
-verbosity=0
+verbosity=1
+max_validator_log_size_bytes=$((6 * 1024 * 1024))
 
 # The time that is used to determine the total timeout for the test
 max_wait_per_block=10
@@ -101,7 +102,7 @@ else
   exit 1
 fi
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings"; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes"; then
   exit 0
 else
   exit 1

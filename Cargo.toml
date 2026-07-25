@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.7.1"
+version = "4.9.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -48,8 +48,8 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "43aef1518"
-#version = "=4.7.3"
+rev = "dd9ab06ec227ac2ff5c191aa1689c2531db3e705" #testnet-4.9.0
+#version = "=4.9.0"
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -185,84 +185,84 @@ version = "0.2"
 
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.7.3"
+version = "=4.9.0"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [workspace.dependencies.snarkos-utilities]
 path = "utilities"
-version = "=4.7.3"
+version = "=4.9.0"
 
 [[bin]]
 name = "snarkos"
@@ -364,12 +364,11 @@ tikv-jemallocator = "0.6"
 [dependencies.tracing]
 workspace = true
 
-# Pinned to =0.14.0-rc.29 because k256 v0.14.0-rc.8 does not implement the
-# MulVartime/MulByGeneratorVartime traits added in elliptic-curve v0.14.0-rc.31.
+# Pinned to =0.14.1 because k256 v0.14.0 requires it.
 # Adding this as a direct dependency forces cargo to resolve the exact version
-# and prevents automatic upgrades to incompatible RC releases.
+# and prevents automatic upgrades to incompatible releases.
 [dependencies.elliptic-curve]
-version = "=0.14.0-rc.29"
+version = "=0.14.1"
 default-features = false
 
 # Pinned alongside elliptic-curve to avoid resolving yanked crypto-bigint releases.
