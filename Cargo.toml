@@ -108,6 +108,9 @@ version = "1"
 [workspace.dependencies.once_cell]
 version = "1"
 
+[workspace.dependencies.pea2pea]
+version = "0.57.2"
+
 [workspace.dependencies.proptest]
 # Pin to 1.6 to match the version used in snarkVM. Avoids pulling in rand >=0.9.
 version = "1.6"

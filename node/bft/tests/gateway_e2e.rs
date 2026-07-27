@@ -64,7 +64,7 @@ async fn handshake_responder_side_timeout() {
     let (_accounts, gateway) = new_test_gateway(NUM_NODES, &mut rng).await;
     let test_peer = TestPeer::new().await;
 
-    dbg!(test_peer.listening_addr());
+    dbg!(test_peer.listening_addr().await);
 
     // Initiate a connection with the gateway, this will only return once the handshake protocol has
     // completed on the test peer's side, which is a no-op.
@@ -110,7 +110,7 @@ async fn handshake_responder_side_invalid_challenge_request() {
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 1);
 
     // Use the address from the second peer in the list, the test peer will use the first.
-    let listener_port = test_peer.listening_addr().port();
+    let listener_port = test_peer.listening_addr().await.port();
     let address = accounts.get(1).unwrap().address();
     let nonce = rng.random();
     let snarkos_sha = None;
@@ -176,7 +176,7 @@ async fn handshake_responder_side_invalid_challenge_response() {
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 1);
 
     // Use the address from the second peer in the list, the test peer will use the first.
-    let listener_port = test_peer.listening_addr().port();
+    let listener_port = test_peer.listening_addr().await.port();
     let address = accounts.get(1).unwrap().address();
     let our_nonce = rng.random();
     let snarkos_sha = None;

@@ -168,7 +168,7 @@ version = "0.2"
 version = "1"
 
 [dev-dependencies.pea2pea]
-version = "0.49"
+workspace = true
 
 [dev-dependencies.snarkos-node-router]
 workspace = true
