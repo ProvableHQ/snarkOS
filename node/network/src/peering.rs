@@ -349,7 +349,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the number of connected validators.
-    #[cfg(feature = "metrics")]
+    ///
+    /// Returns `None` if the peer pool is currently locked; only the metrics code cares about the
+    /// count, and it would rather skip a sample than contend for the lock.
     fn number_of_connected_validators(&self) -> Option<usize> {
         Some(
             self.peer_pool()
@@ -361,7 +363,9 @@ pub trait PeerPoolHandling<N: Network>: P2P {
     }
 
     /// Returns the number of connecting peers.
-    #[cfg(feature = "metrics")]
+    ///
+    /// Returns `None` if the peer pool is currently locked; see
+    /// [`PeerPoolHandling::number_of_connected_validators`].
     fn number_of_connecting_peers(&self) -> Option<usize> {
         Some(self.peer_pool().try_read()?.values().filter(|peer| peer.is_connecting()).count())
     }
