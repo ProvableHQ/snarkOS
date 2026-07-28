@@ -1491,57 +1491,62 @@ impl<N: Network> Handshake for Gateway<N> {
             self.handshake_inner_responder(peer_addr, &mut listener_addr, restrictions_id, stream).await
         };
 
-        if let Some(addr) = listener_addr {
-            match handshake_result {
-                Ok(ref cr) => {
-                    let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
-                        NodeType::BootstrapClient
+        // Register the peer, or roll it back, if the handshake got far enough to learn its listening
+        // address.
+        match (&handshake_result, listener_addr) {
+            (Ok(cr), Some(addr)) => {
+                let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
+                    NodeType::BootstrapClient
+                } else {
+                    NodeType::Validator
+                };
+
+                let mut peer_pool = self.peer_pool.write();
+
+                // Validators may change their listening address, but not the Aleo address; traverse
+                // the peer pool, and retain previously connected (the prior Aleo address is known)
+                // candidate peers with the same Aleo address only if their listening address is the
+                // same; otherwise, it may be concluded that a known validator has changed their
+                // listening address, and thus the old entry should be removed as outdated.
+                peer_pool.retain(|_, peer| {
+                    if let Peer::Candidate(peer) = peer
+                        && let Some(old_aleo_addr) = peer.last_known_aleo_addr
+                    {
+                        old_aleo_addr != cr.address || peer.listener_addr == addr
                     } else {
-                        NodeType::Validator
-                    };
-
-                    let mut peer_pool = self.peer_pool.write();
-
-                    // Validators may change their listening address, but not the Aleo address; traverse
-                    // the peer pool, and retain previously connected (the prior Aleo address is known)
-                    // candidate peers with the same Aleo address only if their listening address is the
-                    // same; otherwise, it may be concluded that a known validator has changed their
-                    // listening address, and thus the old entry should be removed as outdated.
-                    peer_pool.retain(|_, peer| {
-                        if let Peer::Candidate(peer) = peer
-                            && let Some(old_aleo_addr) = peer.last_known_aleo_addr
-                        {
-                            old_aleo_addr != cr.address || peer.listener_addr == addr
-                        } else {
-                            true
-                        }
-                    });
-
-                    if let Some(peer) = peer_pool.get_mut(&addr) {
-                        self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
-                        peer.upgrade_to_connected(
-                            peer_addr,
-                            cr.listener_port,
-                            cr.address,
-                            node_type,
-                            cr.version,
-                            cr.snarkos_sha,
-                            ConnectionMode::Gateway,
-                        );
+                        true
                     }
-                    info!("{CONTEXT} Connected to '{addr}'");
+                });
+
+                if let Some(peer) = peer_pool.get_mut(&addr) {
+                    self.resolver.write().insert_peer(addr, peer_addr, Some(cr.address));
+                    peer.upgrade_to_connected(
+                        peer_addr,
+                        cr.listener_port,
+                        cr.address,
+                        node_type,
+                        cr.version,
+                        cr.snarkos_sha,
+                        ConnectionMode::Gateway,
+                    );
                 }
-                Err(error) => {
-                    if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
-                        // The peer may only be downgraded if it's a ConnectingPeer.
-                        if peer.is_connecting() {
-                            peer.downgrade_to_candidate(addr);
-                        }
+                info!("{CONTEXT} Connected to '{addr}'");
+            }
+            (Err(_), Some(addr)) => {
+                if let Some(peer) = self.peer_pool.write().get_mut(&addr) {
+                    // The peer may only be downgraded if it's a ConnectingPeer.
+                    if peer.is_connecting() {
+                        peer.downgrade_to_candidate(addr);
                     }
-                    return Err(error);
                 }
             }
+            // The handshake failed before the peer's listening address was known, so there is nothing
+            // in the pool to roll back.
+            (_, None) => {}
         }
+
+        // Abort the connection on failure whether or not the peer reached the pool.
+        handshake_result?;
 
         Ok(connection)
     }
