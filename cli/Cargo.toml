@@ -106,7 +106,7 @@ workspace = true
 version = "7.4.0"
 
 [dependencies.self_update]
-version = "0.44"
+version = "1.0.0-rc.6"
 features = [ "archive-zip", "compression-zip-deflate" ]
 
 [dependencies.serde]
