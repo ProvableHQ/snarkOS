@@ -53,13 +53,17 @@ impl<N: Network> Encoder<Event<N>> for EventCodec<N> {
     type Error = std::io::Error;
 
     fn encode(&mut self, event: Event<N>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // Serialize the payload directly into dst.
+        // Serialize the payload directly into dst, but only claim back what was appended here: dst
+        // may already hold frames that have not been written out yet - which is what happens when a
+        // sink is fed several events before being flushed - and folding those into this event's frame
+        // would produce a single frame that no decoder can make sense of.
+        let buffered = dst.len();
         event
             .write_le(&mut dst.writer())
             // This error should never happen, the conversion is for greater compatibility.
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"))?;
 
-        let serialized_event = dst.split_to(dst.len()).freeze();
+        let serialized_event = dst.split_off(buffered).freeze();
 
         self.codec.encode(serialized_event, dst)
     }
@@ -108,5 +112,25 @@ mod tests {
     #[proptest]
     fn event_roundtrip(#[strategy(any_event())] event: Event<CurrentNetwork>) {
         assert_roundtrip(event)
+    }
+
+    #[proptest]
+    fn events_encoded_into_a_shared_buffer_stay_separate(
+        #[strategy(any_event())] first: Event<CurrentNetwork>,
+        #[strategy(any_event())] second: Event<CurrentNetwork>,
+    ) {
+        // Encoding into a buffer that already holds a frame is what a sink does when it is fed
+        // several events before being flushed; each one must remain a frame of its own.
+        let mut codec: EventCodec<CurrentNetwork> = Default::default();
+        let mut buffer = BytesMut::new();
+
+        codec.encode(first.clone(), &mut buffer).unwrap();
+        codec.encode(second.clone(), &mut buffer).unwrap();
+
+        for expected in [first, second] {
+            let decoded = codec.decode(&mut buffer).unwrap().unwrap();
+            assert_eq!(decoded.to_bytes_le().unwrap(), expected.to_bytes_le().unwrap());
+        }
+        assert!(buffer.is_empty());
     }
 }
