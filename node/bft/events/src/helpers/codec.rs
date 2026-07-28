@@ -22,6 +22,17 @@ use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 use tracing::*;
 
 /// The maximum size of an event that can be transmitted during the handshake.
+///
+/// This is sixteen times the 65535-byte ceiling the Noise specification puts on a single message, and
+/// it is the largest buffer an unauthenticated peer can make a node commit to: `LengthDelimitedCodec`
+/// reserves whatever length a frame's header declares as soon as it reads the header, so a peer that
+/// declares a megabyte and then sends a single byte holds a megabyte for the whole handshake timeout.
+///
+/// It is only still reachable because the gateway continues to accept the legacy handshake. The Noise
+/// handshake frames its messages at `MAX_NOISE_MSG_LEN` - the specification's 65535 - and reads the
+/// first of them before deriving any keys, so on that path the figure is already 64 KiB. Retiring the
+/// legacy handshake leaves `EventCodec::handshake` without callers, at which point it and this
+/// constant should go with it: that is what turns the 16x reduction into the only limit there is.
 const MAX_HANDSHAKE_SIZE: usize = 1024 * 1024; // 1 MiB
 /// The maximum size of an event that can be transmitted in the network.
 const MAX_EVENT_SIZE: usize = 256 * 1024 * 1024; // 256 MiB
