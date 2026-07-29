@@ -128,7 +128,7 @@ pub struct BlockRequestsSummary {
 
 #[derive(thiserror::Error, Debug)]
 pub enum InsertBlockResponseError<N: Network> {
-    #[error("Empty block response")]
+    #[error("Emppty block response (this could indicate the peer cannot serve the requested blocks)")]
     EmptyBlockResponse,
     #[error("The peer did not send a consensus version")]
     NoConsensusVersion,
@@ -161,7 +161,7 @@ pub enum InsertBlockResponseError<N: Network> {
 impl<N: Network> InsertBlockResponseError<N> {
     /// Returns `true` if the error does not indicate malicious or faulty behavior.
     pub fn is_benign(&self) -> bool {
-        matches!(self, Self::NoSuchRequest { .. } | Self::BlockSyncAlreadyAdvanced { .. })
+        matches!(self, Self::NoSuchRequest { .. } | Self::BlockSyncAlreadyAdvanced { .. } | Self::EmptyBlockResponse)
     }
 
     // Returns true if the peer's consensus version is ahead of ours.
@@ -2306,6 +2306,38 @@ mod tests {
 
         // Check that the number of requests is reduced based on the ledger height.
         assert_eq!(new_sync.requests.read().len(), (locator_height - ledger_height) as usize);
+    }
+
+    /// Tests that an empty block response — the peer's explicit "cannot serve this range" signal —
+    /// is treated as benign and re-issues the peer's outstanding requests.
+    #[test]
+    fn test_empty_block_response_is_benign_and_reissues_requests() {
+        let rng = &mut TestRng::default();
+        let sync = sample_sync_at_height(0);
+        let peer_ip = sample_peer_ip(1);
+
+        // Add a peer and construct outstanding block requests assigned to it.
+        sync.update_peer_locators(peer_ip, &sample_block_locators(10)).unwrap();
+        let (requests, sync_peers) = sync.prepare_block_requests().pop().unwrap();
+        assert!(!requests.is_empty());
+        for (height, (hash, previous_hash, num_sync_ips)) in requests.clone() {
+            // Construct the sync IPs.
+            let sync_ips: IndexSet<_> = sync_peers.keys().sample(rng, num_sync_ips).into_iter().copied().collect();
+            // Insert the block request.
+            sync.insert_block_request(height, (hash, previous_hash, sync_ips)).unwrap();
+        }
+        let num_requests = sync.requests.read().len();
+        assert_eq!(num_requests, requests.len());
+
+        // The peer responds with an empty block response, indicating it cannot serve the range.
+        let error = sync.insert_block_responses(peer_ip, vec![], None).unwrap_err();
+        assert!(matches!(error, InsertBlockResponseError::EmptyBlockResponse));
+        // An explicit "cannot serve" is not a protocol violation.
+        assert!(error.is_benign());
+
+        // The requests to the peer were removed and marked for re-issue to other peers.
+        assert!(sync.requests.read().is_empty());
+        assert_eq!(sync.failed_requests.lock().len(), num_requests);
     }
 
     #[test]

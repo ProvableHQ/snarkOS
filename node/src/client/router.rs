@@ -205,14 +205,16 @@ impl<N: Network, C: ConsensusStorage<N>> Inbound<N> for Client<N, C> {
             }
         };
 
-        // Retrieve the blocks within the requested range.
+        // Retrieve the blocks within the requested range. If any block is unavailable (e.g. its
+        // authority data was pruned), send an empty block response to explicitly signal that this
+        // node cannot serve the requested range, rather than penalizing the requester.
         let blocks = match self.ledger.get_blocks(*start_height..*end_height) {
             Ok(blocks) => DataBlocks(blocks),
             Err(error) => {
                 let err =
-                    error.context(format!("Failed to retrieve blocks {start_height} to {end_height} from the ledger"));
-                error!("{}", flatten_error(&err));
-                return false;
+                    error.context(format!("Cannot serve block request {start_height}..{end_height} from the ledger"));
+                warn!("{}", flatten_error(&err));
+                DataBlocks(vec![])
             }
         };
 
