@@ -892,6 +892,11 @@ impl Start {
         }
 
         node.wait_for_signals(&signal_handler).await;
+
+        // Exit with an error if the node shut itself down due to a fatal error.
+        if signal_handler.is_failed() {
+            bail!("The node shut down due to a fatal error (see the logs above for details)");
+        }
         Ok(())
     }
 

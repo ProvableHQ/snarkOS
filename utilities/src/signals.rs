@@ -72,6 +72,9 @@ pub struct SignalHandler {
     /// This receiver is used to wait for the node to be stopped.
     stopped_receiver: Mutex<Option<oneshot::Receiver<()>>>,
 
+    /// Whether the stop was caused by a fatal error, so the process can exit with a non-zero code.
+    failed: AtomicBool,
+
     /// An optional tokio runtime handle.
     pub handle: Option<Handle>,
 }
@@ -83,6 +86,7 @@ impl SignalHandler {
         let obj = Arc::new(Self {
             stopped_sender: RwLock::new(Some(stopped_sender)),
             stopped_receiver: Mutex::new(Some(stopped_receiver)),
+            failed: AtomicBool::new(false),
             handle,
         });
 
@@ -131,6 +135,17 @@ impl SignalHandler {
         }
 
         self.stop();
+    }
+
+    /// Initiates shutdown of the node due to a fatal error, so the process exits with a non-zero code.
+    pub fn stop_with_failure(&self) {
+        self.failed.store(true, Ordering::SeqCst);
+        self.stop();
+    }
+
+    /// Returns `true` if the node was stopped due to a fatal error.
+    pub fn is_failed(&self) -> bool {
+        self.failed.load(Ordering::SeqCst)
     }
 
     /// Waits until the signal handler was invoked or the stopped flag was set some other way.

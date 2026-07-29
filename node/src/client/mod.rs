@@ -32,7 +32,7 @@ use snarkos_node_router::{
     Routing,
     messages::{Message, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::{BlockSync, Ping};
+use snarkos_node_sync::{BlockSync, Ping, STUCK_SYNC_SHUTDOWN_THRESHOLD};
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
@@ -281,6 +281,15 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
 
                 // Perform the sync routine.
                 self_.try_issuing_block_requests().await;
+
+                // If the blocks this node needs have been unservable by every connected peer for
+                // too long, shut down: on restart, the node will fetch the missing range from the CDN.
+                if self_.sync.sync_stuck_below_peer_floors().is_some_and(|stuck| stuck >= STUCK_SYNC_SHUTDOWN_THRESHOLD)
+                {
+                    crate::log_stuck_sync_error();
+                    self_.signal_handler.stop_with_failure();
+                    break;
+                }
             }
 
             info!("Stopped block request generation");
