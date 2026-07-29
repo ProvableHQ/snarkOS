@@ -813,7 +813,6 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
                 - canary
                 - testnet
                 - mainnet
@@ -823,7 +822,7 @@ workflows:
           filters:
             branches:
               only:
-                - relax_warns
+                - main_net_v49
                 - canary
                 - testnet
                 - mainnet
@@ -833,7 +832,7 @@ workflows:
           filters:
             branches:
               only:
-                - relax_warns
+                - main_net_v49
                 - canary
                 - testnet
                 - mainnet
@@ -842,7 +841,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v48 
+                - main_net_v49
                 - canary
                 - testnet
                 - mainnet

@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.8.1"
+version = "4.9.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
