@@ -121,7 +121,11 @@ pub fn add_transmission_latency_metric<N: Network>(
     let ts_now = OffsetDateTime::now_utc().unix_timestamp();
 
     // Determine which keys to remove.
-    let keys_to_remove = cfg_iter!(&*transmissions_tracker)
+    // Note: this is intentionally serial, as it is done while holding the lock above. A parallel
+    // iterator that blocks on a lock can occupy every worker of the rayon thread pool, which in
+    // turn prevents the lock holder's own parallel iterator from ever being scheduled.
+    let keys_to_remove = transmissions_tracker
+        .iter()
         .flat_map(|(transmission_id, timestamp)| {
             let elapsed_time = std::time::Duration::from_secs((ts_now - *timestamp) as u64);
 
