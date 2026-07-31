@@ -348,15 +348,17 @@ function check_heights() {
 
   for node_index in $(seq "$start_index" $((end_index-1))); do
     port=$((3030 + node_index))
-    height=$(curl -s "http://127.0.0.1:$port/v2/$network_name/block/height/latest" || echo "0")
-    
+    # Note: this yields an empty string when the node is unreachable, so that an
+    # unreachable node is not indistinguishable from one that is at height 0.
+    height=$(get_block_height_by_port "$port" "$network_name")
+
     # Track highest height for reporting
     if (is_integer "$height") && (( height > highest_height )); then
       highest_height=$height
     fi
-    
+
     if ! (is_integer "$height"); then
-      log "Node #${node_index} (port=$port) did not respont to height request"
+      log "Node #${node_index} (port=$port) did not respond to height request"
       all_reached=false
     elif (( height < min_height )); then
       log "Node #${node_index} (port=$port) only reached height $height, expected at least $min_height"
