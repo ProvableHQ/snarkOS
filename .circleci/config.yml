@@ -841,7 +841,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v49
+                - tests/flaky_test_full_upgrade
                 - canary
                 - testnet
                 - mainnet
