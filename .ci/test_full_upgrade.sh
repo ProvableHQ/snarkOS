@@ -24,7 +24,10 @@ max_warnings=$4
 : "${total_validators:=4}"
 : "${total_clients:=2}"
 : "${network_id:=0}"
-: "${max_warnings:=45}"
+# Note: a validator logs a "Received signature for an older batch" warning whenever a
+# signature arrives after its batch was already certified, which happens roughly once per
+# round on a small committee. The ceiling therefore has to scale with the length of the run.
+: "${max_warnings:=4000}"
 
 # Node verbosity
 NODE_VERBOSITY=4
