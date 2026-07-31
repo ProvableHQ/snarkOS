@@ -1160,10 +1160,16 @@ impl<N: Network> Primary<N> {
         let signer = signature.to_address();
 
         // Ensure the batch signature is signed by the validator.
-        if self.gateway.resolve_to_aleo_addr(peer_ip) != Some(signer) {
-            // Proceed to disconnect the validator.
-            self.gateway.disconnect(peer_ip);
-            bail!("Malicious peer - batch signature is from a different validator ({signer})");
+        match self.gateway.resolve_to_aleo_addr(peer_ip) {
+            // If the peer is a validator, then ensure the batch signature is from the validator.
+            Some(address) => {
+                if address != signer {
+                    // Proceed to disconnect the validator.
+                    self.gateway.disconnect(peer_ip);
+                    bail!("Malicious peer - batch signature is from a different validator ({signer})");
+                }
+            }
+            None => bail!("Batch signature from a disconnected validator"),
         }
         // Ensure the batch signature is not from the current primary.
         if self.gateway.account().address() == signer {
