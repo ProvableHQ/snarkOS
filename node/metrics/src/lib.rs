@@ -37,18 +37,42 @@ use std::{
     net::SocketAddr,
     sync::{
         Arc,
+        OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
 use time::OffsetDateTime;
+use tokio::task::JoinHandle;
 
-/// Initializes the metrics and returns a handle to the task running the metrics exporter.
+/// The handle to the task running the metrics exporter.
+static EXPORTER_TASK: OnceLock<JoinHandle<()>> = OnceLock::new();
+
+/// Initializes the metrics and starts the metrics exporter.
+///
+/// Note: the exporter runs until [`shut_down_metrics`] is called, or until the process exits.
 pub fn initialize_metrics(ip: Option<SocketAddr>) {
-    // Build the Prometheus exporter.
+    // Build the Prometheus recorder and exporter.
+    //
+    // Note: this is `PrometheusBuilder::install` spelled out, so that the handle to the exporter
+    // task can be retained. `install` spawns the task and immediately drops its handle, which
+    // leaves the exporter running after the node has shut down; see `shut_down_metrics`.
     let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
-    if let Some(ip) = ip { builder.with_http_listener(ip) } else { builder }
-        .install()
+    let (recorder, exporter) = if let Some(ip) = ip { builder.with_http_listener(ip) } else { builder }
+        .build()
         .expect("can't build the prometheus exporter");
+    metrics::set_global_recorder(recorder).expect("can't install the prometheus recorder");
+
+    // Spawn the exporter, retaining its handle so that it can be stopped on shutdown.
+    let task = tokio::spawn(async move {
+        if let Err(error) = exporter.await {
+            tracing::error!("The metrics exporter has failed: {error}");
+        }
+    });
+    if let Err(task) = EXPORTER_TASK.set(task) {
+        // Note: unreachable in practice, as installing the recorder twice fails above.
+        task.abort();
+        tracing::warn!("The metrics exporter was already initialized");
+    }
 
     // Register the snarkVM metrics.
     snarkvm::metrics::register_metrics();
@@ -66,6 +90,14 @@ pub fn initialize_metrics(ip: Option<SocketAddr>) {
 
     // Set the build information metric
     set_build_info();
+}
+
+/// Stops the task running the metrics exporter, if one was started.
+pub fn shut_down_metrics() {
+    if let Some(task) = EXPORTER_TASK.get() {
+        tracing::info!("Shutting down the metrics exporter...");
+        task.abort();
+    }
 }
 
 pub fn update_block_metrics<N: Network>(block: &Block<N>) {

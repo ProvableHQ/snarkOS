@@ -33,6 +33,7 @@ locktick = [
   "snarkvm/locktick"
 ]
 metrics = [
+  "dep:snarkos-node-metrics",
   "snarkos-node-bft/metrics",
   "snarkos-node-consensus/metrics",
   "snarkos-node-router/metrics",
@@ -120,6 +121,10 @@ workspace = true
 
 [dependencies.snarkos-node-consensus]
 workspace = true
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-network]
 workspace = true
