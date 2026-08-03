@@ -51,16 +51,28 @@
 //! when they disagree.
 
 use crate::{Disconnect, DisconnectReason, Event};
+use snarkos_node_tcp::ConnectError;
 use snarkvm::{
     console::prelude::{FromBytes, Network, Read, ToBytes, Write, io_error},
     ledger::narwhal::Data,
     prelude::{Address, Field, Signature},
 };
 
-use std::io::Result as IoResult;
+use std::{io::Result as IoResult, net::SocketAddr};
 
 /// The domain separator for the signatures binding an Aleo address to a gateway Noise session.
 pub const HANDSHAKE_DOMAIN: &[u8] = b"snarkos-bft-handshake-v1";
+
+/// Serializes a handshake payload for transmission inside a Noise message.
+pub fn encode_payload<T: ToBytes>(payload: &T) -> Result<Vec<u8>, ConnectError> {
+    payload.to_bytes_le().map_err(ConnectError::other)
+}
+
+/// Deserializes a handshake payload received inside a Noise message.
+pub fn decode_payload<T: FromBytes>(peer_addr: SocketAddr, bytes: &[u8]) -> Result<T, ConnectError> {
+    T::from_bytes_le(bytes)
+        .map_err(|err| ConnectError::other(format!("'{peer_addr}' sent a malformed handshake payload: {err}")))
+}
 
 /// Constant for an unknown commit hash.
 const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];

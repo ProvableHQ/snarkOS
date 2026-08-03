@@ -15,13 +15,35 @@
 
 use crate::{
     BootstrapClient,
-    bft::events::{self, DisconnectReason, Event},
+    bft::events::{
+        self,
+        DisconnectReason,
+        Event,
+        HANDSHAKE_DOMAIN,
+        HandshakeHint,
+        InitiatorInfo,
+        PeerInfo,
+        ResponderProof,
+        decode_payload,
+        encode_payload,
+    },
     bootstrap_client::{codec::BootstrapClientCodec, network::MessageOrEvent},
     network::{ConnectionMode, NodeType, PeerPoolHandling, log_repo_sha_comparison},
     router::messages::{self, Message},
     tcp::{ConnectError, Connection, ConnectionSide, protocols::*},
 };
-use snarkos_node_network::harden_socket;
+use snarkos_node_network::{
+    harden_socket,
+    noise::{
+        HandshakeProtocol,
+        NoiseSession,
+        PendingSession,
+        Role,
+        binding_message,
+        detect_handshake_protocol,
+        prepare_framed,
+    },
+};
 use snarkvm::{
     ledger::narwhal::Data,
     prelude::{Address, Network, io_error},
@@ -116,7 +138,18 @@ impl<N: Network> Handshake for BootstrapClient<N> {
         let handshake_result = if peer_side == ConnectionSide::Responder {
             unreachable!("The boostrapper clients don't initiate connections");
         } else {
-            self.handshake_inner_responder(peer_addr, &mut listener_addr, stream).await
+            match detect_handshake_protocol(stream).await? {
+                // Only the gateway speaks Noise for now, so the marker also settles the connection
+                // mode. When the router's handshake is converted the two will need telling apart -
+                // most likely by giving each subprotocol its own marker - and this is the dispatch
+                // that has to change.
+                (HandshakeProtocol::Noise, _) => {
+                    self.handshake_inner_responder_noise(peer_addr, &mut listener_addr, stream).await
+                }
+                (HandshakeProtocol::Legacy, prefix) => {
+                    self.handshake_inner_responder(peer_addr, &mut listener_addr, stream, &prefix).await
+                }
+            }
         };
 
         if let Some(addr) = listener_addr {
@@ -158,15 +191,149 @@ impl<N: Network> Handshake for BootstrapClient<N> {
 }
 
 impl<N: Network> BootstrapClient<N> {
-    /// The connection responder side of the handshake.
-    async fn handshake_inner_responder<'a>(
+    /// The connection responder side of the Noise handshake, which validators use to connect in
+    /// Gateway mode.
+    ///
+    /// As on the gateway itself, the expensive work is deferred for as long as the protocol allows:
+    /// the peer's cleartext hint is checked before any key is derived, its signature is verified only
+    /// once the authenticated payload has passed every cheap check, and one is produced only once
+    /// that verification has succeeded.
+    async fn handshake_inner_responder_noise<'a>(
         &'a self,
         peer_addr: SocketAddr,
         listener_addr: &mut Option<SocketAddr>,
         stream: &'a mut TcpStream,
     ) -> Result<(u16, Address<N>, NodeType, u32, Option<[u8; 40]>, ConnectionMode), ConnectError> {
+        /* Message 1: the peer's cleartext hint, read without deriving anything. */
+
+        let pending = PendingSession::accept(stream).await?;
+        let hint: HandshakeHint<N> = decode_payload(peer_addr, pending.first_payload()?)?;
+
+        // Nothing here is trustworthy yet - message 3 runs it again against the authenticated copy -
+        // but a peer that fails one of these would fail it there too, so it is not worth a
+        // Diffie-Hellman.
+        if let Some(reason) = self.verify_peer_claims(peer_addr, hint.version, hint.address).await? {
+            return Err(reason.into_connect_error(peer_addr));
+        }
+
+        // Introduce the peer into the peer pool; this is the only thing mutated here, so it goes
+        // after the checks that might have turned the peer away.
+        *listener_addr = Some(SocketAddr::new(peer_addr.ip(), hint.listener_port));
+        self.add_connecting_peer(listener_addr.unwrap())?;
+
+        /* Message 2: disclose ourselves, without signing anything yet. */
+
+        let mut noise = pending.into_session()?;
+        // The bootstrap client does not track the block height, so it discloses no commit hash.
+        let our_info = PeerInfo::new(self.local_ip().port(), self.account.address(), self.restrictions_id, None);
+        noise.send(&encode_payload(&our_info)?).await?;
+
+        let peer_binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);
+
+        /* Message 3: the peer's authenticated metadata and its proof of identity. */
+
+        let InitiatorInfo { info: peer_info, signature: peer_signature } =
+            decode_payload::<InitiatorInfo<N>>(peer_addr, &noise.recv().await?)?;
+
+        let binding = binding_message(HANDSHAKE_DOMAIN, Role::Responder, &noise.handshake_hash()?);
+        let mut noise = noise.into_transport_mode()?;
+
+        // The hint is a claim: reject the peer if it contradicts what it has now authenticated,
+        // as otherwise it could be checked as one validator and admitted as another.
+        if (hint.version, hint.listener_port, hint.address)
+            != (peer_info.version, peer_info.listener_port, peer_info.address)
+        {
+            warn!("{} Handshake with '{peer_addr}' failed (the handshake hint was contradicted)", Self::OWNER);
+            return self.reject_noise_handshake(peer_addr, noise, DisconnectReason::ProtocolViolation).await;
+        }
+        log_repo_sha_comparison(peer_addr, &peer_info.snarkos_sha, Self::OWNER);
+
+        if peer_info.restrictions_id != self.restrictions_id {
+            warn!("{} Handshake with '{peer_addr}' failed (incorrect restrictions ID)", Self::OWNER);
+            return self.reject_noise_handshake(peer_addr, noise, DisconnectReason::InvalidChallengeResponse).await;
+        }
+        if let Some(reason) = self.verify_peer_claims(peer_addr, peer_info.version, peer_info.address).await? {
+            return self.reject_noise_handshake(peer_addr, noise, reason).await;
+        }
+
+        /* Message 4: verify the peer's proof, then produce our own. */
+
+        // Perform the deferred non-blocking deserialization of the signature.
+        let Ok(signature) = peer_signature.deserialize().await else {
+            warn!("{} Handshake with '{peer_addr}' failed (cannot deserialize the signature)", Self::OWNER);
+            return self.reject_noise_handshake(peer_addr, noise, DisconnectReason::InvalidChallengeResponse).await;
+        };
+        if !signature.verify_bytes(&peer_info.address, &peer_binding) {
+            warn!("{} Handshake with '{peer_addr}' failed (invalid signature)", Self::OWNER);
+            return self.reject_noise_handshake(peer_addr, noise, DisconnectReason::InvalidChallengeResponse).await;
+        }
+
+        let Ok(our_signature) = self.account.sign_bytes(&binding, &mut rand::rng()) else {
+            return Err(ConnectError::other(format!("Failed to sign the handshake binding for '{peer_addr}'")));
+        };
+        noise.send(&encode_payload(&ResponderProof::Accepted { signature: Data::Object(our_signature) })?).await?;
+
+        Ok((
+            peer_info.listener_port,
+            peer_info.address,
+            NodeType::Validator,
+            peer_info.version,
+            peer_info.snarkos_sha,
+            ConnectionMode::Gateway,
+        ))
+    }
+
+    /// Tells the initiator why it was turned away, and fails the handshake with that reason.
+    async fn reject_noise_handshake(
+        &self,
+        peer_addr: SocketAddr,
+        mut noise: NoiseSession<&mut TcpStream>,
+        reason: DisconnectReason,
+    ) -> Result<(u16, Address<N>, NodeType, u32, Option<[u8; 40]>, ConnectionMode), ConnectError> {
+        noise.send(&encode_payload(&ResponderProof::<N>::Rejected { reason })?).await?;
+
+        Err(reason.into_connect_error(peer_addr))
+    }
+
+    /// The checks a peer's claimed identity can be held to without any cryptography, run first
+    /// against the cleartext hint and then against the authenticated payload.
+    async fn verify_peer_claims(
+        &self,
+        peer_addr: SocketAddr,
+        version: u32,
+        address: Address<N>,
+    ) -> Result<Option<DisconnectReason>, ConnectError> {
+        if version < Event::<N>::VERSION {
+            warn!("{} Dropping '{peer_addr}' on version {version} (outdated)", Self::OWNER);
+            return Ok(Some(DisconnectReason::OutdatedClientVersion));
+        }
+
+        // Reject validators that aren't members of the committee.
+        let committee =
+            self.get_or_update_committee().await.map_err(|_| ConnectError::other("Couldn't load the committee"))?;
+        if let Some(committee) = committee
+            && !committee.contains(&address)
+        {
+            warn!("{} Dropping '{peer_addr}' for not being a committee member ({address})", Self::OWNER);
+            return Ok(Some(DisconnectReason::ProtocolViolation));
+        }
+
+        Ok(None)
+    }
+
+    /// The connection responder side of the legacy handshake.
+    ///
+    /// `prefix` holds the bytes consumed while determining which handshake the peer speaks; they are
+    /// the beginning of its first frame.
+    async fn handshake_inner_responder<'a>(
+        &'a self,
+        peer_addr: SocketAddr,
+        listener_addr: &mut Option<SocketAddr>,
+        stream: &'a mut TcpStream,
+        prefix: &[u8],
+    ) -> Result<(u16, Address<N>, NodeType, u32, Option<[u8; 40]>, ConnectionMode), ConnectError> {
         // Construct the stream.
-        let mut framed = Framed::new(stream, BootstrapClientCodec::<N>::handshake());
+        let mut framed = prepare_framed(stream, BootstrapClientCodec::<N>::handshake(), prefix);
 
         /* Step 1: Receive the challenge request. */
 

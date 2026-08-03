@@ -1532,7 +1532,7 @@ impl<N: Network> Handshake for Gateway<N> {
         // The initiator picks the handshake protocol, gated on the block height so that validators
         // can be upgraded one at a time; the responder goes along with whichever one it is offered.
         let handshake_result = if peer_side == ConnectionSide::Responder {
-            if self.initiates_noise_handshake(peer_addr) {
+            if self.initiates_noise_handshake() {
                 write_noise_magic(stream).await?;
                 self.handshake_inner_initiator_noise(peer_addr, restrictions_id, stream).await
             } else {
@@ -1736,13 +1736,7 @@ fn peer_info_from_challenge_request<N: Network>(
 
 impl<N: Network> Gateway<N> {
     /// Returns `true` if this node should offer the Noise handshake when it dials the given peer.
-    fn initiates_noise_handshake(&self, peer_addr: SocketAddr) -> bool {
-        // The bootstrap clients have not been converted yet and only understand the legacy
-        // handshake, so they keep getting it until they have been.
-        if bootstrap_peers::<N>(self.is_dev()).contains(&peer_addr) {
-            return false;
-        }
-
+    fn initiates_noise_handshake(&self) -> bool {
         // Tests pin the choice, so that both sides of the transition can be covered.
         if let Some(initiates) = self.pinned_handshake_protocol() {
             return initiates;
