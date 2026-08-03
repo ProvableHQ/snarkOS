@@ -55,6 +55,7 @@ use snarkos_node_network::{
     Resolver,
     bootstrap_peers,
     get_repo_commit_hash,
+    harden_socket,
     log_repo_sha_comparison,
     noise::{
         HandshakeProtocol,
@@ -1528,6 +1529,8 @@ impl<N: Network> Handshake for Gateway<N> {
         }
 
         let stream = self.borrow_stream(&mut connection);
+        // Make the socket more robust; every other handshake in the node does this too.
+        harden_socket(stream)?;
 
         // If this is an inbound connection, we log it, but don't know the listening address yet.
         // Otherwise, we can immediately register the listening address.
