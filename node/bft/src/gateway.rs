@@ -133,22 +133,37 @@ const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
 /// The amount of time an IP address is prohibited from connecting.
 const IP_BAN_TIME_IN_SECS: u64 = 300;
 
-/// The block height at which this node starts *initiating* Noise handshakes, if one is scheduled.
+/// The consensus version at which this node starts *initiating* Noise handshakes, if one is
+/// scheduled.
 ///
 /// Only the initiator's choice is gated: a responder accepts either protocol as soon as this code
 /// ships, which is what allows validators to be upgraded one at a time. `None` means no switchover
 /// has been scheduled yet - except in development, where the Noise path is always taken so that
 /// devnets exercise it, and in tests, which pin the choice explicitly.
 ///
-/// Setting this height is not the end of the migration, only the middle of it. For as long as the
-/// responder still accepts the legacy handshake, two things remain reachable through it: the relay
-/// that the handshake binding exists to prevent, and the legacy handshake codec's 1 MiB frame limit -
-/// sixteen times what a Noise message may be, on a buffer an unauthenticated peer gets to size. Both
-/// are collected by the same step, which is dropping the legacy path rather than merely preferring
-/// the new one. Note also that the same relay is reachable through the router's handshake, which
+/// Setting this is not the end of the migration, only the middle of it; see
+/// [`LEGACY_HANDSHAKE_EXPIRY`].
+// TODO: this is meant to be `Some(ConsensusVersion::V19)`, which the pinned snarkVM does not define
+//  yet - its `ConsensusVersion` stops at `V18`. Set it once the dependency carries the variant.
+const NOISE_HANDSHAKE_ACTIVATION: Option<ConsensusVersion> = None;
+
+/// The consensus version at which this node stops *accepting* the legacy handshake, if one is
+/// scheduled.
+///
+/// This is the step that actually collects what the conversion is for. For as long as the responder
+/// still accepts the legacy handshake, two things remain reachable through it: the relay that the
+/// handshake binding exists to prevent, and the legacy handshake codec's 1 MiB frame limit - sixteen
+/// times what a Noise message may be, on a buffer an unauthenticated peer gets to size. Preferring
+/// the new path does not close either; refusing the old one does.
+///
+/// It must trail [`NOISE_HANDSHAKE_ACTIVATION`] by enough for every peer to have switched, as a
+/// validator that has not yet reached the activation still dials with the legacy handshake and would
+/// be shut out. Note also that the same relay is reachable through the router's handshake, which
 /// signs a byte-identical message with the same account key, so the gateway cannot be the last part
 /// of this to be converted.
-const NOISE_HANDSHAKE_ACTIVATION_HEIGHT: Option<u32> = None;
+// TODO: this is meant to be `Some(ConsensusVersion::V20)`, which the pinned snarkVM does not define
+//  yet - its `ConsensusVersion` stops at `V18`. Set it once the dependency carries the variant.
+const LEGACY_HANDSHAKE_EXPIRY: Option<ConsensusVersion> = None;
 
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
@@ -203,7 +218,7 @@ pub struct InnerGateway<N: Network> {
     /// The development mode.
     dev: Option<u16>,
     /// Pins which handshake this node offers when it dials, bypassing
-    /// [`NOISE_HANDSHAKE_ACTIVATION_HEIGHT`].
+    /// [`NOISE_HANDSHAKE_ACTIVATION`].
     ///
     /// Tests default to the Noise handshake, since that is the one under test, and set this to
     /// `false` to cover the other half of the transition: a converted node has to keep talking to
@@ -1543,6 +1558,9 @@ impl<N: Network> Handshake for Gateway<N> {
                 (HandshakeProtocol::Noise, _) => {
                     self.handshake_inner_responder_noise(peer_addr, &mut listener_addr, restrictions_id, stream).await
                 }
+                (HandshakeProtocol::Legacy, _) if !self.accepts_legacy_handshake() => {
+                    Err(ConnectError::other(format!("'{peer_addr}' offered the legacy handshake, which has expired")))
+                }
                 (HandshakeProtocol::Legacy, prefix) => {
                     self.handshake_inner_responder(peer_addr, &mut listener_addr, restrictions_id, stream, &prefix)
                         .await
@@ -1743,8 +1761,23 @@ impl<N: Network> Gateway<N> {
         }
 
         // Development nodes always take the new path, so that devnets exercise it.
-        self.is_dev()
-            || NOISE_HANDSHAKE_ACTIVATION_HEIGHT.is_some_and(|height| self.ledger.latest_block_height() >= height)
+        self.is_dev() || self.consensus_version_reached(NOISE_HANDSHAKE_ACTIVATION)
+    }
+
+    /// Returns `true` if this node still accepts the legacy handshake from a peer that dials it.
+    ///
+    /// Unlike the choice of what to offer, this is not pinned in tests and not forced in development:
+    /// a converted node has to keep answering unconverted ones for the whole of the transition, and
+    /// the tests covering that rely on it.
+    fn accepts_legacy_handshake(&self) -> bool {
+        !self.consensus_version_reached(LEGACY_HANDSHAKE_EXPIRY)
+    }
+
+    /// Returns `true` if the given consensus version is scheduled and the ledger has reached it.
+    fn consensus_version_reached(&self, version: Option<ConsensusVersion>) -> bool {
+        version.is_some_and(|version| {
+            N::CONSENSUS_HEIGHT(version).is_ok_and(|height| self.ledger.latest_block_height() >= height)
+        })
     }
 
     /// The pinned choice of handshake protocol; always `None` outside tests.
