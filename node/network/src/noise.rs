@@ -75,6 +75,24 @@ const TAG_LEN: usize = 16;
 /// The length of the handshake hash, i.e. the digest length of the hash function in [`NOISE_PARAMS`].
 pub const HANDSHAKE_HASH_LEN: usize = 32;
 
+/// The maximum length of a message exchanged during the handshake itself.
+///
+/// The pattern's largest message is the third, at 307 bytes with the payloads this crate's callers
+/// put in it, so this leaves room for a field or two to be added without a change to what peers
+/// accept from one another. It is far below [`MAX_NOISE_MSG_LEN`], and deliberately so: until a peer
+/// has been checked over, the length it declares is the size of a buffer it gets to make the
+/// responder allocate, and there is no reason for that to be 64 KiB when the protocol needs a
+/// fraction of it. The transport phase keeps the specification's limit, which is what a chunked
+/// payload would need.
+///
+/// Note that this is a soft parameter of the wire protocol: raising it later is harmless, lowering
+/// it is not, so it is set with headroom rather than as tightly as today's messages allow.
+const MAX_HANDSHAKE_MSG_LEN: usize = 1024;
+
+// The handshake limit only means anything if it is the tighter of the two; a change that inverted
+// them would otherwise widen what an unchecked peer can ask for, silently.
+const _: () = assert!(MAX_HANDSHAKE_MSG_LEN < MAX_NOISE_MSG_LEN);
+
 /// The length of a public or private key of the Diffie-Hellman function in [`NOISE_PARAMS`].
 const DH_LEN: usize = 32;
 
@@ -182,14 +200,14 @@ pub fn prepare_framed<S: AsyncRead + AsyncWrite, C>(stream: S, codec: C, read_bu
 /// the stream be handed on to a reader with a codec of its own once the handshake is done: there is
 /// never anything buffered here for that reader to miss. Note that a buffering codec could not offer
 /// the same guarantee, as it reads whatever the socket has available.
-async fn read_message<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> {
+async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S, max_len: usize) -> io::Result<Vec<u8>> {
     let mut length = [0u8; LENGTH_PREFIX_LEN];
     stream.read_exact(&mut length).await?;
 
-    // Bound the length before it is used to allocate; the specification caps a Noise message at
-    // `MAX_NOISE_MSG_LEN`, so anything larger is a protocol violation rather than a big message.
+    // Bound the length before it is used to allocate, against whichever limit applies to the phase
+    // the session is in; anything larger is a protocol violation rather than a big message.
     let length = u32::from_le_bytes(length) as usize;
-    if length > MAX_NOISE_MSG_LEN {
+    if length > max_len {
         return Err(invalid_data(format!("the Noise message is too large ({length} bytes)")));
     }
 
@@ -203,10 +221,10 @@ async fn read_message<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8
 ///
 /// The prefix and the body go out in a single write, so that emitting a message costs one syscall
 /// rather than two and the peer sees the two halves arrive together.
-async fn write_message<S: AsyncWrite + Unpin>(stream: &mut S, message: &[u8]) -> io::Result<()> {
+async fn write_frame<S: AsyncWrite + Unpin>(stream: &mut S, message: &[u8], max_len: usize) -> io::Result<()> {
     // `NoiseSession::send` already bounds its payload so that the message the pattern produces cannot
     // reach this; the check is repeated here so that the cast below cannot silently truncate.
-    if message.len() > MAX_NOISE_MSG_LEN {
+    if message.len() > max_len {
         return Err(invalid_data(format!("the Noise message is too large ({} bytes)", message.len())));
     }
 
@@ -270,7 +288,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> PendingSession<S> {
     /// The caller is responsible for the [`NOISE_MAGIC`] prefix, which must already have been
     /// consumed with [`detect_handshake_protocol`].
     pub async fn accept(mut stream: S) -> io::Result<Self> {
-        let first_message = read_message(&mut stream).await?;
+        // The bound is stated rather than taken from a session, as there is not one yet; this is by
+        // definition the pattern's first message, so the handshake limit is the one that applies.
+        let first_message = read_frame(&mut stream, MAX_HANDSHAKE_MSG_LEN).await?;
 
         Ok(Self { stream, first_message })
     }
@@ -322,7 +342,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSession<S> {
 
     /// Encrypts the given payload and sends it to the peer.
     pub async fn send(&mut self, payload: &[u8]) -> io::Result<()> {
-        if payload.len() + NOISE_OVERHEAD > MAX_NOISE_MSG_LEN {
+        let max_len = self.max_msg_len();
+        if payload.len() + NOISE_OVERHEAD > max_len {
             return Err(invalid_data(format!("the handshake payload is too large ({} bytes)", payload.len())));
         }
 
@@ -336,20 +357,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSession<S> {
         .map_err(invalid_data)?;
         buffer.truncate(len);
 
-        write_message(&mut self.stream, &buffer).await
+        write_frame(&mut self.stream, &buffer, max_len).await
     }
 
     /// Receives a message from the peer and returns its decrypted payload.
     pub async fn recv(&mut self) -> io::Result<Vec<u8>> {
-        let message = read_message(&mut self.stream).await?;
+        let max_len = self.max_msg_len();
+        let message = read_frame(&mut self.stream, max_len).await?;
 
         self.decrypt(&message)
     }
 
+    /// The largest message this session will accept or produce, which the handshake holds well below
+    /// what the specification allows; see [`MAX_HANDSHAKE_MSG_LEN`].
+    fn max_msg_len(&self) -> usize {
+        match self.state {
+            SessionState::Handshake(_) => MAX_HANDSHAKE_MSG_LEN,
+            SessionState::Transport(_) => MAX_NOISE_MSG_LEN,
+        }
+    }
+
     /// Processes an already-received message and returns its decrypted payload.
     fn decrypt(&mut self, message: &[u8]) -> io::Result<Vec<u8>> {
-        // A payload is never longer than the message that carried it, which `read_message` has
-        // already capped at `MAX_NOISE_MSG_LEN`.
+        // A payload is never longer than the message that carried it, which was already bounded by
+        // whichever limit applies to the phase this session is in.
         let mut buffer = vec![0u8; message.len()];
         let len = match self.state {
             SessionState::Handshake(ref mut state) => state.read_message(message, &mut buffer),
@@ -473,7 +504,7 @@ mod tests {
         let len = state.write_message(b"responder info", &mut buffer).unwrap();
         buffer.truncate(len);
         *buffer.last_mut().unwrap() ^= 1;
-        write_message(&mut responder.stream, &buffer).await.unwrap();
+        write_frame(&mut responder.stream, &buffer, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
 
         assert!(initiator.recv().await.is_err());
     }
@@ -506,9 +537,9 @@ mod tests {
         initiator.send(b"the original hint").await.unwrap();
 
         // Flip a bit in the payload, which the pattern's first message carries in the clear.
-        let mut message = read_message(&mut initiator_wire).await.unwrap();
+        let mut message = read_frame(&mut initiator_wire, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
         message[FIRST_MESSAGE_PAYLOAD_OFFSET] ^= 1;
-        write_message(&mut responder_wire, &message).await.unwrap();
+        write_frame(&mut responder_wire, &message, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
 
         // The responder reads the rewritten payload quite happily - it is a claim, not a fact.
         let pending = PendingSession::accept(responder_stream).await.unwrap();
@@ -519,8 +550,8 @@ mod tests {
         // encryption that follows, so its reply cannot be decrypted by the initiator. This is what
         // lets the responder act on the cleartext hint and have the result stand.
         responder.send(b"responder info").await.unwrap();
-        let reply = read_message(&mut responder_wire).await.unwrap();
-        write_message(&mut initiator_wire, &reply).await.unwrap();
+        let reply = read_frame(&mut responder_wire, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
+        write_frame(&mut initiator_wire, &reply, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
 
         assert!(initiator.recv().await.is_err());
     }
@@ -543,14 +574,14 @@ mod tests {
         let mut buffer = vec![0u8; MAX_NOISE_MSG_LEN];
         let len = odd_one_out.write_message(b"hint", &mut buffer).unwrap();
         buffer.truncate(len);
-        write_message(&mut initiator_stream, &buffer).await.unwrap();
+        write_frame(&mut initiator_stream, &buffer, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
 
         // The responder accepts the first message, which carries nothing it could verify, and its
         // reply is rejected in turn - exactly as with a tampered payload.
         let mut responder = PendingSession::accept(responder_stream).await.unwrap().into_session().unwrap();
         responder.send(b"responder info").await.unwrap();
 
-        let reply = read_message(&mut initiator_stream).await.unwrap();
+        let reply = read_frame(&mut initiator_stream, MAX_HANDSHAKE_MSG_LEN).await.unwrap();
         assert!(odd_one_out.read_message(&reply, &mut vec![0u8; MAX_NOISE_MSG_LEN]).is_err());
     }
 
@@ -579,11 +610,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_oversized_handshake_message_is_rejected_before_it_is_read() {
+        let (mut initiator_stream, mut responder_stream) = duplex(1024);
+
+        // Only the length is written, not a body to match it: the bound has to be applied to the
+        // declared length before anything is allocated or read, so this must fail regardless.
+        let length = (MAX_HANDSHAKE_MSG_LEN + 1) as u32;
+        initiator_stream.write_all(&length.to_le_bytes()).await.unwrap();
+
+        let error = read_frame(&mut responder_stream, MAX_HANDSHAKE_MSG_LEN).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
     async fn a_truncated_first_message_is_rejected() {
         let (mut initiator_stream, responder_stream) = duplex(1024);
 
         // Shorter than the ephemeral key the pattern's first message must begin with.
-        write_message(&mut initiator_stream, &[0u8; DH_LEN - 1]).await.unwrap();
+        write_frame(&mut initiator_stream, &[0u8; DH_LEN - 1], MAX_HANDSHAKE_MSG_LEN).await.unwrap();
 
         let pending = PendingSession::accept(responder_stream).await.unwrap();
         assert!(pending.first_payload().is_err());
@@ -596,7 +640,7 @@ mod tests {
         // A length prefix beyond what the specification permits, and no body behind it.
         initiator_stream.write_all(&(MAX_NOISE_MSG_LEN as u32 + 1).to_le_bytes()).await.unwrap();
 
-        let error = read_message(&mut responder_stream).await.unwrap_err();
+        let error = read_frame(&mut responder_stream, MAX_HANDSHAKE_MSG_LEN).await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
