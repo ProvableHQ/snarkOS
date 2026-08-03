@@ -42,6 +42,9 @@ features = [ "serde", "rayon" ]
 [dependencies.serde]
 workspace = true
 
+[dependencies.snarkos-node-network]
+workspace = true
+
 [dependencies.snarkos-node-sync-locators]
 workspace = true
 

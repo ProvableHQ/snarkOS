@@ -51,6 +51,7 @@
 //! when they disagree.
 
 use crate::{Disconnect, DisconnectReason, Event};
+use snarkos_node_network::ConnectionMode;
 use snarkos_node_tcp::ConnectError;
 use snarkvm::{
     console::prelude::{FromBytes, Network, Read, ToBytes, Write, io_error},
@@ -86,6 +87,11 @@ const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
 /// where it is authenticated, and the responder must reject the connection if the two disagree;
 /// otherwise this message would be a way to be checked as one peer and admitted as another.
 ///
+/// The payload opens with the connection mode, so that a bootstrap client - which accepts both the
+/// gateway's and the router's connections on one listener - knows which hint it is reading before it
+/// parses the rest; see [`ConnectionMode`]. A hint for a different mode is rejected by name
+/// rather than misread as this one.
+///
 /// Disclosing the Aleo address here costs little: committee membership is public on-chain, the
 /// responder discloses its own address to an unauthenticated peer in the second message anyway, and
 /// the legacy handshake sends it in the clear. What it buys is the committee check, which is the one
@@ -97,8 +103,14 @@ pub struct HandshakeHint<N: Network> {
     pub address: Address<N>,
 }
 
+impl<N: Network> HandshakeHint<N> {
+    /// The connection mode this hint describes; the gateway's handshake only ever serves one.
+    const MODE: ConnectionMode = ConnectionMode::Gateway;
+}
+
 impl<N: Network> ToBytes for HandshakeHint<N> {
     fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
+        Self::MODE.write_le(&mut writer)?;
         self.version.write_le(&mut writer)?;
         self.listener_port.write_le(&mut writer)?;
         self.address.write_le(&mut writer)
@@ -107,6 +119,11 @@ impl<N: Network> ToBytes for HandshakeHint<N> {
 
 impl<N: Network> FromBytes for HandshakeHint<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self> {
+        let mode = ConnectionMode::read_le(&mut reader)?;
+        if mode != Self::MODE {
+            return Err(io_error(format!("expected a {}-mode handshake, got {mode}", Self::MODE)));
+        }
+
         let version = u32::read_le(&mut reader)?;
         let listener_port = u16::read_le(&mut reader)?;
         let address = Address::<N>::read_le(&mut reader)?;

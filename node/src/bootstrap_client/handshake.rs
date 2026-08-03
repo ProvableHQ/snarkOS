@@ -207,6 +207,11 @@ impl<N: Network> BootstrapClient<N> {
         /* Message 1: the peer's cleartext hint, read without deriving anything. */
 
         let pending = PendingSession::accept(stream).await?;
+        // The hint opens with its connection mode, so a payload meant for another subprotocol is
+        // rejected by name instead of misread as this one.
+        //
+        // TODO: the router's handshake still uses the legacy protocol. When it is converted, dispatch
+        // on the mode here and parse the router's hint on the Router-mode arm.
         let hint: HandshakeHint<N> = decode_payload(peer_addr, pending.first_payload()?)?;
 
         // Nothing here is trustworthy yet - message 3 runs it again against the authenticated copy -
