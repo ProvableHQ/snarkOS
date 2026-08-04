@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785833869540,
+  "lastUpdate": 1785873632216,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -15084,6 +15084,72 @@ window.BENCHMARK_DATA = {
             "value": 1.92,
             "unit": "blocks/s",
             "extra": "total_wait=130s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ccfe7bee87a62643eb8c2aa06e98e7a85aca3c92",
+          "message": "Merge pull request #4366 from cbeck88/fix/drop-vestigial-snarkvm-test-devdep\n\nchore(storage-service): drop vestigial snarkvm/test dev-dependency",
+          "timestamp": "2026-08-04T21:32:40+02:00",
+          "tree_id": "e772ae0b2d08b0ac368b67b4aff66e51b5058575",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/ccfe7bee87a62643eb8c2aa06e98e7a85aca3c92"
+        },
+        "date": 1785873631259,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.562734160431267,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=56.05686116218567, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 9656.804232385179,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=8.284314155578613, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3174.553941840014,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.25200390815734863, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.022117,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=148, mean_speed=1.119369, max_speed=2.583333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.38,
+            "unit": "blocks/s",
+            "extra": "total_wait=180s, target_height=250, connect_time=10, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.48,
+            "unit": "blocks/s",
+            "extra": "total_wait=168s, target_height=250"
           }
         ]
       }
