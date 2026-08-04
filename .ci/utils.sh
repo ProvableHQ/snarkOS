@@ -1032,3 +1032,44 @@ function get_block_height {
   echo "$result"
   return 0
 }
+
+# Get the greatest block height reported by any of the given nodes, i.e. the height that
+# the network has reached. Prints an empty string if no node responded.
+#
+# Unlike `get_block_height`, this tolerates individual nodes being unreachable, which makes
+# it suitable for checking that the network is advancing while a node is being restarted.
+function get_network_block_height() {
+  local total_nodes=$1
+  local network_name=$2
+
+  local greatest=""
+  local height
+
+  for ((node_index = 0; node_index < total_nodes; node_index++)); do
+    height=$(get_block_height_by_port $((3030 + node_index)) "$network_name" 5)
+    if (is_integer "$height") && { [[ -z "$greatest" ]] || (( height > greatest )); }; then
+      greatest=$height
+    fi
+  done
+
+  echo "$greatest"
+}
+
+# Get the consensus version that the given comma-separated list of consensus version
+# heights implies for the given block height, i.e. how many of them have been reached.
+function consensus_version_at_height() {
+  local heights=$1
+  local height=$2
+
+  local count=0
+  local entries
+  IFS=',' read -ra entries <<< "$heights"
+
+  for entry in "${entries[@]}"; do
+    if (is_integer "$entry") && (( entry <= height )); then
+      count=$((count + 1))
+    fi
+  done
+
+  echo "$count"
+}
