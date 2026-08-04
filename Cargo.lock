@@ -4926,6 +4926,7 @@ version = "4.9.0"
 dependencies = [
  "aleo-std",
  "anyhow",
+ "bytes",
  "indexmap 2.14.0",
  "locktick",
  "lru 0.16.4",
