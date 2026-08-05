@@ -15,6 +15,7 @@ jobs:
       labels: ubuntu-latest-m
     permissions:
       contents: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -37,23 +38,20 @@ jobs:
       - name: Set up Rust build caching
         uses: Swatinem/rust-cache@v2
 
-      - name: Set up Google Cloud Integration
-        env:
-          GCLOUD_SERVICE_KEY: ${{ secrets.GCLOUD_SERVICE_KEY }}
-        run: |
-          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-          sudo apt-get update
-          sudo apt-get install google-cloud-cli -y
-          echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-key.json
-          gcloud auth activate-service-account --key-file=${HOME}/gcloud-key.json
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.CI_RUNNER_SA }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Fetch Ledger Data
         run: |
-          gcloud config set project protocol-development-sandbox
           # Created with `.ci/generate_ledger.sh 40 250 1`
           # NOTE: This needs to be updated when the consensus version changes.
-          gcloud storage cp gs://ci_testdata/sync-ledger-val40-250-9ec2291c57.zip ledger.zip
+          gcloud storage cp gs://snarkos-ci-testdata/sync-ledger-val40-250-a9fe6c4ec6.zip ledger.zip
           unzip ledger.zip
  
       - name: Install snarkOS (test_network)
