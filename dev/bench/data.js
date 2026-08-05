@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785923583016,
+  "lastUpdate": 1785923790894,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -15414,6 +15414,72 @@ window.BENCHMARK_DATA = {
             "value": 1.59,
             "unit": "blocks/s",
             "extra": "total_wait=157s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e4cb0ef5dd45d2546633dabd32c036374f6273b",
+          "message": "Merge pull request #4335 from thep2p/thep2p/metrics-fix\n\n[Fix] Record confirmed transmission latency regardless of age",
+          "timestamp": "2026-08-05T11:30:51+02:00",
+          "tree_id": "a19dd96bab2211d505b7f81bff2c8496d8a255d3",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7e4cb0ef5dd45d2546633dabd32c036374f6273b"
+        },
+        "date": 1785923789752,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 11.082046297249953,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=43.313300371170044, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 11789.162015832913,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.785893678665161, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3111.3889612671646,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.25711989402770996, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.68,
+            "unit": "blocks/s",
+            "extra": "total_wait=148s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.059071,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=144, mean_speed=1.183102, max_speed=2.583333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.66,
+            "unit": "blocks/s",
+            "extra": "total_wait=150s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.62,
+            "unit": "blocks/s",
+            "extra": "total_wait=154s, target_height=250"
           }
         ]
       }
