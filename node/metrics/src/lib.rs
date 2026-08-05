@@ -160,9 +160,26 @@ pub fn add_transmission_latency_metric<N: Network>(
         .iter()
         .flat_map(|(transmission_id, timestamp)| {
             let elapsed_time = std::time::Duration::from_secs((ts_now - *timestamp) as u64);
+            let transmission_type = match transmission_id {
+                TransmissionID::Solution(solution_id, _) if solution_ids.contains(solution_id) => Some("solution"),
+                TransmissionID::Transaction(transaction_id, _) if transaction_ids.contains(transaction_id) => {
+                    Some("transaction")
+                }
+                // Either a ratification, or the transmission was not included in the block
+                _ => None,
+            };
 
-            if elapsed_time.as_secs() > AGE_THRESHOLD_SECONDS as u64 {
-                // This entry is stale-- remove it from transmission queue and record it as a stale transmission.
+            if let Some(transmission_type_string) = transmission_type {
+                histogram_label(
+                    consensus::TRANSMISSION_LATENCY,
+                    "transmission_type",
+                    transmission_type_string.to_owned(),
+                    elapsed_time.as_secs_f64(),
+                );
+                Some(*transmission_id)
+            } else if elapsed_time.as_secs() > AGE_THRESHOLD_SECONDS as u64 {
+                // A transmission included in this block is confirmed, so record its latency even if it
+                // predates the staleness threshold — confirmation takes precedence over staleness.
                 match transmission_id {
                     TransmissionID::Solution(..) => increment_counter(consensus::STALE_UNCONFIRMED_SOLUTIONS),
                     TransmissionID::Transaction(..) => increment_counter(consensus::STALE_UNCONFIRMED_TRANSACTIONS),
@@ -170,26 +187,7 @@ pub fn add_transmission_latency_metric<N: Network>(
                 }
                 Some(*transmission_id)
             } else {
-                let transmission_type = match transmission_id {
-                    TransmissionID::Solution(solution_id, _) if solution_ids.contains(solution_id) => Some("solution"),
-                    TransmissionID::Transaction(transaction_id, _) if transaction_ids.contains(transaction_id) => {
-                        Some("transaction")
-                    }
-                    // Either a ratification, or the transmission was not included in the block
-                    _ => None,
-                };
-
-                if let Some(transmission_type_string) = transmission_type {
-                    histogram_label(
-                        consensus::TRANSMISSION_LATENCY,
-                        "transmission_type",
-                        transmission_type_string.to_owned(),
-                        elapsed_time.as_secs_f64(),
-                    );
-                    Some(*transmission_id)
-                } else {
-                    None
-                }
+                None
             }
         })
         .collect::<Vec<_>>();
