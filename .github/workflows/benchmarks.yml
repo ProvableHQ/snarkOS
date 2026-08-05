@@ -12,7 +12,7 @@ jobs:
   benchmark:
     name: Benchmark
     runs-on:
-      labels: ubuntu-latest
+      labels: ubuntu-latest-m
     permissions:
       contents: write
       id-token: write
@@ -53,7 +53,7 @@ jobs:
           # NOTE: This needs to be updated when the consensus version changes.
           gcloud storage cp gs://snarkos-ci-testdata/sync-ledger-val40-250-a9fe6c4ec6.zip ledger.zip
           unzip ledger.zip
-
+ 
       - name: Install snarkOS (test_network)
         run: cargo install --path=. --locked --features=test_network
 
