@@ -54,8 +54,6 @@ pub struct BFTPersistentStorage<N: Network> {
     aborted_transmission_ids: DataMap<TransmissionID<N>, IndexSet<Field<N>>>,
     /// The LRU cache for `transmission ID` to `(transmission, certificate IDs)` entries that are part of the persistent storage.
     cache_transmissions: Mutex<LruCache<TransmissionID<N>, (Transmission<N>, IndexSet<Field<N>>)>>,
-    /// The LRU cache for `aborted transmission ID` to `certificate IDs` entries that are part of the persistent storage.
-    cache_aborted_transmission_ids: Mutex<LruCache<TransmissionID<N>, IndexSet<Field<N>>>>,
     /// The lock that serializes the read-modify-write updates to the certificate-ID sets,
     /// which would otherwise lose updates when run concurrently.
     update_lock: Mutex<()>,
@@ -77,7 +75,6 @@ impl<N: Network> BFTPersistentStorage<N> {
                 MapID::BFT(BFTMap::AbortedTransmissionIDs),
             )?,
             cache_transmissions: Mutex::new(LruCache::new(capacity)),
-            cache_aborted_transmission_ids: Mutex::new(LruCache::new(capacity)),
             update_lock: Mutex::new(()),
         })
     }
@@ -228,16 +225,8 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 }
             };
             // Insert the certificate IDs into the persistent storage.
-            match self.aborted_transmission_ids.insert(aborted_transmission_id, certificate_ids.clone()) {
-                // Insert the certificate IDs into the cache.
-                Ok(()) => {
-                    self.cache_aborted_transmission_ids.lock().put(aborted_transmission_id, certificate_ids);
-                }
-                // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
-                Err(e) => {
-                    error!("Failed to insert aborted transmission ID {aborted_transmission_id} into storage - {e}");
-                    self.cache_aborted_transmission_ids.lock().pop(&aborted_transmission_id);
-                }
+            if let Err(e) = self.aborted_transmission_ids.insert(aborted_transmission_id, certificate_ids) {
+                error!("Failed to insert aborted transmission ID {aborted_transmission_id} into storage - {e}");
             }
         }
     }
@@ -306,24 +295,14 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                                 "Failed to remove aborted transmission ID {transmission_id} (now empty) from storage - {e}"
                             );
                         }
-                        // Remove the aborted transmission ID from the cache.
-                        self.cache_aborted_transmission_ids.lock().pop(transmission_id);
                     }
                     // Otherwise, update the transmission entry.
                     else {
                         // Update the transmission entry.
-                        match self.aborted_transmission_ids.insert(*transmission_id, certificate_ids.clone()) {
-                            // Update the aborted transmission ID in the cache.
-                            Ok(()) => {
-                                self.cache_aborted_transmission_ids.lock().put(*transmission_id, certificate_ids);
-                            }
-                            // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
-                            Err(e) => {
-                                error!(
-                                    "Failed to remove aborted transmission ID {transmission_id} for certificate {certificate_id} from storage - {e}"
-                                );
-                                self.cache_aborted_transmission_ids.lock().pop(transmission_id);
-                            }
+                        if let Err(e) = self.aborted_transmission_ids.insert(*transmission_id, certificate_ids) {
+                            error!(
+                                "Failed to remove aborted transmission ID {transmission_id} for certificate {certificate_id} from storage - {e}"
+                            );
                         }
                     }
                 }
