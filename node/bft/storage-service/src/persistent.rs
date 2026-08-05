@@ -197,12 +197,17 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 }
             };
             // Insert the transmission into persistent storage.
-            if let Err(e) = self.transmissions.insert(transmission_id, (transmission.clone(), certificate_ids.clone()))
-            {
-                error!("Failed to insert transmission {transmission_id} into storage - {e}");
+            match self.transmissions.insert(transmission_id, (transmission.clone(), certificate_ids.clone())) {
+                // Insert the transmission into the cache.
+                Ok(()) => {
+                    self.cache_transmissions.lock().put(transmission_id, (transmission, certificate_ids));
+                }
+                // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
+                Err(e) => {
+                    error!("Failed to insert transmission {transmission_id} into storage - {e}");
+                    self.cache_transmissions.lock().pop(&transmission_id);
+                }
             }
-            // Insert the transmission into the cache.
-            self.cache_transmissions.lock().put(transmission_id, (transmission, certificate_ids));
         }
 
         // Next, handle the aborted transmission IDs.
@@ -223,11 +228,17 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 }
             };
             // Insert the certificate IDs into the persistent storage.
-            if let Err(e) = self.aborted_transmission_ids.insert(aborted_transmission_id, certificate_ids.clone()) {
-                error!("Failed to insert aborted transmission ID {aborted_transmission_id} into storage - {e}");
+            match self.aborted_transmission_ids.insert(aborted_transmission_id, certificate_ids.clone()) {
+                // Insert the certificate IDs into the cache.
+                Ok(()) => {
+                    self.cache_aborted_transmission_ids.lock().put(aborted_transmission_id, certificate_ids);
+                }
+                // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
+                Err(e) => {
+                    error!("Failed to insert aborted transmission ID {aborted_transmission_id} into storage - {e}");
+                    self.cache_aborted_transmission_ids.lock().pop(&aborted_transmission_id);
+                }
             }
-            // Insert the certificate IDs into the cache.
-            self.cache_aborted_transmission_ids.lock().put(aborted_transmission_id, certificate_ids);
         }
     }
 
@@ -258,15 +269,22 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                     // Otherwise, update the transmission entry.
                     else {
                         // Update the transmission entry.
-                        if let Err(e) =
-                            self.transmissions.insert(*transmission_id, (transmission.clone(), certificate_ids.clone()))
+                        match self
+                            .transmissions
+                            .insert(*transmission_id, (transmission.clone(), certificate_ids.clone()))
                         {
-                            error!(
-                                "Failed to remove transmission {transmission_id} for certificate {certificate_id} from storage - {e}"
-                            );
+                            // Update the transmission in the cache.
+                            Ok(()) => {
+                                self.cache_transmissions.lock().put(*transmission_id, (transmission, certificate_ids));
+                            }
+                            // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
+                            Err(e) => {
+                                error!(
+                                    "Failed to remove transmission {transmission_id} for certificate {certificate_id} from storage - {e}"
+                                );
+                                self.cache_transmissions.lock().pop(transmission_id);
+                            }
                         }
-                        // Update the transmission in the cache.
-                        self.cache_transmissions.lock().put(*transmission_id, (transmission, certificate_ids));
                     }
                 }
                 Ok(None) => { /* no-op */ }
@@ -293,13 +311,19 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                     }
                     // Otherwise, update the transmission entry.
                     else {
-                        // Update the aborted transmission ID in the cache.
-                        self.cache_aborted_transmission_ids.lock().put(*transmission_id, certificate_ids.clone());
                         // Update the transmission entry.
-                        if let Err(e) = self.aborted_transmission_ids.insert(*transmission_id, certificate_ids) {
-                            error!(
-                                "Failed to remove aborted transmission ID {transmission_id} for certificate {certificate_id} from storage - {e}"
-                            );
+                        match self.aborted_transmission_ids.insert(*transmission_id, certificate_ids.clone()) {
+                            // Update the aborted transmission ID in the cache.
+                            Ok(()) => {
+                                self.cache_aborted_transmission_ids.lock().put(*transmission_id, certificate_ids);
+                            }
+                            // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
+                            Err(e) => {
+                                error!(
+                                    "Failed to remove aborted transmission ID {transmission_id} for certificate {certificate_id} from storage - {e}"
+                                );
+                                self.cache_aborted_transmission_ids.lock().pop(transmission_id);
+                            }
                         }
                     }
                 }
