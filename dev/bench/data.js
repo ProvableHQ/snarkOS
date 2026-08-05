@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785923444781,
+  "lastUpdate": 1785923583016,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -15348,6 +15348,72 @@ window.BENCHMARK_DATA = {
             "value": 2,
             "unit": "blocks/s",
             "extra": "total_wait=125s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "68a03c69619bf983ffdb13844f74def071e0fa0f",
+          "message": "Merge pull request #4331 from thep2p/thep2p/fix-inbound-message-leakage\n\n[Fix] Prune stale inbound rate-limit cache entries to bound memory growth",
+          "timestamp": "2026-08-05T11:28:24+02:00",
+          "tree_id": "af34e4f5be205e6f17588e58fc49d1a7fd413bb2",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/68a03c69619bf983ffdb13844f74def071e0fa0f"
+        },
+        "date": 1785923582218,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.743024291740847,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=49.26601696014404, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7217.659958678708,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.083924770355225, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2772.832311666504,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2885136604309082, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.85,
+            "unit": "blocks/s",
+            "extra": "total_wait=135s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.349062,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=132, mean_speed=1.201641, max_speed=3.000000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.47,
+            "unit": "blocks/s",
+            "extra": "total_wait=169s, target_height=250, connect_time=10, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.59,
+            "unit": "blocks/s",
+            "extra": "total_wait=157s, target_height=250"
           }
         ]
       }
