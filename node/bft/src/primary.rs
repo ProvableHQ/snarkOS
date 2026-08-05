@@ -1622,21 +1622,31 @@ impl<N: Network> Primary<N> {
     }
 
     /// Checks if the proposed batch is expired, and clears the proposed batch if it has expired.
+    ///
+    /// The proposal is inspected and cleared under a single write lock, so that the proposal which
+    /// is discarded is exactly the one that was found to be expired.
     fn check_proposed_batch_for_expiration(&self) -> Result<()> {
-        // Check if the proposed batch is timed out or stale.
+        // Read the current round before taking the lock below, so that no other lock is acquired
+        // while it is held. The round only ever increases, so reading it early is conservative: at
+        // worst a proposal that just expired is left for the next call to clear.
+        let current_round = self.current_round();
+
+        // Take the proposed batch only if it has expired; taking it leaves the state cleared.
         // A batch being certified is not considered expired.
-        let is_expired = match &*self.proposed_batch.read() {
-            ProposedBatchState::Certifying(proposal) => proposal.round() < self.current_round(),
-            _ => false,
+        let expired = {
+            let mut proposed_batch = self.proposed_batch.write();
+            let is_expired = matches!(
+                &*proposed_batch,
+                ProposedBatchState::Certifying(proposal) if proposal.round() < current_round
+            );
+            is_expired.then(|| std::mem::take(&mut *proposed_batch))
         };
-        // If the batch is expired, clear the proposed batch.
-        if is_expired {
-            // Reset the proposed batch.
-            let old = std::mem::replace(&mut *self.proposed_batch.write(), ProposedBatchState::None);
-            if let ProposedBatchState::Certifying(proposal) = old {
-                debug!("Cleared expired proposal for round {}", proposal.round());
-                self.reinsert_transmissions_into_workers(proposal.into_transmissions())?;
-            }
+
+        // Reinsert the transmissions once the lock above has been released, since this acquires the
+        // workers' locks in turn.
+        if let Some(ProposedBatchState::Certifying(proposal)) = expired {
+            debug!("Cleared expired proposal for round {}", proposal.round());
+            self.reinsert_transmissions_into_workers(proposal.into_transmissions())?;
         }
         Ok(())
     }
@@ -2609,6 +2619,49 @@ mod tests {
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_ok()
         );
+    }
+
+    /// A proposal for the current round is left in place; once the round advances past it, the same
+    /// proposal is cleared and its transmissions are returned to the workers.
+    #[test_log::test(tokio::test)]
+    async fn test_check_proposed_batch_for_expiration() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Advance storage to the round the proposal is made for.
+        let round = 3;
+        let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
+        assert_eq!(primary.current_round(), round);
+
+        // Propose a batch for the current round.
+        let proposal = create_test_proposal(
+            &accounts[0].1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            previous_certificates,
+            now(),
+            1,
+            &mut rng,
+        );
+        let batch_id = proposal.batch_id();
+        let transmission_ids: Vec<_> = proposal.transmissions().keys().copied().collect();
+        assert!(!transmission_ids.is_empty());
+        *primary.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
+
+        // The proposal is for the current round, so it is not expired and must be left alone.
+        primary.check_proposed_batch_for_expiration().unwrap();
+        assert_eq!(primary.proposed_batch.read().as_proposal().unwrap().batch_id(), batch_id);
+
+        // Advance the round past the proposal.
+        primary.storage.increment_to_next_round(round).unwrap();
+        assert!(primary.current_round() > round);
+
+        // The proposal is now stale, so it is cleared and its transmissions go back to the workers.
+        primary.check_proposed_batch_for_expiration().unwrap();
+        assert!(primary.proposed_batch.read().is_none());
+        for transmission_id in transmission_ids {
+            assert!(primary.workers()[0].contains_transmission(transmission_id));
+        }
     }
 
     #[test_log::test(tokio::test)]
