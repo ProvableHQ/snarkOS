@@ -53,10 +53,12 @@ pub struct BFTPersistentStorage<N: Network> {
     /// The map of `aborted transmission ID` to `certificate IDs` entries.
     aborted_transmission_ids: DataMap<TransmissionID<N>, IndexSet<Field<N>>>,
     /// The LRU cache for `transmission ID` to `(transmission, certificate IDs)` entries that are part of the persistent storage.
+    ///
+    /// This mutex also serializes the read-modify-write updates in `insert_transmissions` and
+    /// `remove_transmissions`, which would otherwise lose updates when run concurrently: writers
+    /// hold the guard for the full update. This also guarantees that `get_transmission`'s cache
+    /// probe can never observe a removal that has been applied to storage but not yet to the cache.
     cache_transmissions: Mutex<LruCache<TransmissionID<N>, (Transmission<N>, IndexSet<Field<N>>)>>,
-    /// The lock that serializes the read-modify-write updates to the certificate-ID sets,
-    /// which would otherwise lose updates when run concurrently.
-    update_lock: Mutex<()>,
 }
 
 impl<N: Network> BFTPersistentStorage<N> {
@@ -75,7 +77,6 @@ impl<N: Network> BFTPersistentStorage<N> {
                 MapID::BFT(BFTMap::AbortedTransmissionIDs),
             )?,
             cache_transmissions: Mutex::new(LruCache::new(capacity)),
-            update_lock: Mutex::new(()),
         })
     }
 }
@@ -159,8 +160,10 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         aborted_transmission_ids: HashSet<TransmissionID<N>>,
         mut missing_transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
     ) {
-        // Serialize the read-modify-write updates below against concurrent inserts and removals.
-        let _lock = self.update_lock.lock();
+        // Hold the cache lock for the entire update, to serialize the read-modify-write updates
+        // below against concurrent inserts and removals, and to keep the cache and the persistent
+        // storage consistent with one another from the perspective of concurrent readers.
+        let mut cache = self.cache_transmissions.lock();
 
         // First, handle the non-aborted transmissions.
         'outer: for transmission_id in transmission_ids {
@@ -197,12 +200,12 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
             match self.transmissions.insert(transmission_id, (transmission.clone(), certificate_ids.clone())) {
                 // Insert the transmission into the cache.
                 Ok(()) => {
-                    self.cache_transmissions.lock().put(transmission_id, (transmission, certificate_ids));
+                    cache.put(transmission_id, (transmission, certificate_ids));
                 }
                 // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
                 Err(e) => {
                     error!("Failed to insert transmission {transmission_id} into storage - {e}");
-                    self.cache_transmissions.lock().pop(&transmission_id);
+                    cache.pop(&transmission_id);
                 }
             }
         }
@@ -235,8 +238,10 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
     ///
     /// If the transmission no longer references any certificate IDs, the entry is removed from storage.
     fn remove_transmissions(&self, certificate_id: &Field<N>, transmission_ids: &IndexSet<TransmissionID<N>>) {
-        // Serialize the read-modify-write updates below against concurrent inserts and removals.
-        let _lock = self.update_lock.lock();
+        // Hold the cache lock for the entire update, to serialize the read-modify-write updates
+        // below against concurrent inserts and removals, and to keep the cache and the persistent
+        // storage consistent with one another from the perspective of concurrent readers.
+        let mut cache = self.cache_transmissions.lock();
 
         // If this is the last certificate ID for the transmission ID, remove the transmission.
         for transmission_id in transmission_ids {
@@ -253,7 +258,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                             error!("Failed to remove transmission {transmission_id} (now empty) from storage - {e}");
                         }
                         // Remove the transmission from the cache.
-                        self.cache_transmissions.lock().pop(transmission_id);
+                        cache.pop(transmission_id);
                     }
                     // Otherwise, update the transmission entry.
                     else {
@@ -264,14 +269,14 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                         {
                             // Update the transmission in the cache.
                             Ok(()) => {
-                                self.cache_transmissions.lock().put(*transmission_id, (transmission, certificate_ids));
+                                cache.put(*transmission_id, (transmission, certificate_ids));
                             }
                             // On failure, evict the cache entry, to keep the cache consistent with the persistent storage.
                             Err(e) => {
                                 error!(
                                     "Failed to remove transmission {transmission_id} for certificate {certificate_id} from storage - {e}"
                                 );
-                                self.cache_transmissions.lock().pop(transmission_id);
+                                cache.pop(transmission_id);
                             }
                         }
                     }
@@ -282,6 +287,8 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 }
             }
             // Retrieve the aborted transmission ID entry.
+            // Note: while the cache is not consulted here, the lock is intentionally still held, to
+            // serialize the read-modify-write updates below against concurrent inserts and removals.
             match self.aborted_transmission_ids.get_confirmed(transmission_id) {
                 Ok(Some(entry)) => {
                     let mut certificate_ids = (*entry).clone();
