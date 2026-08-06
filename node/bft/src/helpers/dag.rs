@@ -116,6 +116,10 @@ impl<N: Network> DAG<N> {
             // If a previous certificate existed for the author, log it.
             match previous {
                 None => trace!("Added new certificate for round {round} by author {author} to the DAG"),
+                // Re-inserting the same certificate is a no-op from a consensus perspective.
+                Some(previous) if previous.id() == certificate_id => {
+                    trace!("Certificate for round {round} by author {author} already existed in the DAG");
+                }
                 // A second certificate for one author in a round means the author equivocated. The
                 // DAG keeps whichever arrived last, so validators that saw both may now disagree.
                 Some(previous) => error!(
