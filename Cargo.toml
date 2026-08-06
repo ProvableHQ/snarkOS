@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "de1886036c45e4d5ebc46a16c909a4d275a8dc47"
+rev = "4ccbf530c5f011dfda3a5938a1f47a1d5d897cda"
 #version = "=4.8.1"
 
 [workspace.dependencies.anyhow]
@@ -370,12 +370,8 @@ tikv-jemallocator = "0.6"
 [dependencies.tracing]
 workspace = true
 
-# Pinned to =0.14.0-rc.29 because k256 v0.14.0-rc.8 does not implement the
-# MulVartime/MulByGeneratorVartime traits added in elliptic-curve v0.14.0-rc.31.
-# Adding this as a direct dependency forces cargo to resolve the exact version
-# and prevents automatic upgrades to incompatible RC releases.
 [dependencies.elliptic-curve]
-version = "=0.14.0-rc.29"
+version = "0.14.0"
 default-features = false
 
 # Pinned alongside elliptic-curve to avoid resolving yanked crypto-bigint releases.
