@@ -1334,12 +1334,18 @@ impl<N: Network> Transport<N> for Gateway<N> {
     /// Broadcasts the given event to all connected peers.
     // TODO(ljedrz): the event should be checked for the presence of Data::Object, and
     // serialized in advance if it's there.
-    fn broadcast(&self, event: Event<N>) {
+    fn broadcast(&self, mut event: Event<N>) {
         // Ensure there are connected peers.
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
             let connected_peers = self.connected_peers();
             tokio::spawn(async move {
+                // Serialize the event's payload once, rather than once per recipient.
+                // Each recipient then shares the bytes.
+                if let Err(err) = event.serialize_payload() {
+                    error!("{CONTEXT} Unable to serialize '{}' for broadcast - {err}", event.name());
+                    return;
+                }
                 // Iterate through all connected peers.
                 for peer_ip in connected_peers {
                     // Send the event to the peer.

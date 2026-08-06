@@ -119,9 +119,52 @@ impl<N: Network> From<DisconnectReason> for Event<N> {
     }
 }
 
+/// Replaces the payload with its serialized form, if it is not already serialized.
+fn serialize_payload<T: FromBytes + ToBytes + Send + 'static>(payload: &mut Data<T>) -> Result<()> {
+    if let Data::Object(object) = payload {
+        *payload = Data::Buffer(object.to_bytes_le()?.into());
+    }
+    Ok(())
+}
+
 impl<N: Network> Event<N> {
     /// The version of the event protocol; it can be incremented in order to force users to update.
     pub const VERSION: u32 = 10;
+
+    /// Serializes the event's [`Data`] payload, if it holds one that is not already serialized.
+    ///
+    /// [`Data`] defers serialization until the event is written to a stream, so an event that is
+    /// cloned for several peers is serialized once per peer, separately, inside each connection's
+    /// writer task. Calling this beforehand performs the serialization once; every clone then
+    /// shares the resulting buffer, and each writer only has to copy it to the wire.
+    ///
+    /// This is worth doing before a broadcast and pointless before a single send. It is a no-op
+    /// for events that carry no payload, or whose payload is already serialized.
+    pub fn serialize_payload(&mut self) -> Result<()> {
+        match self {
+            Self::BatchPropose(event) => serialize_payload(&mut event.batch_header),
+            Self::BatchCertified(event) => serialize_payload(&mut event.certificate),
+            Self::PrimaryPing(event) => serialize_payload(&mut event.primary_certificate),
+            Self::BlockResponse(event) => serialize_payload(&mut event.blocks),
+            Self::ChallengeResponse(event) => serialize_payload(&mut event.signature),
+            Self::TransmissionResponse(event) => match &mut event.transmission {
+                Transmission::Solution(solution) => serialize_payload(solution),
+                Transmission::Transaction(transaction) => serialize_payload(transaction),
+                Transmission::Ratification => Ok(()),
+            },
+            // The remaining events carry no `Data` payload.
+            Self::BatchSignature(_)
+            | Self::BlockRequest(_)
+            | Self::CertificateRequest(_)
+            | Self::CertificateResponse(_)
+            | Self::ChallengeRequest(_)
+            | Self::Disconnect(_)
+            | Self::TransmissionRequest(_)
+            | Self::ValidatorsRequest(_)
+            | Self::ValidatorsResponse(_)
+            | Self::WorkerPing(_) => Ok(()),
+        }
+    }
 
     /// Returns the event name.
     #[inline]
@@ -357,5 +400,34 @@ pub mod prop_tests {
         let deserialized: Event<CurrentNetwork> = Event::read_le(&*buf).unwrap();
         assert_eq!(original.id(), deserialized.id());
         assert_eq!(original.name(), deserialized.name());
+    }
+
+    /// Serializing the payload ahead of time must be invisible on the wire, otherwise doing it
+    /// before a broadcast would change what peers receive.
+    #[proptest]
+    fn serialize_payload_preserves_the_encoding(#[strategy(any_event())] original: Event<CurrentNetwork>) {
+        let mut expected = Vec::new();
+        Event::write_le(&original, &mut expected).unwrap();
+
+        let mut event = original.clone();
+        event.serialize_payload().unwrap();
+
+        let mut actual = Vec::new();
+        Event::write_le(&event, &mut actual).unwrap();
+
+        assert_eq!(expected, actual, "{} encoded differently once its payload was serialized", original.name());
+    }
+
+    /// Serializing the payload must be idempotent, so that broadcasting an event that has already
+    /// been serialized does not deserialize and re-serialize it.
+    #[proptest]
+    fn serialize_payload_is_idempotent(#[strategy(any_event())] original: Event<CurrentNetwork>) {
+        let mut once = original.clone();
+        once.serialize_payload().unwrap();
+
+        let mut twice = once.clone();
+        twice.serialize_payload().unwrap();
+
+        assert_eq!(once, twice);
     }
 }
