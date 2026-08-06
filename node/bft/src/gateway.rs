@@ -18,6 +18,7 @@ use crate::helpers::Telemetry;
 use crate::{
     CONTEXT,
     MAX_BATCH_DELAY,
+    MAX_FETCH_TIMEOUT,
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
@@ -103,6 +104,35 @@ use tokio_util::codec::Framed;
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 /// The maximum interval of requests to cache.
 const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
+
+/// The number of consensus rounds of traffic that a per-connection message queue must absorb.
+///
+/// A message that has not made it onto (or off of) the wire within `MAX_FETCH_TIMEOUT` is already
+/// useless to the peer: a requester has given up on it by then (see
+/// `Worker::send_transmission_request`), and any consensus event it carried is stale. Sizing the
+/// per-connection queues to this window therefore bounds them to the traffic that can still be
+/// delivered in time, rather than to the entire garbage-collection window (`MAX_GC_ROUNDS`, which
+/// is ~100 rounds, i.e. several minutes of traffic).
+const QUEUE_WINDOW_ROUNDS: usize = (MAX_FETCH_TIMEOUT.as_millis() / MAX_BATCH_DELAY.as_millis()) as usize;
+
+/// Computes the depth of the per-connection inbound and outbound message queues.
+///
+/// These queues are transient send/receive buffers, not backlogs: they only need to hold the
+/// traffic a peer can legitimately exchange with us over `QUEUE_WINDOW_ROUNDS` (see above).
+/// Per round, the worst case is every certificate in the round plus every transmission each of
+/// those certificates contains — that is, a peer that is missing an entire round and fetches all
+/// of it from us. The leading factor of 2 is headroom for the remaining, far smaller, event
+/// traffic (batch proposals and signatures, primary and worker pings, block and validator
+/// requests) and for requests that straddle a round boundary.
+///
+/// Note that each slot can hold a full `Transmission`, so this value is a direct multiplier on the
+/// heap a single peer can pin. It must stay small enough that `depth * max transmission size` is
+/// survivable on a commodity validator.
+fn per_connection_queue_depth<N: Network>() -> usize {
+    2 * QUEUE_WINDOW_ROUNDS
+        * N::LATEST_MAX_CERTIFICATES() as usize
+        * (BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH + 1)
+}
 
 /// The maximum number of connection attempts in an interval.
 #[cfg(not(test))]
@@ -1353,12 +1383,11 @@ impl<N: Network> Reading for Gateway<N> {
         Ok(())
     }
 
-    /// Computes the depth of per-connection queues used to process inbound messages, sufficient to process the maximum expected load at any givent moment.
+    /// Computes the depth of per-connection queues used to process inbound messages, sufficient to process the maximum expected load at any given moment.
     /// The greater it is, the more inbound messages the node can enqueue, but a too large value can make the node more susceptible to DoS attacks.
+    /// See [`per_connection_queue_depth`] for the derivation.
     fn message_queue_depth(&self) -> usize {
-        2 * BatchHeader::<N>::MAX_GC_ROUNDS
-            * N::LATEST_MAX_CERTIFICATES() as usize
-            * BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH
+        per_connection_queue_depth::<N>()
     }
 }
 
@@ -1373,13 +1402,12 @@ impl<N: Network> Writing for Gateway<N> {
         Default::default()
     }
 
-    /// Computes the depth of per-connection queues used to send outbound messages, sufficient to process the maximum expected load at any givent moment.
-    /// The greater it is, the more outbound messages the node can enqueue. A too large value large value might obscure potential issues with your implementation
-    /// (like slow serialization) or network.
+    /// Computes the depth of per-connection queues used to send outbound messages, sufficient to process the maximum expected load at any given moment.
+    /// The greater it is, the more outbound messages the node can enqueue. A too large value might obscure potential issues with your implementation
+    /// (like slow serialization) or network, and lets a peer that stops reading its socket pin an unreasonable amount of our heap.
+    /// See [`per_connection_queue_depth`] for the derivation.
     fn message_queue_depth(&self) -> usize {
-        2 * BatchHeader::<N>::MAX_GC_ROUNDS
-            * N::LATEST_MAX_CERTIFICATES() as usize
-            * BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH
+        per_connection_queue_depth::<N>()
     }
 }
 
@@ -1846,6 +1874,31 @@ mod prop_tests {
     use test_strategy::proptest;
 
     type CurrentNetwork = MainnetV0;
+
+    /// The per-connection queues are sized from the fetch-timeout window, not the GC window.
+    ///
+    /// Each slot can hold a full `Transmission`, so the depth is a direct multiplier on the heap a
+    /// single peer can pin by not reading its socket. Pin the derivation so a regression is loud.
+    #[test]
+    fn test_per_connection_queue_depth() {
+        use crate::gateway::{QUEUE_WINDOW_ROUNDS, per_connection_queue_depth};
+        use snarkvm::console::network::Network;
+
+        // The window is `MAX_FETCH_TIMEOUT` expressed in rounds.
+        assert_eq!(QUEUE_WINDOW_ROUNDS, 3);
+
+        let certificates = CurrentNetwork::LATEST_MAX_CERTIFICATES() as usize;
+        let transmissions = BatchHeader::<CurrentNetwork>::MAX_TRANSMISSIONS_PER_BATCH;
+        let depth = per_connection_queue_depth::<CurrentNetwork>();
+
+        assert_eq!(depth, 2 * QUEUE_WINDOW_ROUNDS * certificates * (transmissions + 1));
+
+        // It must cover a peer fetching every transmission of every certificate for the window...
+        assert!(depth >= QUEUE_WINDOW_ROUNDS * certificates * transmissions);
+        // ...but stay far below the old `MAX_GC_ROUNDS`-derived depth, which let one peer pin
+        // 400,000 transmissions.
+        assert!(depth < 2 * BatchHeader::<CurrentNetwork>::MAX_GC_ROUNDS * certificates * transmissions / 8);
+    }
 
     impl Debug for Gateway<CurrentNetwork> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
