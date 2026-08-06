@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "4.8.1"
+version = "4.9.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -106,7 +106,7 @@ workspace = true
 version = "7.4.0"
 
 [dependencies.self_update]
-version = "0.44"
+version = "1.0.0-rc.6"
 features = [ "archive-zip", "compression-zip-deflate" ]
 
 [dependencies.serde]

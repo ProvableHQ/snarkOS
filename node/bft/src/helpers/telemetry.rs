@@ -18,7 +18,7 @@ use snarkvm::{
         committee::Committee,
         narwhal::{BatchCertificate, BatchHeader, Subdag},
     },
-    prelude::{Address, Field, Network, cfg_chunks, cfg_iter},
+    prelude::{Address, Field, Network, cfg_iter},
 };
 
 use indexmap::{IndexMap, IndexSet};
@@ -46,7 +46,39 @@ use std::{collections::BTreeMap, sync::Arc};
 ///     Combined Score: The weighted score using the certificate and signature scores
 type ParticipationScores = (f64, f64, f64);
 
+/// The metadata of a certificate that the telemetry tracker keeps track of.
+///
+/// This is derived before acquiring any of the tracker's locks, so that the (relatively expensive)
+/// recovery of the signer addresses can be done in parallel without holding a lock.
+struct CertificateMetadata<N: Network> {
+    /// The round of the certificate.
+    round: u64,
+    /// The ID of the certificate.
+    id: Field<N>,
+    /// The author of the certificate.
+    author: Address<N>,
+    /// The author of the certificate, followed by the address of each of its signers.
+    signers: Vec<Address<N>>,
+}
+
+impl<N: Network> CertificateMetadata<N> {
+    fn new(certificate: &BatchCertificate<N>) -> Self {
+        let author = certificate.author();
+        let signers = [author]
+            .into_iter()
+            .chain(certificate.signatures().map(|signature| signature.to_address()))
+            .collect::<Vec<_>>();
+
+        Self { round: certificate.round(), id: certificate.id(), author, signers }
+    }
+}
+
 /// Tracker for the participation metrics of validators.
+///
+/// Note: none of the locks below may be acquired inside a parallel iterator, and none of them may
+/// be held while running one. The rayon thread pool has a fixed number of workers, so a parallel
+/// iterator that blocks on one of these locks can occupy every worker, which in turn prevents the
+/// lock holder's own parallel iterator from ever being scheduled.
 #[derive(Clone, Debug)]
 pub struct Telemetry<N: Network> {
     /// The certificates seen for each round
@@ -110,13 +142,14 @@ impl<N: Network> Telemetry<N> {
         let next_gc_round = subdag.anchor_round().saturating_sub(BatchHeader::<N>::MAX_GC_ROUNDS as u64);
         self.garbage_collect_certificates(next_gc_round);
 
-        // Insert the subdag certificates.
-        cfg_iter!(subdag).for_each(|(_round, certificates)| {
-            cfg_iter!(certificates).for_each(|certificate| {
-                // TODO (raychu86): Can be greatly optimized by doing a one-shot update instead of individual certificates.
-                self.insert_certificate(certificate);
-            })
-        });
+        // Derive the metadata of each certificate in parallel, before acquiring any lock.
+        // Recovering the address of a signer is expensive, so this is the bulk of the work here.
+        let certificates: Vec<_> = subdag.values().flatten().collect();
+        let metadata: Vec<_> =
+            cfg_iter!(certificates).map(|certificate| CertificateMetadata::new(certificate)).collect();
+
+        // Insert the subdag certificates in a single pass.
+        self.insert_certificate_metadata(&metadata);
 
         // Calculate the participation scores.
         self.update_participation_scores();
@@ -124,42 +157,35 @@ impl<N: Network> Telemetry<N> {
 
     /// Insert a certificate to the telemetry tracker.
     pub fn insert_certificate(&self, certificate: &BatchCertificate<N>) {
-        // Acquire the lock for `tracked_certificates`.
+        self.insert_certificate_metadata(&[CertificateMetadata::new(certificate)]);
+    }
+
+    /// Insert the metadata of the given certificates to the telemetry tracker.
+    fn insert_certificate_metadata(&self, metadata: &[CertificateMetadata<N>]) {
+        // Acquire the locks, in the same order as in `garbage_collect_certificates`.
         let mut tracked_certificates = self.tracked_certificates.write();
-
-        // Retrieve the certificate round, author, and ID.
-        let certificate_round = certificate.round();
-        let certificate_author = certificate.author();
-        let certificate_id = certificate.id();
-
-        // If the certificate already exists in the tracker, then return early.
-        if tracked_certificates.get(&certificate_round).is_some_and(|certs| certs.contains(&certificate_id)) {
-            return;
-        }
-
-        // Insert the certificate ID.
-        tracked_certificates.entry(certificate_round).or_default().insert(certificate_id);
-
-        // Acquire the lock for `validator_signatures`
         let mut validator_signatures = self.validator_signatures.write();
-
-        // Insert the certificate author and signers.
-        for address in
-            [certificate_author].into_iter().chain(certificate.signatures().map(|signature| signature.to_address()))
-        {
-            validator_signatures
-                .entry(address)
-                .or_default()
-                .entry(certificate_round)
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
-        }
-
-        // Acquire the lock for `validator_certificates`.
         let mut validator_certificates = self.validator_certificates.write();
 
-        // Insert the certificate
-        validator_certificates.entry(certificate_author).or_default().insert(certificate_round);
+        for metadata in metadata {
+            // If the certificate already exists in the tracker, then skip it.
+            if !tracked_certificates.entry(metadata.round).or_default().insert(metadata.id) {
+                continue;
+            }
+
+            // Insert the certificate author and signers.
+            for address in &metadata.signers {
+                validator_signatures
+                    .entry(*address)
+                    .or_default()
+                    .entry(metadata.round)
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+            }
+
+            // Insert the certificate
+            validator_certificates.entry(metadata.author).or_default().insert(metadata.round);
+        }
     }
 
     /// Calculate and update the participation scores for each validator.
@@ -175,6 +201,7 @@ impl<N: Network> Telemetry<N> {
         }
 
         // Fetch the certificates and signatures.
+        // Note: the work below is intentionally serial, as it is done while holding these locks.
         let tracked_certificates = self.tracked_certificates.read();
         let validator_signatures = self.validator_signatures.read();
         let validator_certificates = self.validator_certificates.read();
@@ -183,7 +210,8 @@ impl<N: Network> Telemetry<N> {
         let total_certificates = validator_certificates.values().map(|rounds| rounds.len()).sum::<usize>();
 
         // Calculate the signature participation scores for each validator.
-        let signature_participation_scores: IndexMap<_, _> = cfg_iter!(&*validator_signatures)
+        let signature_participation_scores: IndexMap<_, _> = validator_signatures
+            .iter()
             .map(|(address, signatures)| {
                 let total_signatures = signatures.values().sum::<u32>() as f64;
                 let score = total_signatures / total_certificates as f64 * 100.0;
@@ -194,10 +222,12 @@ impl<N: Network> Telemetry<N> {
         // Calculate the certificate participation scores for each validator.
         // This score is based on how many certificates the validator has included in every two rounds.
         let tracked_rounds: Vec<_> = tracked_certificates.keys().skip_while(|r| *r % 2 == 0).copied().collect();
-        let certificate_participation_scores: IndexMap<_, _> = cfg_iter!(&*validator_certificates)
+        let certificate_participation_scores: IndexMap<_, _> = validator_certificates
+            .iter()
             .map(|(address, certificate_rounds)| {
                 // Count the number of round pairs that are included in the certificate rounds.
-                let num_included_round_pairs = cfg_chunks!(&tracked_rounds, 2)
+                let num_included_round_pairs = tracked_rounds
+                    .chunks(2)
                     .filter(|chunk| chunk.iter().any(|r| certificate_rounds.contains(r)))
                     .count();
                 // Calculate the number of round pairs.
@@ -218,6 +248,9 @@ impl<N: Network> Telemetry<N> {
             let combined_score = weighted_score(certificate_score, signature_score);
             new_participation_scores.insert(address, (certificate_score, signature_score, combined_score));
         }
+
+        // Release the locks before updating the participation scores.
+        drop((tracked_certificates, validator_signatures, validator_certificates));
 
         // Update the participation scores.
         *self.participation_scores.write() = new_participation_scores;
@@ -287,6 +320,32 @@ mod tests {
             telemetry.insert_certificate(certificate);
         }
         assert_eq!(telemetry.tracked_certificates.read().get(&current_round).unwrap().len(), certificates.len());
+    }
+
+    #[test]
+    fn test_insert_duplicate_certificate() {
+        let rng = &mut TestRng::default();
+
+        // Initialize the telemetry tracker.
+        let telemetry = Telemetry::<CurrentNetwork>::new();
+
+        // Set the current round.
+        let current_round = 2;
+
+        // Sample a certificate.
+        let certificate = sample_batch_certificate_for_round(current_round, rng);
+
+        // Insert the certificate, and snapshot the tracked signatures.
+        telemetry.insert_certificate(&certificate);
+        let validator_signatures = telemetry.validator_signatures.read().clone();
+
+        // Insert the same certificate again.
+        telemetry.insert_certificate(&certificate);
+
+        // Ensure the certificate and its signatures were only counted once.
+        assert_eq!(telemetry.tracked_certificates.read().get(&current_round).unwrap().len(), 1);
+        assert_eq!(*telemetry.validator_signatures.read(), validator_signatures);
+        assert_eq!(telemetry.validator_certificates.read().get(&certificate.author()).unwrap().len(), 1);
     }
 
     #[test]

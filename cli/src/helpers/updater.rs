@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use colored::Colorize;
-use self_update::{Status, backends::github, version::bump_is_greater};
+use self_update::{UpdateConfig, VersionStatus, backends::github, version::bump_is_greater};
 use std::fmt::Write;
 
 pub struct Updater;
@@ -34,13 +34,13 @@ impl Updater {
 
         let mut output = "List of available versions\n".to_string();
         for release in releases {
-            let _ = writeln!(output, "  * {}", release.version);
+            let _ = writeln!(output, "  * {}", release.version());
         }
         Ok(output)
     }
 
     /// Update `snarkOS` to the specified release.
-    pub fn update_to_release(show_output: bool, version: Option<String>) -> Result<Status, UpdaterError> {
+    pub fn update_to_release(show_output: bool, version: Option<String>) -> Result<VersionStatus, UpdaterError> {
         let mut update_builder = github::Update::configure();
 
         update_builder
@@ -54,7 +54,7 @@ impl Updater {
 
         let status = match version {
             None => update_builder.build()?.update()?,
-            Some(v) => update_builder.target_version_tag(&v).build()?.update()?,
+            Some(v) => update_builder.release_tag(&v).build()?.update()?,
         };
 
         Ok(status)
@@ -69,13 +69,16 @@ impl Updater {
             .current_version(env!("SNARKOS_VERSION"))
             .build()?;
 
-        let current_version = updater.current_version();
-        let latest_release = updater.get_latest_release()?;
+        let current_version = updater.current_version().to_string();
+        let latest_releases = updater.get_latest_release()?;
+        let latest_release = latest_releases
+            .latest()
+            .ok_or_else(|| UpdaterError::Crate("self_update", "no releases found".to_string()))?;
 
-        if bump_is_greater(&current_version, &latest_release.version)? {
-            Ok(latest_release.version)
+        if bump_is_greater(&current_version, latest_release.version())? {
+            Ok(latest_release.version().to_string())
         } else {
-            Err(UpdaterError::OldReleaseVersion(current_version, latest_release.version))
+            Err(UpdaterError::OldReleaseVersion(current_version, latest_release.version().to_string()))
         }
     }
 

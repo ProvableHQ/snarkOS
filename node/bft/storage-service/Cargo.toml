@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft-storage-service"
-version = "4.8.1"
+version = "4.9.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A storage service for the memory pool in a decentralized operating system"
 homepage = "https://aleo.org"
@@ -52,7 +52,3 @@ features = [ "ledger", "console", "rocks" ]
 [dependencies.tracing]
 workspace = true
 optional = true
-
-[dev-dependencies.snarkvm]
-workspace = true
-features = [ "test" ]

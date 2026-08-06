@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node"
-version = "4.8.1"
+version = "4.9.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -33,6 +33,7 @@ locktick = [
   "snarkvm/locktick"
 ]
 metrics = [
+  "dep:snarkos-node-metrics",
   "snarkos-node-bft/metrics",
   "snarkos-node-consensus/metrics",
   "snarkos-node-router/metrics",
@@ -120,6 +121,10 @@ workspace = true
 
 [dependencies.snarkos-node-consensus]
 workspace = true
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-network]
 workspace = true
