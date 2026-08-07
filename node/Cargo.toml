@@ -37,7 +37,9 @@ metrics = [
   "snarkos-node-bft/metrics",
   "snarkos-node-consensus/metrics",
   "snarkos-node-router/metrics",
-  "snarkos-node-tcp/metrics"
+  "snarkos-node-tcp/metrics",
+  "snarkvm/metrics",
+  "snarkvm/rocks"
 ]
 history = [ "snarkos-node-rest/history", "snarkvm/history" ]
 history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]

@@ -62,6 +62,10 @@ const CHECKPOINT_BLOCK_FREQUENCY: u32 = 1000;
 /// The maximum number of automatic database checkpoints kept at any time.
 const MAX_AUTO_CHECKPOINTS: usize = 5;
 
+/// How often to publish RocksDB internal metrics to Prometheus.
+#[cfg(feature = "metrics")]
+const ROCKSDB_METRICS_INTERVAL: Duration = Duration::from_secs(15);
+
 fn existing_startup_checkpoint_height(auto_checkpoint_path: &Path, startup_height: u32) -> Option<u32> {
     let mut checkpoint_path = auto_checkpoint_path.to_path_buf();
     checkpoint_path.push(format!("checkpoint_{startup_height}"));
@@ -370,12 +374,20 @@ impl<N: Network> Node<N> {
             let mut existing_checkpoints = Vec::with_capacity(MAX_AUTO_CHECKPOINTS + 1);
             let mut block_tree_path = aleo_ledger_dir(N::ID, ledger.vm().block_store().storage_mode());
             block_tree_path.push("block_tree");
+            #[cfg(feature = "metrics")]
+            let mut last_rocksdb_metrics_export = tokio::time::Instant::now();
 
             loop {
                 // A small delay that's smaller than block time. There are technically situations when
                 // blocks can be inserted one after the other more quickly (syncing, multiple blocks in
                 // a Subdag), those are edge cases unlikely to be encountered under normal conditions.
                 tokio::time::sleep(Duration::from_millis(500)).await;
+
+                #[cfg(feature = "metrics")]
+                if last_rocksdb_metrics_export.elapsed() >= ROCKSDB_METRICS_INTERVAL {
+                    ledger.vm().block_store().export_rocksdb_metrics();
+                    last_rocksdb_metrics_export = tokio::time::Instant::now();
+                }
 
                 // Skip if we've already created a checkpoint during this run, and the
                 // number of blocks baked since then is lower than the configured threshold.
