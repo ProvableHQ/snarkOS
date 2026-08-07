@@ -22,6 +22,17 @@ use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 use tracing::*;
 
 /// The maximum size of an event that can be transmitted during the handshake.
+///
+/// This is sixteen times the 65535-byte ceiling the Noise specification puts on a single message, and
+/// it is the largest buffer an unauthenticated peer can make a node commit to: `LengthDelimitedCodec`
+/// reserves whatever length a frame's header declares as soon as it reads the header, so a peer that
+/// declares a megabyte and then sends a single byte holds a megabyte for the whole handshake timeout.
+///
+/// It is only still reachable because the gateway continues to accept the legacy handshake. The Noise
+/// handshake frames its messages at `MAX_NOISE_MSG_LEN` - the specification's 65535 - and reads the
+/// first of them before deriving any keys, so on that path the figure is already 64 KiB. Retiring the
+/// legacy handshake leaves `EventCodec::handshake` without callers, at which point it and this
+/// constant should go with it: that is what turns the 16x reduction into the only limit there is.
 const MAX_HANDSHAKE_SIZE: usize = 1024 * 1024; // 1 MiB
 /// The maximum size of an event that can be transmitted in the network.
 const MAX_EVENT_SIZE: usize = 256 * 1024 * 1024; // 256 MiB
@@ -53,13 +64,17 @@ impl<N: Network> Encoder<Event<N>> for EventCodec<N> {
     type Error = std::io::Error;
 
     fn encode(&mut self, event: Event<N>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // Serialize the payload directly into dst.
+        // Serialize the payload directly into dst, but only claim back what was appended here: dst
+        // may already hold frames that have not been written out yet - which is what happens when a
+        // sink is fed several events before being flushed - and folding those into this event's frame
+        // would produce a single frame that no decoder can make sense of.
+        let buffered = dst.len();
         event
             .write_le(&mut dst.writer())
             // This error should never happen, the conversion is for greater compatibility.
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"))?;
 
-        let serialized_event = dst.split_to(dst.len()).freeze();
+        let serialized_event = dst.split_off(buffered).freeze();
 
         self.codec.encode(serialized_event, dst)
     }
@@ -108,5 +123,25 @@ mod tests {
     #[proptest]
     fn event_roundtrip(#[strategy(any_event())] event: Event<CurrentNetwork>) {
         assert_roundtrip(event)
+    }
+
+    #[proptest]
+    fn events_encoded_into_a_shared_buffer_stay_separate(
+        #[strategy(any_event())] first: Event<CurrentNetwork>,
+        #[strategy(any_event())] second: Event<CurrentNetwork>,
+    ) {
+        // Encoding into a buffer that already holds a frame is what a sink does when it is fed
+        // several events before being flushed; each one must remain a frame of its own.
+        let mut codec: EventCodec<CurrentNetwork> = Default::default();
+        let mut buffer = BytesMut::new();
+
+        codec.encode(first.clone(), &mut buffer).unwrap();
+        codec.encode(second.clone(), &mut buffer).unwrap();
+
+        for expected in [first, second] {
+            let decoded = codec.decode(&mut buffer).unwrap().unwrap();
+            assert_eq!(decoded.to_bytes_le().unwrap(), expected.to_bytes_le().unwrap());
+        }
+        assert!(buffer.is_empty());
     }
 }
