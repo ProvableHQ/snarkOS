@@ -60,6 +60,14 @@ where
     /// to the underlying stream before the connection is considered dead.
     const TIMEOUT: Duration = Duration::from_secs(5);
 
+    /// The number of consecutive write timeouts tolerated before the connection is torn down.
+    ///
+    /// A peer that has accepted nothing for `MAX_CONSECUTIVE_TIMEOUTS * TIMEOUT` is not slow, it
+    /// is not reading at all (e.g. it has advertised a zero TCP window). Tearing the connection
+    /// down is what releases its outbound queue; without this, such a peer pins every frame
+    /// queued for it, for as long as it keeps the socket open.
+    const MAX_CONSECUTIVE_TIMEOUTS: usize = 3;
+
     /// The type of the outbound messages; unless their serialization is expensive and the message
     /// is broadcasted (in which case it would get serialized multiple times), serialization should
     /// be done in the implementation of [`Self::Codec`].
@@ -239,9 +247,13 @@ impl<W: Writing> WritingInternal for W {
             // disconnect automatically regardless of how this task concludes
             let _conn_cleanup = DisconnectOnDrop::new(node.clone(), addr, DisconnectOrigin::Writing);
 
+            // The number of write timeouts seen in a row; reset by any successful write.
+            let mut consecutive_timeouts = 0;
+
             while let Some(wrapped_msg) = outbound_message_receiver.recv().await {
                 match self_clone.write_to_stream(wrapped_msg.frame, &mut writer).await {
                     Ok(len) => {
+                        consecutive_timeouts = 0;
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
                         // node.known_peers().register_sent_message(addr.ip(), len);
                         node.stats().register_sent_message(len);
@@ -250,7 +262,22 @@ impl<W: Writing> WritingInternal for W {
                     Err(e) => {
                         node.known_peers().register_failure(addr.ip());
                         error!(parent: &conn_span, "couldn't send a message: {e}");
-                        let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
+                        let mut is_fatal = node.config().fatal_io_errors.contains(&e.kind());
+                        // A peer that repeatedly fails to accept a write is not draining its
+                        // socket. Tear the connection down so its outbound queue is released,
+                        // rather than looping here indefinitely.
+                        if e.kind() == io::ErrorKind::TimedOut {
+                            consecutive_timeouts += 1;
+                            if consecutive_timeouts >= W::MAX_CONSECUTIVE_TIMEOUTS {
+                                warn!(
+                                    parent: &conn_span,
+                                    "peer failed to accept {consecutive_timeouts} consecutive writes; disconnecting",
+                                );
+                                is_fatal = true;
+                            }
+                        } else {
+                            consecutive_timeouts = 0;
+                        }
                         let _ = wrapped_msg.delivery_notification.send(Err(e));
                         if is_fatal {
                             break;
@@ -304,5 +331,127 @@ struct SenderCleanup {
 impl Drop for SenderCleanup {
     fn drop(&mut self) {
         self.senders.write().remove(&self.addr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Config, Tcp, protocols::Reading};
+
+    use bytes::Bytes;
+    use std::net::{IpAddr, Ipv4Addr};
+    use tokio::time::Instant;
+    use tokio_util::codec::BytesCodec;
+
+    /// Binds to localhost, so that connecting two test nodes is not seen as a self-connect.
+    fn test_config() -> Config {
+        Config { listener_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), ..Default::default() }
+    }
+
+    /// A node whose write timeouts are short enough to keep the tests fast.
+    #[derive(Clone)]
+    struct TestNode(Tcp);
+
+    impl P2P for TestNode {
+        fn tcp(&self) -> &Tcp {
+            &self.0
+        }
+    }
+
+    #[async_trait]
+    impl Writing for TestNode {
+        type Codec = BytesCodec;
+        type Message = Bytes;
+
+        const MAX_CONSECUTIVE_TIMEOUTS: usize = 2;
+        const TIMEOUT: Duration = Duration::from_millis(200);
+
+        fn codec(&self) -> Self::Codec {
+            Default::default()
+        }
+    }
+
+    #[async_trait]
+    impl Reading for TestNode {
+        type Codec = BytesCodec;
+        type Message = bytes::BytesMut;
+
+        fn codec(&self, _addr: SocketAddr, _side: crate::ConnectionSide) -> Self::Codec {
+            Default::default()
+        }
+
+        async fn process_message(&self, _source: SocketAddr, _message: Self::Message) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Queues enough data to exceed the kernel's send and receive buffers, so that a peer which is
+    /// not reading its socket stalls the writer.
+    fn flood(sender: &TestNode, peer_addr: SocketAddr) {
+        let msg = Bytes::from(vec![0u8; 1024 * 1024]);
+        for _ in 0..64 {
+            if sender.unicast(peer_addr, msg.clone()).is_err() {
+                break;
+            }
+        }
+    }
+
+    async fn wait_for_disconnect(sender: &TestNode, peer_addr: SocketAddr, within: Duration) -> bool {
+        let deadline = Instant::now() + within;
+        while Instant::now() < deadline {
+            if !sender.tcp().is_connected(peer_addr) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    /// A peer that never reads its socket must be disconnected, so that the memory held by its
+    /// outbound queue is released instead of being pinned for as long as it keeps the socket open.
+    #[tokio::test]
+    async fn writer_disconnects_a_peer_that_never_reads() {
+        let sender = TestNode(Tcp::new(test_config()));
+        sender.tcp().enable_listener().await.unwrap();
+        sender.enable_writing().await;
+
+        // The receiver accepts the connection but never enables `Reading`, so nothing drains its
+        // socket; this is the in-process analogue of a peer advertising a zero TCP window.
+        let receiver = Tcp::new(test_config());
+        let receiver_ip = receiver.enable_listener().await.unwrap();
+
+        sender.tcp().connect(receiver_ip).await.unwrap();
+        let peer_addr = *sender.tcp().connected_addrs().first().unwrap();
+
+        flood(&sender, peer_addr);
+
+        assert!(
+            wait_for_disconnect(&sender, peer_addr, Duration::from_secs(10)).await,
+            "the writer never tore down a peer that stopped reading",
+        );
+    }
+
+    /// The control: a peer that does read must not be disconnected by the same flood, so the test
+    /// above cannot pass merely because the flood itself breaks the connection.
+    #[tokio::test]
+    async fn writer_keeps_a_peer_that_reads() {
+        let sender = TestNode(Tcp::new(test_config()));
+        sender.tcp().enable_listener().await.unwrap();
+        sender.enable_writing().await;
+
+        let receiver = TestNode(Tcp::new(test_config()));
+        let receiver_ip = receiver.tcp().enable_listener().await.unwrap();
+        receiver.enable_reading().await;
+
+        sender.tcp().connect(receiver_ip).await.unwrap();
+        let peer_addr = *sender.tcp().connected_addrs().first().unwrap();
+
+        flood(&sender, peer_addr);
+
+        assert!(
+            !wait_for_disconnect(&sender, peer_addr, Duration::from_secs(3)).await,
+            "the writer tore down a peer that was reading normally",
+        );
     }
 }
