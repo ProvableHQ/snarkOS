@@ -1822,6 +1822,13 @@ impl<N: Network> Gateway<N> {
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
     ) -> Result<PeerInfo<N>, ConnectError> {
+        // Note who answered here last time, before the pool entry becomes a connecting one and stops
+        // carrying it.
+        let expected_address = match self.peer_pool.read().get(&peer_addr) {
+            Some(Peer::Candidate(peer)) => peer.last_known_aleo_addr,
+            _ => None,
+        };
+
         // Introduce the peer into the peer pool.
         self.add_connecting_peer(peer_addr)?;
 
@@ -1850,6 +1857,16 @@ impl<N: Network> Gateway<N> {
         // Check the peer over before signing anything for it.
         if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, restrictions_id) {
             return Err(reason.into_connect_error(peer_addr));
+        }
+
+        // A validator is expected to keep its Aleo address and change its listening address rather
+        // than the other way around (the peer pool is pruned on that assumption), so a mismatch here
+        // is not a peer that has legitimately moved.
+        if let Some(expected) = expected_address
+            && peer_info.address != expected
+        {
+            warn!("{CONTEXT} Dropping '{peer_addr}': expected validator {expected}, got {}", peer_info.address);
+            return Err(DisconnectReason::InvalidChallengeResponse.into_connect_error(peer_addr));
         }
 
         /* Message 3: disclose ourselves and prove that we own the Aleo address we claim. */
@@ -1915,7 +1932,8 @@ impl<N: Network> Gateway<N> {
         /* Message 1: the peer's cleartext hint. Everything it claims is re-checked in message 3. */
 
         // The first message is read without deriving any keys, so that everything below costs the
-        // responder nothing but lookups until it has decided the peer is worth talking to.
+        // responder no more than parsing and lookups until it has decided the peer is worth talking
+        // to.
         let pending = PendingSession::accept(stream).await?;
         let hint: HandshakeHint<N> = decode_payload(peer_addr, pending.first_payload()?)?;
         let listener_addr = SocketAddr::new(peer_addr.ip(), hint.listener_port);

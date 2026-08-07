@@ -100,8 +100,8 @@ const DH_LEN: usize = 32;
 ///
 /// That message is `e`: the initiator's ephemeral public key followed by the payload, neither of
 /// them encrypted, since no key has been established yet. The payload can therefore be read - though
-/// emphatically not trusted - before any elliptic curve operation is performed, which is what lets a
-/// responder turn a peer away for free; see [`PendingSession`].
+/// emphatically not trusted - before any key is derived, which is what lets a responder turn a peer
+/// away cheaply; see [`PendingSession`].
 ///
 /// A unit test pins this against a message the pattern actually produced, so that a change to
 /// [`NOISE_PARAMS`] cannot invalidate it silently.
@@ -274,9 +274,9 @@ enum SessionState {
 ///
 /// This exists so that a responder can act on the initiator's cleartext payload *before* deriving
 /// any keys. Everything up to [`PendingSession::into_session`] is reading and parsing, so a peer that
-/// is going to be turned away - one that is not an authorized validator, say - costs no elliptic
-/// curve operations at all. Under a distributed flood of connection attempts, that is the difference
-/// between paying for five scalar multiplications per rejected peer and paying for none.
+/// is going to be turned away - one that is not an authorized validator, say - costs no scalar
+/// multiplications. Under a distributed flood of connection attempts, that is the difference between
+/// paying for five of them per rejected peer and paying for none.
 pub struct PendingSession<S> {
     stream: S,
     first_message: Vec<u8>,
