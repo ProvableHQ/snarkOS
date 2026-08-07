@@ -24,6 +24,7 @@ use crate::{
     helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
+use bytes::Bytes;
 use smol_str::SmolStr;
 use snarkos_account::Account;
 use snarkos_node_bft_events::{
@@ -117,6 +118,31 @@ const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
 
 /// The amount of time an IP address is prohibited from connecting.
 const IP_BAN_TIME_IN_SECS: u64 = 300;
+
+/// Which of a peer's outbound budgets an event is charged against.
+///
+/// This is derived from the event before it is serialized, because serializing consumes the event
+/// and the resulting frame no longer says what kind of event it holds.
+#[derive(Clone, Copy)]
+enum OutboundLimit {
+    /// Certificate requests and responses.
+    Certificate,
+    /// Transmission requests and responses.
+    Transmission,
+    /// Everything else, charged against the peer's general event budget.
+    Event,
+}
+
+impl OutboundLimit {
+    /// Returns the budget the given event is charged against.
+    fn of<N: Network>(event: &Event<N>) -> Self {
+        match event {
+            Event::CertificateRequest(_) | Event::CertificateResponse(_) => Self::Certificate,
+            Event::TransmissionRequest(_) | Event::TransmissionResponse(_) => Self::Transmission,
+            _ => Self::Event,
+        }
+    }
+}
 
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
@@ -510,22 +536,58 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Sends the given event to specified peer.
+    /// Waits until the peer's outbound rate limit permits another event, recording this one.
+    ///
+    /// This is separate from serializing and queueing the event so that an event going to several
+    /// peers can be serialized once, while each peer is still rate limited individually.
+    async fn await_outbound_capacity(&self, peer_ip: SocketAddr, limit: OutboundLimit) {
+        match limit {
+            OutboundLimit::Certificate => {
+                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
+                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
+                // Rate limit the number of certificate requests sent to the peer.
+                while self.cache.insert_outbound_certificate(peer_ip, CACHE_REQUESTS_INTERVAL)
+                    > self.max_cache_certificates()
+                {
+                    // Sleep for a short period of time to allow the cache to clear.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            OutboundLimit::Transmission => {
+                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
+                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
+                // Rate limit the number of transmission requests sent to the peer.
+                while self.cache.insert_outbound_transmission(peer_ip, CACHE_REQUESTS_INTERVAL)
+                    > self.max_cache_transmissions()
+                {
+                    // Sleep for a short period of time to allow the cache to clear.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            OutboundLimit::Event => {
+                // Rate limit against the peer's general event budget.
+                while self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL) > self.max_cache_events() {
+                    // Sleep for a short period of time to allow the cache to clear.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    /// Queues the given serialized event for delivery to the specified peer.
     ///
     /// This function returns as soon as the event is queued to be sent,
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
-    fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
+    fn send_inner(&self, peer_ip: SocketAddr, name: &str, frame: Bytes) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
         let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
             warn!("Unable to resolve the listener IP address '{peer_ip}'");
             return None;
         };
-        // Retrieve the event name.
-        let name = event.name();
         // Send the event to the peer.
         trace!("{CONTEXT} Sending '{name}' to '{peer_ip}'");
-        let result = self.unicast(peer_addr, event);
+        let result = self.unicast_inner(peer_addr, frame);
         // If the event was unable to be sent, disconnect.
         if let Err(err) = &result {
             warn!("{CONTEXT} Failed to send '{name}' to '{peer_ip}': {err:?}");
@@ -1262,58 +1324,52 @@ impl<N: Network> Transport<N> for Gateway<N> {
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
     async fn send(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
-        macro_rules! send {
-            ($self:ident, $cache_map:ident, $interval:expr, $freq:ident) => {{
-                // Rate limit the number of certificate requests sent to the peer.
-                while $self.cache.$cache_map(peer_ip, $interval) > $self.$freq() {
-                    // Sleep for a short period of time to allow the cache to clear.
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                // Send the event to the peer.
-                $self.send_inner(peer_ip, event)
-            }};
+        // Insert an outbound block request so we can match it to the response.
+        if let Event::BlockRequest(request) = &event {
+            self.cache.insert_outbound_block_request(peer_ip, *request);
         }
-
-        // Increment the cache for certificate, transmission and block events.
-        match event {
-            Event::CertificateRequest(_) | Event::CertificateResponse(_) => {
-                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
-                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
-                // Send the event to the peer.
-                send!(self, insert_outbound_certificate, CACHE_REQUESTS_INTERVAL, max_cache_certificates)
+        // Note what the event is before serializing it, which consumes it.
+        let limit = OutboundLimit::of(&event);
+        let name = event.name();
+        // Serialize the event.
+        let frame = match self.encode(event) {
+            Ok(frame) => frame,
+            Err(err) => {
+                warn!("{CONTEXT} Unable to serialize '{name}' for '{peer_ip}' - {err}");
+                return None;
             }
-            Event::TransmissionRequest(_) | Event::TransmissionResponse(_) => {
-                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
-                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
-                // Send the event to the peer.
-                send!(self, insert_outbound_transmission, CACHE_REQUESTS_INTERVAL, max_cache_transmissions)
-            }
-            Event::BlockRequest(request) => {
-                // Insert the outbound request so we can match it to responses.
-                self.cache.insert_outbound_block_request(peer_ip, request);
-                // Send the event to the peer and update the outbound event cache, use the general rate limit.
-                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
-            }
-            _ => {
-                // Send the event to the peer, use the general rate limit.
-                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
-            }
-        }
+        };
+        // Wait for the peer's rate limit to permit it, then queue it.
+        self.await_outbound_capacity(peer_ip, limit).await;
+        self.send_inner(peer_ip, &name, frame)
     }
 
     /// Broadcasts the given event to all connected peers.
-    // TODO(ljedrz): the event should be checked for the presence of Data::Object, and
-    // serialized in advance if it's there.
     fn broadcast(&self, event: Event<N>) {
         // Ensure there are connected peers.
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
             let connected_peers = self.connected_peers();
             tokio::spawn(async move {
+                // Note what the event is before serializing it, which consumes it.
+                let limit = OutboundLimit::of(&event);
+                let name = event.name();
+                // Serialize the event once; every peer is then sent the same bytes. Serializing
+                // per peer instead would repeat the whole cost for each recipient, which for an
+                // event carrying a certificate means walking every field element again.
+                let frame = match self_.encode(event) {
+                    Ok(frame) => frame,
+                    Err(err) => {
+                        warn!("{CONTEXT} Unable to serialize '{name}' for broadcast - {err}");
+                        return;
+                    }
+                };
                 // Iterate through all connected peers.
                 for peer_ip in connected_peers {
+                    // Each peer is still rate limited individually.
+                    self_.await_outbound_capacity(peer_ip, limit).await;
                     // Send the event to the peer.
-                    let _ = Transport::send(&self_, peer_ip, event.clone()).await;
+                    let _ = self_.send_inner(peer_ip, &name, frame.clone());
                 }
             });
         }
