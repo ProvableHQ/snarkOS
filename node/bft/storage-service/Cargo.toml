@@ -52,3 +52,6 @@ features = [ "ledger", "console", "rocks" ]
 [dependencies.tracing]
 workspace = true
 optional = true
+
+[dev-dependencies.bytes]
+workspace = true
