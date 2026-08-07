@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "4c5509f089a49a01c66c166b8abfd9e54161fd7e"
+rev = "79949e163437d61c4f4b2ee577bd709e5263d921"
 #version = "=4.9.0"
 default-features = false
 
@@ -168,6 +168,9 @@ version = "0.13"
 
 [workspace.dependencies.smol_str]
 version = "=0.3.2" # Update after Rust >1.88
+
+[workspace.dependencies.snow]
+version = "0.10"
 
 [workspace.dependencies.tracing]
 version = "0.1"

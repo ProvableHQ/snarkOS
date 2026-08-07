@@ -14,10 +14,10 @@
 // limitations under the License.
 
 use crate::NodeType;
-use snarkvm::prelude::{Address, Network};
+use snarkvm::prelude::{Address, FromBytes, Network, ToBytes, error};
 use tracing::*;
 
-use std::{fmt, net::SocketAddr, time::Instant};
+use std::{fmt, io, net::SocketAddr, time::Instant};
 
 /// A peer of any connection status.
 #[derive(Clone, Debug)]
@@ -86,10 +86,37 @@ pub struct ConnectedPeer<N: Network> {
 }
 
 /// Indicates whether a peer is connected via the Gateway or the Router.
+///
+/// The mode is serialized as the first thing a Noise handshake's first message carries, because a
+/// node accepting more than one subprotocol on a single listener - the bootstrap clients take both
+/// the gateway's and the router's connections - has to know which payload it is looking at before it
+/// can parse it. The marker preceding the pattern cannot say, being shared, and neither can the node
+/// type, since a validator connects in both modes at once.
+///
+/// It is unauthenticated there, but does not need to be trusted: each subprotocol signs under its
+/// own binding domain, so a peer that claims one mode and then speaks another fails signature
+/// verification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ConnectionMode {
-    Gateway,
-    Router,
+    Gateway = 0,
+    Router = 1,
+}
+
+impl ToBytes for ConnectionMode {
+    fn write_le<W: io::Write>(&self, writer: W) -> io::Result<()> {
+        (*self as u8).write_le(writer)
+    }
+}
+
+impl FromBytes for ConnectionMode {
+    fn read_le<R: io::Read>(reader: R) -> io::Result<Self> {
+        match u8::read_le(reader)? {
+            0 => Ok(Self::Gateway),
+            1 => Ok(Self::Router),
+            x => Err(error(format!("Invalid connection mode: expected 0..=1, got {x}."))),
+        }
+    }
 }
 
 impl fmt::Display for ConnectionMode {

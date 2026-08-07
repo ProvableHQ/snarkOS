@@ -138,6 +138,11 @@ impl<N: Network> Node<N> {
             }
         }
 
+        #[cfg(feature = "metrics")]
+        if let Some(handle) = node.spawn_rocksdb_metrics_polling() {
+            validator.handles.lock().push(handle);
+        }
+
         Ok(node)
     }
 
@@ -210,6 +215,11 @@ impl<N: Network> Node<N> {
             if let Some(handle) = node.perform_auto_checkpoints(path)? {
                 client.handles.lock().push(handle);
             }
+        }
+
+        #[cfg(feature = "metrics")]
+        if let Some(handle) = node.spawn_rocksdb_metrics_polling() {
+            client.handles.lock().push(handle);
         }
 
         Ok(node)
@@ -347,6 +357,19 @@ impl<N: Network> Node<N> {
         }
     }
 
+    /// Spawns a background task that periodically publishes RocksDB internal metrics.
+    #[cfg(feature = "metrics")]
+    pub fn spawn_rocksdb_metrics_polling(&self) -> Option<task::JoinHandle<()>> {
+        let ledger = self.ledger()?.clone();
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(ROCKSDB_METRICS_INTERVAL);
+            loop {
+                interval.tick().await;
+                ledger.vm().block_store().export_rocksdb_metrics();
+            }
+        }))
+    }
+
     /// Periodically creates automated ledger checkpoints.
     pub fn perform_auto_checkpoints(&self, auto_checkpoint_path: PathBuf) -> Result<Option<task::JoinHandle<()>>> {
         // Only perform checkpoints if there's a database involved.
@@ -374,20 +397,12 @@ impl<N: Network> Node<N> {
             let mut existing_checkpoints = Vec::with_capacity(MAX_AUTO_CHECKPOINTS + 1);
             let mut block_tree_path = aleo_ledger_dir(N::ID, ledger.vm().block_store().storage_mode());
             block_tree_path.push("block_tree");
-            #[cfg(feature = "metrics")]
-            let mut last_rocksdb_metrics_export = tokio::time::Instant::now();
 
             loop {
                 // A small delay that's smaller than block time. There are technically situations when
                 // blocks can be inserted one after the other more quickly (syncing, multiple blocks in
                 // a Subdag), those are edge cases unlikely to be encountered under normal conditions.
                 tokio::time::sleep(Duration::from_millis(500)).await;
-
-                #[cfg(feature = "metrics")]
-                if last_rocksdb_metrics_export.elapsed() >= ROCKSDB_METRICS_INTERVAL {
-                    ledger.vm().block_store().export_rocksdb_metrics();
-                    last_rocksdb_metrics_export = tokio::time::Instant::now();
-                }
 
                 // Skip if we've already created a checkpoint during this run, and the
                 // number of blocks baked since then is lower than the configured threshold.
