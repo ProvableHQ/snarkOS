@@ -25,14 +25,13 @@ use snarkos_node_router::{
     messages::{Message, MessageCodec},
 };
 use snarkos_node_tcp::{
-    ConnectionSide,
     P2P,
     protocols::{Handshake, OnConnect, Writing},
 };
 use snarkvm::prelude::{MainnetV0 as Network, TestRng};
 
 use async_trait::async_trait;
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 use tokio::time::sleep;
 
 #[derive(Clone)]
@@ -51,7 +50,7 @@ impl Writing for HeartbeatTest {
     type Codec = MessageCodec<Network>;
     type Message = Message<Network>;
 
-    fn codec(&self, _addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
+    fn codec(&self) -> Self::Codec {
         Default::default()
     }
 }

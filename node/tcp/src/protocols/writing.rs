@@ -13,27 +13,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{any::Any, collections::HashMap, io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, io, net::SocketAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures_util::sink::SinkExt;
+use bytes::{Bytes, BytesMut};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::RwLock;
 use tokio::{
-    io::AsyncWrite,
+    io::{AsyncWrite, AsyncWriteExt},
     sync::{mpsc, oneshot},
     time::timeout,
 };
-use tokio_util::codec::{Encoder, FramedWrite};
+use tokio_util::codec::Encoder;
 use tracing::*;
 
 #[cfg(doc)]
 use crate::{Config, Tcp, protocols::Handshake};
 use crate::{
     Connection,
-    ConnectionSide,
     P2P,
     connections::{DisconnectOrigin, create_connection_span},
     protocols::{DisconnectOnDrop, Protocol, ProtocolHandler, ReturnableConnection},
@@ -100,9 +99,20 @@ where
         assert!(self.tcp().protocols.writing.set(hdl).is_ok(), "the Writing protocol was enabled more than once!");
     }
 
-    /// Creates an [`Encoder`] used to write the outbound messages to the target stream.
-    /// The `side` param indicates the connection side **from the node's perspective**.
-    fn codec(&self, addr: SocketAddr, side: ConnectionSide) -> Self::Codec;
+    /// Creates an [`Encoder`] used to serialize outbound messages.
+    fn codec(&self) -> Self::Codec;
+
+    /// Serializes a message into a frame, ready to be handed to [`Self::unicast`].
+    ///
+    /// This is deliberately separate from queueing. Serializing a message is not free -- for
+    /// those carrying certificates or signatures it involves field arithmetic to canonicalize
+    /// curve points -- so the cost belongs at the point where the caller decides to pay it, not
+    /// hidden inside a send. Serialize once, then hand the same frame to as many peers as needed.
+    fn encode(&self, message: Self::Message) -> io::Result<Bytes> {
+        let mut frame = BytesMut::new();
+        self.codec().encode(message, &mut frame)?;
+        Ok(frame.freeze())
+    }
 
     /// Sends the provided message to the specified [`SocketAddr`]. Returns as soon as the message is queued to
     /// be sent, without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
@@ -115,11 +125,23 @@ where
     /// - [`io::ErrorKind::Other`] if the outbound message queue for this address is full
     /// - [`io::ErrorKind::Unsupported`] if [`Writing::enable_writing`] hadn't been called yet
     fn unicast(&self, addr: SocketAddr, message: Self::Message) -> io::Result<oneshot::Receiver<io::Result<()>>> {
+        self.unicast_inner(addr, self.encode(message)?)
+    }
+
+    /// Queues an already-serialized frame for delivery to the specified [`SocketAddr`].
+    ///
+    /// This exists so that a message being sent to several peers can be serialized once and the
+    /// resulting frame handed to each of them, rather than serialized per recipient.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Self::unicast`], minus the serialization.
+    fn unicast_inner(&self, addr: SocketAddr, frame: Bytes) -> io::Result<oneshot::Receiver<io::Result<()>>> {
         // access the protocol handler
         if let Some(handler) = self.tcp().protocols.writing.get() {
             // find the message sender for the given address
             if let Some(sender) = handler.senders.read().get(&addr).cloned() {
-                let (msg, delivery) = WrappedMessage::new(Box::new(message));
+                let (msg, delivery) = WrappedMessage::new(frame);
                 sender
                     .try_send(msg)
                     .map_err(|e| {
@@ -145,38 +167,23 @@ where
     /// # Errors
     ///
     /// Returns [`io::ErrorKind::Unsupported`] if [`Writing::enable_writing`] hadn't been called yet.
-    fn broadcast(&self, message: Self::Message) -> io::Result<()>
-    where
-        Self::Message: Clone,
-    {
-        // access the protocol handler
-        if let Some(handler) = self.tcp().protocols.writing.get() {
-            let senders = handler.senders.read().clone();
-            for (addr, message_sender) in senders {
-                let (msg, _delivery) = WrappedMessage::new(Box::new(message.clone()));
-                let _ = message_sender.try_send(msg).map_err(|e| {
-                    let conn_span = create_connection_span(addr, self.tcp().span());
-                    error!(parent: conn_span, "can't send a message: {e}");
-                    self.tcp().stats().register_failure();
-                });
-            }
+    fn broadcast(&self, message: Self::Message) -> io::Result<()> {
+        // Serialize the message once; every peer is then sent the same bytes.
+        let frame = self.encode(message)?;
 
-            Ok(())
-        } else {
-            Err(io::ErrorKind::Unsupported.into())
+        for addr in self.tcp().connected_addrs() {
+            let _ = self.unicast_inner(addr, frame.clone());
         }
+
+        Ok(())
     }
 }
 
 /// This trait is used to restrict access to methods that would otherwise be public in [`Writing`].
 #[async_trait]
 trait WritingInternal: Writing {
-    /// Writes the given message to the network stream and returns the number of written bytes.
-    async fn write_to_stream<W: AsyncWrite + Unpin + Send>(
-        &self,
-        message: Self::Message,
-        writer: &mut FramedWrite<W, Self::Codec>,
-    ) -> Result<usize, <Self::Codec as Encoder<Self::Message>>::Error>;
+    /// Writes the given frame to the network stream and returns the number of written bytes.
+    async fn write_to_stream<W: AsyncWrite + Unpin + Send>(&self, frame: Bytes, writer: &mut W) -> io::Result<usize>;
 
     /// Applies the [`Writing`] protocol to a single connection.
     async fn handle_new_connection(&self, (conn, conn_returner): ReturnableConnection, conn_senders: &WritingSenders);
@@ -184,15 +191,15 @@ trait WritingInternal: Writing {
 
 #[async_trait]
 impl<W: Writing> WritingInternal for W {
-    async fn write_to_stream<A: AsyncWrite + Unpin + Send>(
-        &self,
-        message: Self::Message,
-        writer: &mut FramedWrite<A, Self::Codec>,
-    ) -> Result<usize, <Self::Codec as Encoder<Self::Message>>::Error> {
-        writer.feed(message).await?;
-        let len = writer.write_buffer().len();
-        // Guard against write starvation
-        match timeout(W::TIMEOUT, writer.flush()).await {
+    async fn write_to_stream<A: AsyncWrite + Unpin + Send>(&self, frame: Bytes, writer: &mut A) -> io::Result<usize> {
+        let len = frame.len();
+        // Guard against write starvation. The whole write is covered, not just the flush: a peer
+        // that has stopped reading blocks the write itself.
+        let write = async {
+            writer.write_all(&frame).await?;
+            writer.flush().await
+        };
+        match timeout(W::TIMEOUT, write).await {
             Ok(Ok(())) => Ok(len),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "write timed out")),
@@ -205,9 +212,7 @@ impl<W: Writing> WritingInternal for W {
         conn_senders: &WritingSenders,
     ) {
         let addr = conn.addr();
-        let codec = self.codec(addr, !conn.side());
-        let writer = conn.writer.take().expect("missing connection writer!");
-        let mut framed = FramedWrite::new(writer, codec);
+        let mut writer = conn.writer.take().expect("missing connection writer!");
 
         let (outbound_message_sender, mut outbound_message_receiver) = mpsc::channel(self.message_queue_depth());
 
@@ -235,9 +240,7 @@ impl<W: Writing> WritingInternal for W {
             let _conn_cleanup = DisconnectOnDrop::new(node.clone(), addr, DisconnectOrigin::Writing);
 
             while let Some(wrapped_msg) = outbound_message_receiver.recv().await {
-                let msg = wrapped_msg.msg.downcast().unwrap();
-
-                match self_clone.write_to_stream(*msg, &mut framed).await {
+                match self_clone.write_to_stream(wrapped_msg.frame, &mut writer).await {
                     Ok(len) => {
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
                         // node.known_peers().register_sent_message(addr.ip(), len);
@@ -266,16 +269,16 @@ impl<W: Writing> WritingInternal for W {
     }
 }
 
-/// Used to queue messages for delivery.
+/// Used to queue frames for delivery.
 struct WrappedMessage {
-    msg: Box<dyn Any + Send>,
+    frame: Bytes,
     delivery_notification: oneshot::Sender<io::Result<()>>,
 }
 
 impl WrappedMessage {
-    fn new(msg: Box<dyn Any + Send>) -> (Self, oneshot::Receiver<io::Result<()>>) {
+    fn new(frame: Bytes) -> (Self, oneshot::Receiver<io::Result<()>>) {
         let (tx, rx) = oneshot::channel();
-        let wrapped_msg = Self { msg, delivery_notification: tx };
+        let wrapped_msg = Self { frame, delivery_notification: tx };
 
         (wrapped_msg, rx)
     }

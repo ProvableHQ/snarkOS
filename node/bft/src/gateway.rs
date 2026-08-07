@@ -1367,9 +1367,7 @@ impl<N: Network> Writing for Gateway<N> {
     type Codec = EventCodec<N>;
     type Message = Event<N>;
 
-    /// Creates an [`Encoder`] used to write the outbound messages to the target stream.
-    /// The `side` parameter indicates the connection side **from the node's perspective**.
-    fn codec(&self, _peer_addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
+    fn codec(&self) -> Self::Codec {
         Default::default()
     }
 

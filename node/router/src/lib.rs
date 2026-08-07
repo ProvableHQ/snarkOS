@@ -60,7 +60,7 @@ use snarkos_node_network::{
     bootstrap_peers,
 };
 use snarkos_node_sync_communication_service::CommunicationService;
-use snarkos_node_tcp::{Config, ConnectionSide, Tcp};
+use snarkos_node_tcp::{Config, Tcp};
 
 use snarkvm::prelude::{Address, Network, PrivateKey, ViewKey};
 
