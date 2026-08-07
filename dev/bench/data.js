@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786025981080,
+  "lastUpdate": 1786088486008,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -15744,6 +15744,72 @@ window.BENCHMARK_DATA = {
             "value": 1.5,
             "unit": "blocks/s",
             "extra": "total_wait=166s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d5f1de3cc92b14a62dcad5d9a93925ccc366f51a",
+          "message": "Merge pull request #4367 from aleo-labs/eran/fix-transmission-storage-race\n\nfix: prevent lost certificate references in the persistent BFT storage",
+          "timestamp": "2026-08-07T09:16:54+02:00",
+          "tree_id": "704c2594cca4d5d61e9ecc48ada274dda7094938",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/d5f1de3cc92b14a62dcad5d9a93925ccc366f51a"
+        },
+        "date": 1786088485192,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 10.047495719985323,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=47.77309823036194, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7098.1008625581335,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.270620346069336, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2807.127069512185,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2849888801574707, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.79,
+            "unit": "blocks/s",
+            "extra": "total_wait=139s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.319221,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=136, mean_speed=1.171324, max_speed=3.066667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.56,
+            "unit": "blocks/s",
+            "extra": "total_wait=160s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=159s, target_height=250"
           }
         ]
       }
