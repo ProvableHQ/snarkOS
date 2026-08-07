@@ -68,6 +68,15 @@ pub fn log_clean_error(storage_mode: &StorageMode) {
     }
 }
 
+/// Logs an error explaining that no connected peer can serve the blocks this node needs, and how to recover.
+pub fn log_stuck_sync_error() {
+    error!(
+        "No connected peer can serve the blocks this node needs — they have likely been pruned network-wide. \
+        Shutting down; on restart, the node will automatically sync the missing blocks from the CDN. \
+        Alternatively, restore a recent ledger snapshot. Nodes running with --nocdn must restore a snapshot."
+    );
+}
+
 /// Starts the notification message loop.
 pub fn start_notification_message_loop() -> tokio::task::JoinHandle<()> {
     // let mut interval = tokio::time::interval(std::time::Duration::from_secs(180));

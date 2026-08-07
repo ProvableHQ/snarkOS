@@ -627,16 +627,21 @@ impl<N: Network> Gateway<N> {
 
                 let self_ = self.clone();
                 let blocks = match task::spawn_blocking(move || {
-                    // Retrieve the blocks within the requested range.
+                    // Retrieve the blocks within the requested range. If any block is unavailable
+                    // (e.g. its authority data was pruned), send an empty block response to
+                    // explicitly signal that this node cannot serve the requested range, rather
+                    // than penalizing the requester.
                     match self_.ledger.get_blocks(start_height..end_height) {
-                        Ok(blocks) => Ok(DataBlocks(blocks)),
-                        Err(error) => bail!("Missing blocks {start_height} to {end_height} from ledger - {error}"),
+                        Ok(blocks) => DataBlocks(blocks),
+                        Err(error) => {
+                            warn!("Cannot serve block request {start_height}..{end_height} from ledger - {error}");
+                            DataBlocks(vec![])
+                        }
                     }
                 })
                 .await
                 {
-                    Ok(Ok(blocks)) => blocks,
-                    Ok(Err(error)) => return Err(error),
+                    Ok(blocks) => blocks,
                     Err(error) => return Err(anyhow!("[BlockRequest] {error}")),
                 };
 

@@ -33,12 +33,12 @@ use snarkos_node_router::{
     Routing,
     messages::{PuzzleResponse, UnconfirmedSolution, UnconfirmedTransaction},
 };
-use snarkos_node_sync::{BlockSync, Ping};
+use snarkos_node_sync::{BlockSync, Ping, STUCK_SYNC_SHUTDOWN_THRESHOLD};
 use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler};
+use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::prelude::{
     Ledger,
@@ -76,6 +76,8 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
+    /// The signal handler, used to shut the node down on fatal errors.
+    signal_handler: Arc<SignalHandler>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
@@ -185,6 +187,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync: sync.clone(),
             ping,
             handles: Default::default(),
+            signal_handler: signal_handler.clone(),
         };
 
         // Perform sync with CDN (if enabled).
@@ -223,6 +226,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         node.start_consensus_handlers().await?;
         // Initialize the routing.
         node.initialize_routing().await;
+        // Initialize the stuck-sync monitor.
+        node.initialize_stuck_sync_monitor();
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
 
@@ -496,6 +501,25 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             }
         });
         Ok(())
+    }
+
+    /// Spawns a task that shuts the node down if the blocks it needs to sync have been
+    /// unservable by every connected peer for too long: on restart, the node will fetch
+    /// the missing range from the CDN.
+    fn initialize_stuck_sync_monitor(&self) {
+        let node = self.clone();
+        self.spawn(async move {
+            while !node.signal_handler.is_stopped() {
+                tokio::time::sleep(STUCK_SYNC_SHUTDOWN_THRESHOLD / 10).await;
+
+                if node.sync.sync_stuck_below_peer_floors().is_some_and(|stuck| stuck >= STUCK_SYNC_SHUTDOWN_THRESHOLD)
+                {
+                    crate::log_stuck_sync_error();
+                    node.signal_handler.stop_with_failure();
+                    break;
+                }
+            }
+        });
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.

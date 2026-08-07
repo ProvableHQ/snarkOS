@@ -31,6 +31,7 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
+    sync::{Arc, Mutex},
 };
 
 use futures_util::{TryStreamExt, sink::SinkExt};
@@ -64,6 +65,7 @@ pub struct TestPeer {
     node: Node,
     node_type: NodeType,
     account: Account<CurrentNetwork>,
+    received_messages: Arc<Mutex<Vec<Message<CurrentNetwork>>>>,
 }
 
 impl Pea2Pea for TestPeer {
@@ -97,6 +99,7 @@ impl TestPeer {
             }),
             node_type,
             account,
+            received_messages: Default::default(),
         };
 
         peer.enable_handshake().await;
@@ -124,6 +127,11 @@ impl TestPeer {
 
     pub fn address(&self) -> Address<CurrentNetwork> {
         self.account.address()
+    }
+
+    /// Returns a copy of the messages received from connected nodes so far.
+    pub fn received_messages(&self) -> Vec<Message<CurrentNetwork>> {
+        self.received_messages.lock().unwrap().clone()
     }
 }
 
@@ -225,7 +233,9 @@ impl Reading for TestPeer {
         Default::default()
     }
 
-    async fn process_message(&self, _peer_ip: SocketAddr, _message: Self::Message) {}
+    async fn process_message(&self, _peer_ip: SocketAddr, message: Self::Message) {
+        self.received_messages.lock().unwrap().push(message);
+    }
 }
 
 impl OnDisconnect for TestPeer {
