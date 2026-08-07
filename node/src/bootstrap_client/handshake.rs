@@ -320,7 +320,7 @@ impl<N: Network> BootstrapClient<N> {
             && !committee.contains(&address)
         {
             warn!("{} Dropping '{peer_addr}' for not being a committee member ({address})", Self::OWNER);
-            return Ok(Some(DisconnectReason::ProtocolViolation));
+            return Ok(Some(DisconnectReason::UnauthorizedValidator));
         }
 
         Ok(None)

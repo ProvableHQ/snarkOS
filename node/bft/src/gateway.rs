@@ -1677,13 +1677,12 @@ async fn send_event<N: Network>(
 
 /// Serializes a handshake payload for transmission inside a Noise message.
 fn encode_payload<T: ToBytes>(payload: &T) -> Result<Vec<u8>, ConnectError> {
-    payload.to_bytes_le().map_err(ConnectError::other)
+    snarkos_node_bft_events::encode_payload(payload)
 }
 
 /// Deserializes a handshake payload received inside a Noise message.
 fn decode_payload<T: FromBytes>(peer_addr: SocketAddr, bytes: &[u8]) -> Result<T, ConnectError> {
-    T::from_bytes_le(bytes)
-        .map_err(|err| ConnectError::other(format!("'{peer_addr}' sent a malformed handshake payload: {err}")))
+    snarkos_node_bft_events::decode_payload(peer_addr, bytes)
 }
 
 /// Verifies a peer's proof that it owns the Aleo address it claims: its signature over the binding
