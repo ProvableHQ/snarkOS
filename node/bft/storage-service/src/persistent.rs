@@ -132,8 +132,19 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         let mut missing_transmissions = HashMap::new();
         // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
         for transmission_id in batch_header.transmission_ids() {
+            // Check only the concrete transmissions map, not the aborted transmission IDs.
+            // `contains_transmission` is also true for aborted IDs, for which storage holds no
+            // retrievable bytes; if the caller provided bytes for a previously-aborted ID, we must
+            // still collect them here so they are persisted and remain retrievable at commit time.
+            let is_stored = match self.transmissions.contains_key_confirmed(transmission_id) {
+                Ok(result) => result,
+                Err(error) => {
+                    error!("Failed to check if transmission ID exists in confirmed storage - {error}");
+                    false
+                }
+            };
             // If the transmission ID does not exist, ensure it was provided by the caller or aborted.
-            if !self.contains_transmission(*transmission_id) {
+            if !is_stored {
                 // Retrieve the transmission.
                 match transmissions.remove(transmission_id) {
                     // Append the transmission if it exists.
