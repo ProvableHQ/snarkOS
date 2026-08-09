@@ -48,7 +48,7 @@ use crate::{
 
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
-use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_bft_ledger_service::{LedgerService, deserialize_transaction_strict};
 #[cfg(test)]
 use snarkos_node_network::ConnectionMode;
 use snarkos_node_network::PeerPoolHandling;
@@ -708,14 +708,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                         }
 
                         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!({
-                            match transaction {
-                                Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(
-                                    &mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64),
-                                )?),
-                            }
-                        })?;
+                        let transaction = spawn_blocking!(deserialize_transaction_strict(transaction))?;
 
                         // Fetch the current block height and consensus version.
                         let current_block_height = self.ledger.latest_block_height();
