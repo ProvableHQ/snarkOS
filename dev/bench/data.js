@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786126585022,
+  "lastUpdate": 1786295890185,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -16008,6 +16008,72 @@ window.BENCHMARK_DATA = {
             "value": 1.61,
             "unit": "blocks/s",
             "extra": "total_wait=155s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "89ea061d809722eaae6d9287acb11296a8741d0e",
+          "message": "Merge pull request #4344 from eranrund/deserialize-reject-extra-bytes\n\nReject trailing bytes in BFT transmission payloads",
+          "timestamp": "2026-08-09T18:55:39+02:00",
+          "tree_id": "832e8eef7ae2504116eca23aacf667711eb7ea8c",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/89ea061d809722eaae6d9287acb11296a8741d0e"
+        },
+        "date": 1786295889546,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 10.729672389358512,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=44.735755443573, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12360.316755100941,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.472326040267944, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 4544.380339449492,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.1760416030883789, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.13,
+            "unit": "blocks/s",
+            "extra": "total_wait=117s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.713646,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=115, mean_speed=1.402029, max_speed=3.483333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.96,
+            "unit": "blocks/s",
+            "extra": "total_wait=127s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.95,
+            "unit": "blocks/s",
+            "extra": "total_wait=128s, target_height=250"
           }
         ]
       }
