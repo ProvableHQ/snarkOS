@@ -36,6 +36,37 @@
 //! [`tokio::sync::watch`] channel. That channel does have an internal lock, but
 //! it is held only long enough to clone an `Arc`, there is exactly one writer,
 //! and no other lock is ever acquired underneath it, so no cycle can form.
+//!
+//! # Eventual consistency under dropped updates
+//!
+//! Because a full queue drops updates, the scores can be temporarily wrong. They
+//! are, however, guaranteed to become correct again, and the reason is a property
+//! of [`TelemetryState`] that must be preserved by anyone changing it:
+//!
+//! **Every piece of tracked state is keyed by round, and garbage collection prunes
+//! by round.** `tracked_certificates` is keyed by round; `validator_signatures`
+//! holds a per-round count for each validator rather than a running total; and
+//! `validator_certificates` holds a set of rounds. So the entire contribution of
+//! any given round can be, and is, removed wholesale by
+//! [`TelemetryState::garbage_collect_certificates`].
+//!
+//! A dropped subdag update means the rounds it covered are never inserted. Once
+//! `gc_round` advances past those rounds, a state that missed them and a state that
+//! saw them contain *exactly the same data*, because the only difference between
+//! them lived in rounds that have since been pruned. Since `gc_round` is derived
+//! from the anchor round of each committed subdag, it advances on its own as
+//! consensus proceeds, so the gap always ages out --- after `MAX_GC_ROUNDS` rounds
+//! beyond the highest dropped round. `test_scores_converge_after_dropped_updates`
+//! pins this down.
+//!
+//! The load-bearing part is the per-round keying. If `validator_signatures` held an
+//! aggregate count instead of a per-round breakdown, a dropped update would leave a
+//! permanent deficit that garbage collection could never repair, and the scores
+//! would be wrong forever. Do not aggregate across rounds in this state machine.
+//!
+//! [`Telemetry::is_complete`] reports whether the currently published scores have
+//! caught up: the handle records the highest round affected by a drop, and the
+//! worker publishes the `gc_round` its scores were computed at.
 
 use snarkvm::{
     ledger::{
@@ -45,6 +76,8 @@ use snarkvm::{
     prelude::{Address, Field, Network, cfg_iter},
 };
 
+use crate::helpers::now;
+
 use indexmap::{IndexMap, IndexSet};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
@@ -52,7 +85,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
     },
 };
 use tokio::sync::{
@@ -85,8 +118,31 @@ const TELEMETRY_QUEUE_CAPACITY: usize = 1024;
 ///     Combined Score: The weighted score using the certificate and signature scores
 type ParticipationScores = (f64, f64, f64);
 
+/// The minimum interval between successive "queue is full" warnings.
+///
+/// A full queue tends to stay full for a while, so warning per dropped update would emit
+/// thousands of identical lines. The running total in [`Telemetry::num_dropped`] is what
+/// makes a rate-limited warning interpretable: no drop goes uncounted, only unlogged.
+const DROPPED_WARNING_INTERVAL_IN_SECS: i64 = 10;
+
 /// A published snapshot of the participation scores for every tracked validator.
-type ScoreSnapshot<N> = Arc<IndexMap<Address<N>, ParticipationScores>>;
+#[derive(Clone, Debug)]
+struct ScoreSnapshot<N: Network> {
+    /// The participation scores as of the last recomputation.
+    scores: IndexMap<Address<N>, ParticipationScores>,
+    /// The garbage collection round the state machine had reached when these scores were
+    /// computed. Used by [`Telemetry::is_complete`] to decide whether dropped updates can
+    /// still be affecting the scores; see the module documentation.
+    gc_round: u64,
+}
+
+impl<N: Network> Default for ScoreSnapshot<N> {
+    /// Note this is written out rather than derived, as `derive(Default)` would require the
+    /// network type itself to implement `Default`.
+    fn default() -> Self {
+        Self { scores: Default::default(), gc_round: 0 }
+    }
+}
 
 /// The metadata of a certificate that the telemetry tracker keeps track of.
 ///
@@ -141,9 +197,16 @@ pub struct Telemetry<N: Network> {
     /// Sends updates to the telemetry worker.
     sender: mpsc::Sender<TelemetryUpdate<N>>,
     /// Receives the latest published participation scores.
-    scores: watch::Receiver<ScoreSnapshot<N>>,
+    scores: watch::Receiver<Arc<ScoreSnapshot<N>>>,
     /// The running total of updates dropped because the queue was full.
     num_dropped: Arc<AtomicU64>,
+    /// The highest round covered by a dropped update, or zero if nothing was dropped.
+    ///
+    /// Once the worker's `gc_round` reaches this, every round a drop could have affected has
+    /// been pruned, and the published scores are correct again. See the module documentation.
+    max_dropped_round: Arc<AtomicU64>,
+    /// The timestamp of the last "queue is full" warning, used to rate limit it.
+    last_dropped_warning: Arc<AtomicI64>,
 }
 
 impl<N: Network> Telemetry<N> {
@@ -154,10 +217,16 @@ impl<N: Network> Telemetry<N> {
     /// tracker does not require an active Tokio runtime.
     pub fn new() -> (Self, TelemetryWorker<N>) {
         let (sender, receiver) = mpsc::channel(TELEMETRY_QUEUE_CAPACITY);
-        let (score_sender, score_receiver) = watch::channel::<ScoreSnapshot<N>>(Default::default());
+        let (score_sender, score_receiver) = watch::channel::<Arc<ScoreSnapshot<N>>>(Default::default());
 
-        let telemetry = Self { sender, scores: score_receiver, num_dropped: Default::default() };
-        let worker = TelemetryWorker { receiver, scores: score_sender, state: TelemetryState::new() };
+        let telemetry = Self {
+            sender,
+            scores: score_receiver,
+            num_dropped: Default::default(),
+            max_dropped_round: Default::default(),
+            last_dropped_warning: Default::default(),
+        };
+        let worker = TelemetryWorker { receiver, scores: score_sender, state: TelemetryState::new(), gc_round: 0 };
 
         (telemetry, worker)
     }
@@ -180,12 +249,17 @@ impl<N: Network> Telemetry<N> {
         // paying in full for a result it immediately discards -- which defeats the purpose,
         // since the load shedding exists to avoid exactly this work when we are behind.
         // Reserving first means a full queue costs nothing beyond the failed reservation.
+        let anchor_round = subdag.anchor_round();
         let Some(permit) = self.reserve() else {
+            // Record the highest round a drop could have affected, so that `is_complete` can
+            // report when the scores have caught back up. A subdag only contains rounds at or
+            // below its anchor, so the anchor round bounds the damage.
+            self.max_dropped_round.fetch_max(anchor_round, Ordering::Relaxed);
             return;
         };
 
         // Determine the round to garbage collect below.
-        let gc_round = subdag.anchor_round().saturating_sub(BatchHeader::<N>::MAX_GC_ROUNDS as u64);
+        let gc_round = anchor_round.saturating_sub(BatchHeader::<N>::MAX_GC_ROUNDS as u64);
 
         // Derive the metadata of each certificate in parallel, now that there is somewhere
         // to put the result. Recovering signer addresses is the bulk of the work here.
@@ -201,6 +275,7 @@ impl<N: Network> Telemetry<N> {
     pub fn insert_certificate(&self, certificate: &BatchCertificate<N>) {
         // Reserve before deriving the metadata, for the reason given in `insert_subdag`.
         let Some(permit) = self.reserve() else {
+            self.max_dropped_round.fetch_max(certificate.round(), Ordering::Relaxed);
             return;
         };
 
@@ -214,9 +289,25 @@ impl<N: Network> Telemetry<N> {
     pub fn get_participation_scores(&self, committee: &Committee<N>) -> IndexMap<Address<N>, (f64, f64)> {
         // Clone the Arc out of the watch channel, then drop the borrow immediately, so that
         // the projection below happens outside of it.
-        let snapshot: ScoreSnapshot<N> = self.scores.borrow().clone();
+        let snapshot: Arc<ScoreSnapshot<N>> = self.scores.borrow().clone();
 
-        scores_for_committee(&snapshot, committee)
+        scores_for_committee(&snapshot.scores, committee)
+    }
+
+    /// Returns `true` if the published scores reflect every update that was produced.
+    ///
+    /// This is `false` only while a dropped update can still be affecting the result. Because
+    /// all tracked state is keyed by round and pruned by round, the scores become correct
+    /// again once garbage collection passes the highest round a drop touched, at which point
+    /// this returns `true` permanently (until the next drop). See the module documentation.
+    pub fn is_complete(&self) -> bool {
+        let max_dropped_round = self.max_dropped_round.load(Ordering::Relaxed);
+        // Nothing has ever been dropped.
+        if max_dropped_round == 0 {
+            return true;
+        }
+        // Every round a drop could have touched has since been garbage collected.
+        self.scores.borrow().gc_round >= max_dropped_round
     }
 
     /// Returns the number of telemetry updates dropped so far because the queue was full.
@@ -246,8 +337,21 @@ impl<N: Network> Telemetry<N> {
         match self.sender.try_reserve() {
             Ok(permit) => Some(permit),
             Err(TrySendError::Full(())) => {
+                // Every drop is counted, even when the warning below is suppressed.
                 let num_dropped = self.num_dropped.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-                warn!("Telemetry queue is full - dropping an update ({num_dropped} dropped in total)");
+
+                // Rate limit the warning itself. Claim the slot with a compare-exchange so that
+                // concurrent callers cannot all log in the same interval.
+                let now = now();
+                let last = self.last_dropped_warning.load(Ordering::Relaxed);
+                if now.saturating_sub(last) >= DROPPED_WARNING_INTERVAL_IN_SECS
+                    && self
+                        .last_dropped_warning
+                        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                        .is_ok()
+                {
+                    warn!("Telemetry queue is full - dropping updates ({num_dropped} dropped in total)");
+                }
                 None
             }
             Err(TrySendError::Closed(())) => {
@@ -268,9 +372,14 @@ pub struct TelemetryWorker<N: Network> {
     /// Receives updates from the BFT path.
     receiver: mpsc::Receiver<TelemetryUpdate<N>>,
     /// Publishes participation score snapshots to readers.
-    scores: watch::Sender<ScoreSnapshot<N>>,
+    scores: watch::Sender<Arc<ScoreSnapshot<N>>>,
     /// The telemetry state machine.
     state: TelemetryState<N>,
+    /// The highest garbage collection round applied so far.
+    ///
+    /// Published alongside the scores so that readers can tell whether a dropped update can
+    /// still be affecting them; see [`Telemetry::is_complete`].
+    gc_round: u64,
 }
 
 impl<N: Network> TelemetryWorker<N> {
@@ -294,6 +403,10 @@ impl<N: Network> TelemetryWorker<N> {
                     TelemetryUpdate::Subdag { gc_round, metadata } => {
                         self.state.garbage_collect_certificates(gc_round);
                         self.state.insert_certificate_metadata(&metadata);
+                        // Track the high-water mark rather than the last value seen. Updates
+                        // are applied in order today, but `is_complete` would silently start
+                        // reporting false negatives if a lower round were ever to follow.
+                        self.gc_round = self.gc_round.max(gc_round);
                         recompute = true;
                     }
                     TelemetryUpdate::Certificate(metadata) => {
@@ -309,7 +422,10 @@ impl<N: Network> TelemetryWorker<N> {
             if recompute {
                 self.state.update_participation_scores();
                 // Note that `send_replace` succeeds even when there are no receivers.
-                self.scores.send_replace(Arc::new(self.state.participation_scores.clone()));
+                self.scores.send_replace(Arc::new(ScoreSnapshot {
+                    scores: self.state.participation_scores.clone(),
+                    gc_round: self.gc_round,
+                }));
             }
 
             for ack in acks {
@@ -327,6 +443,15 @@ impl<N: Network> TelemetryWorker<N> {
 /// This is plain owned data with `&mut self` methods: no locks, no interior mutability,
 /// no async. It is only ever reached through [`TelemetryWorker`], which guarantees
 /// single-threaded access.
+///
+/// # Invariant
+///
+/// Every field below is keyed by round, and none aggregates across rounds. This is what
+/// makes the scores recover from dropped updates: the contribution of any round can be
+/// removed wholesale by [`Self::garbage_collect_certificates`], so a state that missed some
+/// rounds becomes identical to one that saw them as soon as those rounds are pruned.
+/// Introducing a running total here would make dropped updates permanently visible in the
+/// scores. See the module documentation.
 #[derive(Clone, Debug)]
 pub struct TelemetryState<N: Network> {
     /// The certificates seen for each round
@@ -655,6 +780,64 @@ mod tests {
         assert_eq!(state.tracked_certificates.get(&next_round).unwrap().len(), num_new_certificates);
     }
 
+    /// The scores must recover on their own from updates that were dropped by backpressure.
+    ///
+    /// This builds two states from the same certificates: one that saw every round, and one
+    /// that missed a contiguous block of them, standing in for a dropped update. Once garbage
+    /// collection passes the gap, the two must agree exactly -- that is the eventual
+    /// consistency property the module documentation describes.
+    #[test]
+    fn test_scores_converge_after_dropped_updates() {
+        let rng = &mut TestRng::default();
+
+        // The rounds that the "lossy" state will never be told about.
+        const DROPPED_ROUNDS: std::ops::RangeInclusive<u64> = 5..=6;
+
+        // Sample a fixed set of certificates per round, so that both states see the same data.
+        // Note the rounds start at 2, as round 1 may not reference previous certificates.
+        let rounds: Vec<(u64, Vec<_>)> = (2..=21u64)
+            .map(|round| (round, (0..3).map(|_| sample_batch_certificate_for_round(round, rng)).collect()))
+            .collect();
+
+        let mut complete = TelemetryState::<CurrentNetwork>::new();
+        let mut lossy = TelemetryState::<CurrentNetwork>::new();
+
+        for (round, certificates) in &rounds {
+            for certificate in certificates {
+                complete.insert_certificate(certificate);
+                // Simulate the update for these rounds having been dropped on the floor.
+                if !DROPPED_ROUNDS.contains(round) {
+                    lossy.insert_certificate(certificate);
+                }
+            }
+        }
+
+        // While the dropped rounds are still inside the window, the two disagree: `complete`
+        // tracks the validators that authored them and `lossy` has never heard of those rounds.
+        complete.update_participation_scores();
+        lossy.update_participation_scores();
+        assert_ne!(
+            complete.participation_scores(),
+            lossy.participation_scores(),
+            "the states should differ while the dropped rounds are still tracked"
+        );
+
+        // Advance garbage collection past the gap, as consensus does on its own.
+        complete.garbage_collect_certificates(*DROPPED_ROUNDS.end());
+        lossy.garbage_collect_certificates(*DROPPED_ROUNDS.end());
+        complete.update_participation_scores();
+        lossy.update_participation_scores();
+
+        // Every round the drop could have affected has been pruned, so the two states now hold
+        // exactly the same data and must produce exactly the same scores.
+        assert_eq!(
+            complete.participation_scores(),
+            lossy.participation_scores(),
+            "the scores must converge once the dropped rounds are garbage collected"
+        );
+        assert!(!complete.participation_scores().is_empty(), "the test is vacuous if no scores survived");
+    }
+
     /// Exercises the handle -> queue -> worker -> watch plumbing.
     ///
     /// The score calculation itself is covered by the [`TelemetryState`] tests above;
@@ -695,8 +878,9 @@ mod tests {
         }
         telemetry.flush().await.unwrap();
 
-        // Nothing was dropped, and the reads still succeed for every committee member.
+        // Nothing was dropped, so the published scores are complete by definition.
         assert_eq!(telemetry.num_dropped(), 0);
+        assert!(telemetry.is_complete());
         assert_eq!(telemetry.get_participation_scores(&committee).len(), committee.members().len());
 
         // Dropping the last handle stops the worker.
