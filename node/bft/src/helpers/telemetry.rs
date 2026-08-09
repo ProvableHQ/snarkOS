@@ -168,21 +168,43 @@ impl<N: Network> Telemetry<N> {
     /// This never blocks. If the worker is behind, the update is dropped and a warning is
     /// logged; see the module documentation for why that is acceptable here.
     pub fn insert_subdag(&self, subdag: &Subdag<N>) {
+        // Reserve a queue slot BEFORE deriving the metadata. This ordering is deliberate,
+        // and it is the whole point of using `try_reserve` rather than `try_send`.
+        //
+        // Deriving the metadata recovers the address of every signer, and each recovery is
+        // a fixed-base scalar multiplication (~39us measured, per signature). A subdag holds
+        // a committee-sized certificate set with a quorum of signatures each, so a single
+        // call is on the order of tens of milliseconds of CPU.
+        //
+        // `try_send` would take that cost first and only then discover the queue is full,
+        // paying in full for a result it immediately discards -- which defeats the purpose,
+        // since the load shedding exists to avoid exactly this work when we are behind.
+        // Reserving first means a full queue costs nothing beyond the failed reservation.
+        let Some(permit) = self.reserve() else {
+            return;
+        };
+
         // Determine the round to garbage collect below.
         let gc_round = subdag.anchor_round().saturating_sub(BatchHeader::<N>::MAX_GC_ROUNDS as u64);
 
-        // Derive the metadata of each certificate in parallel, before enqueueing the update.
-        // Recovering the address of a signer is expensive, so this is the bulk of the work here.
+        // Derive the metadata of each certificate in parallel, now that there is somewhere
+        // to put the result. Recovering signer addresses is the bulk of the work here.
         let certificates: Vec<_> = subdag.values().flatten().collect();
         let metadata: Vec<_> =
             cfg_iter!(certificates).map(|certificate| CertificateMetadata::new(certificate)).collect();
 
-        self.enqueue(TelemetryUpdate::Subdag { gc_round, metadata });
+        // Sending on a reserved permit cannot fail.
+        permit.send(TelemetryUpdate::Subdag { gc_round, metadata });
     }
 
     /// Insert a certificate into the telemetry tracker.
     pub fn insert_certificate(&self, certificate: &BatchCertificate<N>) {
-        self.enqueue(TelemetryUpdate::Certificate(Box::new(CertificateMetadata::new(certificate))));
+        // Reserve before deriving the metadata, for the reason given in `insert_subdag`.
+        let Some(permit) = self.reserve() else {
+            return;
+        };
+
+        permit.send(TelemetryUpdate::Certificate(Box::new(CertificateMetadata::new(certificate))));
     }
 
     /// Fetch the certificate and signature participation scores for each validator in the committee set.
@@ -216,17 +238,22 @@ impl<N: Network> Telemetry<N> {
         receiver.await.map_err(|_| ())
     }
 
-    /// Enqueues an update for the worker, dropping it if the queue is full.
-    fn enqueue(&self, update: TelemetryUpdate<N>) {
-        match self.sender.try_send(update) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
+    /// Reserves a slot in the telemetry queue, returning `None` if there is no room.
+    ///
+    /// Callers must reserve before doing any work to build the update they intend to send;
+    /// see the comment in [`Self::insert_subdag`] for why the order matters.
+    fn reserve(&self) -> Option<mpsc::Permit<'_, TelemetryUpdate<N>>> {
+        match self.sender.try_reserve() {
+            Ok(permit) => Some(permit),
+            Err(TrySendError::Full(())) => {
                 let num_dropped = self.num_dropped.fetch_add(1, Ordering::Relaxed).saturating_add(1);
                 warn!("Telemetry queue is full - dropping an update ({num_dropped} dropped in total)");
+                None
             }
-            Err(TrySendError::Closed(_)) => {
+            Err(TrySendError::Closed(())) => {
                 // The worker has stopped; this is expected during shutdown.
                 trace!("Telemetry worker is not running - dropping an update");
+                None
             }
         }
     }
