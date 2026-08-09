@@ -14,7 +14,7 @@
 // limitations under the License.
 
 #[cfg(feature = "telemetry")]
-use crate::helpers::Telemetry;
+use crate::helpers::{Telemetry, TelemetryWorker};
 use crate::{
     CONTEXT,
     MAX_BATCH_DELAY,
@@ -198,8 +198,15 @@ pub struct InnerGateway<N: Network> {
     resolver: RwLock<Resolver<N>>,
     /// The collection of both candidate and connected peers.
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
+    /// The handle to the validator telemetry tracker.
     #[cfg(feature = "telemetry")]
     validator_telemetry: Telemetry<N>,
+    /// The telemetry worker, taken and spawned by `run`.
+    ///
+    /// This is a one-shot handoff from `new` to `run`, not a hot-path lock: the telemetry
+    /// state itself lives in the worker task, and is never shared.
+    #[cfg(feature = "telemetry")]
+    telemetry_worker: Mutex<Option<TelemetryWorker<N>>>,
     /// The primary sender.
     primary_sender: OnceCell<PrimarySender<N>>,
     /// The worker senders.
@@ -293,6 +300,10 @@ impl<N: Network> Gateway<N> {
         // some of the cached validators to trusted ones.
         initial_peers.extend(trusted_validators.iter().copied().map(|addr| (addr, Peer::new_candidate(addr, true))));
 
+        // Initialize the validator telemetry. The worker is spawned later, by `run`.
+        #[cfg(feature = "telemetry")]
+        let (validator_telemetry, telemetry_worker) = Telemetry::new();
+
         // Return the gateway.
         Ok(Self(Arc::new(InnerGateway {
             account,
@@ -303,7 +314,9 @@ impl<N: Network> Gateway<N> {
             resolver: Default::default(),
             peer_pool: RwLock::new(initial_peers),
             #[cfg(feature = "telemetry")]
-            validator_telemetry: Default::default(),
+            validator_telemetry,
+            #[cfg(feature = "telemetry")]
+            telemetry_worker: Mutex::new(Some(telemetry_worker)),
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
@@ -335,6 +348,13 @@ impl<N: Network> Gateway<N> {
         // If the sync sender was provided, set the sync sender.
         if let Some(sync_sender) = sync_sender {
             self.sync_sender.set(sync_sender).expect("Sync sender already set in gateway");
+        }
+
+        // Spawn the validator telemetry worker, which owns all telemetry state.
+        // It is registered in `handles`, so `shut_down` aborts it along with everything else.
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry_worker) = self.telemetry_worker.lock().take() {
+            self.spawn(telemetry_worker.run());
         }
 
         // Enable the TCP protocols.
