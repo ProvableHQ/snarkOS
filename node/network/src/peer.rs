@@ -230,6 +230,15 @@ impl<N: Network> Peer<N> {
         }
     }
 
+    /// The number of connection attempts made since this peer was last connected.
+    pub fn failed_connection_attempts(&self) -> u32 {
+        match self {
+            Self::Candidate(peer) => peer.total_connection_attempts,
+            // Both have been reached, so there is nothing outstanding against them.
+            Self::Connecting(_) | Self::Connected(_) => 0,
+        }
+    }
+
     /// Returns `true` if the peer is not connected or connecting.
     pub fn is_candidate(&self) -> bool {
         matches!(self, Peer::Candidate(_))
