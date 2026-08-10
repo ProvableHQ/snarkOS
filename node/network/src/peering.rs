@@ -544,8 +544,10 @@ pub trait PeerPoolHandling<N: Network>: P2P {
                 Ok(())
             }
             Entry::Occupied(mut entry) => match entry.get() {
-                peer @ Peer::Candidate(_) => {
-                    entry.insert(Peer::new_connecting(listener_addr, peer.is_trusted()));
+                // Promote in place rather than replacing the entry, so the candidate's
+                // connection-attempt metadata survives the transition.
+                Peer::Candidate(_) => {
+                    entry.get_mut().promote_to_connecting();
                     Ok(())
                 }
                 Peer::Connecting(_) => Err(ConnectError::AlreadyConnecting { address: listener_addr }),
