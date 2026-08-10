@@ -127,6 +127,49 @@ fn serialize_payload<T: FromBytes + ToBytes + Send + 'static>(payload: &mut Data
     Ok(())
 }
 
+/// Returns `true` if the payload still holds an object that would have to be serialized.
+fn is_payload_unserialized<T: FromBytes + ToBytes + Send + 'static>(payload: &mut Data<T>) -> bool {
+    matches!(payload, Data::Object(_))
+}
+
+/// Applies `$f` to the event's [`Data`] payload, evaluating to `$default` if it carries none.
+///
+/// Both [`Event::serialize_payload`] and [`Event::has_unserialized_payload`] need to know which
+/// variants carry a payload. Routing both through this macro keeps that list in exactly one place,
+/// so a newly added variant cannot be handled by one and silently forgotten by the other.
+macro_rules! with_data_payload {
+    ($event:expr, $f:ident, $default:expr) => {
+        match $event {
+            Self::BatchPropose(event) => $f(&mut event.batch_header),
+            Self::BatchCertified(event) => $f(&mut event.certificate),
+            Self::PrimaryPing(event) => $f(&mut event.primary_certificate),
+            Self::BlockResponse(event) => $f(&mut event.blocks),
+            Self::ChallengeResponse(event) => $f(&mut event.signature),
+            Self::TransmissionResponse(event) => match &mut event.transmission {
+                Transmission::Solution(solution) => $f(solution),
+                Transmission::Transaction(transaction) => $f(transaction),
+                Transmission::Ratification => $default,
+            },
+            // The remaining events carry no `Data` payload.
+            //
+            // Note that `CertificateResponse` is in this list only because its certificate is held
+            // directly rather than behind a `Data`, unlike every other certificate-bearing event.
+            // It is consequently serialized on the writer task and deserialized on the reading
+            // task, and cannot benefit from either of the methods below until that is changed.
+            Self::BatchSignature(_)
+            | Self::BlockRequest(_)
+            | Self::CertificateRequest(_)
+            | Self::CertificateResponse(_)
+            | Self::ChallengeRequest(_)
+            | Self::Disconnect(_)
+            | Self::TransmissionRequest(_)
+            | Self::ValidatorsRequest(_)
+            | Self::ValidatorsResponse(_)
+            | Self::WorkerPing(_) => $default,
+        }
+    };
+}
+
 impl<N: Network> Event<N> {
     /// The version of the event protocol; it can be incremented in order to force users to update.
     pub const VERSION: u32 = 10;
@@ -138,32 +181,32 @@ impl<N: Network> Event<N> {
     /// writer task. Calling this beforehand performs the serialization once; every clone then
     /// shares the resulting buffer, and each writer only has to copy it to the wire.
     ///
-    /// This is worth doing before a broadcast and pointless before a single send. It is a no-op
-    /// for events that carry no payload, or whose payload is already serialized.
+    /// Before a broadcast, this avoids serializing the same payload once per recipient. Before a
+    /// single send it saves no total work, but it still matters: it moves the serialization off
+    /// the connection's writer task, which is a Tokio worker and should not be running compute.
+    /// A large payload serialized there stalls the reactor, and it does so inside the write
+    /// timeout, which then has to be sized to accommodate it.
+    ///
+    /// Accordingly, `Transport::send` performs this on a blocking thread for every outbound event,
+    /// and `Transport::broadcast` performs it once up front so that the fan-out only clones the
+    /// resulting buffer.
+    ///
+    /// It is a no-op for events that carry no payload, or whose payload is already serialized, so
+    /// applying it twice is harmless.
     pub fn serialize_payload(&mut self) -> Result<()> {
-        match self {
-            Self::BatchPropose(event) => serialize_payload(&mut event.batch_header),
-            Self::BatchCertified(event) => serialize_payload(&mut event.certificate),
-            Self::PrimaryPing(event) => serialize_payload(&mut event.primary_certificate),
-            Self::BlockResponse(event) => serialize_payload(&mut event.blocks),
-            Self::ChallengeResponse(event) => serialize_payload(&mut event.signature),
-            Self::TransmissionResponse(event) => match &mut event.transmission {
-                Transmission::Solution(solution) => serialize_payload(solution),
-                Transmission::Transaction(transaction) => serialize_payload(transaction),
-                Transmission::Ratification => Ok(()),
-            },
-            // The remaining events carry no `Data` payload.
-            Self::BatchSignature(_)
-            | Self::BlockRequest(_)
-            | Self::CertificateRequest(_)
-            | Self::CertificateResponse(_)
-            | Self::ChallengeRequest(_)
-            | Self::Disconnect(_)
-            | Self::TransmissionRequest(_)
-            | Self::ValidatorsRequest(_)
-            | Self::ValidatorsResponse(_)
-            | Self::WorkerPing(_) => Ok(()),
-        }
+        with_data_payload!(self, serialize_payload, Ok(()))
+    }
+
+    /// Returns `true` if this event carries a payload that has not been serialized yet.
+    ///
+    /// Callers use this to decide whether [`Self::serialize_payload`] is worth the cost of moving
+    /// the event to a blocking thread. Most events carry no payload at all, and re-sending an
+    /// already-serialized one is common, so the check keeps that hop off the common path.
+    ///
+    /// Note this takes `&mut self` only because it shares its variant list with
+    /// [`Self::serialize_payload`]; it does not modify the event.
+    pub fn has_unserialized_payload(&mut self) -> bool {
+        with_data_payload!(self, is_payload_unserialized, false)
     }
 
     /// Returns the event name.
@@ -429,5 +472,27 @@ pub mod prop_tests {
         twice.serialize_payload().unwrap();
 
         assert_eq!(once, twice);
+    }
+
+    /// `has_unserialized_payload` is what decides whether an event is worth handing to a blocking
+    /// thread, so it must agree with `serialize_payload` about which events have work to do. If the
+    /// two ever disagreed, a payload-carrying event could be serialized on a writer task after all.
+    #[proptest]
+    fn has_unserialized_payload_agrees_with_serialize_payload(
+        #[strategy(any_event())] original: Event<CurrentNetwork>,
+    ) {
+        let mut event = original.clone();
+
+        // Serializing must clear the flag, whether or not it was set to begin with.
+        event.serialize_payload().unwrap();
+        assert!(!event.has_unserialized_payload(), "{} still reports an unserialized payload", original.name());
+
+        // And an event that reports no work to do must be unchanged by doing the work.
+        let mut reported_no_work = original.clone();
+        if !reported_no_work.has_unserialized_payload() {
+            let before = reported_no_work.clone();
+            reported_no_work.serialize_payload().unwrap();
+            assert_eq!(before, reported_no_work, "{} changed despite reporting no work", original.name());
+        }
     }
 }

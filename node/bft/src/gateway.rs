@@ -1291,7 +1291,32 @@ impl<N: Network> Transport<N> for Gateway<N> {
     /// This function returns as soon as the event is queued to be sent,
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
-    async fn send(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
+    async fn send(&self, peer_ip: SocketAddr, mut event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
+        // Serialize the payload here, rather than leaving it for the connection's writer task.
+        //
+        // `Data` defers serialization until the event is written to the stream, which puts it on
+        // the writer task -- a Tokio worker -- and inside the write timeout. For the large
+        // responses (`BlockResponse` in particular, which can carry `DataBlocks::MAXIMUM_NUMBER_
+        // OF_BLOCKS`) that is a substantial amount of compute on the reactor.
+        //
+        // The check keeps the hop off the common path: most events carry no payload, and a
+        // broadcast has already serialized its payload before fanning out here, so this is a no-op
+        // for every recipient after the first.
+        if event.has_unserialized_payload() {
+            let name = event.name();
+            event = match spawn_blocking!({
+                let mut event = event;
+                event.serialize_payload()?;
+                Ok(event)
+            }) {
+                Ok(event) => event,
+                Err(err) => {
+                    error!("{CONTEXT} Unable to serialize '{name}' for '{peer_ip}' - {err}");
+                    return None;
+                }
+            };
+        }
+
         macro_rules! send {
             ($self:ident, $cache_map:ident, $interval:expr, $freq:ident) => {{
                 // Rate limit the number of certificate requests sent to the peer.
@@ -1332,19 +1357,28 @@ impl<N: Network> Transport<N> for Gateway<N> {
     }
 
     /// Broadcasts the given event to all connected peers.
-    // TODO(ljedrz): the event should be checked for the presence of Data::Object, and
-    // serialized in advance if it's there.
     fn broadcast(&self, mut event: Event<N>) {
         // Ensure there are connected peers.
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
             let connected_peers = self.connected_peers();
             tokio::spawn(async move {
-                // Serialize the event's payload once, rather than once per recipient.
-                // Each recipient then shares the bytes.
-                if let Err(err) = event.serialize_payload() {
-                    error!("{CONTEXT} Unable to serialize '{}' for broadcast - {err}", event.name());
-                    return;
+                // Serialize the event's payload once, rather than once per recipient; every
+                // recipient then shares the resulting buffer. `Transport::send` would otherwise do
+                // this separately for each peer below.
+                if event.has_unserialized_payload() {
+                    let name = event.name();
+                    event = match spawn_blocking!({
+                        let mut event = event;
+                        event.serialize_payload()?;
+                        Ok(event)
+                    }) {
+                        Ok(event) => event,
+                        Err(err) => {
+                            error!("{CONTEXT} Unable to serialize '{name}' for broadcast - {err}");
+                            return;
+                        }
+                    };
                 }
                 // Iterate through all connected peers.
                 for peer_ip in connected_peers {
