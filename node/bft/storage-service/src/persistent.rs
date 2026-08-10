@@ -347,7 +347,7 @@ mod tests {
 
     use snarkvm::{
         console::network::MainnetV0,
-        ledger::narwhal::Data,
+        ledger::narwhal::{Data, batch_header, transmission},
         prelude::{Rng, TestRng, Uniform},
     };
 
@@ -355,6 +355,26 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     type CurrentNetwork = MainnetV0;
+
+    /// Opens a new persistent storage service backed by an ephemeral database.
+    fn open_storage() -> BFTPersistentStorage<CurrentNetwork> {
+        BFTPersistentStorage::open(StorageMode::new_test(None)).unwrap()
+    }
+
+    /// Samples a batch header along with a transmission for each of its transmission IDs.
+    fn sample_header_and_transmissions(
+        rng: &mut TestRng,
+    ) -> (BatchHeader<CurrentNetwork>, HashMap<TransmissionID<CurrentNetwork>, Transmission<CurrentNetwork>>) {
+        let batch_header = batch_header::test_helpers::sample_batch_header(rng);
+        let transmissions: HashMap<_, _> = batch_header
+            .transmission_ids()
+            .iter()
+            .copied()
+            .zip(transmission::test_helpers::sample_transmissions(rng))
+            .collect();
+        assert_eq!(transmissions.len(), batch_header.transmission_ids().len());
+        (batch_header, transmissions)
+    }
 
     /// Every certificate that references a transmission must contribute its certificate ID to the
     /// transmission's reference set, even when the insertions happen concurrently — as they do when
@@ -444,5 +464,96 @@ mod tests {
         assert!(!storage.as_hashmap().contains_key(&transmission_id));
         assert!(storage.get_transmission(transmission_id).is_none());
         assert!(!storage.contains_transmission(transmission_id));
+    }
+
+    #[test]
+    fn test_provided_bytes_collected_for_previously_aborted_ids() {
+        let rng = &mut TestRng::default();
+        let storage = open_storage();
+        let (batch_header, transmissions) = sample_header_and_transmissions(rng);
+
+        // Record all of the transmission IDs as aborted, without any transmissions.
+        storage.insert_transmissions(
+            Field::rand(rng),
+            batch_header.transmission_ids().clone(),
+            batch_header.transmission_ids().iter().copied().collect(),
+            HashMap::new(),
+        );
+        // Sanity check - the aborted IDs are "contained", but hold no retrievable transmission.
+        for transmission_id in batch_header.transmission_ids() {
+            assert!(storage.contains_transmission(*transmission_id));
+            assert!(storage.get_transmission(*transmission_id).is_none());
+        }
+
+        // The provided transmissions must be collected as missing, despite the IDs being aborted,
+        // so that they get persisted and remain retrievable at commit time.
+        let missing = storage.find_missing_transmissions(&batch_header, transmissions.clone(), HashSet::new()).unwrap();
+        assert_eq!(missing, transmissions);
+    }
+
+    #[test]
+    fn test_stored_transmissions_are_not_missing() {
+        let rng = &mut TestRng::default();
+        let storage = open_storage();
+        let (batch_header, transmissions) = sample_header_and_transmissions(rng);
+
+        // Store the transmissions concretely.
+        storage.insert_transmissions(
+            Field::rand(rng),
+            batch_header.transmission_ids().clone(),
+            HashSet::new(),
+            transmissions.clone(),
+        );
+        // Sanity check - the transmissions are retrievable.
+        for transmission_id in batch_header.transmission_ids() {
+            assert!(storage.get_transmission(*transmission_id).is_some());
+        }
+
+        // Stored transmissions are not reported as missing, whether provided again or not.
+        let missing = storage.find_missing_transmissions(&batch_header, transmissions.clone(), HashSet::new()).unwrap();
+        assert!(missing.is_empty());
+        let missing = storage.find_missing_transmissions(&batch_header, HashMap::new(), HashSet::new()).unwrap();
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn test_aborted_ids_declared_by_caller_are_allowed_without_bytes() {
+        let rng = &mut TestRng::default();
+        let storage = open_storage();
+        let (batch_header, _) = sample_header_and_transmissions(rng);
+
+        // Declaring all of the transmission IDs as aborted requires no transmissions.
+        let aborted = batch_header.transmission_ids().iter().copied().collect();
+        let missing = storage.find_missing_transmissions(&batch_header, HashMap::new(), aborted).unwrap();
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn test_previously_aborted_ids_without_bytes_or_declaration_error() {
+        let rng = &mut TestRng::default();
+        let storage = open_storage();
+        let (batch_header, _) = sample_header_and_transmissions(rng);
+
+        // Record all of the transmission IDs as aborted, without any transmissions.
+        storage.insert_transmissions(
+            Field::rand(rng),
+            batch_header.transmission_ids().clone(),
+            batch_header.transmission_ids().iter().copied().collect(),
+            HashMap::new(),
+        );
+
+        // An aborted ID in storage does not satisfy the check by itself - the caller must
+        // either provide the transmission or declare the ID as aborted.
+        assert!(storage.find_missing_transmissions(&batch_header, HashMap::new(), HashSet::new()).is_err());
+    }
+
+    #[test]
+    fn test_unknown_unprovided_transmission_errors() {
+        let rng = &mut TestRng::default();
+        let storage = open_storage();
+        let (batch_header, _) = sample_header_and_transmissions(rng);
+
+        // The transmission IDs are unknown to storage, not provided, and not declared as aborted.
+        assert!(storage.find_missing_transmissions(&batch_header, HashMap::new(), HashSet::new()).is_err());
     }
 }
