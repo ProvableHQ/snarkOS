@@ -53,6 +53,12 @@ pub struct Config {
     /// note: This number can very briefly be breached by 1 in case of inbound connection attempts. It can never be
     /// breached by outbound connection attempts, though.
     pub max_connections: u16,
+    /// The maximum number of connections Tcp can maintain with a single IP address.
+    ///
+    /// note: Like [`Config::max_connections`], pending connections count towards this limit too.
+    ///
+    /// note: Must not be `0`.
+    pub max_connections_per_ip: u16,
     /// The maximum time (in milliseconds) allowed to establish a raw (before the [`Handshake`] protocol) TCP connection.
     pub connection_timeout_ms: u16,
 }
@@ -84,6 +90,7 @@ impl Default for Config {
             allow_random_port: true,
             fatal_io_errors: vec![ConnectionReset, ConnectionAborted, BrokenPipe, InvalidData, UnexpectedEof],
             max_connections: 100,
+            max_connections_per_ip: 25,
             connection_timeout_ms: 3_000,
         }
     }
