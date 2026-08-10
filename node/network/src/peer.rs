@@ -37,6 +37,10 @@ pub struct ConnectingPeer {
     pub listener_addr: SocketAddr,
     /// Indicates whether the peer is considered trusted.
     pub trusted: bool,
+    /// The last time we attempted to connect to the peer.
+    pub last_connection_attempt: Option<Instant>,
+    /// The total number of connection attempts, since the peer was last connected.
+    pub total_connection_attempts: u32,
 }
 
 /// A candidate peer.
@@ -141,9 +145,38 @@ impl<N: Network> Peer<N> {
         })
     }
 
-    /// Create a connecting peer.
+    /// Create a connecting peer, with no prior connection attempts on record.
     pub const fn new_connecting(listener_addr: SocketAddr, trusted: bool) -> Self {
-        Self::Connecting(ConnectingPeer { listener_addr, trusted })
+        Self::Connecting(ConnectingPeer {
+            listener_addr,
+            trusted,
+            last_connection_attempt: None,
+            total_connection_attempts: 0,
+        })
+    }
+
+    /// Promote a candidate peer to connecting status, preserving its connection-attempt metadata.
+    pub fn promote_to_connecting(&mut self) {
+        let listener_addr = self.listener_addr();
+        let trusted = self.is_trusted();
+
+        let (last_connection_attempt, total_connection_attempts) = match self {
+            Self::Candidate(peer) => (peer.last_connection_attempt, peer.total_connection_attempts),
+            Self::Connecting(_) | Self::Connected(_) => {
+                warn!(
+                    "Peer '{listener_addr}' is being promoted to Connecting, but is {}",
+                    if self.is_connected() { "already Connected" } else { "already Connecting" }
+                );
+                (None, 0)
+            }
+        };
+
+        *self = Self::Connecting(ConnectingPeer {
+            listener_addr,
+            trusted,
+            last_connection_attempt,
+            total_connection_attempts,
+        });
     }
 
     /// Promote a connecting peer to a fully connected one.
@@ -193,12 +226,19 @@ impl<N: Network> Peer<N> {
             _ => None,
         };
 
+        // Preserve the connection attempt info if the handshake didn't succeed.
+        let (last_connection_attempt, total_connection_attempts) = match self {
+            Self::Candidate(p) => (p.last_connection_attempt, p.total_connection_attempts),
+            Self::Connecting(p) => (p.last_connection_attempt, p.total_connection_attempts),
+            Self::Connected(_) => (None, 0),
+        };
+
         *self = Self::Candidate(CandidatePeer {
             listener_addr,
             trusted: self.is_trusted(),
             last_height_seen: self.last_height_seen(),
-            last_connection_attempt: None,
-            total_connection_attempts: 0,
+            last_connection_attempt,
+            total_connection_attempts,
             last_known_aleo_addr,
         });
     }
@@ -227,6 +267,15 @@ impl<N: Network> Peer<N> {
             Self::Candidate(_) => None,
             Self::Connecting(_) => None,
             Self::Connected(peer) => peer.last_height_seen,
+        }
+    }
+
+    /// The number of connection attempts made since this peer was last connected.
+    pub fn failed_connection_attempts(&self) -> u32 {
+        match self {
+            Self::Candidate(peer) => peer.total_connection_attempts,
+            Self::Connecting(peer) => peer.total_connection_attempts,
+            Self::Connected(_) => 0,
         }
     }
 
