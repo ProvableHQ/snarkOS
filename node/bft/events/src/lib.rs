@@ -343,15 +343,20 @@ pub mod prop_tests {
         Disconnect,
         DisconnectReason,
         Event,
+        ValidatorsRequest,
         batch_certified::prop_tests::any_batch_certified,
         batch_propose::prop_tests::any_batch_propose,
         batch_signature::prop_tests::any_batch_signature,
+        block_request::prop_tests::any_block_request,
+        block_response::prop_tests::any_block_response,
         certificate_request::prop_tests::any_certificate_request,
         certificate_response::prop_tests::any_certificate_response,
         challenge_request::prop_tests::any_challenge_request,
         challenge_response::prop_tests::any_challenge_response,
+        primary_ping::prop_tests::any_primary_ping,
         transmission_request::prop_tests::any_transmission_request,
         transmission_response::prop_tests::any_transmission_response,
+        validators_response::prop_tests::any_validators_response,
         worker_ping::prop_tests::any_worker_ping,
     };
     use snarkvm::{
@@ -402,11 +407,18 @@ pub mod prop_tests {
         .boxed()
     }
 
+    /// A strategy covering every [`Event`] variant.
+    ///
+    /// Keep this exhaustive. Several properties are asserted over "any event", and a variant that
+    /// is missing here is silently untested rather than failing -- which is how `BlockResponse` and
+    /// `PrimaryPing`, the two largest `Data`-carrying events, went uncovered.
     pub fn any_event() -> BoxedStrategy<Event<CurrentNetwork>> {
         prop_oneof![
             any_batch_certified().prop_map(Event::BatchCertified),
             any_batch_propose().prop_map(Event::BatchPropose),
             any_batch_signature().prop_map(Event::BatchSignature),
+            any_block_request().prop_map(Event::BlockRequest),
+            any_block_response().prop_map(Event::BlockResponse),
             any_certificate_request().prop_map(Event::CertificateRequest),
             any_certificate_response().prop_map(Event::CertificateResponse),
             any_challenge_request().prop_map(Event::ChallengeRequest),
@@ -428,8 +440,11 @@ pub mod prop_tests {
                 any::<Selector>()
             )
                 .prop_map(|(reasons, selector)| Event::Disconnect(Disconnect::from(selector.select(reasons)))),
+            any_primary_ping().prop_map(Event::PrimaryPing),
             any_transmission_request().prop_map(Event::TransmissionRequest),
             any_transmission_response().prop_map(Event::TransmissionResponse),
+            Just(ValidatorsRequest).prop_map(Event::ValidatorsRequest),
+            any_validators_response().prop_map(Event::ValidatorsResponse),
             any_worker_ping().prop_map(Event::WorkerPing)
         ]
         .boxed()
