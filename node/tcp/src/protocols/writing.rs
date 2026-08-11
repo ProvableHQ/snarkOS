@@ -125,7 +125,6 @@ where
                     .map_err(|e| {
                         let conn_span = create_connection_span(addr, self.tcp().span());
                         error!(parent: conn_span, "can't send a message: {e}");
-                        self.tcp().stats().register_failure();
                         io::ErrorKind::Other.into()
                     })
                     .map(|_| delivery)
@@ -157,7 +156,6 @@ where
                 let _ = message_sender.try_send(msg).map_err(|e| {
                     let conn_span = create_connection_span(addr, self.tcp().span());
                     error!(parent: conn_span, "can't send a message: {e}");
-                    self.tcp().stats().register_failure();
                 });
             }
 
@@ -222,6 +220,7 @@ impl<W: Writing> WritingInternal for W {
 
         // the task for writing outbound messages
         let self_clone = self.clone();
+        let conn_stats = Arc::clone(conn.stats());
         let conn_span = conn.span().clone();
         let writer_task = tokio::spawn(Box::pin(async move {
             let node = self_clone.tcp();
@@ -240,12 +239,11 @@ impl<W: Writing> WritingInternal for W {
                 match self_clone.write_to_stream(*msg, &mut framed).await {
                     Ok(len) => {
                         let _ = wrapped_msg.delivery_notification.send(Ok(()));
-                        // node.known_peers().register_sent_message(addr.ip(), len);
+                        conn_stats.register_sent_message(len);
                         node.stats().register_sent_message(len);
                         trace!(parent: &conn_span, "sent {len}B");
                     }
                     Err(e) => {
-                        node.known_peers().register_failure(addr.ip());
                         error!(parent: &conn_span, "couldn't send a message: {e}");
                         let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
                         let _ = wrapped_msg.delivery_notification.send(Err(e));

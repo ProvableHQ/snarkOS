@@ -19,7 +19,8 @@ use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     ops::Not,
-    sync::atomic::AtomicBool,
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
 };
 
 #[cfg(feature = "locktick")]
@@ -34,6 +35,7 @@ use tokio::{
 };
 use tracing::*;
 
+use crate::Stats;
 #[cfg(doc)]
 use crate::{
     Tcp,
@@ -68,6 +70,16 @@ impl Connections {
     /// Returns the list of connected addresses.
     pub(crate) fn addrs(&self) -> Vec<SocketAddr> {
         self.0.read().keys().copied().collect()
+    }
+
+    /// Returns the stats of the connection with the given address, if it is still active.
+    pub(crate) fn stats(&self, addr: SocketAddr) -> Option<Arc<Stats>> {
+        self.0.read().get(&addr).map(|conn| Arc::clone(conn.stats()))
+    }
+
+    /// Returns the stats of every active connection.
+    pub(crate) fn stats_snapshot(&self) -> HashMap<SocketAddr, Arc<Stats>> {
+        self.0.read().iter().map(|(addr, conn)| (*addr, Arc::clone(conn.stats()))).collect()
     }
 
     /// Returns the number of active connections charged to the given address' IP.
@@ -106,6 +118,8 @@ pub struct Connection {
     addr: SocketAddr,
     /// The connection's side in relation to Tcp.
     side: ConnectionSide,
+    /// Statistics covering this connection alone, for as long as it is active.
+    stats: Arc<Stats>,
     /// Available and used only in the [`Handshake`] protocol.
     pub(crate) stream: Option<TcpStream>,
     /// Available and used only in the [`Reading`] protocol.
@@ -133,6 +147,7 @@ impl Connection {
             readiness_notifier: None,
             disconnecting: Default::default(),
             side,
+            stats: Arc::new(Stats::new(Instant::now())),
             tasks: Default::default(),
             span,
         }
@@ -141,6 +156,12 @@ impl Connection {
     /// Returns the address associated with the connection.
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Returns the statistics of this connection.
+    #[inline]
+    pub fn stats(&self) -> &Arc<Stats> {
+        &self.stats
     }
 
     /// Returns `ConnectionSide::Initiator` if the associated peer initiated the connection

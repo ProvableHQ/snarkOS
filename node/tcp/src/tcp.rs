@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt,
     io,
     net::{IpAddr, SocketAddr},
@@ -44,7 +44,6 @@ use tracing::*;
 use crate::{
     BannedPeers,
     Config,
-    KnownPeers,
     Stats,
     connections::{Connection, ConnectionSide, Connections, DisconnectOrigin, canonical_ip, create_connection_span},
     protocols::{Protocol, Protocols},
@@ -147,8 +146,6 @@ pub struct InnerTcp {
     connecting: Mutex<HashSet<SocketAddr>>,
     /// Contains objects related to the node's active connections.
     pub(crate) connections: Connections,
-    /// Collects statistics related to the node's peers.
-    known_peers: KnownPeers,
     /// Contains the set of currently banned peers.
     banned_peers: BannedPeers,
     /// Collects statistics related to the node itself.
@@ -180,7 +177,6 @@ impl Tcp {
             protocols: Default::default(),
             connecting: Default::default(),
             connections: Default::default(),
-            known_peers: Default::default(),
             banned_peers: Default::default(),
             stats: Stats::new(Instant::now()),
             tasks: Default::default(),
@@ -193,7 +189,7 @@ impl Tcp {
 
     /// How long has this node accepting connections?
     pub fn uptime(&self) -> Duration {
-        self.stats.timestamp().elapsed()
+        self.stats.created().elapsed()
     }
 
     /// Returns the name assigned.
@@ -245,10 +241,14 @@ impl Tcp {
         self.connecting.lock().iter().copied().collect()
     }
 
-    /// Returns a reference to the collection of statistics of known peers.
-    #[inline]
-    pub fn known_peers(&self) -> &KnownPeers {
-        &self.known_peers
+    /// Returns the statistics of the active connection with the given address, if any.
+    pub fn connection_stats(&self, addr: SocketAddr) -> Option<Arc<Stats>> {
+        self.connections.stats(addr)
+    }
+
+    /// Returns the statistics of every active connection.
+    pub fn connection_stats_snapshot(&self) -> HashMap<SocketAddr, Arc<Stats>> {
+        self.connections.stats_snapshot()
     }
 
     /// Returns a reference to the set of currently banned peers.
@@ -348,7 +348,6 @@ impl Tcp {
 
         if let Err(ref e) = ret {
             self.connecting.lock().remove(&addr);
-            self.known_peers().register_failure(addr.ip());
             error!(parent: self.span(), "Unable to initiate a connection with {addr}: {e}");
         }
 
@@ -536,7 +535,6 @@ impl Tcp {
 
             if let Err(e) = tcp.adapt_stream(stream, addr, ConnectionSide::Responder).await {
                 tcp.connecting.lock().remove(&addr);
-                tcp.known_peers().register_failure(addr.ip());
                 error!(parent: tcp.span(), "Failed to connect with {addr}: {e}");
             }
         });
@@ -611,8 +609,6 @@ impl Tcp {
 
     /// Prepares the freshly acquired connection to handle the protocols the Tcp implements.
     async fn adapt_stream(&self, stream: TcpStream, peer_addr: SocketAddr, own_side: ConnectionSide) -> io::Result<()> {
-        self.known_peers.add(peer_addr.ip());
-
         // Register the port seen by the peer.
         if own_side == ConnectionSide::Initiator {
             if let Ok(addr) = stream.local_addr() {
