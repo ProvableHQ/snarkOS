@@ -16,15 +16,18 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::type_complexity)]
 
-#[cfg(feature = "memory")]
+#[cfg(any(test, feature = "memory"))]
 pub mod memory;
 #[cfg(feature = "memory")]
 pub use memory::*;
 
 #[cfg(any(test, feature = "persistent"))]
 pub mod persistent;
-#[cfg(any(test, feature = "persistent"))]
+#[cfg(feature = "persistent")]
 pub use persistent::*;
 
 pub mod traits;
 pub use traits::*;
+
+#[cfg(test)]
+mod tests;
