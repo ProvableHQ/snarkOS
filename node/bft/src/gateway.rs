@@ -600,6 +600,48 @@ impl<N: Network> Gateway<N> {
     /// This function returns as soon as the event is queued to be sent,
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
+    /// Waits until this peer is within the outbound rate limits for the given event, recording the
+    /// event in the outbound caches as it does so.
+    ///
+    /// This is the admission control for [`Transport::send`], and it deliberately runs *before* the
+    /// payload is serialized. Serializing first would mean doing the expensive work for an event
+    /// that is about to be throttled -- or dropped outright, if the connection's outbound queue is
+    /// full by the time it is enqueued -- which lets a peer that requests large responses pile up
+    /// work in the blocking pool no matter how far behind its own queue is.
+    async fn throttle_outbound(&self, peer_ip: SocketAddr, event: &Event<N>) {
+        /// Waits until the given per-peer counter is back under its limit.
+        macro_rules! wait_until_under_limit {
+            ($cache_map:ident, $interval:expr, $limit:ident) => {{
+                while self.cache.$cache_map(peer_ip, $interval) > self.$limit() {
+                    // Sleep for a short period of time to allow the cache to clear.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }};
+        }
+
+        // Increment the cache for certificate, transmission and block events.
+        match event {
+            Event::CertificateRequest(_) | Event::CertificateResponse(_) => {
+                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
+                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
+                wait_until_under_limit!(insert_outbound_certificate, CACHE_REQUESTS_INTERVAL, max_cache_certificates)
+            }
+            Event::TransmissionRequest(_) | Event::TransmissionResponse(_) => {
+                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
+                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
+                wait_until_under_limit!(insert_outbound_transmission, CACHE_REQUESTS_INTERVAL, max_cache_transmissions)
+            }
+            Event::BlockRequest(request) => {
+                // Insert the outbound request so we can match it to responses.
+                self.cache.insert_outbound_block_request(peer_ip, *request);
+                // Use the general rate limit.
+                wait_until_under_limit!(insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
+            }
+            // Everything else uses the general rate limit.
+            _ => wait_until_under_limit!(insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events),
+        }
+    }
+
     fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
         let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
@@ -1347,6 +1389,10 @@ impl<N: Network> Transport<N> for Gateway<N> {
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
     async fn send(&self, peer_ip: SocketAddr, mut event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
+        // Apply the outbound rate limits first, so that the serialization below is only performed
+        // for events this peer is actually allowed to be sent right now.
+        self.throttle_outbound(peer_ip, &event).await;
+
         // Serialize the payload here, rather than leaving it for the connection's writer task.
         //
         // `Data` defers serialization until the event is written to the stream, which puts it on
@@ -1372,43 +1418,8 @@ impl<N: Network> Transport<N> for Gateway<N> {
             };
         }
 
-        macro_rules! send {
-            ($self:ident, $cache_map:ident, $interval:expr, $freq:ident) => {{
-                // Rate limit the number of certificate requests sent to the peer.
-                while $self.cache.$cache_map(peer_ip, $interval) > $self.$freq() {
-                    // Sleep for a short period of time to allow the cache to clear.
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                // Send the event to the peer.
-                $self.send_inner(peer_ip, event)
-            }};
-        }
-
-        // Increment the cache for certificate, transmission and block events.
-        match event {
-            Event::CertificateRequest(_) | Event::CertificateResponse(_) => {
-                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
-                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
-                // Send the event to the peer.
-                send!(self, insert_outbound_certificate, CACHE_REQUESTS_INTERVAL, max_cache_certificates)
-            }
-            Event::TransmissionRequest(_) | Event::TransmissionResponse(_) => {
-                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
-                self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
-                // Send the event to the peer.
-                send!(self, insert_outbound_transmission, CACHE_REQUESTS_INTERVAL, max_cache_transmissions)
-            }
-            Event::BlockRequest(request) => {
-                // Insert the outbound request so we can match it to responses.
-                self.cache.insert_outbound_block_request(peer_ip, request);
-                // Send the event to the peer and update the outbound event cache, use the general rate limit.
-                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
-            }
-            _ => {
-                // Send the event to the peer, use the general rate limit.
-                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
-            }
-        }
+        // Hand the event to the connection's outbound queue.
+        self.send_inner(peer_ip, event)
     }
 
     /// Broadcasts the given event to all connected peers.
