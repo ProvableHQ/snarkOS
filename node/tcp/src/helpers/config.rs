@@ -13,10 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    io::{self, ErrorKind::*},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[cfg(doc)]
 use crate::protocols::{self, Handshake, Reading, Writing};
@@ -44,10 +41,6 @@ pub struct Config {
     ///
     /// note: [`Config::listener_ip`] must not be `None` in order for it to have any effect.
     pub allow_random_port: bool,
-    /// The list of IO errors considered fatal and causing the connection to be dropped.
-    ///
-    /// note: Tcp needs to implement the [`Reading`] and/or [`Writing`] protocol in order for it to have any effect.
-    pub fatal_io_errors: Vec<io::ErrorKind>,
     /// The maximum number of active connections Tcp can maintain at any given time.
     ///
     /// note: This number can very briefly be breached by 1 in case of inbound connection attempts. It can never be
@@ -82,7 +75,6 @@ impl Default for Config {
             listener_ip: default_ip(),
             desired_listening_port: None,
             allow_random_port: true,
-            fatal_io_errors: vec![ConnectionReset, ConnectionAborted, BrokenPipe, InvalidData, UnexpectedEof],
             max_connections: 100,
             connection_timeout_ms: 3_000,
         }
