@@ -27,7 +27,7 @@ use snarkvm::{
             },
         },
     },
-    prelude::{Field, Network, Result, bail},
+    prelude::{Field, Network, Result},
 };
 
 use aleo_std::StorageMode;
@@ -100,6 +100,23 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         }
     }
 
+    /// Returns `true` if the storage holds the actual transmission for the specified
+    /// `transmission ID`, excluding IDs only recorded as aborted.
+    fn contains_stored_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
+        // Check the cache first: it only ever holds transmissions that exist in persistent
+        // storage, so a hit soundly answers `true` without a storage read.
+        if self.cache_transmissions.lock().contains(&transmission_id) {
+            return true;
+        }
+        match self.transmissions.contains_key_confirmed(&transmission_id) {
+            Ok(result) => result,
+            Err(error) => {
+                error!("Failed to check if transmission ID exists in confirmed storage - {error}");
+                false
+            }
+        }
+    }
+
     /// Returns the transmission for the given `transmission ID`.
     /// If the transmission ID does not exist in storage, `None` is returned.
     fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>> {
@@ -118,49 +135,6 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 None
             }
         }
-    }
-
-    /// Takes a certificate and its transmissions, and returns the subset of transmissions that
-    /// did not yet exists in the storage.
-    fn find_missing_transmissions(
-        &self,
-        batch_header: &BatchHeader<N>,
-        mut transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
-        aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
-        // Initialize a list for the missing transmissions from storage.
-        let mut missing_transmissions = HashMap::new();
-        // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
-        for transmission_id in batch_header.transmission_ids() {
-            // Check only the concrete transmissions map, not the aborted transmission IDs.
-            // `contains_transmission` is also true for aborted IDs, for which storage holds no
-            // retrievable bytes; if the caller provided bytes for a previously-aborted ID, we must
-            // still collect them here so they are persisted and remain retrievable at commit time.
-            let is_stored = match self.transmissions.contains_key_confirmed(transmission_id) {
-                Ok(result) => result,
-                Err(error) => {
-                    error!("Failed to check if transmission ID exists in confirmed storage - {error}");
-                    false
-                }
-            };
-            // If the transmission ID does not exist, ensure it was provided by the caller or aborted.
-            if !is_stored {
-                // Retrieve the transmission.
-                match transmissions.remove(transmission_id) {
-                    // Append the transmission if it exists.
-                    Some(transmission) => {
-                        missing_transmissions.insert(*transmission_id, transmission);
-                    }
-                    // If the transmission does not exist, check if it was aborted.
-                    None => {
-                        if !aborted_transmissions.contains(transmission_id) {
-                            bail!("Failed to provide a transmission");
-                        }
-                    }
-                }
-            }
-        }
-        Ok(missing_transmissions)
     }
 
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.

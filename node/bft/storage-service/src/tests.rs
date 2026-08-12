@@ -43,17 +43,26 @@ fn sample_header_and_transmissions(
     (batch_header, transmissions)
 }
 
-fn check_provided_bytes_collected_for_previously_aborted_ids(storage: &impl StorageService<CurrentNetwork>) {
-    let rng = &mut TestRng::default();
-    let (batch_header, transmissions) = sample_header_and_transmissions(rng);
-
-    // Record all of the transmission IDs as aborted, without any transmissions.
+/// Records all of the batch header's transmission IDs as aborted, without any transmissions.
+fn record_ids_as_aborted(
+    storage: &impl StorageService<CurrentNetwork>,
+    batch_header: &BatchHeader<CurrentNetwork>,
+    rng: &mut TestRng,
+) {
     storage.insert_transmissions(
         Field::rand(rng),
         batch_header.transmission_ids().clone(),
         batch_header.transmission_ids().iter().copied().collect(),
         HashMap::new(),
     );
+}
+
+fn check_provided_bytes_collected_for_previously_aborted_ids(storage: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let (batch_header, transmissions) = sample_header_and_transmissions(rng);
+
+    // Record all of the transmission IDs as aborted, without any transmissions.
+    record_ids_as_aborted(storage, &batch_header, rng);
     // Sanity check - the aborted IDs are "contained", but hold no retrievable transmission.
     for transmission_id in batch_header.transmission_ids() {
         assert!(storage.contains_transmission(*transmission_id));
@@ -104,16 +113,37 @@ fn check_previously_aborted_ids_without_bytes_or_declaration_error(storage: &imp
     let (batch_header, _) = sample_header_and_transmissions(rng);
 
     // Record all of the transmission IDs as aborted, without any transmissions.
-    storage.insert_transmissions(
-        Field::rand(rng),
-        batch_header.transmission_ids().clone(),
-        batch_header.transmission_ids().iter().copied().collect(),
-        HashMap::new(),
-    );
+    record_ids_as_aborted(storage, &batch_header, rng);
 
     // An aborted ID in storage does not satisfy the check by itself - the caller must
     // either provide the transmission or declare the ID as aborted.
     assert!(storage.find_missing_transmissions(&batch_header, HashMap::new(), HashSet::new()).is_err());
+}
+
+fn check_contains_stored_transmission_distinguishes_aborted_ids(storage: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let (batch_header, transmissions) = sample_header_and_transmissions(rng);
+
+    // Record all of the transmission IDs as aborted, without any transmissions.
+    record_ids_as_aborted(storage, &batch_header, rng);
+    // Aborted-only IDs are contained, but not stored.
+    for transmission_id in batch_header.transmission_ids() {
+        assert!(storage.contains_transmission(*transmission_id));
+        assert!(!storage.contains_stored_transmission(*transmission_id));
+    }
+
+    // Store the transmissions concretely.
+    storage.insert_transmissions(
+        Field::rand(rng),
+        batch_header.transmission_ids().clone(),
+        HashSet::new(),
+        transmissions,
+    );
+    // Stored IDs are both contained and stored.
+    for transmission_id in batch_header.transmission_ids() {
+        assert!(storage.contains_transmission(*transmission_id));
+        assert!(storage.contains_stored_transmission(*transmission_id));
+    }
 }
 
 fn check_unknown_unprovided_transmission_errors(storage: &impl StorageService<CurrentNetwork>) {
@@ -148,6 +178,11 @@ macro_rules! storage_service_tests {
             #[test]
             fn test_previously_aborted_ids_without_bytes_or_declaration_error() {
                 check_previously_aborted_ids_without_bytes_or_declaration_error(&$storage);
+            }
+
+            #[test]
+            fn test_contains_stored_transmission_distinguishes_aborted_ids() {
+                check_contains_stored_transmission_distinguishes_aborted_ids(&$storage);
             }
 
             #[test]

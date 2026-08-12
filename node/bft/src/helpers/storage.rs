@@ -306,6 +306,12 @@ impl<N: Network> Storage<N> {
         self.transmissions.contains_transmission(transmission_id.into())
     }
 
+    /// Returns `true` if the storage holds the actual transmission for the specified transmission
+    /// ID, excluding IDs only recorded as aborted.
+    pub fn contains_stored_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
+        self.transmissions.contains_stored_transmission(transmission_id.into())
+    }
+
     /// Returns the transmission for the given `transmission ID`.
     /// If the transmission ID does not exist in storage or was aborted, `None` is returned.
     pub fn get_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> Option<Transmission<N>> {
@@ -859,12 +865,16 @@ impl<N: Network> Storage<N> {
 
         // Iterate over the transmission IDs.
         for transmission_id in certificate.transmission_ids() {
-            // If the transmission ID already exists in the map, skip it.
-            if missing_transmissions.contains_key(transmission_id) {
-                continue;
-            }
-            // If the transmission ID exists in storage, skip it.
+            // If the transmission ID is already known to storage, it does not need to be recovered
+            // from the block: either the transmission itself is stored, or the ID was recorded as
+            // aborted by an earlier certificate. In the latter case, re-declare it as aborted for
+            // this certificate - it must not be skipped outright, or it would end up in neither
+            // `missing_transmissions` nor `aborted_transmissions`, failing the
+            // `find_missing_transmissions` check in `insert_certificate` below.
             if self.contains_transmission(*transmission_id) {
+                if !self.contains_stored_transmission(*transmission_id) {
+                    aborted_transmissions.insert(*transmission_id);
+                }
                 continue;
             }
             // Retrieve the transmission.
@@ -1002,7 +1012,7 @@ pub(crate) mod tests {
     use snarkos_node_bft_storage_service::BFTMemoryService;
     use snarkvm::{
         ledger::narwhal::{Data, batch_certificate::test_helpers::sample_batch_certificate_for_round_with_committee},
-        prelude::{Rng, TestRng},
+        prelude::{Rng, TestRng, Uniform},
     };
 
     use ::bytes::Bytes;
@@ -1248,6 +1258,77 @@ pub(crate) mod tests {
                 "Non-aborted transmission {id:?} should have content in storage"
             );
         }
+    }
+
+    /// A certificate referencing a transmission that an earlier certificate recorded as aborted
+    /// must still be syncable from a block: the previously-aborted ID has no retrievable bytes in
+    /// storage, so it must be re-declared as aborted for the new certificate rather than skipped.
+    #[test]
+    fn test_sync_certificate_with_previously_aborted_transmission() {
+        use std::collections::HashSet;
+
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 5, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee.clone()));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        // A transaction transmission ID, referenced by both certificates.
+        let transmission_id = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.random::<u128>()),
+        );
+
+        // Creates a quorum-signed round-1 certificate referencing the transmission ID.
+        let make_certificate = |author_index: usize, rng: &mut TestRng| {
+            let batch_header = snarkvm::ledger::narwhal::BatchHeader::new(
+                &private_keys[author_index],
+                1,
+                crate::helpers::now(),
+                committee.id(),
+                indexset![transmission_id],
+                Default::default(),
+                rng,
+            )
+            .unwrap();
+            let signatures = private_keys
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != author_index)
+                .map(|(_, private_key)| private_key.sign(&[batch_header.batch_id()], rng).unwrap())
+                .collect();
+            BatchCertificate::from(batch_header, signatures).unwrap()
+        };
+
+        // Insert the first certificate, recording the transmission as aborted.
+        let certificate_1 = make_certificate(0, rng);
+        storage
+            .insert_certificate(
+                certificate_1,
+                Default::default(),
+                [transmission_id].into_iter().collect::<HashSet<_>>(),
+            )
+            .unwrap();
+        assert!(storage.contains_transmission(transmission_id));
+        assert!(storage.get_transmission(transmission_id).is_none());
+
+        // Sync a later certificate that references the previously-aborted transmission. The block
+        // does not carry the transmission: it was aborted by an earlier certificate, so only the
+        // BFT storage knows about it. Any block works here, so use the sample genesis block.
+        let certificate_2 = make_certificate(1, rng);
+        let block = snarkvm::ledger::test_helpers::sample_genesis_block(rng);
+        storage
+            .sync_certificate_with_block(&block, certificate_2.clone(), &Default::default(), false)
+            .expect("syncing a certificate referencing a previously-aborted transmission must succeed");
+        assert!(storage.contains_certificate(certificate_2.id()));
+
+        // The transmission remains aborted-only: contained, with no retrievable bytes.
+        assert!(storage.contains_transmission(transmission_id));
+        assert!(storage.get_transmission(transmission_id).is_none());
     }
 
     /// Test that `check_incoming_certificate` does not reject a valid cert.
