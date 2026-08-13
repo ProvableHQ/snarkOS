@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786295890185,
+  "lastUpdate": 1786623270469,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -16068,6 +16068,72 @@ window.BENCHMARK_DATA = {
             "value": 1.96,
             "unit": "blocks/s",
             "extra": "total_wait=127s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.95,
+            "unit": "blocks/s",
+            "extra": "total_wait=128s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "941ac2eabeec7cbc4f3b6a73efddf1e57860e2dd",
+          "message": "Merge pull request #4382 from cbeck88/fix/gateway-outbound-queues\n\nFix/gateway outbound queues",
+          "timestamp": "2026-08-13T13:51:46+02:00",
+          "tree_id": "9168737e6c8c670fa29d9fb39a1422a276b393b8",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/941ac2eabeec7cbc4f3b6a73efddf1e57860e2dd"
+        },
+        "date": 1786623269395,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 11.136772569414251,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=43.1004581451416, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12606.853675815742,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.345754623413086, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3735.338312384434,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2141706943511963, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.13,
+            "unit": "blocks/s",
+            "extra": "total_wait=117s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.509395,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=114, mean_speed=1.315058, max_speed=3.166667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.04,
+            "unit": "blocks/s",
+            "extra": "total_wait=122s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
