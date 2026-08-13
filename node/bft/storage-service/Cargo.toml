@@ -61,7 +61,7 @@ workspace = true
 
 [dev-dependencies.snarkvm]
 workspace = true
-features = [ "test", "test-helpers" ]
+features = [ "test-helpers" ]
 
 [dev-dependencies.tracing]
 workspace = true
