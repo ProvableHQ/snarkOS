@@ -48,7 +48,7 @@ use crate::{
 
 use snarkos_account::Account;
 use snarkos_node_bft_events::PrimaryPing;
-use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_bft_ledger_service::{LedgerService, deserialize_transaction_strict};
 #[cfg(test)]
 use snarkos_node_network::ConnectionMode;
 use snarkos_node_network::PeerPoolHandling;
@@ -708,14 +708,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                         }
 
                         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!({
-                            match transaction {
-                                Data::Object(transaction) => Ok(transaction),
-                                Data::Buffer(bytes) => Ok(Transaction::<N>::read_le(
-                                    &mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64),
-                                )?),
-                            }
-                        })?;
+                        let transaction = spawn_blocking!(deserialize_transaction_strict(transaction))?;
 
                         // Fetch the current block height and consensus version.
                         let current_block_height = self.ledger.latest_block_height();
@@ -1006,24 +999,9 @@ impl<N: Network> Primary<N> {
         // Note: Due to the need to sync the batch header with the peer, it is possible
         // for the primary to receive the same 'BatchPropose' event again, whereby only
         // one instance of this handler should sign the batch. This check guarantees this.
-        match self.signed_proposals.write().0.entry(batch_author) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                // If the validator has already signed a batch for this round, then return early,
-                // since, if the peer still has not received the signature, they will request it again,
-                // and the logic at the start of this function will resend the (now cached) signature
-                // to the peer if asked to sign this batch proposal again.
-                if entry.get().0 == batch_round {
-                    return Ok(());
-                }
-                // Otherwise, cache the round, batch ID, and signature for this validator.
-                entry.insert((batch_round, batch_id, signature));
-            }
-            // If the validator has not signed a batch before, then continue.
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                // Cache the round, batch ID, and signature for this validator.
-                entry.insert((batch_round, batch_id, signature));
-            }
-        };
+        if !self.cache_signed_proposal(batch_author, batch_round, batch_id, signature) {
+            return Ok(());
+        }
 
         // Broadcast the signature back to the validator.
         let self_ = self.clone();
@@ -1036,6 +1014,48 @@ impl<N: Network> Primary<N> {
         });
 
         Ok(())
+    }
+
+    /// Records that this primary signed `batch_id` at `batch_round`, on behalf of `batch_author`,
+    /// returning whether the proposal may be signed at all.
+    ///
+    /// For correctness we must endorse at most one batch per author per round, and the cached round
+    /// is the only record of that. So the cached round must never move backwards: if it did, for
+    /// example due to a race, we would forget having signed the newer round and could go on to
+    /// endorse a second, conflicting batch for it. Two signatures over different batch IDs in one
+    /// round are enough to build conflicting certificates, and so to fork the DAG.
+    ///
+    /// This runs under a single write lock, and either atomically caches the proposal and returns
+    /// `true`, or leaves the cache untouched and returns `false` to say the proposal must not be
+    /// signed.
+    ///
+    /// `false` is also returned when the cached round already equals `batch_round`, even if the
+    /// cached batch ID matches: exactly one signature is produced per author per round, and it stays
+    /// in the cache, so a repeat of a proposal we already signed is answered from the cache rather
+    /// than signed afresh.
+    fn cache_signed_proposal(
+        &self,
+        batch_author: Address<N>,
+        batch_round: u64,
+        batch_id: Field<N>,
+        signature: Signature<N>,
+    ) -> bool {
+        match self.signed_proposals.write().0.entry(batch_author) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                // Only ever advance the cached round.
+                if entry.get().0 >= batch_round {
+                    return false;
+                }
+                entry.insert((batch_round, batch_id, signature));
+                true
+            }
+            // If the validator has not signed a batch before, then continue.
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                // Cache the round, batch ID, and signature for this validator.
+                entry.insert((batch_round, batch_id, signature));
+                true
+            }
+        }
     }
 
     /// Attempts to add a peer's `signature` for `batch_id` to the current proposal.
@@ -1622,21 +1642,31 @@ impl<N: Network> Primary<N> {
     }
 
     /// Checks if the proposed batch is expired, and clears the proposed batch if it has expired.
+    ///
+    /// The proposal is inspected and cleared under a single write lock, so that the proposal which
+    /// is discarded is exactly the one that was found to be expired.
     fn check_proposed_batch_for_expiration(&self) -> Result<()> {
-        // Check if the proposed batch is timed out or stale.
+        // Read the current round before taking the lock below, so that no other lock is acquired
+        // while it is held. The round only ever increases, so reading it early is conservative: at
+        // worst a proposal that just expired is left for the next call to clear.
+        let current_round = self.current_round();
+
+        // Take the proposed batch only if it has expired; taking it leaves the state cleared.
         // A batch being certified is not considered expired.
-        let is_expired = match &*self.proposed_batch.read() {
-            ProposedBatchState::Certifying(proposal) => proposal.round() < self.current_round(),
-            _ => false,
+        let expired = {
+            let mut proposed_batch = self.proposed_batch.write();
+            let is_expired = matches!(
+                &*proposed_batch,
+                ProposedBatchState::Certifying(proposal) if proposal.round() < current_round
+            );
+            is_expired.then(|| std::mem::take(&mut *proposed_batch))
         };
-        // If the batch is expired, clear the proposed batch.
-        if is_expired {
-            // Reset the proposed batch.
-            let old = std::mem::replace(&mut *self.proposed_batch.write(), ProposedBatchState::None);
-            if let ProposedBatchState::Certifying(proposal) = old {
-                debug!("Cleared expired proposal for round {}", proposal.round());
-                self.reinsert_transmissions_into_workers(proposal.into_transmissions())?;
-            }
+
+        // Reinsert the transmissions once the lock above has been released, since this acquires the
+        // workers' locks in turn.
+        if let Some(ProposedBatchState::Certifying(proposal)) = expired {
+            debug!("Cleared expired proposal for round {}", proposal.round());
+            self.reinsert_transmissions_into_workers(proposal.into_transmissions())?;
         }
         Ok(())
     }
@@ -2609,6 +2639,94 @@ mod tests {
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_ok()
         );
+    }
+
+    /// A proposal for the current round is left in place; once the round advances past it, the same
+    /// proposal is cleared and its transmissions are returned to the workers.
+    #[test_log::test(tokio::test)]
+    async fn test_check_proposed_batch_for_expiration() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Advance storage to the round the proposal is made for.
+        let round = 3;
+        let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
+        assert_eq!(primary.current_round(), round);
+
+        // Propose a batch for the current round.
+        let proposal = create_test_proposal(
+            &accounts[0].1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            previous_certificates,
+            now(),
+            1,
+            &mut rng,
+        );
+        let batch_id = proposal.batch_id();
+        let transmission_ids: Vec<_> = proposal.transmissions().keys().copied().collect();
+        assert!(!transmission_ids.is_empty());
+        *primary.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
+
+        // The proposal is for the current round, so it is not expired and must be left alone.
+        primary.check_proposed_batch_for_expiration().unwrap();
+        assert_eq!(primary.proposed_batch.read().as_proposal().unwrap().batch_id(), batch_id);
+
+        // Advance the round past the proposal.
+        primary.storage.increment_to_next_round(round).unwrap();
+        assert!(primary.current_round() > round);
+
+        // The proposal is now stale, so it is cleared and its transmissions go back to the workers.
+        primary.check_proposed_batch_for_expiration().unwrap();
+        assert!(primary.proposed_batch.read().is_none());
+        for transmission_id in transmission_ids {
+            assert!(primary.workers()[0].contains_transmission(transmission_id));
+        }
+    }
+
+    /// The signed-proposal cache advances, and only advances: an older round must never overwrite a
+    /// newer one, and a round already cached must never be signed twice.
+    #[test_log::test(tokio::test)]
+    async fn test_signed_proposal_cache_never_moves_backwards() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let account = primary.gateway.account().clone();
+        let author = accounts[1].1.address();
+
+        // The first proposal seen for a validator is cached.
+        let id_2 = Field::rand(&mut rng);
+        let sig_2 = account.sign(&[id_2], &mut rng).unwrap();
+        assert!(primary.cache_signed_proposal(author, 2, id_2, sig_2));
+        assert_eq!(primary.signed_proposals.read().get(&author).copied().unwrap(), (2, id_2, sig_2));
+
+        // A newer round advances the cache.
+        let id_3 = Field::rand(&mut rng);
+        let sig_3 = account.sign(&[id_3], &mut rng).unwrap();
+        assert!(primary.cache_signed_proposal(author, 3, id_3, sig_3));
+        assert_eq!(primary.signed_proposals.read().get(&author).copied().unwrap(), (3, id_3, sig_3));
+
+        // A conflicting batch for the cached round is refused, and leaves the cache intact.
+        let conflicting_id = Field::rand(&mut rng);
+        let conflicting_sig = account.sign(&[conflicting_id], &mut rng).unwrap();
+        assert!(!primary.cache_signed_proposal(author, 3, conflicting_id, conflicting_sig));
+        assert_eq!(primary.signed_proposals.read().get(&author).copied().unwrap(), (3, id_3, sig_3));
+
+        // The regression: a handler for an older round must not downgrade the cache.
+        let stale_id = Field::rand(&mut rng);
+        let stale_sig = account.sign(&[stale_id], &mut rng).unwrap();
+        assert!(!primary.cache_signed_proposal(author, 2, stale_id, stale_sig));
+        assert_eq!(
+            primary.signed_proposals.read().get(&author).copied().unwrap(),
+            (3, id_3, sig_3),
+            "a handler for an older round downgraded the signed-proposal cache"
+        );
+
+        // Entries for other validators are independent.
+        let other_author = accounts[2].1.address();
+        let other_id = Field::rand(&mut rng);
+        let other_sig = account.sign(&[other_id], &mut rng).unwrap();
+        assert!(primary.cache_signed_proposal(other_author, 1, other_id, other_sig));
+        assert_eq!(primary.signed_proposals.read().get(&author).copied().unwrap().0, 3);
     }
 
     #[test_log::test(tokio::test)]

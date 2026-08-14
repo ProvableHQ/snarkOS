@@ -25,7 +25,7 @@ use crate::{
     helpers::{Pending, Ready, Storage, WorkerReceiver, fmt_id, max_redundant_requests},
     spawn_blocking,
 };
-use snarkos_node_bft_ledger_service::LedgerService;
+use snarkos_node_bft_ledger_service::{LedgerService, deserialize_transaction_strict};
 use snarkvm::{
     console::prelude::*,
     ledger::{
@@ -417,14 +417,7 @@ impl<N: Network> Worker<N> {
             return Ok(false);
         }
         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-        let transaction = spawn_blocking!({
-            match transaction {
-                Data::Object(transaction) => Ok(transaction),
-                Data::Buffer(bytes) => {
-                    Ok(Transaction::<N>::read_le(&mut bytes.take(N::LATEST_MAX_TRANSACTION_SIZE() as u64))?)
-                }
-            }
-        })?;
+        let transaction = spawn_blocking!(deserialize_transaction_strict(transaction))?;
 
         // Check that the transaction is well-formed and unique.
         self.ledger.check_transaction_basic(transaction_id, transaction).await?;

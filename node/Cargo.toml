@@ -33,10 +33,13 @@ locktick = [
   "snarkvm/locktick"
 ]
 metrics = [
+  "dep:snarkos-node-metrics",
   "snarkos-node-bft/metrics",
   "snarkos-node-consensus/metrics",
   "snarkos-node-router/metrics",
-  "snarkos-node-tcp/metrics"
+  "snarkos-node-tcp/metrics",
+  "snarkvm/metrics",
+  "snarkvm/rocks"
 ]
 history = [ "snarkos-node-rest/history", "snarkvm/history" ]
 history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
@@ -121,6 +124,10 @@ workspace = true
 [dependencies.snarkos-node-consensus]
 workspace = true
 
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
+
 [dependencies.snarkos-node-network]
 workspace = true
 
@@ -168,7 +175,7 @@ version = "0.2"
 version = "1"
 
 [dev-dependencies.pea2pea]
-version = "0.49"
+workspace = true
 
 [dev-dependencies.snarkos-node-router]
 workspace = true

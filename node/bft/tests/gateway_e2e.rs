@@ -24,7 +24,7 @@ use crate::common::{
 };
 use snarkos_account::Account;
 use snarkos_node_bft::{Gateway, helpers::init_primary_channels};
-use snarkos_node_bft_events::{ChallengeRequest, ChallengeResponse, Event};
+use snarkos_node_bft_events::{ChallengeRequest, ChallengeResponse, Event, ValidatorsRequest};
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_tcp::{P2P, protocols::Handshake};
 use snarkvm::{ledger::narwhal::Data, prelude::TestRng};
@@ -64,7 +64,7 @@ async fn handshake_responder_side_timeout() {
     let (_accounts, gateway) = new_test_gateway(NUM_NODES, &mut rng).await;
     let test_peer = TestPeer::new().await;
 
-    dbg!(test_peer.listening_addr());
+    dbg!(test_peer.listening_addr().await);
 
     // Initiate a connection with the gateway, this will only return once the handshake protocol has
     // completed on the test peer's side, which is a no-op.
@@ -110,7 +110,7 @@ async fn handshake_responder_side_invalid_challenge_request() {
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 1);
 
     // Use the address from the second peer in the list, the test peer will use the first.
-    let listener_port = test_peer.listening_addr().port();
+    let listener_port = test_peer.listening_addr().await.port();
     let address = accounts.get(1).unwrap().address();
     let nonce = rng.random();
     let snarkos_sha = None;
@@ -127,6 +127,32 @@ async fn handshake_responder_side_invalid_challenge_request() {
     let gateway_clone = gateway.clone();
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 0);
     // Check the test peer hasn't been added to the gateway's connected peers.
+    assert!(gateway.connected_peers().is_empty());
+    assert_eq!(gateway.tcp().num_connected(), 0);
+}
+
+/* An unexpected first event */
+
+// A peer whose first event is not a challenge request fails the handshake before the gateway learns
+// its listening address, so it never reaches the peer pool. The failure must still abort the
+// connection rather than leaving the peer connected with a reader attached.
+#[tokio::test(flavor = "multi_thread")]
+async fn handshake_responder_side_unexpected_first_event() {
+    const NUM_NODES: u16 = 4;
+
+    let mut rng = TestRng::default();
+    let (_accounts, gateway) = new_test_gateway(NUM_NODES, &mut rng).await;
+    let test_peer = TestPeer::new().await;
+
+    assert!(test_peer.connect(gateway.local_ip()).await.is_ok());
+
+    let gateway_clone = gateway.clone();
+    deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 1);
+
+    let _ = test_peer.unicast(gateway.local_ip(), Event::ValidatorsRequest(ValidatorsRequest));
+
+    let gateway_clone = gateway.clone();
+    deadline!(Duration::from_secs(5), move || gateway_clone.tcp().num_connecting() == 0);
     assert!(gateway.connected_peers().is_empty());
     assert_eq!(gateway.tcp().num_connected(), 0);
 }
@@ -150,7 +176,7 @@ async fn handshake_responder_side_invalid_challenge_response() {
     deadline!(Duration::from_secs(1), move || gateway_clone.tcp().num_connecting() == 1);
 
     // Use the address from the second peer in the list, the test peer will use the first.
-    let listener_port = test_peer.listening_addr().port();
+    let listener_port = test_peer.listening_addr().await.port();
     let address = accounts.get(1).unwrap().address();
     let our_nonce = rng.random();
     let snarkos_sha = None;

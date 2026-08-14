@@ -19,6 +19,7 @@ use crate::{
     NodeType,
     Outbound,
     PeerPoolHandling,
+    Router,
     bootstrap_peers,
     messages::{DisconnectReason, Message, PeerRequest},
 };
@@ -79,6 +80,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
         self.handle_puzzle_request();
         // Unban any addresses whose ban time has expired.
         self.handle_banned_ips();
+        // Clear stale rate-limit cache entries.
+        self.clear_stale_peers();
     }
 
     /// TODO (howardwu): Consider checking minimum number of validators, to exclude clients and provers.
@@ -372,5 +375,12 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
     // Remove addresses whose ban time has expired.
     fn handle_banned_ips(&self) {
         self.router().tcp().banned_peers().remove_old_bans(Self::IP_BAN_TIME_IN_SECS);
+    }
+
+    fn clear_stale_peers(&self) {
+        self.router().cache().clear_stale_entries(
+            Router::<N>::CONNECTION_ATTEMPTS_SINCE_SECS,
+            Router::<N>::MESSAGE_LIMIT_TIME_FRAME_IN_SECS,
+        );
     }
 }

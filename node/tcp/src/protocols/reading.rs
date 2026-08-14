@@ -19,6 +19,7 @@ use crate::{
     Connection,
     ConnectionSide,
     P2P,
+    Stats,
     Tcp,
     connections::DisconnectOrigin,
     protocols::{DisconnectOnDrop, ProtocolHandler, ReturnableConnection},
@@ -30,6 +31,7 @@ use futures_util::StreamExt;
 use std::{
     io,
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -161,7 +163,6 @@ impl<R: Reading> ReadingInternal for R {
             while let Some((msg, _guard)) = inbound_message_receiver.recv().await {
                 if let Err(e) = self_clone.process_message(addr, msg).await {
                     error!(parent: &conn_span, "can't process a message: {e}");
-                    node.known_peers().register_failure(addr.ip());
                 }
                 // _guard drops here, after process_message completes
             }
@@ -203,7 +204,6 @@ impl<R: Reading> ReadingInternal for R {
                     Some(Ok(msg)) => {
                         // send the message for further processing
                         if let Err(e) = inbound_message_sender.try_send((msg, QueuedMessageGuard::new())) {
-                            node.stats().register_failure();
                             match e {
                                 mpsc::error::TrySendError::Full(_) => {
                                     // avoid log flooding
@@ -226,7 +226,6 @@ impl<R: Reading> ReadingInternal for R {
                     }
                     Some(Err(e)) => {
                         error!(parent: &conn_span, "can't read: {e}");
-                        node.known_peers().register_failure(addr.ip());
                         if node.config().fatal_io_errors.contains(&e.kind()) {
                             break;
                         }
@@ -249,7 +248,13 @@ impl<R: Reading> ReadingInternal for R {
         framed: FramedRead<T, Self::Codec>,
         conn: &Connection,
     ) -> FramedRead<T, CountingCodec<Self::Codec>> {
-        framed.map_decoder(|codec| CountingCodec { codec, node: self.tcp().clone(), acc: 0, span: conn.span().clone() })
+        framed.map_decoder(|codec| CountingCodec {
+            codec,
+            node: self.tcp().clone(),
+            stats: Arc::clone(conn.stats()),
+            acc: 0,
+            span: conn.span().clone(),
+        })
     }
 }
 
@@ -257,6 +262,7 @@ impl<R: Reading> ReadingInternal for R {
 struct CountingCodec<D: Decoder> {
     codec: D,
     node: Tcp,
+    stats: Arc<Stats>,
     acc: usize,
     span: Span,
 }
@@ -279,7 +285,7 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
 
             if ret.is_some() {
                 self.acc = 0;
-                // self.node.known_peers().register_received_message(self.addr.ip(), read_len);
+                self.stats.register_received_message(read_len);
                 self.node.stats().register_received_message(read_len);
             } else {
                 self.acc = read_len;

@@ -486,6 +486,7 @@ jobs:
       - run_serial:
           workspace_member: node/bft/storage-service
           cache_key: node-bft-storage-service
+          flags: --features memory,persistent
 
   node-cdn:
     executor: rust-docker
@@ -813,7 +814,6 @@ workflows:
           filters:
             branches:
               only:
-                - release-testnet-4.9.0
                 - canary
                 - testnet
                 - mainnet

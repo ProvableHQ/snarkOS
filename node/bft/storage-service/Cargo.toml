@@ -53,6 +53,5 @@ features = [ "ledger", "console", "rocks" ]
 workspace = true
 optional = true
 
-[dev-dependencies.snarkvm]
+[dev-dependencies.bytes]
 workspace = true
-features = [ "test" ]
