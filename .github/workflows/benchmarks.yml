@@ -120,7 +120,7 @@ jobs:
           # but for all, except the sync variance, bigger is indeed better.
           tool: 'customBiggerIsBetter'
           output-file-path: results.json
-          alert-comment-cc-users: '@kaimast'
+          alert-comment-cc-users: '@kaimast,@snarkworld,@cbeck88'
           # Only push the results on staging (see below)
           auto-push: false
           # Enable Job Summary for PRs
