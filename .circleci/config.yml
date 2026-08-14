@@ -823,7 +823,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-testnet-4.9.0
+                - test_net_v491
                 - canary
                 - testnet
                 - mainnet
@@ -833,7 +833,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-testnet-4.9.0
+                - test_net_v491
                 - canary
                 - testnet
                 - mainnet
@@ -842,7 +842,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-testnet-4.9.0
+                - test_net_v491
                 - canary
                 - testnet
                 - mainnet
