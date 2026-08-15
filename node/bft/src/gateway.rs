@@ -174,7 +174,7 @@ const IP_BAN_TIME_IN_SECS: u64 = 300;
 ///
 /// Setting this is not the end of the migration, only the middle of it; see
 /// [`LEGACY_HANDSHAKE_EXPIRY`].
-const NOISE_HANDSHAKE_ACTIVATION: Option<ConsensusVersion> = Some(ConsensusVersion::V19);
+const NOISE_HANDSHAKE_ACTIVATION: Option<ConsensusVersion> = Some(ConsensusVersion::V20);
 
 /// The consensus version at which this node stops *accepting* the legacy handshake, if one is
 /// scheduled.
@@ -190,7 +190,7 @@ const NOISE_HANDSHAKE_ACTIVATION: Option<ConsensusVersion> = Some(ConsensusVersi
 /// be shut out. Note also that the same relay is reachable through the router's handshake, which
 /// signs a byte-identical message with the same account key, so the gateway cannot be the last part
 /// of this to be converted.
-const LEGACY_HANDSHAKE_EXPIRY: Option<ConsensusVersion> = Some(ConsensusVersion::V20);
+const LEGACY_HANDSHAKE_EXPIRY: Option<ConsensusVersion> = Some(ConsensusVersion::V21);
 
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.

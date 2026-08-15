@@ -823,7 +823,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v49
+                - test_net_v491
                 - canary
                 - testnet
                 - mainnet
@@ -833,7 +833,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v49
+                - test_net_v491
                 - canary
                 - testnet
                 - mainnet
@@ -842,7 +842,7 @@ workflows:
           filters:
             branches:
               only:
-                - tests/flaky_test_full_upgrade
+                - test_net_v491
                 - canary
                 - testnet
                 - mainnet
