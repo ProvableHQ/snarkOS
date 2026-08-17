@@ -822,7 +822,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v49
+                - main_net_v491
                 - canary
                 - testnet
                 - mainnet
@@ -832,7 +832,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v49
+                - main_net_v491
                 - canary
                 - testnet
                 - mainnet
@@ -841,7 +841,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v49
+                - main_net_v491
                 - canary
                 - testnet
                 - mainnet
