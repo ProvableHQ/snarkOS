@@ -60,6 +60,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # clang-sys links libclang with @rpath. dyld does not search the Xcode
+      # toolchain, but it does search $HOME/lib (DYLD_FALLBACK_LIBRARY_PATH).
+      - name: Make libclang discoverable
+        run: |
+          LIBCLANG="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/libclang.dylib"
+          test -f "$LIBCLANG"
+          mkdir -p "$HOME/lib"
+          ln -sf "$LIBCLANG" "$HOME/lib/libclang.dylib"
+
       - name: Build snarkOS
         run: |
           cargo build --all --release && strip target/release/snarkos
