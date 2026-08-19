@@ -17,7 +17,7 @@
 
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::Not,
     sync::{Arc, atomic::AtomicBool},
     time::Instant,
@@ -81,6 +81,26 @@ impl Connections {
     pub(crate) fn stats_snapshot(&self) -> HashMap<SocketAddr, Arc<Stats>> {
         self.0.read().iter().map(|(addr, conn)| (*addr, Arc::clone(conn.stats()))).collect()
     }
+
+    /// Returns the number of active connections charged to the given address' IP.
+    ///
+    /// note: This is a scan rather than a lookup, as connections are keyed by their full address;
+    /// it is only performed once per connection setup, and is bounded by `Config::max_connections`.
+    pub(crate) fn num_with_ip(&self, addr: SocketAddr) -> usize {
+        let ip = canonical_ip(addr);
+        self.0.read().keys().filter(|addr| canonical_ip(**addr) == ip).count()
+    }
+}
+
+/// The IP address a connection is charged to, for the purposes of per-IP limits.
+///
+/// Canonicalizing is what keeps the two spellings of an IPv4 host - the native form and the
+/// IPv4-mapped IPv6 form a dual-stack listener reports - in a single bucket. Without it, a peer
+/// reaching a node bound to `::` could claim the per-IP allowance twice over by alternating
+/// between them. Deriving the key here, rather than accepting one from the caller, is what
+/// guarantees every comparison uses the same bucket.
+pub(crate) const fn canonical_ip(addr: SocketAddr) -> IpAddr {
+    addr.ip().to_canonical()
 }
 
 /// A helper trait to facilitate trait-objectification of connection readers.
