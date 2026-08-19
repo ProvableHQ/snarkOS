@@ -245,11 +245,8 @@ impl<W: Writing> WritingInternal for W {
                     }
                     Err(e) => {
                         error!(parent: &conn_span, "couldn't send a message: {e}");
-                        let is_fatal = node.config().fatal_io_errors.contains(&e.kind());
                         let _ = wrapped_msg.delivery_notification.send(Err(e));
-                        if is_fatal {
-                            break;
-                        }
+                        break;
                     }
                 }
             }

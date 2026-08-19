@@ -47,8 +47,8 @@ use tracing::*;
 ///
 /// Each inbound message is isolated by the user-supplied [`Reading::Codec`], creating a [`Reading::Message`],
 /// which is immediately queued (with a [`Reading::MESSAGE_QUEUE_DEPTH`] limit) to be processed by
-/// [`Reading::process_message`]. The configured fatal IO errors result in an immediate disconnect
-/// (in order to e.g. avoid accidentally reading "borked" messages).
+/// [`Reading::process_message`]. Errors result in an immediate disconnect (in order to e.g. avoid
+/// accidentally reading "borked" messages).
 #[async_trait]
 pub trait Reading: P2P
 where
@@ -226,9 +226,7 @@ impl<R: Reading> ReadingInternal for R {
                     }
                     Some(Err(e)) => {
                         error!(parent: &conn_span, "can't read: {e}");
-                        if node.config().fatal_io_errors.contains(&e.kind()) {
-                            break;
-                        }
+                        break;
                     }
                     None => break, // end of stream
                 }
