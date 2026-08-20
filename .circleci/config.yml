@@ -447,6 +447,14 @@ jobs:
           workspace_member: cli
           cache_key: cli
 
+  utilities:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: utilities
+          cache_key: utilities
+
   node:
     executor: rust-docker
     resource_class: << pipeline.parameters.twoxlarge >>
@@ -853,6 +861,7 @@ workflows:
       - snarkos
       - account
       - cli
+      - utilities
 
   windows-workflow:
     jobs:
