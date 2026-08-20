@@ -272,6 +272,9 @@ impl<N: Network> Telemetry<N> {
     }
 
     /// Insert a certificate into the telemetry tracker.
+    ///
+    /// This does not cause the scores to be recomputed on its own; the next subdag picks the
+    /// certificate up. See the note on the certificate arm of [`TelemetryWorker::run`].
     pub fn insert_certificate(&self, certificate: &BatchCertificate<N>) {
         // Reserve before deriving the metadata, for the reason given in `insert_subdag`.
         let Some(permit) = self.reserve() else {
@@ -325,7 +328,11 @@ impl<N: Network> Telemetry<N> {
         self.num_dropped.load(Ordering::Relaxed)
     }
 
-    /// Waits until every previously enqueued update has been applied and published.
+    /// Waits until every previously enqueued update has been applied.
+    ///
+    /// Any update that recomputes the scores has also been published by the time this returns.
+    /// A certificate insert does not recompute, so it is applied but not yet reflected in the
+    /// published snapshot.
     ///
     /// Returns an error if the worker is not running. Intended for tests and for
     /// deterministic shutdown; the production paths are all fire-and-forget.
@@ -417,6 +424,9 @@ impl<N: Network> TelemetryWorker<N> {
                         recompute = true;
                     }
                     TelemetryUpdate::Certificate(metadata) => {
+                        // Deliberately leaves `recompute` alone. A lone certificate barely moves
+                        // the scores, and the next subdag recomputes and republishes them, so the
+                        // published snapshot trails a certificate insert until one arrives.
                         self.state.insert_certificate_metadata(std::slice::from_ref(&*metadata));
                     }
                     // Acknowledged below, after any pending recomputation has been published.
