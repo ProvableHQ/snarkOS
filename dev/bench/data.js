@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787207876295,
+  "lastUpdate": 1787239618291,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -16536,6 +16536,72 @@ window.BENCHMARK_DATA = {
             "value": 1.53,
             "unit": "blocks/s",
             "extra": "total_wait=163s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bda72b40f5be4d08c7c7511850da93eb55909ca7",
+          "message": "Merge pull request #4405 from cbeck88/ci/close-test-coverage-gaps\n\nci: check the display crate, and fix the serial wiring that hid behind it",
+          "timestamp": "2026-08-20T09:10:22-06:00",
+          "tree_id": "2f1bf7515410f1f5173eb8364d68941b3f585ad5",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/bda72b40f5be4d08c7c7511850da93eb55909ca7"
+        },
+        "date": 1787239616999,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.91156365565943,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=48.428282022476196, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12334.270528306462,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.4859936237335205, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 6345.463829014701,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.12607431411743164, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.29,
+            "unit": "blocks/s",
+            "extra": "total_wait=109s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.90992,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=107, mean_speed=1.313707, max_speed=3.700000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.03,
+            "unit": "blocks/s",
+            "extra": "total_wait=123s, target_height=250, connect_time=7, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.96,
+            "unit": "blocks/s",
+            "extra": "total_wait=127s, target_height=250"
           }
         ]
       }
