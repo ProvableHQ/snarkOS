@@ -124,8 +124,10 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
                 Entry::Vacant(vacant_entry) => {
                     // Retrieve the missing transmission.
                     let Some(transmission) = missing_transmissions.remove(&transmission_id) else {
+                        // note: `self.contains_transmission` would deadlock here; it read-locks
+                        // `self.transmissions`, which is write-locked above.
                         if !aborted_transmission_ids.contains(&transmission_id)
-                            && !self.contains_transmission(transmission_id)
+                            && !aborted_transmission_ids_lock.contains_key(&transmission_id)
                         {
                             error!("Failed to provide a missing transmission {transmission_id}");
                         }
@@ -466,32 +468,25 @@ mod tests {
         assert!(service.find_missing_transmissions(&batch_header, Default::default(), Default::default()).is_err());
     }
 
-    /// Documents a live deadlock rather than asserting correct behavior; ignored so it cannot hang
-    /// CI. Run it explicitly with `--ignored` to reproduce.
+    /// `insert_transmissions` must return when a declared transmission is neither provided nor
+    /// aborted, rather than deadlock on a re-entrant lock acquisition.
     ///
-    /// When `insert_transmissions` reaches a vacant entry for a transmission ID that was neither
-    /// provided in `missing_transmissions` nor aborted, it calls `self.contains_transmission(..)`
-    /// while already holding the write guard on `self.transmissions`. That method takes a read
-    /// guard on the same lock, which `parking_lot::RwLock` does not grant re-entrantly, so the
-    /// thread parks forever.
+    /// That branch is reached through the gap between `find_missing_transmissions` and
+    /// `insert_transmissions`, which take separate locks: a concurrent `remove_transmissions` can
+    /// evict an entry the first call saw and therefore left out of `missing_transmissions`.
     ///
-    /// The production path reaches this branch through the gap between `find_missing_transmissions`
-    /// and `insert_transmissions`: the two take separate locks, so a concurrent
-    /// `remove_transmissions` can evict an entry that the first call saw and therefore skipped.
-    /// Only `BFTMemoryService` is affected. `BFTPersistentStorage` has the same shape but its
-    /// `contains_transmission` reads RocksDB rather than the lock it is holding.
+    /// The call runs on its own thread so a regression fails on the timeout rather than hanging
+    /// the test binary.
     #[test]
-    #[ignore = "reproduces a deadlock in insert_transmissions; see the PR description"]
-    fn insert_transmissions_deadlocks_on_an_unprovided_transmission() {
+    fn insert_transmissions_returns_when_a_transmission_is_neither_provided_nor_aborted() {
         let (sender, receiver) = mpsc::channel();
 
-        // Run the call on its own thread so a hang is reported as a failure, not as a hung test
-        // binary. The thread is leaked if it parks, which is the behavior under test.
         std::thread::spawn(move || {
             let rng = &mut TestRng::default();
             let service = BFTMemoryService::<CurrentNetwork>::new();
             let transmission_id = sample_transmission_id(rng);
 
+            // Declare a transmission that is neither provided nor aborted.
             service.insert_transmissions(
                 Field::rand(rng),
                 indexset![transmission_id],
@@ -499,12 +494,14 @@ mod tests {
                 Default::default(),
             );
 
-            let _ = sender.send(());
+            let _ = sender.send(service.contains_transmission(transmission_id));
         });
 
-        assert!(
-            receiver.recv_timeout(Duration::from_secs(10)).is_ok(),
-            "insert_transmissions did not return: it re-entered its own lock",
-        );
+        let contains = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("insert_transmissions did not return: it re-entered its own lock");
+
+        // The undeliverable transmission is skipped, not recorded as a phantom entry.
+        assert!(!contains);
     }
 }
