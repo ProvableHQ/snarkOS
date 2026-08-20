@@ -662,7 +662,7 @@ impl<N: Network> Consensus<N> {
         #[cfg(feature = "metrics")]
         metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_SECS, advance_elapsed.as_secs_f64());
 
-        #[cfg(feature = "telemetry")]
+        #[cfg(feature = "metrics")]
         // Fetch the committee lookback for the latest round.
         // Note: Do not abort here if this returns an error, because the committee is only needed for telemetry,
         // not for block advancement itself.
@@ -716,7 +716,7 @@ impl<N: Network> Consensus<N> {
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);
 
             // If telemetry is enabled, update participation scores.
-            #[cfg(feature = "telemetry")]
+            #[cfg(feature = "metrics")]
             {
                 let telemetry = self.bft().primary().gateway().validator_telemetry();
 

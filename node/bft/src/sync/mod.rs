@@ -445,7 +445,7 @@ impl<N: Network> Sync<N> {
                 }
 
                 // Update the validator telemetry.
-                #[cfg(feature = "telemetry")]
+                #[cfg(feature = "metrics")]
                 self.gateway.validator_telemetry().insert_subdag(subdag);
             }
         }

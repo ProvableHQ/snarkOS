@@ -1367,7 +1367,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     /// GET /{network}/validators/participation
     /// GET /{network}/validators/participation?metadata={true}
-    #[cfg(feature = "telemetry")]
+    #[cfg(feature = "metrics")]
     pub(crate) async fn get_validator_participation_scores(
         State(rest): State<Self>,
         metadata: Query<Metadata>,

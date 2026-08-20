@@ -36,6 +36,7 @@ metrics = [
   "dep:snarkos-node-metrics",
   "snarkos-node-bft/metrics",
   "snarkos-node-consensus/metrics",
+  "snarkos-node-rest/metrics",
   "snarkos-node-router/metrics",
   "snarkos-node-tcp/metrics",
   "snarkvm/metrics",
@@ -44,7 +45,6 @@ metrics = [
 history = [ "snarkos-node-rest/history", "snarkvm/history" ]
 history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
 slipstream-plugins = [ "snarkos-node-rest/slipstream-plugins", "snarkvm/slipstream-plugins" ]
-telemetry = [ "snarkos-node-bft/telemetry", "snarkos-node-consensus/telemetry", "snarkos-node-rest/telemetry" ]
 cuda = [
   "snarkvm/cuda",
   "snarkos-account/cuda",

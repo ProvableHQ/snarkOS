@@ -21,7 +21,7 @@ default = [ ]
 history = [ "snarkvm/history" ]
 history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
 slipstream-plugins = [ "snarkvm/slipstream-plugins" ]
-telemetry = [ "snarkos-node-consensus/telemetry" ]
+metrics = [ "snarkos-node-consensus/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
   "dep:locktick",
