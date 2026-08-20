@@ -301,13 +301,20 @@ impl<N: Network> Telemetry<N> {
     /// again once garbage collection passes the highest round a drop touched, at which point
     /// this returns `true` permanently (until the next drop). See the module documentation.
     pub fn is_complete(&self) -> bool {
+        // Read the published `gc_round` before `max_dropped_round`. Both only ever increase, so
+        // in this order a drop recorded between the two reads is compared against the older
+        // `gc_round` and reports incomplete for one call. Reading them the other way round
+        // compares the new `gc_round` against a stale `max_dropped_round`, which can report
+        // complete while that drop is still relevant.
+        let gc_round = self.scores.borrow().gc_round;
         let max_dropped_round = self.max_dropped_round.load(Ordering::Relaxed);
+
         // Nothing has ever been dropped.
         if max_dropped_round == 0 {
             return true;
         }
         // Every round a drop could have touched has since been garbage collected.
-        self.scores.borrow().gc_round >= max_dropped_round
+        gc_round >= max_dropped_round
     }
 
     /// Returns the number of telemetry updates dropped so far because the queue was full.
