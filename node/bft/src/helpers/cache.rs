@@ -24,8 +24,24 @@ use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     net::{IpAddr, SocketAddr},
+    time::Duration,
 };
 use time::OffsetDateTime;
+
+/// The outcome of attempting to record an event against a rate-limited counter.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RateLimit {
+    /// The event was recorded; the counter is within its limit.
+    Allowed,
+    /// The counter is at its limit, and *nothing was recorded*.
+    ///
+    /// `retry_after` is the time until the oldest recent hit ages out of the counter's interval.
+    /// Hits are never removed by any other means -- in particular, recording one reserves it for
+    /// the whole interval rather than until whatever it stands for completes -- so against an
+    /// unchanged `limit` this is how long the caller must wait. It is a lower bound: if the counter
+    /// is above its limit rather than exactly at it, more than one hit has to age out first.
+    Throttled { retry_after: Duration },
+}
 
 #[derive(Debug)]
 pub struct Cache<N: Network> {
@@ -118,6 +134,31 @@ impl<N: Network> Cache<N> {
     pub fn insert_outbound_transmission(&self, peer_ip: SocketAddr, interval_in_secs: i64) -> usize {
         Self::retain_and_insert(&self.seen_outbound_transmissions, peer_ip, interval_in_secs)
     }
+
+    /// Records a new timestamp for the given peer, unless doing so would exceed `limit`.
+    pub fn try_insert_outbound_event(&self, peer_ip: SocketAddr, interval_in_secs: i64, limit: usize) -> RateLimit {
+        Self::retain_and_insert_within(&self.seen_outbound_events, peer_ip, interval_in_secs, limit)
+    }
+
+    /// Records a new timestamp for the given peer, unless doing so would exceed `limit`.
+    pub fn try_insert_outbound_certificate(
+        &self,
+        peer_ip: SocketAddr,
+        interval_in_secs: i64,
+        limit: usize,
+    ) -> RateLimit {
+        Self::retain_and_insert_within(&self.seen_outbound_certificates, peer_ip, interval_in_secs, limit)
+    }
+
+    /// Records a new timestamp for the given peer, unless doing so would exceed `limit`.
+    pub fn try_insert_outbound_transmission(
+        &self,
+        peer_ip: SocketAddr,
+        interval_in_secs: i64,
+        limit: usize,
+    ) -> RateLimit {
+        Self::retain_and_insert_within(&self.seen_outbound_transmissions, peer_ip, interval_in_secs, limit)
+    }
 }
 
 impl<N: Network> Cache<N> {
@@ -168,37 +209,88 @@ impl<N: Network> Cache<N> {
         key: K,
         interval_in_secs: i64,
     ) -> usize {
+        // An unlimited insert is always granted, so the throttled arm is unreachable here.
+        match Self::retain_and_insert_up_to(map, key, interval_in_secs, None) {
+            Ok(cache_hits) => cache_hits,
+            Err(_) => unreachable!("an unlimited insert cannot be throttled"),
+        }
+    }
+
+    /// Insert a new timestamp for the given key, unless the key already has `limit` recent entries.
+    ///
+    /// The count and the insert happen under a *single* acquisition of the write lock, so capacity
+    /// is claimed atomically: two callers can never both observe the same free slot and take it.
+    /// That is what stops a burst of concurrent senders from collectively overshooting the limit
+    /// after they are all released by the same expiry.
+    ///
+    /// A throttled call records nothing. This matters because callers retry in a loop: an attempt
+    /// that recorded a hit would sustain the very count it is waiting to see fall, and once enough
+    /// callers were retrying, the counter could never drain again.
+    fn retain_and_insert_within<K: Copy + Clone + PartialEq + Eq + Hash>(
+        map: &RwLock<BTreeMap<i64, HashMap<K, u32>>>,
+        key: K,
+        interval_in_secs: i64,
+        limit: usize,
+    ) -> RateLimit {
+        match Self::retain_and_insert_up_to(map, key, interval_in_secs, Some(limit)) {
+            Ok(_) => RateLimit::Allowed,
+            Err(retry_after) => RateLimit::Throttled { retry_after },
+        }
+    }
+
+    /// Prunes the expired entries, then records a hit for `key` if `limit` allows it.
+    ///
+    /// Returns the number of recent entries for `key`, including the one just recorded. If `limit`
+    /// is `Some` and is already met, nothing is recorded and the time until `key`'s oldest recent
+    /// entry ages out of the interval is returned instead. Expiry is the only thing that removes an
+    /// entry, so for an unchanging `limit` no earlier retry could have been granted.
+    fn retain_and_insert_up_to<K: Copy + Clone + PartialEq + Eq + Hash>(
+        map: &RwLock<BTreeMap<i64, HashMap<K, u32>>>,
+        key: K,
+        interval_in_secs: i64,
+        limit: Option<usize>,
+    ) -> Result<usize, Duration> {
         // Fetch the current timestamp.
         let now = OffsetDateTime::now_utc().unix_timestamp();
-
-        // Get the write lock.
-        let mut map_write = map.write();
-        // Insert the new timestamp and increment the frequency for the key.
-        *map_write.entry(now).or_default().entry(key).or_default() += 1;
         // Calculate the cutoff time for the entries to retain.
         let cutoff = now.saturating_sub(interval_in_secs);
-        // Obtain the oldest timestamp from the map; it's guaranteed to exist at this point.
-        let (oldest, _) = map_write.first_key_value().unwrap();
-        // Track the number of cache hits of the key.
-        let mut cache_hits = 0;
-        // If the oldest timestamp is above the cutoff value, all the entries can be retained.
-        if cutoff <= *oldest {
-            for cache_keys in map_write.values() {
-                cache_hits += *cache_keys.get(&key).unwrap_or(&0);
-            }
-        } else {
-            // Extract the subtree after interval (i.e. non-expired entries)
+
+        // Get the write lock. Everything below happens under it, so that a count cannot go stale
+        // between being checked against the limit and being acted on.
+        let mut map_write = map.write();
+
+        // Drop the expired entries, unless every entry is still within the interval.
+        if map_write.first_key_value().is_some_and(|(oldest, _)| *oldest < cutoff) {
+            // Extract the subtree from the cutoff (i.e. the non-expired entries), discarding the rest.
             let retained = map_write.split_off(&cutoff);
-            // Clear all the expired entries.
-            map_write.clear();
-            // Reinsert the entries into map and sum the frequency of recent requests for `key` while looping.
-            for (time, cache_keys) in retained {
-                cache_hits += *cache_keys.get(&key).unwrap_or(&0);
-                map_write.insert(time, cache_keys);
+            *map_write = retained;
+        }
+
+        // Sum the frequency of the key over the retained entries, noting the oldest one holding a hit.
+        let mut cache_hits = 0;
+        let mut oldest_hit = None;
+        for (time, cache_keys) in map_write.iter() {
+            if let Some(hits) = cache_keys.get(&key) {
+                cache_hits += *hits;
+                oldest_hit.get_or_insert(*time);
             }
         }
-        // Return the frequency.
-        cache_hits as usize
+
+        // Refuse to record the hit if the key is already at its limit.
+        if let Some(limit) = limit
+            && cache_hits as usize >= limit
+        {
+            // An entry recorded at `t` remains within the interval while `t >= now - interval`, so
+            // the oldest one ages out at `t + interval + 1`. Fall back to `now` if the limit is
+            // zero, in which case there is no hit to age out and any wait is as good as another.
+            let ages_out_at = oldest_hit.unwrap_or(now).saturating_add(interval_in_secs).saturating_add(1);
+            return Err(Duration::from_secs(ages_out_at.saturating_sub(now).max(0) as u64));
+        }
+
+        // Insert the new timestamp and increment the frequency for the key.
+        *map_write.entry(now).or_default().entry(key).or_default() += 1;
+        // Return the frequency, including the hit just recorded.
+        Ok(cache_hits as usize + 1)
     }
 
     /// Increments the key's counter in the map, returning the updated counter.
@@ -233,7 +325,12 @@ mod tests {
     use super::*;
     use snarkvm::prelude::MainnetV0;
 
-    use std::{net::Ipv4Addr, thread, time::Duration};
+    use std::{
+        net::Ipv4Addr,
+        sync::{Arc, Barrier},
+        thread,
+        time::Duration,
+    };
 
     type CurrentNetwork = MainnetV0;
 
@@ -355,5 +452,79 @@ mod tests {
         // Clear all requests.
         cache.clear_outbound_validators_requests(input);
         assert!(!cache.contains_outbound_validators_request(input));
+    }
+
+    /// A throttled attempt must record nothing.
+    ///
+    /// `Gateway::throttle_outbound` retries in a loop while waiting for a peer to fall back under a
+    /// rate limit. If a refused attempt still recorded a hit, waiters would sustain the very count
+    /// they are waiting on, and past some number of them the counter could never drain again.
+    #[test]
+    fn test_throttled_outbound_does_not_record() {
+        let cache = Cache::<CurrentNetwork>::default();
+        let input: SocketAddr = Input::input();
+        const INTERVAL: i64 = 10;
+        const LIMIT: usize = 2;
+
+        // Fill the counter up to its limit.
+        for _ in 0..LIMIT {
+            assert_eq!(cache.try_insert_outbound_event(input, INTERVAL, LIMIT), RateLimit::Allowed);
+            assert_eq!(cache.try_insert_outbound_certificate(input, INTERVAL, LIMIT), RateLimit::Allowed);
+            assert_eq!(cache.try_insert_outbound_transmission(input, INTERVAL, LIMIT), RateLimit::Allowed);
+        }
+
+        // Retrying, as the wait loop does, must be refused and must leave the counts untouched.
+        for _ in 0..100 {
+            for outcome in [
+                cache.try_insert_outbound_event(input, INTERVAL, LIMIT),
+                cache.try_insert_outbound_certificate(input, INTERVAL, LIMIT),
+                cache.try_insert_outbound_transmission(input, INTERVAL, LIMIT),
+            ] {
+                // The wait must be bounded by the interval, and must be long enough to be worth
+                // making: a zero-length wait would turn the caller's retry into a busy loop.
+                let RateLimit::Throttled { retry_after } = outcome else {
+                    panic!("a counter at its limit must throttle")
+                };
+                assert!(retry_after > Duration::ZERO);
+                assert!(retry_after <= Duration::from_secs(INTERVAL as u64 + 1));
+            }
+        }
+
+        // Had any of those attempts recorded a hit, the count would have grown past the limit.
+        assert_eq!(cache.insert_outbound_event(input, INTERVAL), LIMIT + 1);
+    }
+
+    /// Only `limit` of the callers competing for the same free slot may claim it.
+    #[test]
+    fn test_concurrent_outbound_claims_do_not_overshoot() {
+        const INTERVAL: i64 = 10;
+        const LIMIT: usize = 8;
+        const CLAIMANTS: usize = 64;
+
+        let cache = Arc::new(Cache::<CurrentNetwork>::default());
+        let input: SocketAddr = Input::input();
+        // Release every thread at once, so that they contend for the same empty counter.
+        let barrier = Arc::new(Barrier::new(CLAIMANTS));
+
+        let claimants: Vec<_> = (0..CLAIMANTS)
+            .map(|_| {
+                let (cache, barrier) = (cache.clone(), barrier.clone());
+                thread::spawn(move || {
+                    barrier.wait();
+                    cache.try_insert_outbound_transmission(input, INTERVAL, LIMIT)
+                })
+            })
+            .collect();
+
+        let allowed = claimants
+            .into_iter()
+            .map(|c| c.join().expect("claimant panicked"))
+            .filter(|outcome| *outcome == RateLimit::Allowed)
+            .count();
+
+        // Exactly `LIMIT` may pass. More would mean two claimants saw the same free slot; fewer
+        // would mean a refusal consumed one.
+        assert_eq!(allowed, LIMIT);
+        assert_eq!(cache.insert_outbound_transmission(input, INTERVAL), LIMIT + 1);
     }
 }

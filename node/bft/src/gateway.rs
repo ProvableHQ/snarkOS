@@ -22,7 +22,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{Cache, PrimarySender, RateLimit, Storage, SyncSender, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use smol_str::SmolStr;
@@ -112,6 +112,7 @@ use tokio::{
     net::TcpStream,
     sync::{OnceCell, oneshot},
     task::{self, JoinHandle},
+    time::Instant,
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -120,6 +121,13 @@ use tokio_util::codec::Framed;
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 /// The maximum interval of requests to cache.
 const CACHE_REQUESTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
+
+/// The shortest delay between two attempts to claim outbound rate limit capacity.
+///
+/// The caches bucket by whole seconds, so a throttled sender normally sleeps until the moment its
+/// oldest recorded event ages out. This floor only applies when that moment has already passed, and
+/// exists so that a retry can never become a busy loop.
+const THROTTLE_RETRY_MIN_DELAY: Duration = Duration::from_millis(10);
 
 /// The number of consensus rounds of traffic that a per-connection message queue must absorb.
 ///
@@ -595,53 +603,89 @@ impl<N: Network> Gateway<N> {
         }
     }
 
-    /// Sends the given event to specified peer.
-    ///
-    /// This function returns as soon as the event is queued to be sent,
-    /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
-    /// which can be used to determine when and whether the event has been delivered.
     /// Waits until this peer is within the outbound rate limits for the given event, recording the
-    /// event in the outbound caches as it does so.
+    /// event in the outbound caches once it is. Returns `false` if the event should be dropped.
     ///
     /// This is the admission control for [`Transport::send`], and it deliberately runs *before* the
     /// payload is serialized. Serializing first would mean doing the expensive work for an event
     /// that is about to be throttled -- or dropped outright, if the connection's outbound queue is
     /// full by the time it is enqueued -- which lets a peer that requests large responses pile up
     /// work in the blocking pool no matter how far behind its own queue is.
-    async fn throttle_outbound(&self, peer_ip: SocketAddr, event: &Event<N>) {
-        /// Waits until the given per-peer counter is back under its limit.
-        macro_rules! wait_until_under_limit {
-            ($cache_map:ident, $interval:expr, $limit:ident) => {{
-                while self.cache.$cache_map(peer_ip, $interval) > self.$limit() {
-                    // Sleep for a short period of time to allow the cache to clear.
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+    ///
+    /// Capacity is claimed atomically, and an attempt that is refused records nothing; see
+    /// [`Cache::retain_and_insert_within`] for why both halves of that matter.
+    ///
+    /// The wait is bounded by [`MAX_FETCH_TIMEOUT`]. An event that cannot be admitted inside that
+    /// window is already useless to the peer -- a requester has given up on it by then, and any
+    /// consensus event it carried is stale -- so it is dropped rather than sent late. This is the
+    /// same reasoning that sizes the queues it feeds; see [`per_connection_queue_depth`].
+    async fn throttle_outbound(&self, peer_ip: SocketAddr, event: &Event<N>) -> bool {
+        /// Attempts to claim capacity against the given per-peer counter, retrying until it is
+        /// granted or the deadline leaves no time for another attempt.
+        macro_rules! claim {
+            ($try_insert:ident, $interval:expr, $limit:ident) => {{
+                let deadline = Instant::now() + MAX_FETCH_TIMEOUT;
+                loop {
+                    let retry_after = match self.cache.$try_insert(peer_ip, $interval, self.$limit()) {
+                        RateLimit::Allowed => break true,
+                        RateLimit::Throttled { retry_after } => retry_after,
+                    };
+                    // Wait for the oldest recorded event to age out. Nothing else returns capacity:
+                    // these counters record admissions, not messages in flight, so a slot stays
+                    // taken for the whole interval rather than until the event reaches the wire.
+                    // The floor only guards against spinning if that moment has already passed.
+                    let next_attempt = Instant::now() + retry_after.max(THROTTLE_RETRY_MIN_DELAY);
+                    // Give up rather than sleep past the deadline: no attempt after it can be in
+                    // time, and the earliest useful attempt is already too late. Strictly, the
+                    // limits are dynamic (they scale with the committee), so a growing committee
+                    // could admit this event sooner than `retry_after` suggests -- but not by
+                    // enough, within one fetch timeout, to be worth waiting on.
+                    if next_attempt >= deadline {
+                        warn!("{CONTEXT} Dropping '{}' to '{peer_ip}' (outbound rate limit)", event.name());
+                        break false;
+                    }
+                    tokio::time::sleep_until(next_attempt).await;
                 }
             }};
         }
 
-        // Increment the cache for certificate, transmission and block events.
+        // Claim capacity for certificate, transmission and block events, and record the event only
+        // once it is cleared to be sent -- an event dropped above must not leave a hit behind for
+        // an event that could otherwise have been sent.
         match event {
             Event::CertificateRequest(_) | Event::CertificateResponse(_) => {
-                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
+                if !claim!(try_insert_outbound_certificate, CACHE_REQUESTS_INTERVAL, max_cache_certificates) {
+                    return false;
+                }
+                // Also record it against the general event cache, so events are not under counted.
                 self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
-                wait_until_under_limit!(insert_outbound_certificate, CACHE_REQUESTS_INTERVAL, max_cache_certificates)
             }
             Event::TransmissionRequest(_) | Event::TransmissionResponse(_) => {
-                // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
+                if !claim!(try_insert_outbound_transmission, CACHE_REQUESTS_INTERVAL, max_cache_transmissions) {
+                    return false;
+                }
+                // Also record it against the general event cache, so events are not under counted.
                 self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
-                wait_until_under_limit!(insert_outbound_transmission, CACHE_REQUESTS_INTERVAL, max_cache_transmissions)
             }
             Event::BlockRequest(request) => {
+                // Use the general rate limit.
+                if !claim!(try_insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events) {
+                    return false;
+                }
                 // Insert the outbound request so we can match it to responses.
                 self.cache.insert_outbound_block_request(peer_ip, *request);
-                // Use the general rate limit.
-                wait_until_under_limit!(insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
             }
             // Everything else uses the general rate limit.
-            _ => wait_until_under_limit!(insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events),
+            _ => return claim!(try_insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events),
         }
+        true
     }
 
+    /// Sends the given event to specified peer.
+    ///
+    /// This function returns as soon as the event is queued to be sent,
+    /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
+    /// which can be used to determine when and whether the event has been delivered.
     fn send_inner(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Resolve the listener IP to the (ambiguous) peer address.
         let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
@@ -1383,7 +1427,9 @@ impl<N: Network> Gateway<N> {
 impl<N: Network> Transport<N> for Gateway<N> {
     /// Sends the given event to specified peer.
     ///
-    /// This method is rate limited to prevent spamming the peer.
+    /// This method is rate limited to prevent spamming the peer. An event that stays throttled for
+    /// longer than [`MAX_FETCH_TIMEOUT`] is already too stale to be worth sending, so it is dropped
+    /// and `None` is returned.
     ///
     /// This function returns as soon as the event is queued to be sent,
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
@@ -1391,7 +1437,9 @@ impl<N: Network> Transport<N> for Gateway<N> {
     async fn send(&self, peer_ip: SocketAddr, mut event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
         // Apply the outbound rate limits first, so that the serialization below is only performed
         // for events this peer is actually allowed to be sent right now.
-        self.throttle_outbound(peer_ip, &event).await;
+        if !self.throttle_outbound(peer_ip, &event).await {
+            return None;
+        }
 
         // Serialize the payload here, rather than leaving it for the connection's writer task.
         //
