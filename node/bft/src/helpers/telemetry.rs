@@ -320,6 +320,15 @@ impl<N: Network> Telemetry<N> {
         gc_round >= max_dropped_round
     }
 
+    /// Returns the garbage collection round that the published scores were computed at.
+    ///
+    /// Readers see the last snapshot the worker published, which trails the tip while the worker
+    /// is catching up. Exporting this next to the scores is what lets a reader tell a stale
+    /// snapshot apart from a real change in participation.
+    pub fn published_gc_round(&self) -> u64 {
+        self.scores.borrow().gc_round
+    }
+
     /// Returns the number of telemetry updates dropped so far because the queue was full.
     ///
     /// A nonzero and growing value means the published scores are missing rounds, which is
