@@ -204,7 +204,11 @@ pub mod prop_tests {
                 let blocks: Vec<_> =
                     (request.start_height..request.end_height).map(|_| sample_genesis_block(&mut rng)).collect();
 
-                BlockResponse::new(request, DataBlocks(blocks), ConsensusVersion::V11)
+                // V12 is the current wire format: the version is written and survives a roundtrip.
+                // V11 is the legacy encoding (no version on the wire); after decode it cannot be
+                // re-serialized, so it is not a valid input for generic Event codec properties.
+                // That path is covered by `deserialize_version1`.
+                BlockResponse::new(request, DataBlocks(blocks), ConsensusVersion::V12)
             })
             .boxed()
     }
