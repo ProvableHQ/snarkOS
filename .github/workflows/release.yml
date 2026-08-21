@@ -3,6 +3,9 @@ on:
   push:
     tags:
       - 'v*.*.*'
+    # Temporary: allow a workflow dry-run from this branch without cutting a release.
+    branches:
+      - dryrun/macos-release-libclang
 
 env:
   RUST_BACKTRACE: 1
