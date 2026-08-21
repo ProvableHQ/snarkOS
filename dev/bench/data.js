@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787246377766,
+  "lastUpdate": 1787310166885,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -16728,6 +16728,72 @@ window.BENCHMARK_DATA = {
             "value": 1.76,
             "unit": "blocks/s",
             "extra": "total_wait=142s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "36afca1a6d2c33ca37f014843086f410cf8af986",
+          "message": "Merge pull request #4399 from cbeck88/fix/worker-ping-toctou\n\nfix(bft): enforce worker capacity limit at transmission insertion",
+          "timestamp": "2026-08-21T12:43:00+02:00",
+          "tree_id": "274121f78f450185fd95b96f3d86420f3c15646f",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/36afca1a6d2c33ca37f014843086f410cf8af986"
+        },
+        "date": 1787310165789,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.596506566520654,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=50.01820158958435, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7122.76211359184,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.231597900390625, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2837.747286947579,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.28191375732421875, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.81,
+            "unit": "blocks/s",
+            "extra": "total_wait=138s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.217162,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=134, mean_speed=1.225498, max_speed=2.833333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.77,
+            "unit": "blocks/s",
+            "extra": "total_wait=141s, target_height=250, connect_time=9, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
