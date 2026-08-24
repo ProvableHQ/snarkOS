@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787566596302,
+  "lastUpdate": 1787591208633,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -16932,6 +16932,72 @@ window.BENCHMARK_DATA = {
             "value": 1.51,
             "unit": "blocks/s",
             "extra": "total_wait=165s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4d7457611ed7b2f835f3f097e5fbb66d1ef758e3",
+          "message": "Merge pull request #4391 from cbeck88/refactor/telemetry-actor\n\nrefactor(telemetry): replace shared locks with a single-owner worker",
+          "timestamp": "2026-08-24T18:50:47+02:00",
+          "tree_id": "7975a1b307de753b7e570d80db72cef7e1f637d0",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/4d7457611ed7b2f835f3f097e5fbb66d1ef758e3"
+        },
+        "date": 1787591207272,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 11.751332893842115,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=40.84643030166626, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12502.415665577764,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.398763418197632, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 4487.002382945492,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.17829275131225586, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.29,
+            "unit": "blocks/s",
+            "extra": "total_wait=109s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.859286,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=107, mean_speed=1.328660, max_speed=3.666667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.04,
+            "unit": "blocks/s",
+            "extra": "total_wait=122s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.96,
+            "unit": "blocks/s",
+            "extra": "total_wait=127s, target_height=250"
           }
         ]
       }
