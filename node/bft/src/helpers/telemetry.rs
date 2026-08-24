@@ -304,6 +304,7 @@ impl<N: Network> Telemetry<N> {
     /// all tracked state is keyed by round and pruned by round, the scores become correct
     /// again once garbage collection passes the highest round a drop touched, at which point
     /// this returns `true` permanently (until the next drop). See the module documentation.
+    #[cfg(test)]
     pub fn is_complete(&self) -> bool {
         // Read the published `gc_round` before `max_dropped_round`. Both only ever increase, so
         // in this order a drop recorded between the two reads is compared against the older
