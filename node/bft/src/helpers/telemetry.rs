@@ -275,6 +275,7 @@ impl<N: Network> Telemetry<N> {
     ///
     /// This does not cause the scores to be recomputed on its own; the next subdag picks the
     /// certificate up. See the note on the certificate arm of [`TelemetryWorker::run`].
+    #[cfg(test)]
     pub fn insert_certificate(&self, certificate: &BatchCertificate<N>) {
         // Reserve before deriving the metadata, for the reason given in `insert_subdag`.
         let Some(permit) = self.reserve() else {
