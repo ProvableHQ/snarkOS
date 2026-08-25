@@ -882,8 +882,13 @@ impl<N: Network> Storage<N> {
             if missing_transmissions.contains_key(transmission_id) {
                 continue;
             }
-            // If the transmission ID exists in storage, skip it.
-            if self.contains_transmission(*transmission_id) {
+            // If the transmission can be retrieved from storage, skip it.
+            //
+            // Note that an ID recorded as aborted by an earlier certificate is deliberately not
+            // skipped here: storage holds no transmission for it, so it has to go through the
+            // classification below - which either recovers the transmission from the block, or
+            // declares the ID as aborted for this certificate as well.
+            if self.contains_retrievable_transmission(*transmission_id) {
                 continue;
             }
             // Retrieve the transmission.
@@ -896,12 +901,17 @@ impl<N: Network> Storage<N> {
                     //
                     // Aborted transmissions only appear in the aborted set of the first block that contains them,
                     // for subsequent blocks, we can check that `contains_transmission` is true to determine if the transmission was aborted.
+                    //
+                    // Note that the ledger only answers for the blocks it already holds: the block that
+                    // aborted the ID may still be awaiting its availability check in `Sync::pending_blocks`,
+                    // so storage is consulted as well - it recorded the abort when that block was processed.
                     if let Some(solution) = block.get_solution(solution_id) {
                         missing_transmissions.insert(*transmission_id, (*solution).into());
                     } else if let Ok(Some(solution)) = self.ledger.get_solution(solution_id) {
                         missing_transmissions.insert(*transmission_id, solution.into());
                     } else if aborted_solutions.contains(solution_id)
                         || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
+                        || self.contains_aborted_transmission(*transmission_id)
                     {
                         aborted_transmissions.insert(*transmission_id);
                     } else {
@@ -915,12 +925,17 @@ impl<N: Network> Storage<N> {
                     //
                     // Aborted solutions only appear in the aborted set of the first block that contains them,
                     // for subsequent blocks, we can check that `contains_transmission` is true to determine if the transaction was aborted.
+                    //
+                    // Note that the ledger only answers for the blocks it already holds: the block that
+                    // aborted the ID may still be awaiting its availability check in `Sync::pending_blocks`,
+                    // so storage is consulted as well - it recorded the abort when that block was processed.
                     if let Some(transaction) = unconfirmed_transactions.get(transaction_id) {
                         missing_transmissions.insert(*transmission_id, transaction.clone().into());
                     } else if let Ok(Some(transaction)) = self.ledger.get_unconfirmed_transaction(*transaction_id) {
                         missing_transmissions.insert(*transmission_id, transaction.into());
                     } else if aborted_transactions.contains(transaction_id)
                         || self.ledger.contains_transmission(transmission_id).unwrap_or(false)
+                        || self.contains_aborted_transmission(*transmission_id)
                     {
                         aborted_transmissions.insert(*transmission_id);
                     } else {
@@ -1267,6 +1282,107 @@ pub(crate) mod tests {
                 "Non-aborted transmission {id:?} should have content in storage"
             );
         }
+    }
+
+    /// Builds a storage instance, plus a closure producing quorum-signed round-1 certificates that
+    /// all reference the given transmission ID, each authored by a different committee member.
+    ///
+    /// The ledger holds no transaction for the ID either way - as is the case for one it recorded as
+    /// aborted; `ledger_knows_the_id` only decides whether it reports the ID as contained.
+    fn sample_storage_and_certificates_for_transmission(
+        transmission_id: TransmissionID<CurrentNetwork>,
+        ledger_knows_the_id: bool,
+        rng: &mut TestRng,
+    ) -> (Storage<CurrentNetwork>, impl Fn(usize, &mut TestRng) -> BatchCertificate<CurrentNetwork> + use<>) {
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 5, rng);
+        let known_transmission_ids =
+            if ledger_knows_the_id { [transmission_id].into_iter().collect() } else { Default::default() };
+        let ledger =
+            Arc::new(MockLedgerService::new_with_known_transmission_ids(committee.clone(), known_transmission_ids));
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        let make_certificate = move |author_index: usize, rng: &mut TestRng| {
+            let batch_header = BatchHeader::new(
+                &private_keys[author_index],
+                1,
+                crate::helpers::now(),
+                committee.id(),
+                indexset![transmission_id],
+                Default::default(),
+                rng,
+            )
+            .unwrap();
+            let signatures = private_keys
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != author_index)
+                .map(|(_, private_key)| private_key.sign(&[batch_header.batch_id()], rng).unwrap())
+                .collect();
+            BatchCertificate::from(batch_header, signatures).unwrap()
+        };
+
+        (storage, make_certificate)
+    }
+
+    /// A certificate referencing a transmission that an earlier certificate recorded as aborted must
+    /// still be syncable from a block.
+    ///
+    /// Storage holds no transmission for such an ID, so it cannot be skipped as already known: it
+    /// has to go through the classification, which recovers the transmission from the block if it
+    /// carries one, and otherwise records the ID as aborted for this certificate as well. Skipping
+    /// it would leave the ID out of both sets, and it would not be reference counted against the
+    /// certificate that declares it.
+    ///
+    /// `ledger_knows_the_id` separates the two ways the classification can conclude that the ID was
+    /// aborted: the block that aborted it has reached the ledger, or it has not - as while it awaits
+    /// its availability check in `Sync::pending_blocks` - and only storage remembers.
+    fn check_sync_certificate_with_a_previously_aborted_transmission(ledger_knows_the_id: bool) {
+        use snarkvm::prelude::Uniform;
+
+        let rng = &mut TestRng::default();
+
+        // A transaction transmission ID, referenced by both certificates.
+        let transmission_id = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.random::<u128>()),
+        );
+        let (storage, make_certificate) =
+            sample_storage_and_certificates_for_transmission(transmission_id, ledger_knows_the_id, rng);
+
+        // Insert the first certificate, recording the transmission as aborted.
+        let certificate_1 = make_certificate(0, rng);
+        storage
+            .insert_certificate(certificate_1.clone(), Default::default(), [transmission_id].into_iter().collect())
+            .unwrap();
+        assert!(storage.contains_transmission(transmission_id));
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
+
+        // Sync a later certificate that references the previously-aborted transmission. The block
+        // carries neither the transmission nor its ID, so only the ledger and storage know it; any
+        // block will do here, hence the sample genesis block.
+        let certificate_2 = make_certificate(1, rng);
+        let block = snarkvm::ledger::test_helpers::sample_genesis_block(rng);
+        storage
+            .sync_certificate_with_block(&block, certificate_2.clone(), &Default::default(), false)
+            .expect("syncing a certificate referencing a previously-aborted transmission must succeed");
+        assert!(storage.contains_certificate(certificate_2.id()));
+
+        // The ID must have been recorded as aborted for the second certificate too, so dropping the
+        // first one must not take the aborted entry with it.
+        assert!(storage.remove_certificate(certificate_1.id()));
+        assert!(storage.contains_transmission(transmission_id));
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
+    }
+
+    #[test]
+    fn test_sync_certificate_with_a_previously_aborted_transmission() {
+        check_sync_certificate_with_a_previously_aborted_transmission(true);
+    }
+
+    #[test]
+    fn test_sync_certificate_with_a_previously_aborted_transmission_the_ledger_does_not_know() {
+        check_sync_certificate_with_a_previously_aborted_transmission(false);
     }
 
     /// Test that `check_incoming_certificate` does not reject a valid cert.
