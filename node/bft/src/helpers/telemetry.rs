@@ -164,10 +164,7 @@ impl<N: Network> CertificateMetadata<N> {
     /// Derives the telemetry metadata for the given certificate.
     fn new(certificate: &BatchCertificate<N>) -> Self {
         let author = certificate.author();
-        let signers = [author]
-            .into_iter()
-            .chain(certificate.signatures().map(|signature| signature.to_address()))
-            .collect::<Vec<_>>();
+        let signers = [author].into_iter().chain(certificate.signers().iter().copied()).collect::<Vec<_>>();
 
         Self { round: certificate.round(), id: certificate.id(), author, signers }
     }
