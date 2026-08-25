@@ -27,7 +27,7 @@ use snarkvm::{
             },
         },
     },
-    prelude::{Field, Network, Result, bail},
+    prelude::{Field, Network, Result},
 };
 
 use aleo_std::StorageMode;
@@ -146,44 +146,6 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                 None
             }
         }
-    }
-
-    /// Takes a certificate and its transmissions, and returns the subset of transmissions that
-    /// did not yet exists in the storage.
-    fn find_missing_transmissions(
-        &self,
-        batch_header: &BatchHeader<N>,
-        mut transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
-        aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
-        // Initialize a list for the missing transmissions from storage.
-        let mut missing_transmissions = HashMap::new();
-        // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
-        for transmission_id in batch_header.transmission_ids() {
-            // If the transmission cannot be retrieved from storage, ensure it was provided by the
-            // caller. Note that an ID recorded as aborted holds no transmission, so bytes provided
-            // for it must still be collected here in order to become retrievable.
-            if !self.contains_retrievable_transmission(*transmission_id) {
-                // Retrieve the transmission.
-                match transmissions.remove(transmission_id) {
-                    // Append the transmission if it exists.
-                    Some(transmission) => {
-                        missing_transmissions.insert(*transmission_id, transmission);
-                    }
-                    // If the transmission does not exist, it must be aborted: either the caller
-                    // declares it as such, or storage already recorded it as aborted for an earlier
-                    // certificate - in which case there are no bytes to be had from anyone.
-                    None => {
-                        if !aborted_transmissions.contains(transmission_id)
-                            && !self.contains_aborted_transmission(*transmission_id)
-                        {
-                            bail!("Failed to provide a transmission");
-                        }
-                    }
-                }
-            }
-        }
-        Ok(missing_transmissions)
     }
 
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
@@ -375,7 +337,7 @@ mod tests {
     use snarkvm::{
         console::network::MainnetV0,
         ledger::narwhal::Data,
-        prelude::{PrivateKey, Rng, TestRng, Uniform},
+        prelude::{Rng, TestRng, Uniform},
     };
 
     use bytes::Bytes;
@@ -395,25 +357,6 @@ mod tests {
 
     fn sample_transmission(payload: &[u8]) -> Transmission<CurrentNetwork> {
         Transmission::Transaction(Data::Buffer(Bytes::from(payload.to_vec())))
-    }
-
-    /// Builds a batch header declaring the given transmission IDs.
-    fn sample_batch_header(
-        transmission_ids: &[TransmissionID<CurrentNetwork>],
-        rng: &mut TestRng,
-    ) -> BatchHeader<CurrentNetwork> {
-        let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
-        // Round 1 is the only round that may carry no previous certificate IDs.
-        BatchHeader::new(
-            &private_key,
-            1,
-            0,
-            Field::rand(rng),
-            transmission_ids.iter().copied().collect(),
-            Default::default(),
-            rng,
-        )
-        .unwrap()
     }
 
     /// Every certificate that references a transmission must contribute its certificate ID to the
@@ -506,38 +449,6 @@ mod tests {
         assert!(!storage.contains_transmission(transmission_id));
     }
 
-    /// The three containment queries must answer three different questions: a stored transmission
-    /// is retrievable, an aborted ID is known but has nothing to return, and both are contained.
-    #[test]
-    fn test_the_containment_queries_distinguish_stored_from_aborted_ids() {
-        let rng = &mut TestRng::default();
-        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
-        let (stored_id, aborted_id, unknown_id) =
-            (sample_transmission_id(rng), sample_transmission_id(rng), sample_transmission_id(rng));
-
-        storage.insert_transmissions(
-            Field::rand(rng),
-            indexset![stored_id],
-            [aborted_id].into(),
-            [(stored_id, sample_transmission(b"payload"))].into(),
-        );
-
-        // The stored transmission is contained and retrievable, but not aborted.
-        assert!(storage.contains_transmission(stored_id));
-        assert!(storage.contains_retrievable_transmission(stored_id));
-        assert!(!storage.contains_aborted_transmission(stored_id));
-
-        // The aborted ID is contained and aborted, but not retrievable.
-        assert!(storage.contains_transmission(aborted_id));
-        assert!(!storage.contains_retrievable_transmission(aborted_id));
-        assert!(storage.contains_aborted_transmission(aborted_id));
-
-        // An unknown ID is none of the three.
-        assert!(!storage.contains_transmission(unknown_id));
-        assert!(!storage.contains_retrievable_transmission(unknown_id));
-        assert!(!storage.contains_aborted_transmission(unknown_id));
-    }
-
     /// The cache `contains_retrievable_transmission` consults first must not outlive the storage
     /// entry it stands for, or the query would report a removed transmission as retrievable.
     #[test]
@@ -557,82 +468,5 @@ mod tests {
 
         storage.remove_transmissions(&certificate_id, &indexset![transmission_id]);
         assert!(!storage.contains_retrievable_transmission(transmission_id));
-    }
-
-    /// An ID that storage already recorded as aborted needs neither bytes nor a fresh declaration:
-    /// there is nothing to fetch, because no peer holds a transmission for an aborted ID either.
-    ///
-    /// Only the caller that has the block can declare the ID itself; a batch proposed or certified
-    /// by a peer arrives with an empty set of aborted IDs.
-    #[test]
-    fn test_find_missing_transmissions_accepts_an_already_aborted_id_without_bytes() {
-        let rng = &mut TestRng::default();
-        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
-        let aborted_id = sample_transmission_id(rng);
-
-        // An earlier certificate recorded the ID as aborted.
-        storage.insert_transmissions(Field::rand(rng), Default::default(), [aborted_id].into(), Default::default());
-
-        let batch_header = sample_batch_header(&[aborted_id], rng);
-        let result = storage.find_missing_transmissions(&batch_header, Default::default(), Default::default()).unwrap();
-
-        // Nothing to fetch, and nothing to reject.
-        assert!(result.is_empty());
-    }
-
-    /// A transmission whose ID an earlier certificate recorded as aborted must still be persisted
-    /// when a later certificate provides its bytes.
-    ///
-    /// An aborted entry records the ID and nothing else, so `get_transmission` has nothing to hand
-    /// back for it. `find_missing_transmissions` nevertheless decides whether the bytes are needed
-    /// with `contains_transmission`, which is also true for an aborted ID - so the bytes are
-    /// discarded, and the certificate that declares the ID is accepted into storage while the
-    /// transmission it commits to can never be materialized.
-    ///
-    /// Note the in-memory service does not share this behavior: it consults only its concrete map,
-    /// collects the bytes, and stores them.
-    #[test]
-    fn test_provided_bytes_are_kept_for_a_previously_aborted_id() {
-        let rng = &mut TestRng::default();
-        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
-        let transmission_id = sample_transmission_id(rng);
-        let transmission = sample_transmission(b"payload");
-
-        // An earlier certificate recorded the ID as aborted, so storage contains it without bytes.
-        storage.insert_transmissions(
-            Field::rand(rng),
-            Default::default(),
-            [transmission_id].into(),
-            Default::default(),
-        );
-        assert!(storage.contains_transmission(transmission_id));
-        assert!(storage.get_transmission(transmission_id).is_none());
-
-        // A later certificate declares the same ID and provides its bytes.
-        let batch_header = sample_batch_header(&[transmission_id], rng);
-        let missing_transmissions = storage
-            .find_missing_transmissions(
-                &batch_header,
-                [(transmission_id, transmission.clone())].into(),
-                Default::default(),
-            )
-            .unwrap();
-
-        // The bytes have to be collected...
-        assert_eq!(
-            missing_transmissions.get(&transmission_id),
-            Some(&transmission),
-            "the provided bytes were discarded, so they will never reach storage"
-        );
-
-        // ...and, once inserted, they have to be retrievable, or the certificate that declares this
-        // transmission ID cannot be committed.
-        storage.insert_transmissions(
-            Field::rand(rng),
-            indexset![transmission_id],
-            Default::default(),
-            missing_transmissions,
-        );
-        assert_eq!(storage.get_transmission(transmission_id), Some(transmission));
     }
 }

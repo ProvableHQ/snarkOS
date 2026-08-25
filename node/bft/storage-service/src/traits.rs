@@ -15,7 +15,7 @@
 
 use snarkvm::{
     ledger::narwhal::{BatchHeader, Transmission, TransmissionID},
-    prelude::{Field, Network, Result},
+    prelude::{Field, Network, Result, bail},
 };
 
 use indexmap::IndexSet;
@@ -52,14 +52,48 @@ pub trait StorageService<N: Network>: Debug + Send + Sync {
     /// If the transmission ID does not exist in storage, `None` is returned.
     fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>>;
 
-    /// Takes a certificate and its transmissions, and returns the subset of transmissions that
-    /// did not yet exists in the storage.
+    /// Takes a batch header and the transmissions provided for it, and returns the subset of those
+    /// transmissions that the storage does not already hold.
+    ///
+    /// A transmission that cannot be retrieved from storage has to be provided by the caller, or be
+    /// aborted - either as declared by the caller, or as already recorded in storage, in which case
+    /// there are no bytes to be had from anyone. Anything else is an error: a peer does not get to
+    /// have a certificate accepted while withholding a transmission that it commits to.
     fn find_missing_transmissions(
         &self,
         batch_header: &BatchHeader<N>,
-        transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
+        mut transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>>;
+    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
+        // Initialize a list for the missing transmissions from storage.
+        let mut missing_transmissions = HashMap::new();
+        // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
+        for transmission_id in batch_header.transmission_ids() {
+            // If the transmission cannot be retrieved from storage, ensure it was provided by the
+            // caller. Note that an ID recorded as aborted holds no transmission, so bytes provided
+            // for it must still be collected here in order to become retrievable.
+            if !self.contains_retrievable_transmission(*transmission_id) {
+                // Retrieve the transmission.
+                match transmissions.remove(transmission_id) {
+                    // Append the transmission if it exists.
+                    Some(transmission) => {
+                        missing_transmissions.insert(*transmission_id, transmission);
+                    }
+                    // If the transmission does not exist, it must be aborted: either the caller
+                    // declares it as such, or storage already recorded it as aborted for an earlier
+                    // certificate - in which case there are no bytes to be had from anyone.
+                    None => {
+                        if !aborted_transmissions.contains(transmission_id)
+                            && !self.contains_aborted_transmission(*transmission_id)
+                        {
+                            bail!("Failed to provide a transmission");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(missing_transmissions)
+    }
 
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
     fn insert_transmissions(
