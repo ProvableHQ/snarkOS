@@ -100,6 +100,34 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         }
     }
 
+    /// Returns `true` if the storage holds the transmission for the specified `transmission ID`.
+    fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
+        // Check the cache first: it only ever holds transmissions that are also in persistent
+        // storage, so a hit answers this without a storage read. This also keeps the check in
+        // agreement with `get_transmission`, which probes the cache first as well.
+        if self.cache_transmissions.lock().contains(&transmission_id) {
+            return true;
+        }
+        match self.transmissions.contains_key_confirmed(&transmission_id) {
+            Ok(result) => result,
+            Err(error) => {
+                error!("Failed to check if transmission ID exists in confirmed storage - {error}");
+                false
+            }
+        }
+    }
+
+    /// Returns `true` if the specified `transmission ID` is recorded as aborted.
+    fn contains_aborted_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
+        match self.aborted_transmission_ids.contains_key_confirmed(&transmission_id) {
+            Ok(result) => result,
+            Err(error) => {
+                error!("Failed to check if aborted transmission ID exists in storage - {error}");
+                false
+            }
+        }
+    }
+
     /// Returns the transmission for the given `transmission ID`.
     /// If the transmission ID does not exist in storage, `None` is returned.
     fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>> {
@@ -466,6 +494,59 @@ mod tests {
         assert!(!storage.as_hashmap().contains_key(&transmission_id));
         assert!(storage.get_transmission(transmission_id).is_none());
         assert!(!storage.contains_transmission(transmission_id));
+    }
+
+    /// The three containment queries must answer three different questions: a stored transmission
+    /// is retrievable, an aborted ID is known but has nothing to return, and both are contained.
+    #[test]
+    fn test_the_containment_queries_distinguish_stored_from_aborted_ids() {
+        let rng = &mut TestRng::default();
+        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
+        let (stored_id, aborted_id, unknown_id) =
+            (sample_transmission_id(rng), sample_transmission_id(rng), sample_transmission_id(rng));
+
+        storage.insert_transmissions(
+            Field::rand(rng),
+            indexset![stored_id],
+            [aborted_id].into(),
+            [(stored_id, sample_transmission(b"payload"))].into(),
+        );
+
+        // The stored transmission is contained and retrievable, but not aborted.
+        assert!(storage.contains_transmission(stored_id));
+        assert!(storage.contains_retrievable_transmission(stored_id));
+        assert!(!storage.contains_aborted_transmission(stored_id));
+
+        // The aborted ID is contained and aborted, but not retrievable.
+        assert!(storage.contains_transmission(aborted_id));
+        assert!(!storage.contains_retrievable_transmission(aborted_id));
+        assert!(storage.contains_aborted_transmission(aborted_id));
+
+        // An unknown ID is none of the three.
+        assert!(!storage.contains_transmission(unknown_id));
+        assert!(!storage.contains_retrievable_transmission(unknown_id));
+        assert!(!storage.contains_aborted_transmission(unknown_id));
+    }
+
+    /// The cache `contains_retrievable_transmission` consults first must not outlive the storage
+    /// entry it stands for, or the query would report a removed transmission as retrievable.
+    #[test]
+    fn test_contains_retrievable_transmission_follows_a_removal_through_the_cache() {
+        let rng = &mut TestRng::default();
+        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
+        let transmission_id = sample_transmission_id(rng);
+        let certificate_id = Field::rand(rng);
+
+        storage.insert_transmissions(
+            certificate_id,
+            indexset![transmission_id],
+            Default::default(),
+            [(transmission_id, sample_transmission(b"payload"))].into(),
+        );
+        assert!(storage.contains_retrievable_transmission(transmission_id));
+
+        storage.remove_transmissions(&certificate_id, &indexset![transmission_id]);
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
     }
 
     /// A transmission whose ID an earlier certificate recorded as aborted must still be persisted

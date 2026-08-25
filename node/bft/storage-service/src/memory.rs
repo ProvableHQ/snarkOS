@@ -58,6 +58,16 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
             || self.aborted_transmission_ids.read().contains_key(&transmission_id)
     }
 
+    /// Returns `true` if the storage holds the transmission for the specified `transmission ID`.
+    fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
+        self.transmissions.read().contains_key(&transmission_id)
+    }
+
+    /// Returns `true` if the specified `transmission ID` is recorded as aborted.
+    fn contains_aborted_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
+        self.aborted_transmission_ids.read().contains_key(&transmission_id)
+    }
+
     /// Returns the transmission for the given `transmission ID`.
     /// If the transmission does not exist in storage, `None` is returned.
     fn get_transmission(&self, transmission_id: TransmissionID<N>) -> Option<Transmission<N>> {
@@ -280,6 +290,38 @@ mod tests {
 
         assert!(service.contains_transmission(transmission_id));
         assert_eq!(service.get_transmission(transmission_id), Some(transmission));
+    }
+
+    /// The three containment queries must answer three different questions: a stored transmission
+    /// is retrievable, an aborted ID is known but has nothing to return, and both are contained.
+    #[test]
+    fn the_containment_queries_distinguish_stored_from_aborted_ids() {
+        let rng = &mut TestRng::default();
+        let service = BFTMemoryService::<CurrentNetwork>::new();
+        let (stored_id, aborted_id, unknown_id) =
+            (sample_transmission_id(rng), sample_transmission_id(rng), sample_transmission_id(rng));
+
+        service.insert_transmissions(
+            Field::rand(rng),
+            indexset![stored_id],
+            [aborted_id].into(),
+            [(stored_id, sample_transmission(b"payload"))].into(),
+        );
+
+        // The stored transmission is contained and retrievable, but not aborted.
+        assert!(service.contains_transmission(stored_id));
+        assert!(service.contains_retrievable_transmission(stored_id));
+        assert!(!service.contains_aborted_transmission(stored_id));
+
+        // The aborted ID is contained and aborted, but not retrievable.
+        assert!(service.contains_transmission(aborted_id));
+        assert!(!service.contains_retrievable_transmission(aborted_id));
+        assert!(service.contains_aborted_transmission(aborted_id));
+
+        // An unknown ID is none of the three.
+        assert!(!service.contains_transmission(unknown_id));
+        assert!(!service.contains_retrievable_transmission(unknown_id));
+        assert!(!service.contains_aborted_transmission(unknown_id));
     }
 
     #[test]

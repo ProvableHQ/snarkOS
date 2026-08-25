@@ -302,8 +302,27 @@ impl<N: Network> Storage<N> {
     }
 
     /// Returns `true` if the storage contains the specified transmission, or it was recorded as aborted.
+    ///
+    /// This is the union of [`Self::contains_retrievable_transmission`] and
+    /// [`Self::contains_aborted_transmission`]; prefer one of those whenever the distinction
+    /// matters.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_transmission(transmission_id.into())
+    }
+
+    /// Returns `true` if the storage holds the specified transmission, i.e. exactly when
+    /// [`Self::get_transmission`] would return `Some`.
+    ///
+    /// Unlike [`Self::contains_transmission`], this is `false` for a transmission ID that is only
+    /// recorded as aborted.
+    pub fn contains_retrievable_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
+        self.transmissions.contains_retrievable_transmission(transmission_id.into())
+    }
+
+    /// Returns `true` if the specified transmission ID was recorded as aborted, i.e. the storage
+    /// knows the ID but holds no transmission for it.
+    pub fn contains_aborted_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
+        self.transmissions.contains_aborted_transmission(transmission_id.into())
     }
 
     /// Returns the transmission for the given `transmission ID`.
