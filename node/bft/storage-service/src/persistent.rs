@@ -337,13 +337,46 @@ mod tests {
     use snarkvm::{
         console::network::MainnetV0,
         ledger::narwhal::Data,
-        prelude::{Rng, TestRng, Uniform},
+        prelude::{PrivateKey, Rng, TestRng, Uniform},
     };
 
     use bytes::Bytes;
     use std::sync::{Arc, Barrier};
 
     type CurrentNetwork = MainnetV0;
+
+    // Note: these mirror the helpers in the in-memory service's tests; they are candidates for a
+    // shared harness once both services are exercised against the same expectations.
+
+    fn sample_transmission_id(rng: &mut TestRng) -> TransmissionID<CurrentNetwork> {
+        TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.random::<u128>()),
+        )
+    }
+
+    fn sample_transmission(payload: &[u8]) -> Transmission<CurrentNetwork> {
+        Transmission::Transaction(Data::Buffer(Bytes::from(payload.to_vec())))
+    }
+
+    /// Builds a batch header declaring the given transmission IDs.
+    fn sample_batch_header(
+        transmission_ids: &[TransmissionID<CurrentNetwork>],
+        rng: &mut TestRng,
+    ) -> BatchHeader<CurrentNetwork> {
+        let private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Round 1 is the only round that may carry no previous certificate IDs.
+        BatchHeader::new(
+            &private_key,
+            1,
+            0,
+            Field::rand(rng),
+            transmission_ids.iter().copied().collect(),
+            Default::default(),
+            rng,
+        )
+        .unwrap()
+    }
 
     /// Every certificate that references a transmission must contribute its certificate ID to the
     /// transmission's reference set, even when the insertions happen concurrently — as they do when
@@ -433,5 +466,61 @@ mod tests {
         assert!(!storage.as_hashmap().contains_key(&transmission_id));
         assert!(storage.get_transmission(transmission_id).is_none());
         assert!(!storage.contains_transmission(transmission_id));
+    }
+
+    /// A transmission whose ID an earlier certificate recorded as aborted must still be persisted
+    /// when a later certificate provides its bytes.
+    ///
+    /// An aborted entry records the ID and nothing else, so `get_transmission` has nothing to hand
+    /// back for it. `find_missing_transmissions` nevertheless decides whether the bytes are needed
+    /// with `contains_transmission`, which is also true for an aborted ID - so the bytes are
+    /// discarded, and the certificate that declares the ID is accepted into storage while the
+    /// transmission it commits to can never be materialized.
+    ///
+    /// Note the in-memory service does not share this behavior: it consults only its concrete map,
+    /// collects the bytes, and stores them.
+    #[test]
+    fn test_provided_bytes_are_kept_for_a_previously_aborted_id() {
+        let rng = &mut TestRng::default();
+        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
+        let transmission_id = sample_transmission_id(rng);
+        let transmission = sample_transmission(b"payload");
+
+        // An earlier certificate recorded the ID as aborted, so storage contains it without bytes.
+        storage.insert_transmissions(
+            Field::rand(rng),
+            Default::default(),
+            [transmission_id].into(),
+            Default::default(),
+        );
+        assert!(storage.contains_transmission(transmission_id));
+        assert!(storage.get_transmission(transmission_id).is_none());
+
+        // A later certificate declares the same ID and provides its bytes.
+        let batch_header = sample_batch_header(&[transmission_id], rng);
+        let missing_transmissions = storage
+            .find_missing_transmissions(
+                &batch_header,
+                [(transmission_id, transmission.clone())].into(),
+                Default::default(),
+            )
+            .unwrap();
+
+        // The bytes have to be collected...
+        assert_eq!(
+            missing_transmissions.get(&transmission_id),
+            Some(&transmission),
+            "the provided bytes were discarded, so they will never reach storage"
+        );
+
+        // ...and, once inserted, they have to be retrievable, or the certificate that declares this
+        // transmission ID cannot be committed.
+        storage.insert_transmissions(
+            Field::rand(rng),
+            indexset![transmission_id],
+            Default::default(),
+            missing_transmissions,
+        );
+        assert_eq!(storage.get_transmission(transmission_id), Some(transmission));
     }
 }

@@ -455,6 +455,51 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    /// An aborted entry records the transmission ID and nothing else, so a later certificate that
+    /// declares the same ID and provides its bytes must have them collected and stored - otherwise
+    /// that certificate references a transmission that can never be materialized.
+    ///
+    /// This service consults only its concrete map, so it does the right thing here. The persistent
+    /// service gates the same decision on `contains_transmission`, which is also true for an
+    /// aborted ID, and discards the bytes.
+    #[test]
+    fn find_missing_transmissions_keeps_provided_bytes_for_an_aborted_id() {
+        let rng = &mut TestRng::default();
+        let service = BFTMemoryService::<CurrentNetwork>::new();
+        let transmission_id = sample_transmission_id(rng);
+        let transmission = sample_transmission(b"payload");
+
+        // An earlier certificate recorded the ID as aborted, so storage contains it without bytes.
+        service.insert_transmissions(
+            Field::rand(rng),
+            Default::default(),
+            [transmission_id].into(),
+            Default::default(),
+        );
+        assert!(service.contains_transmission(transmission_id));
+        assert!(service.get_transmission(transmission_id).is_none());
+
+        // A later certificate declares the same ID and provides its bytes.
+        let batch_header = sample_batch_header(&[transmission_id], rng);
+        let missing_transmissions = service
+            .find_missing_transmissions(
+                &batch_header,
+                [(transmission_id, transmission.clone())].into(),
+                Default::default(),
+            )
+            .unwrap();
+
+        // The bytes are collected, and once inserted the transmission is retrievable.
+        assert_eq!(missing_transmissions.get(&transmission_id), Some(&transmission));
+        service.insert_transmissions(
+            Field::rand(rng),
+            indexset![transmission_id],
+            Default::default(),
+            missing_transmissions,
+        );
+        assert_eq!(service.get_transmission(transmission_id), Some(transmission));
+    }
+
     #[test]
     fn find_missing_transmissions_rejects_a_declaration_that_is_neither_provided_nor_aborted() {
         let rng = &mut TestRng::default();
