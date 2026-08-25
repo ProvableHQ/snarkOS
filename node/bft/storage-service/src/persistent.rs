@@ -207,8 +207,12 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                     // The transmission is missing from persistent storage.
                     // Check if it exists in the `missing_transmissions` map provided.
                     let Some(transmission) = missing_transmissions.remove(&transmission_id) else {
+                        // This is the branch where persistent storage does not hold the
+                        // transmission, so asking whether it is aborted is the same question as
+                        // asking whether storage knows the ID at all - without repeating the
+                        // lookup that just came back empty.
                         if !aborted_transmission_ids.contains(&transmission_id)
-                            && !self.contains_transmission(transmission_id)
+                            && !self.contains_aborted_transmission(transmission_id)
                         {
                             error!("Failed to provide a missing transmission {transmission_id}");
                         }
