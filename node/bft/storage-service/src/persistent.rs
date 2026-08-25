@@ -160,17 +160,23 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         let mut missing_transmissions = HashMap::new();
         // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
         for transmission_id in batch_header.transmission_ids() {
-            // If the transmission ID does not exist, ensure it was provided by the caller or aborted.
-            if !self.contains_transmission(*transmission_id) {
+            // If the transmission cannot be retrieved from storage, ensure it was provided by the
+            // caller. Note that an ID recorded as aborted holds no transmission, so bytes provided
+            // for it must still be collected here in order to become retrievable.
+            if !self.contains_retrievable_transmission(*transmission_id) {
                 // Retrieve the transmission.
                 match transmissions.remove(transmission_id) {
                     // Append the transmission if it exists.
                     Some(transmission) => {
                         missing_transmissions.insert(*transmission_id, transmission);
                     }
-                    // If the transmission does not exist, check if it was aborted.
+                    // If the transmission does not exist, it must be aborted: either the caller
+                    // declares it as such, or storage already recorded it as aborted for an earlier
+                    // certificate - in which case there are no bytes to be had from anyone.
                     None => {
-                        if !aborted_transmissions.contains(transmission_id) {
+                        if !aborted_transmissions.contains(transmission_id)
+                            && !self.contains_aborted_transmission(*transmission_id)
+                        {
                             bail!("Failed to provide a transmission");
                         }
                     }
@@ -551,6 +557,27 @@ mod tests {
 
         storage.remove_transmissions(&certificate_id, &indexset![transmission_id]);
         assert!(!storage.contains_retrievable_transmission(transmission_id));
+    }
+
+    /// An ID that storage already recorded as aborted needs neither bytes nor a fresh declaration:
+    /// there is nothing to fetch, because no peer holds a transmission for an aborted ID either.
+    ///
+    /// Only the caller that has the block can declare the ID itself; a batch proposed or certified
+    /// by a peer arrives with an empty set of aborted IDs.
+    #[test]
+    fn test_find_missing_transmissions_accepts_an_already_aborted_id_without_bytes() {
+        let rng = &mut TestRng::default();
+        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
+        let aborted_id = sample_transmission_id(rng);
+
+        // An earlier certificate recorded the ID as aborted.
+        storage.insert_transmissions(Field::rand(rng), Default::default(), [aborted_id].into(), Default::default());
+
+        let batch_header = sample_batch_header(&[aborted_id], rng);
+        let result = storage.find_missing_transmissions(&batch_header, Default::default(), Default::default()).unwrap();
+
+        // Nothing to fetch, and nothing to reject.
+        assert!(result.is_empty());
     }
 
     /// A transmission whose ID an earlier certificate recorded as aborted must still be persisted

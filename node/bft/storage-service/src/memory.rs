@@ -85,10 +85,16 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
         // Initialize a list for the missing transmissions from storage.
         let mut missing_transmissions = HashMap::new();
         // Lock the existing transmissions.
+        // Note: both maps are read through their guards rather than through
+        // `contains_retrievable_transmission` and `contains_aborted_transmission`, which would take
+        // the very same locks again while these guards are held.
         let known_transmissions = self.transmissions.read();
+        let known_aborted_transmission_ids = self.aborted_transmission_ids.read();
         // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
         for transmission_id in batch_header.transmission_ids() {
-            // If the transmission ID does not exist, ensure it was provided by the caller or aborted.
+            // If the transmission cannot be retrieved from storage, ensure it was provided by the
+            // caller. Note that an ID recorded as aborted holds no transmission, so bytes provided
+            // for it must still be collected here in order to become retrievable.
             if !known_transmissions.contains_key(transmission_id) {
                 // Retrieve the transmission.
                 match transmissions.remove(transmission_id) {
@@ -96,9 +102,13 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
                     Some(transmission) => {
                         missing_transmissions.insert(*transmission_id, transmission);
                     }
-                    // If the transmission does not exist, check if it was aborted.
+                    // If the transmission does not exist, it must be aborted: either the caller
+                    // declares it as such, or storage already recorded it as aborted for an earlier
+                    // certificate - in which case there are no bytes to be had from anyone.
                     None => {
-                        if !aborted_transmissions.contains(transmission_id) {
+                        if !aborted_transmissions.contains(transmission_id)
+                            && !known_aborted_transmission_ids.contains_key(transmission_id)
+                        {
                             bail!("Failed to provide a transmission");
                         }
                     }
@@ -540,6 +550,27 @@ mod tests {
             missing_transmissions,
         );
         assert_eq!(service.get_transmission(transmission_id), Some(transmission));
+    }
+
+    /// An ID that storage already recorded as aborted needs neither bytes nor a fresh declaration:
+    /// there is nothing to fetch, because no peer holds a transmission for an aborted ID either.
+    ///
+    /// Only the caller that has the block can declare the ID itself; a batch proposed or certified
+    /// by a peer arrives with an empty set of aborted IDs.
+    #[test]
+    fn find_missing_transmissions_accepts_an_already_aborted_id_without_bytes() {
+        let rng = &mut TestRng::default();
+        let service = BFTMemoryService::<CurrentNetwork>::new();
+        let aborted_id = sample_transmission_id(rng);
+
+        // An earlier certificate recorded the ID as aborted.
+        service.insert_transmissions(Field::rand(rng), Default::default(), [aborted_id].into(), Default::default());
+
+        let batch_header = sample_batch_header(&[aborted_id], rng);
+        let result = service.find_missing_transmissions(&batch_header, Default::default(), Default::default()).unwrap();
+
+        // Nothing to fetch, and nothing to reject.
+        assert!(result.is_empty());
     }
 
     #[test]
