@@ -36,6 +36,13 @@ use tracing::*;
 const MAX_HANDSHAKE_SIZE: usize = 1024 * 1024; // 1 MiB
 /// The maximum size of an event that can be transmitted in the network.
 const MAX_EVENT_SIZE: usize = 256 * 1024 * 1024; // 256 MiB
+/// The integer type of a frame's length prefix.
+///
+/// The decoder is configured with this via `length_field_type`, and the encoder writes the prefix
+/// as one of these, so the two cannot disagree about the framing.
+type FrameLength = u32;
+/// The width of a frame's length prefix, in bytes.
+const LENGTH_FIELD_LEN: usize = size_of::<FrameLength>();
 
 /// The codec used to decode and encode network `Event`s.
 pub struct EventCodec<N: Network> {
@@ -54,7 +61,11 @@ impl<N: Network> EventCodec<N> {
 impl<N: Network> Default for EventCodec<N> {
     fn default() -> Self {
         Self {
-            codec: LengthDelimitedCodec::builder().max_frame_length(MAX_EVENT_SIZE).little_endian().new_codec(),
+            codec: LengthDelimitedCodec::builder()
+                .max_frame_length(MAX_EVENT_SIZE)
+                .length_field_type::<FrameLength>()
+                .little_endian()
+                .new_codec(),
             _phantom: Default::default(),
         }
     }
@@ -64,19 +75,41 @@ impl<N: Network> Encoder<Event<N>> for EventCodec<N> {
     type Error = std::io::Error;
 
     fn encode(&mut self, event: Event<N>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // Serialize the payload directly into dst, but only claim back what was appended here: dst
-        // may already hold frames that have not been written out yet - which is what happens when a
-        // sink is fed several events before being flushed - and folding those into this event's frame
-        // would produce a single frame that no decoder can make sense of.
-        let buffered = dst.len();
-        event
-            .write_le(&mut dst.writer())
+        // Reserve the frame's length prefix, remembering where it has to be written.
+        //
+        // The length is not known until the event has been serialized, so the alternative is to
+        // serialize the event elsewhere and copy the result in once its size is known. Writing the
+        // event straight into `dst` and filling in the length afterwards avoids that copy.
+        //
+        // Note that `dst` is the connection's write buffer and is not necessarily empty: it still
+        // holds any frames that have not been flushed yet. Everything below is therefore relative
+        // to where this frame starts, not to the start of the buffer.
+        let frame_offset = dst.len();
+        dst.extend_from_slice(&[0u8; LENGTH_FIELD_LEN]);
+
+        // Serialize the event directly into the destination buffer.
+        if let Err(error) = event.write_le(&mut dst.writer()) {
+            // Leave the buffer as it was found, so a failed encode cannot corrupt the stream.
+            dst.truncate(frame_offset);
+            error!("Failed to serialize an event: {error}");
             // This error should never happen, the conversion is for greater compatibility.
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"))?;
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"));
+        }
 
-        let serialized_event = dst.split_off(buffered).freeze();
+        // Determine the length of what was just written, and ensure it is a permitted frame size.
+        let frame_len = dst.len() - frame_offset - LENGTH_FIELD_LEN;
+        if frame_len > self.codec.max_frame_length() {
+            dst.truncate(frame_offset);
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"));
+        }
 
-        self.codec.encode(serialized_event, dst)
+        // Fill in the length prefix, in the same little-endian `FrameLength` framing that
+        // `self.codec` is built to decode. The `event_roundtrip` test covers that agreement.
+        let frame_len = FrameLength::try_from(frame_len)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"))?;
+        dst[frame_offset..frame_offset + LENGTH_FIELD_LEN].copy_from_slice(&frame_len.to_le_bytes());
+
+        Ok(())
     }
 }
 

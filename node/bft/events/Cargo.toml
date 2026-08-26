@@ -66,6 +66,13 @@ workspace = true
 workspace = true
 optional = true
 
+[[bench]]
+name = "serialization"
+harness = false
+
+[dev-dependencies.criterion]
+workspace = true
+
 [dev-dependencies.snarkvm]
 workspace = true
 features = [ "test-helpers" ]
