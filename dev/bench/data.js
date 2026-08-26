@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787715637039,
+  "lastUpdate": 1787715682190,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17064,6 +17064,72 @@ window.BENCHMARK_DATA = {
             "value": 1.52,
             "unit": "blocks/s",
             "extra": "total_wait=164s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77308d1890c155cbefb0a14571feb7d2d436e26b",
+          "message": "Merge pull request #4406 from cbeck88/refactor/fold-telemetry-into-metrics\n\nrefactor: fold the telemetry feature into metrics",
+          "timestamp": "2026-08-26T05:21:05+02:00",
+          "tree_id": "244840ba8905c596c1bb8a481d9287f04591ad5d",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/77308d1890c155cbefb0a14571feb7d2d436e26b"
+        },
+        "date": 1787715681368,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.405968881371836,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=51.03142547607422, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7120.455120967132,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.235236883163452, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3221.181148547396,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.24835610389709473, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.86,
+            "unit": "blocks/s",
+            "extra": "total_wait=134s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.310066,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=130, mean_speed=1.237564, max_speed=2.950000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250"
           }
         ]
       }
