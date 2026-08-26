@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787591208633,
+  "lastUpdate": 1787715637039,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -16998,6 +16998,72 @@ window.BENCHMARK_DATA = {
             "value": 1.96,
             "unit": "blocks/s",
             "extra": "total_wait=127s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a26bc9482b686a584725a4e49f97e4b5d18ee95b",
+          "message": "Merge pull request #4375 from cbeck88/perf/event-codec-avoid-copy\n\nperf(events): write event frames in place instead of copying twice",
+          "timestamp": "2026-08-26T05:19:34+02:00",
+          "tree_id": "17862c4340f4f86e2737c50f83214e18fe8114d3",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/a26bc9482b686a584725a4e49f97e4b5d18ee95b"
+        },
+        "date": 1787715635831,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.350949947939762,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=57.47849082946777, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 9577.76019851061,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=8.352683544158936, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3424.505196293654,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.2336103916168213, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.65,
+            "unit": "blocks/s",
+            "extra": "total_wait=151s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.032754,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=147, mean_speed=1.155896, max_speed=2.716667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.53,
+            "unit": "blocks/s",
+            "extra": "total_wait=163s, target_height=250, connect_time=10, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.52,
+            "unit": "blocks/s",
+            "extra": "total_wait=164s, target_height=250"
           }
         ]
       }
