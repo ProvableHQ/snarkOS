@@ -676,10 +676,13 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     continue;
                 }
 
-                // Check if the storage already contain the transmission.
-                // Note: We do not skip if this is the first transmission in the proposal, to ensure that
-                // the primary does not propose a batch with no transmissions.
-                if !transmissions.is_empty() && self.storage.contains_transmission(id) {
+                // Check if the storage already contains the transmission.
+                // Note: `contains_transmission` is also true for an ID that storage only recorded as
+                // aborted, which holds no transmission to hand back. Proposing one of those would
+                // commit the batch to a transmission that peers cannot materialize, so it is skipped
+                // here unconditionally - proposing an empty batch is valid, so there is no need to
+                // make an exception for the first transmission in the proposal.
+                if self.storage.contains_transmission(id) {
                     trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
                     continue;
                 }
@@ -2454,6 +2457,37 @@ mod tests {
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
         assert!(primary.proposed_batch.read().is_proposed());
+    }
+
+    /// A transmission that storage only knows as aborted holds no bytes for peers to materialize, so
+    /// it must be skipped when proposing - including when it is the first item drained from the
+    /// worker, which used to bypass the storage check entirely.
+    #[test_log::test(tokio::test)]
+    async fn test_propose_batch_skips_an_aborted_first_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Queue a certificate's transmissions on the worker before recording them as aborted.
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        for (transmission_id, transmission) in &transmissions {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        }
+        assert_eq!(primary.workers()[0].num_transmissions(), transmissions.len());
+
+        // Record the queued transmission IDs as aborted in storage.
+        let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
+        primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions.clone()).unwrap();
+        for transmission_id in &aborted_transmissions {
+            assert!(primary.storage.contains_transmission(*transmission_id));
+            assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
+        }
+
+        // Every aborted ID is skipped, leaving an empty proposal rather than an uncommittable one.
+        assert!(primary.propose_batch().await.unwrap());
+        assert!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().is_empty());
+        assert_eq!(primary.workers()[0].num_transmissions(), 0);
     }
 
     #[test_log::test(tokio::test)]
