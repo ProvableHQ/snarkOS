@@ -36,6 +36,9 @@ pub use challenge_response::ChallengeResponse;
 mod disconnect;
 pub use disconnect::Disconnect;
 
+mod message_id;
+pub use message_id::{MAX_PING_MESSAGE_SIZE, MAX_SMALL_MESSAGE_SIZE, MessageId};
+
 mod peer_request;
 pub use peer_request::PeerRequest;
 
@@ -77,6 +80,9 @@ use snarkvm::prelude::{
 };
 
 use std::{borrow::Cow, io, net::SocketAddr};
+
+/// The width, in bytes, of the message ID that leads every message payload.
+pub const MESSAGE_ID_SIZE: usize = size_of::<u16>();
 
 // A compile-time compatibility check for the Message.
 const _: () = {
@@ -120,19 +126,6 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 }
 
 impl<N: Network> Message<N> {
-    // 8 KiB
-
-    /// The maximum size of a `Ping` message. Its `block_locators` can legitimately grow over the
-    /// life of the chain: up to `NUM_RECENT_BLOCKS` recent entries plus up to `MAX_CHECKPOINTS`
-    /// checkpoint entries (see `snarkos_node_sync_locators::block_locators`), each a `(u32,
-    /// BlockHash)` pair, i.e. 4 + 32 bytes. This is that bound with headroom, not a guess.
-    pub(crate) const MAX_PING_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
-    /// The maximum size of the small, fixed-shape messages: `BlockRequest`, `ChallengeRequest`,
-    /// `ChallengeResponse`, `Disconnect`, `PeerRequest`, `PeerResponse`, `Pong`, `PuzzleRequest`,
-    /// `PuzzleResponse` and `UnconfirmedSolution`. None of these carry more than a handful of
-    /// fixed-size fields (or, for `PeerResponse`, a list bounded by `MAX_PEERS_TO_SEND`), so this
-    /// is generous relative to their real size while remaining far below the general frame limit.
-    pub(crate) const MAX_SMALL_MESSAGE_SIZE: usize = 8 * 1024;
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
     pub const VERSIONS: [(ConsensusVersion, u32); 16] = [
@@ -207,55 +200,33 @@ impl<N: Network> Message<N> {
     }
 
     /// Returns the message ID.
-    #[inline]
-    pub fn id(&self) -> u16 {
-        match self {
-            Self::BlockRequest(..) => 0,
-            Self::BlockResponse(..) => 1,
-            Self::ChallengeRequest(..) => 2,
-            Self::ChallengeResponse(..) => 3,
-            Self::Disconnect(..) => 4,
-            Self::PeerRequest(..) => 5,
-            Self::PeerResponse(..) => 6,
-            Self::Ping(..) => 7,
-            Self::Pong(..) => 8,
-            Self::PuzzleRequest(..) => 9,
-            Self::PuzzleResponse(..) => 10,
-            Self::UnconfirmedSolution(..) => 11,
-            Self::UnconfirmedTransaction(..) => 12,
-        }
-    }
-
-    // 16 MiB
-
-    /// Returns the maximum size, in bytes, that a message with the given ID may legitimately be -
-    /// to be checked against the declared frame length before the frame body is read off the
-    /// wire, not after. Every message ID this node understands must appear here explicitly: there
-    /// is no fallback arm, so adding a message variant without adding its entry is a compile
-    /// error, not a silent gap.
     ///
-    /// Returns `None` for an ID this node doesn't recognize, which the caller should treat as a
-    /// rejection.
-    pub fn max_size_for_id(id: u16) -> Option<usize> {
-        match id {
-            // BlockResponse is the one message that is legitimately large - up to a handful of
-            // full blocks (bounded by block count, not by byte size). It is deliberately left at
-            // the general frame ceiling here; restricting it further needs the requester's own
-            // pending-request state, which this layer doesn't have.
-            1 => Some(MAXIMUM_MESSAGE_SIZE),
-            7 => Some(Self::MAX_PING_MESSAGE_SIZE),
-            // UnconfirmedTransaction is the one message type with its own network-defined,
-            // consensus-version-dependent cap.
-            12 => Some(N::LATEST_MAX_TRANSACTION_SIZE()),
-            0 | 2 | 3 | 4 | 5 | 6 | 8 | 9 | 10 | 11 => Some(Self::MAX_SMALL_MESSAGE_SIZE),
-            _ => None,
+    /// This is exhaustive over the variants and has no fallback arm, so a new variant has to be
+    /// given an ID here - and, in turn, a maximum size in [`MessageId::max_size`] - before the
+    /// crate will compile.
+    #[inline]
+    pub fn id(&self) -> MessageId {
+        match self {
+            Self::BlockRequest(..) => MessageId::BlockRequest,
+            Self::BlockResponse(..) => MessageId::BlockResponse,
+            Self::ChallengeRequest(..) => MessageId::ChallengeRequest,
+            Self::ChallengeResponse(..) => MessageId::ChallengeResponse,
+            Self::Disconnect(..) => MessageId::Disconnect,
+            Self::PeerRequest(..) => MessageId::PeerRequest,
+            Self::PeerResponse(..) => MessageId::PeerResponse,
+            Self::Ping(..) => MessageId::Ping,
+            Self::Pong(..) => MessageId::Pong,
+            Self::PuzzleRequest(..) => MessageId::PuzzleRequest,
+            Self::PuzzleResponse(..) => MessageId::PuzzleResponse,
+            Self::UnconfirmedSolution(..) => MessageId::UnconfirmedSolution,
+            Self::UnconfirmedTransaction(..) => MessageId::UnconfirmedTransaction,
         }
     }
 }
 
 impl<N: Network> ToBytes for Message<N> {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
-        self.id().write_le(&mut writer)?;
+        self.id().as_u16().write_le(&mut writer)?;
 
         match self {
             Self::BlockRequest(message) => message.write_le(writer),
@@ -277,27 +248,31 @@ impl<N: Network> ToBytes for Message<N> {
 
 impl<N: Network> FromBytes for Message<N> {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
-        // Read the event ID.
-        let mut id_bytes = [0u8; 2];
+        // Read the message ID.
+        let mut id_bytes = [0u8; MESSAGE_ID_SIZE];
         reader.read_exact(&mut id_bytes)?;
         let id = u16::from_le_bytes(id_bytes);
+        let Some(id) = MessageId::from_u16(id) else {
+            return Err(error(format!("Unknown message ID {id}")));
+        };
 
         // Deserialize the data field.
         let message = match id {
-            0 => Self::BlockRequest(BlockRequest::read_le(&mut reader)?),
-            1 => Self::BlockResponse(BlockResponse::read_le(&mut reader)?),
-            2 => Self::ChallengeRequest(ChallengeRequest::read_le(&mut reader)?),
-            3 => Self::ChallengeResponse(ChallengeResponse::read_le(&mut reader)?),
-            4 => Self::Disconnect(Disconnect::read_le(&mut reader)?),
-            5 => Self::PeerRequest(PeerRequest::read_le(&mut reader)?),
-            6 => Self::PeerResponse(PeerResponse::read_le(&mut reader)?),
-            7 => Self::Ping(Ping::read_le(&mut reader)?),
-            8 => Self::Pong(Pong::read_le(&mut reader)?),
-            9 => Self::PuzzleRequest(PuzzleRequest::read_le(&mut reader)?),
-            10 => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
-            11 => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
-            12 => Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?),
-            13.. => return Err(error("Unknown message ID {id}")),
+            MessageId::BlockRequest => Self::BlockRequest(BlockRequest::read_le(&mut reader)?),
+            MessageId::BlockResponse => Self::BlockResponse(BlockResponse::read_le(&mut reader)?),
+            MessageId::ChallengeRequest => Self::ChallengeRequest(ChallengeRequest::read_le(&mut reader)?),
+            MessageId::ChallengeResponse => Self::ChallengeResponse(ChallengeResponse::read_le(&mut reader)?),
+            MessageId::Disconnect => Self::Disconnect(Disconnect::read_le(&mut reader)?),
+            MessageId::PeerRequest => Self::PeerRequest(PeerRequest::read_le(&mut reader)?),
+            MessageId::PeerResponse => Self::PeerResponse(PeerResponse::read_le(&mut reader)?),
+            MessageId::Ping => Self::Ping(Ping::read_le(&mut reader)?),
+            MessageId::Pong => Self::Pong(Pong::read_le(&mut reader)?),
+            MessageId::PuzzleRequest => Self::PuzzleRequest(PuzzleRequest::read_le(&mut reader)?),
+            MessageId::PuzzleResponse => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
+            MessageId::UnconfirmedSolution => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
+            MessageId::UnconfirmedTransaction => {
+                Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?)
+            }
         };
 
         // Ensure that there are no "dangling" bytes.

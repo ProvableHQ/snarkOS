@@ -86,13 +86,25 @@ pub mod prop_tests {
             .boxed()
     }
 
-    pub fn any_large_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
+    /// An `UnconfirmedTransaction` carrying a transaction of exactly the maximum permitted size.
+    /// Such a transaction is valid - the ledger and the REST endpoint both accept it - so the
+    /// message carrying it has to be accepted on the wire too, even though the message is
+    /// necessarily larger than the transaction by the size of its envelope.
+    pub fn any_max_size_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
+        unconfirmed_transaction_of_size(CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE())
+    }
+
+    /// An `UnconfirmedTransaction` carrying a transaction one byte over the maximum.
+    pub fn any_oversized_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
+        unconfirmed_transaction_of_size(CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE() + 1)
+    }
+
+    fn unconfirmed_transaction_of_size(size: usize) -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
         any::<u64>()
-            .prop_map(|seed| {
+            .prop_map(move |seed| {
                 let mut rng = TestRng::fixed(seed);
                 let tx_id_field = Field::<CurrentNetwork>::rand(&mut rng);
-                let bytes: Vec<u8> =
-                    (0..CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE()).map(|_| u8::rand(&mut rng)).collect();
+                let bytes: Vec<u8> = (0..size).map(|_| u8::rand(&mut rng)).collect();
                 UnconfirmedTransaction {
                     transaction_id: tx_id_field.into(),
                     transaction: Data::Buffer(Bytes::from(bytes)),

@@ -89,8 +89,7 @@ pub mod prop_tests {
         (any_solution_id(), any::<u64>())
             .prop_map(|(solution_id, seed)| {
                 let mut rng = TestRng::fixed(seed);
-                let bytes: Vec<u8> =
-                    (0..crate::Message::<CurrentNetwork>::MAX_SMALL_MESSAGE_SIZE).map(|_| rng.random()).collect();
+                let bytes: Vec<u8> = (0..crate::MAX_SMALL_MESSAGE_SIZE).map(|_| rng.random()).collect();
                 UnconfirmedSolution { solution_id, solution: Data::Buffer(bytes::Bytes::from(bytes)) }
             })
             .boxed()
