@@ -519,7 +519,7 @@ mod tests {
     fn restricted_codec_rejects_an_excluded_id_even_when_well_formed(
         #[strategy(any_puzzle_response())] message: PuzzleResponse<CurrentNetwork>,
     ) {
-        const EXCLUDED: &[u16] = &[10]; // PuzzleResponse
+        const EXCLUDED: &[MessageId] = &[MessageId::PuzzleResponse];
 
         let mut bytes = BytesMut::new();
         let mut encoder = MessageCodec::<CurrentNetwork>::default();
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn restricted_codec_still_allows_a_permitted_message() {
-        const EXCLUDED: &[u16] = &[1]; // BlockResponse; unrelated to the message sent below
+        const EXCLUDED: &[MessageId] = &[MessageId::BlockResponse]; // unrelated to the message sent below
 
         let mut bytes = BytesMut::new();
         let mut encoder = MessageCodec::<CurrentNetwork>::default();
