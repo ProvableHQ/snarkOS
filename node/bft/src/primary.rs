@@ -989,6 +989,24 @@ impl<N: Network> Primary<N> {
         // Inserts the missing transmissions into the workers.
         self.insert_missing_transmissions_into_workers(peer_ip, missing_transmissions.into_iter())?;
 
+        // Do not sign a proposal referencing a transmission this node knows only as aborted: storage
+        // holds no payload for it, and none can be fetched from anyone, so the signature would help
+        // certify a batch committing to something that can never be materialized.
+        //
+        // Note: this is deliberately stricter than the certificate and block sync paths, which have
+        // to keep accepting such IDs - see `StorageService::find_missing_transmissions`. It is also a
+        // judgment made from local sync state, so an honest peer that has not seen the aborting block
+        // yet can trip it; skip the proposal rather than treat the peer as malicious.
+        if let Some(transmission_id) =
+            batch_header.transmission_ids().iter().find(|id| self.storage.contains_aborted_transmission(**id))
+        {
+            debug!(
+                "Primary is safely skipping a batch proposal from '{peer_ip}' - {}",
+                format!("it references the aborted transmission '{}'", fmt_id(transmission_id)).dimmed()
+            );
+            return Ok(());
+        }
+
         /* Proceeding to sign the batch. */
 
         // Retrieve the batch ID.
@@ -2673,6 +2691,60 @@ mod tests {
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_ok()
         );
+        // The primary signed the proposal.
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_some());
+    }
+
+    /// A proposal referencing a transmission that storage knows only as aborted must not be signed:
+    /// there is no payload for it, and none can be fetched, so the signature would help certify a
+    /// batch committing to something that can never be materialized.
+    #[test_log::test(tokio::test)]
+    async fn test_batch_propose_from_peer_with_an_aborted_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Create a valid proposal with an author that isn't the primary.
+        let round = 1;
+        let peer_account = &accounts[1];
+        let peer_ip = peer_account.0;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
+        let proposal = create_test_proposal(
+            &peer_account.1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            Default::default(),
+            timestamp,
+            1,
+            &mut rng,
+        );
+
+        // Make sure the primary is aware of the transmissions in the proposal.
+        for (transmission_id, transmission) in proposal.transmissions() {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+        }
+
+        // The author must be known to resolver to pass propose checks.
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
+
+        // The primary will only consider itself synced if we received
+        // block locators from a peer.
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
+
+        // Record one of the proposed transmission IDs as aborted, as an earlier certificate would have.
+        let aborted_transmission_id = *proposal.transmissions().keys().next().unwrap();
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[2].1.address(), &accounts, round, Default::default(), &mut rng);
+        primary
+            .storage
+            .insert_certificate(certificate, transmissions, [aborted_transmission_id].into_iter().collect())
+            .unwrap();
+        assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
+
+        // The proposal is skipped rather than rejected - an honest peer that has not seen the
+        // aborting block yet can send one - and no signature is produced for it.
+        primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_none());
     }
 
     /// A proposal for the current round is left in place; once the round advances past it, the same
