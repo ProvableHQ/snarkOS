@@ -43,34 +43,69 @@ impl<N: Network> MessageCodec<N> {
 impl<N: Network> Default for MessageCodec<N> {
     fn default() -> Self {
         Self {
-            codec: LengthDelimitedCodec::builder().max_frame_length(MAXIMUM_MESSAGE_SIZE).little_endian().new_codec(),
+            codec: LengthDelimitedCodec::builder()
+                .max_frame_length(MAXIMUM_MESSAGE_SIZE)
+                .length_field_type::<FrameLength>()
+                .little_endian()
+                .new_codec(),
             _phantom: Default::default(),
         }
     }
 }
 
+/// The type of a frame's length prefix on the wire.
+///
+/// The encoder below writes this prefix by hand, while `self.codec` is what enforces
+/// `max_frame_length`; passing the type to `length_field_type` on the builder keeps the two from
+/// disagreeing about the framing, rather than leaving it to `LengthDelimitedCodec`'s defaults.
+type FrameLength = u32;
+
+/// The width, in bytes, of the length prefix on the wire. The prefix is not itself included in
+/// the length it declares.
+const LENGTH_PREFIX_SIZE: usize = size_of::<FrameLength>();
+
 impl<N: Network> Encoder<Message<N>> for MessageCodec<N> {
     type Error = std::io::Error;
 
     fn encode(&mut self, message: Message<N>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        // Reserve the frame's length prefix, remembering where it has to be written.
+        //
+        // The length is not known until the message has been serialized, so the alternative is to
+        // serialize the message elsewhere and copy the result in once its size is known.
+        //
+        // Note that `dst` is the connection's write buffer and is not necessarily empty: it may
+        // still hold a frame that has not been flushed yet. Everything below is therefore relative
+        // to where this frame starts, not to the start of the buffer - taking the whole buffer
+        // would fold an already-encoded frame into this one's payload. This mirrors what
+        // `EventCodec` does, for the same reason.
+        let frame_offset = dst.len();
+        dst.extend_from_slice(&[0u8; LENGTH_PREFIX_SIZE]);
+
         // Serialize the payload directly into dst.
-        message
-            .write_le(&mut dst.writer())
+        if let Err(error) = message.write_le(&mut dst.writer()) {
+            // Leave the buffer as it was found, so a failed encode cannot corrupt the stream.
+            dst.truncate(frame_offset);
+            error!("Failed to serialize a message - {error}");
             // This error should never happen, the conversion is for greater compatibility.
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"))?;
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "serialization error"));
+        }
 
-        let serialized_message = dst.split_to(dst.len()).freeze();
+        // Determine the length of what was just written, and ensure it is a permitted frame size.
+        let frame_len = dst.len() - frame_offset - LENGTH_PREFIX_SIZE;
+        if frame_len > self.codec.max_frame_length() {
+            dst.truncate(frame_offset);
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"));
+        }
 
-        self.codec.encode(serialized_message, dst)
+        // Fill in the length prefix, in the same little-endian `FrameLength` framing the decoder
+        // below reads back. The roundtrip tests cover that agreement.
+        let frame_len = FrameLength::try_from(frame_len)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"))?;
+        dst[frame_offset..frame_offset + LENGTH_PREFIX_SIZE].copy_from_slice(&frame_len.to_le_bytes());
+
+        Ok(())
     }
 }
-
-/// The width, in bytes, of the length prefix on the wire. Matches `LengthDelimitedCodec`'s
-/// default (`.little_endian()` is the only builder option `MessageCodec` sets besides
-/// `max_frame_length`, so the rest of the format - a 4-byte length field, not itself included in
-/// the count, immediately followed by that many payload bytes - is `LengthDelimitedCodec`'s
-/// default framing).
-const LENGTH_PREFIX_SIZE: usize = 4;
 
 /// The width, in bytes, of the message ID that leads every payload (see `Message::id`/`ToBytes`).
 const ID_SIZE: usize = 2;
@@ -139,6 +174,8 @@ mod tests {
     use super::*;
 
     use crate::{
+        PeerRequest,
+        PuzzleRequest,
         PuzzleResponse,
         UnconfirmedSolution,
         UnconfirmedTransaction,
@@ -221,5 +258,22 @@ mod tests {
         let mut codec = MessageCodec::<CurrentNetwork>::default();
         let result = codec.decode(&mut bytes);
         assert!(matches!(result, Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    /// Encoding into a buffer that already holds an unflushed frame must append a second frame,
+    /// not fold the first one into the second one's payload. `FramedWrite::feed` encodes into a
+    /// persistent write buffer, so the codec cannot assume it is handed an empty one.
+    #[test]
+    fn encoding_appends_to_a_non_empty_buffer() {
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+
+        let mut bytes = BytesMut::new();
+        codec.encode(Message::PeerRequest(PeerRequest), &mut bytes).unwrap();
+        codec.encode(Message::PuzzleRequest(PuzzleRequest), &mut bytes).unwrap();
+
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::PeerRequest(_)))));
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::PuzzleRequest(_)))));
+        assert!(matches!(codec.decode(&mut bytes), Ok(None)));
+        assert!(bytes.is_empty());
     }
 }

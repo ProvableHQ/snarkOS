@@ -120,6 +120,19 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 }
 
 impl<N: Network> Message<N> {
+    // 8 KiB
+
+    /// The maximum size of a `Ping` message. Its `block_locators` can legitimately grow over the
+    /// life of the chain: up to `NUM_RECENT_BLOCKS` recent entries plus up to `MAX_CHECKPOINTS`
+    /// checkpoint entries (see `snarkos_node_sync_locators::block_locators`), each a `(u32,
+    /// BlockHash)` pair, i.e. 4 + 32 bytes. This is that bound with headroom, not a guess.
+    pub(crate) const MAX_PING_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+    /// The maximum size of the small, fixed-shape messages: `BlockRequest`, `ChallengeRequest`,
+    /// `ChallengeResponse`, `Disconnect`, `PeerRequest`, `PeerResponse`, `Pong`, `PuzzleRequest`,
+    /// `PuzzleResponse` and `UnconfirmedSolution`. None of these carry more than a handful of
+    /// fixed-size fields (or, for `PeerResponse`, a list bounded by `MAX_PEERS_TO_SEND`), so this
+    /// is generous relative to their real size while remaining far below the general frame limit.
+    pub(crate) const MAX_SMALL_MESSAGE_SIZE: usize = 8 * 1024;
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
     pub const VERSIONS: [(ConsensusVersion, u32); 16] = [
@@ -213,18 +226,7 @@ impl<N: Network> Message<N> {
         }
     }
 
-    /// The maximum size of the small, fixed-shape messages: `BlockRequest`, `ChallengeRequest`,
-    /// `ChallengeResponse`, `Disconnect`, `PeerRequest`, `PeerResponse`, `Pong`, `PuzzleRequest`,
-    /// `PuzzleResponse` and `UnconfirmedSolution`. None of these carry more than a handful of
-    /// fixed-size fields (or, for `PeerResponse`, a list bounded by `MAX_PEERS_TO_SEND`), so this
-    /// is generous relative to their real size while remaining far below the general frame limit.
-    pub(crate) const MAX_SMALL_MESSAGE_SIZE: usize = 8 * 1024; // 8 KiB
-
-    /// The maximum size of a `Ping` message. Its `block_locators` can legitimately grow over the
-    /// life of the chain: up to `NUM_RECENT_BLOCKS` recent entries plus up to `MAX_CHECKPOINTS`
-    /// checkpoint entries (see `snarkos_node_sync_locators::block_locators`), each a `(u32,
-    /// BlockHash)` pair, i.e. 4 + 32 bytes. This is that bound with headroom, not a guess.
-    pub(crate) const MAX_PING_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MiB
+    // 16 MiB
 
     /// Returns the maximum size, in bytes, that a message with the given ID may legitimately be -
     /// to be checked against the declared frame length before the frame body is read off the
