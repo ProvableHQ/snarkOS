@@ -29,6 +29,10 @@ pub(crate) const MAXIMUM_MESSAGE_SIZE: usize = 128 * 1024 * 1024; // 128 MiB
 /// The codec used to decode and encode network `Message`s.
 pub struct MessageCodec<N: Network> {
     codec: LengthDelimitedCodec,
+    /// Message IDs this codec refuses to decode, rejecting them the moment the ID is visible -
+    /// before waiting for or buffering the rest of the body. Empty by default (every ID this node
+    /// recognizes is decodable); see [`Self::restricted`].
+    excluded_ids: &'static [MessageId],
     _phantom: PhantomData<N>,
 }
 
@@ -37,6 +41,16 @@ impl<N: Network> MessageCodec<N> {
         let mut codec = Self::default();
         codec.codec.set_max_frame_length(MAXIMUM_HANDSHAKE_MESSAGE_SIZE);
         codec
+    }
+
+    /// Returns a codec that refuses to decode any message whose ID is in `excluded_ids`, rejecting
+    /// the connection the moment the ID is visible rather than after buffering and parsing a body
+    /// that was never going to be accepted. Use this for connections that structurally have no
+    /// legitimate reason to ever receive certain message types - for instance, a validator's
+    /// router connections, which never expect `BlockResponse` since validators sync blocks over
+    /// the committee-gated BFT gateway instead.
+    pub fn restricted(excluded_ids: &'static [MessageId]) -> Self {
+        Self { excluded_ids, ..Self::default() }
     }
 }
 
@@ -48,6 +62,7 @@ impl<N: Network> Default for MessageCodec<N> {
                 .length_field_type::<FrameLength>()
                 .little_endian()
                 .new_codec(),
+            excluded_ids: &[],
             _phantom: Default::default(),
         }
     }
@@ -157,6 +172,12 @@ impl<N: Network> Decoder for MessageCodec<N> {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "unrecognized message ID"));
         };
 
+        // Reject a message type this connection has no legitimate reason to ever receive, before
+        // waiting for or buffering its body. See `MessageCodec::restricted`.
+        if self.excluded_ids.contains(&id) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "message type is not permitted"));
+        }
+
         // Reject a declared length that exceeds what this specific message type could
         // legitimately need - before waiting for, and buffering, the rest of the body.
         if declared_len > id.max_size::<N>() {
@@ -198,11 +219,12 @@ mod tests {
         PeerRequest,
         PeerResponse,
         Ping,
+        Pong,
         PuzzleRequest,
         PuzzleResponse,
         UnconfirmedSolution,
         UnconfirmedTransaction,
-        puzzle_response::prop_tests::any_large_puzzle_response,
+        puzzle_response::prop_tests::{any_large_puzzle_response, any_puzzle_response},
         unconfirmed_solution::prop_tests::any_large_unconfirmed_solution,
         unconfirmed_transaction::prop_tests::{
             any_max_size_unconfirmed_transaction,
@@ -491,5 +513,31 @@ mod tests {
         bytes.extend_from_slice(&(declared_len as FrameLength).to_le_bytes());
         bytes.extend_from_slice(&id.to_le_bytes());
         bytes
+    }
+
+    #[proptest]
+    fn restricted_codec_rejects_an_excluded_id_even_when_well_formed(
+        #[strategy(any_puzzle_response())] message: PuzzleResponse<CurrentNetwork>,
+    ) {
+        const EXCLUDED: &[u16] = &[10]; // PuzzleResponse
+
+        let mut bytes = BytesMut::new();
+        let mut encoder = MessageCodec::<CurrentNetwork>::default();
+        assert!(encoder.encode(Message::PuzzleResponse(message), &mut bytes).is_ok());
+
+        let mut restricted = MessageCodec::<CurrentNetwork>::restricted(EXCLUDED);
+        assert!(matches!(restricted.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    #[test]
+    fn restricted_codec_still_allows_a_permitted_message() {
+        const EXCLUDED: &[u16] = &[1]; // BlockResponse; unrelated to the message sent below
+
+        let mut bytes = BytesMut::new();
+        let mut encoder = MessageCodec::<CurrentNetwork>::default();
+        assert!(encoder.encode(Message::Pong(Pong { is_fork: Some(false) }), &mut bytes).is_ok());
+
+        let mut restricted = MessageCodec::<CurrentNetwork>::restricted(EXCLUDED);
+        assert!(restricted.decode(&mut bytes).is_ok());
     }
 }
