@@ -26,8 +26,9 @@ pub const NUM_RECENT_BLOCKS: usize = 100; // 100 blocks
 const RECENT_INTERVAL: u32 = 1; // 1 block intervals
 /// The interval between block checkpoints.
 pub const CHECKPOINT_INTERVAL: u32 = 10_000; // 10,000 block intervals
-// The maximum number of checkpoints that there can be
-const MAX_CHECKPOINTS: usize = (u32::MAX / CHECKPOINT_INTERVAL) as usize;
+/// The maximum number of checkpoints that there can be. `BlockLocators::read_le` rejects any
+/// locator set claiming more than this, so it also bounds how large a `Ping` can legitimately be.
+pub const MAX_CHECKPOINTS: usize = (u32::MAX / CHECKPOINT_INTERVAL) as usize;
 
 /// Block locator maps.
 ///

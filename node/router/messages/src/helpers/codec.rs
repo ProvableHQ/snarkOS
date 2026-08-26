@@ -91,16 +91,20 @@ impl<N: Network> Encoder<Message<N>> for MessageCodec<N> {
         }
 
         // Determine the length of what was just written, and ensure it is a permitted frame size.
+        // Both ways this can fail share one arm, so that neither can leave a half-written frame
+        // behind for the next `encode` to append to.
         let frame_len = dst.len() - frame_offset - LENGTH_PREFIX_SIZE;
-        if frame_len > self.codec.max_frame_length() {
-            dst.truncate(frame_offset);
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"));
-        }
+        let frame_len = match FrameLength::try_from(frame_len) {
+            Ok(frame_len) if frame_len as usize <= self.codec.max_frame_length() => frame_len,
+            _ => {
+                // Leave the buffer as it was found, so a failed encode cannot corrupt the stream.
+                dst.truncate(frame_offset);
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"));
+            }
+        };
 
         // Fill in the length prefix, in the same little-endian `FrameLength` framing the decoder
         // below reads back. The roundtrip tests cover that agreement.
-        let frame_len = FrameLength::try_from(frame_len)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame size too big"))?;
         dst[frame_offset..frame_offset + LENGTH_PREFIX_SIZE].copy_from_slice(&frame_len.to_le_bytes());
 
         Ok(())
@@ -209,7 +213,7 @@ mod tests {
 
     use crate::message_id::UNCONFIRMED_TRANSACTION_OVERHEAD;
     use snarkos_node_network::NodeType;
-    use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, test_helpers::sample_block_locators};
+    use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, MAX_CHECKPOINTS, test_helpers::sample_block_locators};
 
     use proptest::prelude::ProptestConfig;
     use std::net::{Ipv6Addr, SocketAddr};
@@ -339,7 +343,7 @@ mod tests {
     /// on top of the transaction itself.
     #[test]
     fn size_gate_boundary_is_exact() {
-        for id in MessageId::ALL {
+        for id in MessageId::all() {
             let max_size = id.max_size::<CurrentNetwork>();
 
             // Exactly at the cap: accepted by the gate, still waiting for the body, which is
@@ -455,14 +459,13 @@ mod tests {
     /// serializer really produces rather than against that arithmetic.
     ///
     /// The height used is the largest one whose checkpoint count `BlockLocators::read_le` still
-    /// accepts, i.e. exactly `u32::MAX / CHECKPOINT_INTERVAL` checkpoints.
+    /// accepts, i.e. exactly `MAX_CHECKPOINTS` checkpoints.
     #[test]
     fn largest_possible_ping_is_accepted() {
-        let max_checkpoints = u32::MAX / CHECKPOINT_INTERVAL;
-        let height = max_checkpoints * CHECKPOINT_INTERVAL - 1;
+        let height = MAX_CHECKPOINTS as u32 * CHECKPOINT_INTERVAL - 1;
 
         let locators = sample_block_locators(height);
-        assert_eq!(locators.checkpoints.len(), max_checkpoints as usize, "not the largest acceptable locator set");
+        assert_eq!(locators.checkpoints.len(), MAX_CHECKPOINTS, "not the largest acceptable locator set");
 
         let ping = Ping {
             version: Message::<CurrentNetwork>::latest_message_version(),

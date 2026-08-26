@@ -15,19 +15,28 @@
 
 use crate::{MAXIMUM_MESSAGE_SIZE, MESSAGE_ID_SIZE};
 
-use snarkos_node_sync_locators::{CHECKPOINT_INTERVAL, NUM_RECENT_BLOCKS};
+use snarkos_node_sync_locators::{MAX_CHECKPOINTS, NUM_RECENT_BLOCKS};
 use snarkvm::prelude::Network;
 
 /// The wire ID of a [`crate::Message`] variant: the `u16` that leads every message payload.
 ///
-/// This exists so that the codec can decide how large a message is allowed to be while holding
-/// nothing but the ID - i.e. before the body has been read off the socket. Keeping the IDs in a
-/// type rather than as bare integers is what makes that decision total: both
-/// [`crate::Message::id`] and [`MessageId::max_size`] are written as `match`es without a fallback
-/// arm, so a new `Message` variant that has no ID, or a new ID that has no size, does not compile.
+/// This exists so the codec can decide how large a message is allowed to be while holding nothing
+/// but the ID - i.e. before the body has been read off the socket.
 ///
-/// The one direction that cannot be enforced by the compiler is [`MessageId::from_u16`], since a
-/// `u16` can hold values no variant claims; `message_id_round_trip` covers it instead.
+/// # Adding a message
+///
+/// Two of the three mappings are checked by the compiler: [`crate::Message::id`] and
+/// [`MessageId::max_size`] are `match`es with no fallback arm, so a `Message` variant with no ID,
+/// or an ID with no size, does not compile.
+///
+/// [`MessageId::from_u16`] is **not** checked, and cannot be on stable Rust - enumerating an
+/// enum's variants needs a macro, a derive, or the unstable `variant_count`. So: **a variant added
+/// here must be added to `from_u16` by hand.** If it is not, everything still compiles and every
+/// test still passes, but the node will happily *encode* the new message while every decoder - its
+/// own included - rejects the frame as an unrecognized ID and drops the connection.
+///
+/// `message_ids_agree_with_their_discriminants` catches a `from_u16` arm that maps an ID to the
+/// *wrong* variant. Nothing catches one that is simply missing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum MessageId {
@@ -106,6 +115,8 @@ const _: () = {
 
     // The largest `Ping` the wire format permits: a full recent-block window, plus the ceiling on
     // checkpoints that `BlockLocators::read_le` enforces, each entry a `(u32, BlockHash)` pair.
+    // Both bounds come from the locators crate rather than being restated here, so that tightening
+    // either one there tightens this assertion with it.
     let locator_entry = size_of::<u32>() + 32;
     let ping = MESSAGE_ID_SIZE
         + 4 // the version
@@ -113,28 +124,19 @@ const _: () = {
         + 1 // the `Some` tag on the block locators
         + 4 // the recents map length
         + 4 // the checkpoints map length
-        + (NUM_RECENT_BLOCKS + (u32::MAX / CHECKPOINT_INTERVAL) as usize) * locator_entry;
+        + (NUM_RECENT_BLOCKS + MAX_CHECKPOINTS) * locator_entry;
     assert!(ping <= MAX_PING_MESSAGE_SIZE, "MAX_PING_MESSAGE_SIZE is below the largest Ping the wire format permits");
 };
 
 impl MessageId {
-    /// Every message ID, for tests that need to enumerate them.
-    #[cfg(test)]
-    pub(crate) const ALL: [Self; 13] = [
-        Self::BlockRequest,
-        Self::BlockResponse,
-        Self::ChallengeRequest,
-        Self::ChallengeResponse,
-        Self::Disconnect,
-        Self::PeerRequest,
-        Self::PeerResponse,
-        Self::Ping,
-        Self::Pong,
-        Self::PuzzleRequest,
-        Self::PuzzleResponse,
-        Self::UnconfirmedSolution,
-        Self::UnconfirmedTransaction,
-    ];
+    /// Every message ID, in wire order.
+    ///
+    /// Derived from `from_u16` rather than restated, so there is one hand-maintained list here
+    /// rather than two. Note this means an ID missing from `from_u16` is missing from here too -
+    /// see the type-level docs.
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..).map_while(Self::from_u16)
+    }
 
     /// Returns the ID as it appears on the wire.
     pub const fn as_u16(self) -> u16 {
@@ -144,6 +146,8 @@ impl MessageId {
     /// Returns the ID for the given wire value, or `None` if no message this node understands
     /// uses it. Callers are expected to treat `None` as a rejection: `Message::read_le` has never
     /// been able to deserialize such a payload either.
+    ///
+    /// Must be kept in step with the enum by hand - see the type-level docs.
     pub const fn from_u16(id: u16) -> Option<Self> {
         Some(match id {
             0 => Self::BlockRequest,
@@ -159,7 +163,7 @@ impl MessageId {
             10 => Self::PuzzleResponse,
             11 => Self::UnconfirmedSolution,
             12 => Self::UnconfirmedTransaction,
-            13.. => return None,
+            _ => return None,
         })
     }
 
@@ -202,21 +206,27 @@ impl MessageId {
 mod tests {
     use super::*;
 
-    /// `from_u16` is the one mapping the compiler cannot check, so check it here.
+    /// `from_u16` is hand-maintained, so check that each arm maps an ID to the variant whose
+    /// discriminant actually is that ID - a transposed or copy-pasted arm would otherwise decode
+    /// one message type as another. (A *missing* arm is not detectable here; see the type docs.)
     #[test]
-    fn message_id_round_trip() {
-        for id in MessageId::ALL {
-            assert_eq!(MessageId::from_u16(id.as_u16()), Some(id), "{id:?} does not round-trip through its wire value");
+    fn message_ids_agree_with_their_discriminants() {
+        for (index, id) in MessageId::all().enumerate() {
+            assert_eq!(
+                id.as_u16() as usize,
+                index,
+                "from_u16({index}) returned {id:?}, whose wire value is not {index}"
+            );
         }
     }
 
-    /// Every ID is distinct, and they are the contiguous range the wire format assumes.
+    /// The IDs `from_u16` accepts are a contiguous run from zero, which is what `all()` assumes
+    /// when it stops at the first gap.
     #[test]
     fn message_ids_are_contiguous_from_zero() {
-        for (index, id) in MessageId::ALL.iter().enumerate() {
-            assert_eq!(id.as_u16() as usize, index, "{id:?} is not at its expected wire value");
-        }
-        assert_eq!(MessageId::from_u16(MessageId::ALL.len() as u16), None, "an unclaimed ID was accepted");
+        let count = MessageId::all().count();
+        assert!(count > 0, "no message IDs are reachable from the wire");
+        assert_eq!(MessageId::from_u16(count as u16), None, "an ID past the end of the run was accepted");
     }
 
     /// Every ID has a size that is at least large enough to hold the ID itself, and no capped
@@ -225,7 +235,7 @@ mod tests {
     fn max_sizes_are_sane() {
         type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
-        for id in MessageId::ALL {
+        for id in MessageId::all() {
             let max_size = id.max_size::<CurrentNetwork>();
             assert!(max_size >= MESSAGE_ID_SIZE, "{id:?} cannot hold its own message ID");
             assert!(max_size <= MAXIMUM_MESSAGE_SIZE, "{id:?} is allowed to exceed the general frame ceiling");
