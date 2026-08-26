@@ -711,13 +711,26 @@ impl<N: Network> Storage<N> {
         &self,
         certificate: BatchCertificate<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
-        aborted_transmissions: HashSet<TransmissionID<N>>,
+        mut aborted_transmissions: HashSet<TransmissionID<N>>,
     ) -> Result<()> {
         // Ensure the certificate round is above the GC round.
         ensure!(certificate.round() > self.gc_round(), "Certificate round is at or below the GC round");
         // Ensure the certificate and its transmissions are valid.
         let missing_transmissions =
             self.check_certificate(&certificate, transmissions, aborted_transmissions.clone())?;
+        // Declare as aborted every referenced ID that storage only knows as aborted and that nobody
+        // provided. Callers outside the block sync always pass an empty set of aborted IDs, so
+        // without this the certificate would be reference counted against neither the transmission
+        // nor the aborted entry - and removing the certificate that first recorded the abort would
+        // drop the entry while this certificate still refers to it.
+        for transmission_id in certificate.transmission_ids() {
+            if !missing_transmissions.contains_key(transmission_id)
+                && !self.contains_retrievable_transmission(*transmission_id)
+                && self.contains_aborted_transmission(*transmission_id)
+            {
+                aborted_transmissions.insert(*transmission_id);
+            }
+        }
         // Insert the certificate into storage.
         self.insert_certificate_atomic(certificate, aborted_transmissions, missing_transmissions);
         Ok(())
@@ -1383,6 +1396,46 @@ pub(crate) mod tests {
     #[test]
     fn test_sync_certificate_with_a_previously_aborted_transmission_the_ledger_does_not_know() {
         check_sync_certificate_with_a_previously_aborted_transmission(false);
+    }
+
+    /// A certificate inserted outside the block sync - as the primary does for a peer's batch or
+    /// certificate - arrives with an empty set of aborted transmission IDs.
+    ///
+    /// A referenced ID that storage only knows as aborted still has to be counted against such a
+    /// certificate, or removing the certificate that first recorded the abort drops the entry while
+    /// this one is still referring to it.
+    #[test]
+    fn test_insert_certificate_counts_a_previously_aborted_transmission() {
+        use snarkvm::prelude::Uniform;
+
+        let rng = &mut TestRng::default();
+
+        let transmission_id = TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.random::<u128>()),
+        );
+        let (storage, make_certificate) = sample_storage_and_certificates_for_transmission(transmission_id, false, rng);
+
+        // Insert the first certificate, recording the transmission as aborted.
+        let certificate_1 = make_certificate(0, rng);
+        storage
+            .insert_certificate(certificate_1.clone(), Default::default(), [transmission_id].into_iter().collect())
+            .unwrap();
+
+        // Insert a second certificate the way the primary does: no transmissions, and nothing
+        // declared as aborted.
+        let certificate_2 = make_certificate(1, rng);
+        storage.insert_certificate(certificate_2.clone(), Default::default(), Default::default()).unwrap();
+        assert!(storage.contains_certificate(certificate_2.id()));
+
+        // Dropping the first certificate must leave the aborted entry in place for the second.
+        assert!(storage.remove_certificate(certificate_1.id()));
+        assert!(storage.contains_transmission(transmission_id));
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
+
+        // Dropping the second one as well must then remove it.
+        assert!(storage.remove_certificate(certificate_2.id()));
+        assert!(!storage.contains_transmission(transmission_id));
     }
 
     /// Test that `check_incoming_certificate` does not reject a valid cert.
