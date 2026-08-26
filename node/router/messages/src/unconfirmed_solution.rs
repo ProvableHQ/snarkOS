@@ -85,6 +85,17 @@ pub mod prop_tests {
             .boxed()
     }
 
+    pub fn any_large_unconfirmed_solution() -> BoxedStrategy<UnconfirmedSolution<CurrentNetwork>> {
+        (any_solution_id(), any::<u64>())
+            .prop_map(|(solution_id, seed)| {
+                let mut rng = TestRng::fixed(seed);
+                let bytes: Vec<u8> =
+                    (0..crate::Message::<CurrentNetwork>::MAX_SMALL_MESSAGE_SIZE).map(|_| rng.random()).collect();
+                UnconfirmedSolution { solution_id, solution: Data::Buffer(bytes::Bytes::from(bytes)) }
+            })
+            .boxed()
+    }
+
     #[proptest]
     fn unconfirmed_solution_roundtrip(
         #[strategy(any_unconfirmed_solution())] original: UnconfirmedSolution<CurrentNetwork>,

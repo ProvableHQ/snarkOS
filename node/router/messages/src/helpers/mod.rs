@@ -15,6 +15,7 @@
 
 mod codec;
 pub use codec::MessageCodec;
+pub(crate) use codec::MAXIMUM_MESSAGE_SIZE;
 
 mod disconnect;
 pub use disconnect::DisconnectReason;

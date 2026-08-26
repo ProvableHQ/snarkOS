@@ -213,26 +213,41 @@ impl<N: Network> Message<N> {
         }
     }
 
-    /// Checks the message byte length. To be used before deserialization.
-    pub fn check_size(bytes: &[u8]) -> io::Result<()> {
-        // Store the length to be checked against the max message size for each variant.
-        let len = bytes.len();
-        if len < 2 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
+    /// The maximum size of the small, fixed-shape messages: `BlockRequest`, `ChallengeRequest`,
+    /// `ChallengeResponse`, `Disconnect`, `PeerRequest`, `PeerResponse`, `Pong`, `PuzzleRequest`,
+    /// `PuzzleResponse` and `UnconfirmedSolution`. None of these carry more than a handful of
+    /// fixed-size fields (or, for `PeerResponse`, a list bounded by `MAX_PEERS_TO_SEND`), so this
+    /// is generous relative to their real size while remaining far below the general frame limit.
+    pub(crate) const MAX_SMALL_MESSAGE_SIZE: usize = 8 * 1024; // 8 KiB
+
+    /// The maximum size of a `Ping` message. Its `block_locators` can legitimately grow over the
+    /// life of the chain: up to `NUM_RECENT_BLOCKS` recent entries plus up to `MAX_CHECKPOINTS`
+    /// checkpoint entries (see `snarkos_node_sync_locators::block_locators`), each a `(u32,
+    /// BlockHash)` pair, i.e. 4 + 32 bytes. This is that bound with headroom, not a guess.
+    pub(crate) const MAX_PING_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MiB
+
+    /// Returns the maximum size, in bytes, that a message with the given ID may legitimately be -
+    /// to be checked against the declared frame length before the frame body is read off the
+    /// wire, not after. Every message ID this node understands must appear here explicitly: there
+    /// is no fallback arm, so adding a message variant without adding its entry is a compile
+    /// error, not a silent gap.
+    ///
+    /// Returns `None` for an ID this node doesn't recognize, which the caller should treat as a
+    /// rejection.
+    pub fn max_size_for_id(id: u16) -> Option<usize> {
+        match id {
+            // BlockResponse is the one message that is legitimately large - up to a handful of
+            // full blocks (bounded by block count, not by byte size). It is deliberately left at
+            // the general frame ceiling here; restricting it further needs the requester's own
+            // pending-request state, which this layer doesn't have.
+            1 => Some(MAXIMUM_MESSAGE_SIZE),
+            7 => Some(Self::MAX_PING_MESSAGE_SIZE),
+            // UnconfirmedTransaction is the one message type with its own network-defined,
+            // consensus-version-dependent cap.
+            12 => Some(N::LATEST_MAX_TRANSACTION_SIZE()),
+            0 | 2 | 3 | 4 | 5 | 6 | 8 | 9 | 10 | 11 => Some(Self::MAX_SMALL_MESSAGE_SIZE),
+            _ => None,
         }
-
-        // Check the first two bytes for the message ID.
-        let id_bytes: [u8; 2] = (&bytes[..2])
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "id couldn't be deserialized"))?;
-        let id = u16::from_le_bytes(id_bytes);
-
-        // SPECIAL CASE: check the transaction message isn't too large.
-        if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
-        }
-
-        Ok(())
     }
 }
 

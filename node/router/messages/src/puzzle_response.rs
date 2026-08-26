@@ -79,6 +79,17 @@ pub mod prop_tests {
             .boxed()
     }
 
+    pub fn any_large_puzzle_response() -> BoxedStrategy<PuzzleResponse<CurrentNetwork>> {
+        (any_epoch_hash(), any::<u64>())
+            .prop_map(|(epoch_hash, seed)| {
+                let mut rng = TestRng::fixed(seed);
+                let bytes: Vec<u8> =
+                    (0..crate::Message::<CurrentNetwork>::MAX_SMALL_MESSAGE_SIZE).map(|_| rng.random()).collect();
+                PuzzleResponse { epoch_hash, block_header: Data::Buffer(bytes::Bytes::from(bytes)) }
+            })
+            .boxed()
+    }
+
     #[proptest]
     fn puzzle_response_roundtrip(#[strategy(any_puzzle_response())] original: PuzzleResponse<CurrentNetwork>) {
         let mut buf = BytesMut::default().writer();
