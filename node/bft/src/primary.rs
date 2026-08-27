@@ -676,13 +676,15 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     continue;
                 }
 
-                // Check if the storage already contains the transmission.
-                // Note: `contains_transmission` is also true for an ID that storage only recorded as
-                // aborted, which holds no transmission to hand back. Proposing one of those would
-                // commit the batch to a transmission that peers cannot materialize, so it is skipped
-                // here unconditionally - proposing an empty batch is valid, so there is no need to
-                // make an exception for the first transmission in the proposal.
-                if self.storage.contains_transmission(id) {
+                // Check if storage already knows the transmission, either way.
+                //
+                // This is the one place that wants both states: a transmission already in storage is
+                // already in the DAG, and an ID storage knows only as aborted holds no transmission
+                // to hand back, so proposing it would commit the batch to something peers cannot
+                // materialize. Both are skipped unconditionally - proposing an empty batch is valid,
+                // so there is no need to make an exception for the first transmission.
+                if self.storage.contains_retrievable_transmission(id) || self.storage.contains_aborted_transmission(id)
+                {
                     trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
                     continue;
                 }
@@ -2487,7 +2489,7 @@ mod tests {
         let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
         primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions.clone()).unwrap();
         for transmission_id in &aborted_transmissions {
-            assert!(primary.storage.contains_transmission(*transmission_id));
+            assert!(primary.storage.contains_aborted_transmission(*transmission_id));
             assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
         }
 
@@ -3553,7 +3555,7 @@ mod tests {
         assert!(primary.storage.contains_certificate(certificate_id));
         // Ensure that the aborted transmission IDs exist in storage.
         for aborted_transmission_id in aborted_transmissions {
-            assert!(primary.storage.contains_transmission(aborted_transmission_id));
+            assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
             assert!(primary.storage.get_transmission(aborted_transmission_id).is_none());
         }
     }

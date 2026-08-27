@@ -82,24 +82,6 @@ impl<N: Network> BFTPersistentStorage<N> {
 }
 
 impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
-    /// Returns `true` if the storage contains the specified `transmission ID`.
-    fn contains_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
-        // Check if the transmission ID exists in storage.
-        match self.transmissions.contains_key_confirmed(&transmission_id) {
-            Ok(true) => return true,
-            Ok(false) => (),
-            Err(error) => error!("Failed to check if transmission ID exists in confirmed storage - {error}"),
-        }
-        // Check if the transmission ID is in aborted storage.
-        match self.aborted_transmission_ids.contains_key_confirmed(&transmission_id) {
-            Ok(result) => result,
-            Err(error) => {
-                error!("Failed to check if aborted transmission ID exists in storage - {error}");
-                false
-            }
-        }
-    }
-
     /// Returns `true` if the storage holds the transmission for the specified `transmission ID`.
     fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
         // Check the cache first: it only ever holds transmissions that are also in persistent
@@ -446,7 +428,8 @@ mod tests {
         // The transmission must be gone from both the persistent storage and the cache.
         assert!(!storage.as_hashmap().contains_key(&transmission_id));
         assert!(storage.get_transmission(transmission_id).is_none());
-        assert!(!storage.contains_transmission(transmission_id));
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
+        assert!(!storage.contains_aborted_transmission(transmission_id));
     }
 
     /// The cache `contains_retrievable_transmission` consults first must not outlive the storage

@@ -25,20 +25,17 @@ use std::{
 };
 
 pub trait StorageService<N: Network>: Debug + Send + Sync {
-    /// Returns `true` if the storage knows the specified `transmission ID`, whether or not the
-    /// transmission itself can be retrieved.
-    ///
-    /// This is the union of [`Self::contains_retrievable_transmission`] and
-    /// [`Self::contains_aborted_transmission`]: it is `true` both for a transmission held in
-    /// storage and for an ID recorded as aborted, for which there is nothing to hand back. Prefer
-    /// one of those two whenever the distinction matters.
-    fn contains_transmission(&self, transmission_id: TransmissionID<N>) -> bool;
-
     /// Returns `true` if the storage holds the transmission for the specified `transmission ID`,
     /// i.e. exactly when [`Self::get_transmission`] would return `Some`.
     ///
-    /// Unlike [`Self::contains_transmission`], this is `false` for an ID that storage knows only as
-    /// aborted. Prefer this over `get_transmission(id).is_some()`, which clones the transmission.
+    /// This is `false` for an ID that storage knows only as aborted, which holds no transmission to
+    /// hand back; see [`Self::contains_aborted_transmission`]. Prefer this over
+    /// `get_transmission(id).is_some()`, which clones the transmission.
+    ///
+    /// Note: there is deliberately no single query for "storage knows this ID, either way". The two
+    /// states answer different questions, and conflating them is what let a batch be certified
+    /// while committing to a transmission that nobody can produce, so a caller that genuinely wants
+    /// both has to name both.
     fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool;
 
     /// Returns `true` if the specified `transmission ID` is recorded as aborted.

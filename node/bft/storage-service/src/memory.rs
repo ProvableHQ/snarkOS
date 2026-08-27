@@ -51,13 +51,6 @@ impl<N: Network> BFTMemoryService<N> {
 }
 
 impl<N: Network> StorageService<N> for BFTMemoryService<N> {
-    /// Returns `true` if the storage contains the specified `transmission ID`.
-    fn contains_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
-        // Check if the transmission ID exists in storage.
-        self.transmissions.read().contains_key(&transmission_id)
-            || self.aborted_transmission_ids.read().contains_key(&transmission_id)
-    }
-
     /// Returns `true` if the storage holds the transmission for the specified `transmission ID`.
     fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
         self.transmissions.read().contains_key(&transmission_id)
@@ -101,8 +94,8 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
                 Entry::Vacant(vacant_entry) => {
                     // Retrieve the missing transmission.
                     let Some(transmission) = missing_transmissions.remove(&transmission_id) else {
-                        // note: `self.contains_transmission` would deadlock here; it read-locks
-                        // `self.transmissions`, which is write-locked above.
+                        // note: `self.contains_retrievable_transmission` would deadlock here; it
+                        // read-locks `self.transmissions`, which is write-locked above.
                         if !aborted_transmission_ids.contains(&transmission_id)
                             && !aborted_transmission_ids_lock.contains_key(&transmission_id)
                         {
@@ -216,7 +209,8 @@ mod tests {
         let service = BFTMemoryService::<CurrentNetwork>::new();
         let transmission_id = sample_transmission_id(rng);
 
-        assert!(!service.contains_transmission(transmission_id));
+        assert!(!service.contains_retrievable_transmission(transmission_id));
+        assert!(!service.contains_aborted_transmission(transmission_id));
         assert!(service.get_transmission(transmission_id).is_none());
         assert!(service.as_hashmap().is_empty());
     }
@@ -236,7 +230,7 @@ mod tests {
             [(transmission_id, transmission.clone())].into(),
         );
 
-        assert!(service.contains_transmission(transmission_id));
+        assert!(service.contains_retrievable_transmission(transmission_id));
         assert_eq!(service.get_transmission(transmission_id), Some(transmission));
     }
 
@@ -263,11 +257,11 @@ mod tests {
 
         // Dropping one reference must not drop the transmission...
         service.remove_transmissions(&first, &indexset![transmission_id]);
-        assert!(service.contains_transmission(transmission_id));
+        assert!(service.contains_retrievable_transmission(transmission_id));
 
         // ...but dropping the last one must.
         service.remove_transmissions(&second, &indexset![transmission_id]);
-        assert!(!service.contains_transmission(transmission_id));
+        assert!(!service.contains_retrievable_transmission(transmission_id));
         assert!(service.get_transmission(transmission_id).is_none());
     }
 
@@ -298,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn an_aborted_transmission_id_is_contained_but_has_no_payload() {
+    fn an_aborted_transmission_id_is_recorded_but_has_no_payload() {
         let rng = &mut TestRng::default();
         let service = BFTMemoryService::<CurrentNetwork>::new();
         let transmission_id = sample_transmission_id(rng);
@@ -312,7 +306,8 @@ mod tests {
 
         // The asymmetry is deliberate: an aborted ID is known to storage, but there is no
         // transmission to hand back for it.
-        assert!(service.contains_transmission(transmission_id));
+        assert!(service.contains_aborted_transmission(transmission_id));
+        assert!(!service.contains_retrievable_transmission(transmission_id));
         assert!(service.get_transmission(transmission_id).is_none());
         assert!(service.as_hashmap().is_empty());
     }
@@ -334,10 +329,10 @@ mod tests {
         }
 
         service.remove_transmissions(&first, &indexset![transmission_id]);
-        assert!(service.contains_transmission(transmission_id));
+        assert!(service.contains_aborted_transmission(transmission_id));
 
         service.remove_transmissions(&second, &indexset![transmission_id]);
-        assert!(!service.contains_transmission(transmission_id));
+        assert!(!service.contains_aborted_transmission(transmission_id));
     }
 
     #[test]
@@ -357,7 +352,7 @@ mod tests {
         // Removing a certificate that never referenced this transmission must not evict it.
         service.remove_transmissions(&Field::rand(rng), &indexset![transmission_id]);
 
-        assert!(service.contains_transmission(transmission_id));
+        assert!(service.contains_retrievable_transmission(transmission_id));
     }
 
     #[test]
@@ -396,7 +391,7 @@ mod tests {
                 Default::default(),
             );
 
-            let _ = sender.send(service.contains_transmission(transmission_id));
+            let _ = sender.send(service.contains_retrievable_transmission(transmission_id));
         });
 
         let contains = receiver

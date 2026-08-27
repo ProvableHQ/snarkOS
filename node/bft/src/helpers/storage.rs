@@ -301,20 +301,13 @@ impl<N: Network> Storage<N> {
         self.batch_ids.read().contains_key(&batch_id)
     }
 
-    /// Returns `true` if the storage contains the specified transmission, or it was recorded as aborted.
-    ///
-    /// This is the union of [`Self::contains_retrievable_transmission`] and
-    /// [`Self::contains_aborted_transmission`]; prefer one of those whenever the distinction
-    /// matters.
-    pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
-        self.transmissions.contains_transmission(transmission_id.into())
-    }
-
     /// Returns `true` if the storage holds the specified transmission, i.e. exactly when
     /// [`Self::get_transmission`] would return `Some`.
     ///
-    /// Unlike [`Self::contains_transmission`], this is `false` for a transmission ID that storage
-    /// knows only as aborted.
+    /// This is `false` for a transmission ID that storage knows only as aborted, which holds no
+    /// transmission; see [`Self::contains_aborted_transmission`]. There is deliberately no single
+    /// query for "known either way": conflating the two is what let a batch be certified while
+    /// committing to a transmission that nobody can produce.
     pub fn contains_retrievable_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_retrievable_transmission(transmission_id.into())
     }
@@ -1266,7 +1259,7 @@ pub(crate) mod tests {
             let (missing_transmissions, _) = sample_transmissions(&certificate, rng);
             storage.insert_certificate_atomic(certificate.clone(), HashSet::new(), missing_transmissions);
             for id in certificate.transmission_ids() {
-                assert!(storage.contains_transmission(*id));
+                assert!(storage.contains_retrievable_transmission(*id));
             }
             return;
         }
@@ -1282,11 +1275,11 @@ pub(crate) mod tests {
         assert!(storage.contains_certificate(certificate_id));
         assert_eq!(storage.get_certificates_for_round(round), indexset! { certificate.clone() });
 
-        // Every transmission ID in the certificate (including aborted) should be resolvable.
+        // Every transmission ID in the certificate must be recorded, one way or the other.
         for id in certificate.transmission_ids() {
             assert!(
-                storage.contains_transmission(*id),
-                "contains_transmission should be true for all transmission IDs including aborted {id:?}"
+                storage.contains_retrievable_transmission(*id) || storage.contains_aborted_transmission(*id),
+                "every transmission ID must be recorded as stored or aborted, including {id:?}"
             );
         }
 
@@ -1374,7 +1367,7 @@ pub(crate) mod tests {
         storage
             .insert_certificate(certificate_1.clone(), Default::default(), [transmission_id].into_iter().collect())
             .unwrap();
-        assert!(storage.contains_transmission(transmission_id));
+        assert!(storage.contains_aborted_transmission(transmission_id));
         assert!(!storage.contains_retrievable_transmission(transmission_id));
 
         // Sync a later certificate that references the previously-aborted transmission. The block
@@ -1390,7 +1383,7 @@ pub(crate) mod tests {
         // The ID must have been recorded as aborted for the second certificate too, so dropping the
         // first one must not take the aborted entry with it.
         assert!(storage.remove_certificate(certificate_1.id()));
-        assert!(storage.contains_transmission(transmission_id));
+        assert!(storage.contains_aborted_transmission(transmission_id));
         assert!(!storage.contains_retrievable_transmission(transmission_id));
     }
 
@@ -1436,12 +1429,12 @@ pub(crate) mod tests {
 
         // Dropping the first certificate must leave the aborted entry in place for the second.
         assert!(storage.remove_certificate(certificate_1.id()));
-        assert!(storage.contains_transmission(transmission_id));
+        assert!(storage.contains_aborted_transmission(transmission_id));
         assert!(!storage.contains_retrievable_transmission(transmission_id));
 
         // Dropping the second one as well must then remove it.
         assert!(storage.remove_certificate(certificate_2.id()));
-        assert!(!storage.contains_transmission(transmission_id));
+        assert!(!storage.contains_aborted_transmission(transmission_id));
     }
 
     /// Test that `check_incoming_certificate` does not reject a valid cert.

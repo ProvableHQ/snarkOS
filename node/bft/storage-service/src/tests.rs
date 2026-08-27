@@ -72,8 +72,8 @@ fn record_as_aborted(
     service.insert_transmissions(Field::rand(rng), Default::default(), [transmission_id].into(), Default::default());
 }
 
-/// The three containment queries must answer three different questions: a stored transmission is
-/// retrievable, an aborted ID is known but has nothing to return, and both are contained.
+/// The two containment queries answer different questions: a stored transmission is retrievable,
+/// and an ID recorded as aborted is known but has nothing to return.
 fn check_containment_queries_distinguish_stored_from_aborted_ids(service: &impl StorageService<CurrentNetwork>) {
     let rng = &mut TestRng::default();
     let (stored_id, aborted_id, unknown_id) =
@@ -86,18 +86,15 @@ fn check_containment_queries_distinguish_stored_from_aborted_ids(service: &impl 
         [(stored_id, sample_transmission(b"payload"))].into(),
     );
 
-    // The stored transmission is contained and retrievable, but not aborted.
-    assert!(service.contains_transmission(stored_id));
+    // The stored transmission is retrievable, but not aborted.
     assert!(service.contains_retrievable_transmission(stored_id));
     assert!(!service.contains_aborted_transmission(stored_id));
 
-    // The aborted ID is contained and aborted, but not retrievable.
-    assert!(service.contains_transmission(aborted_id));
+    // The aborted ID is aborted, but not retrievable.
     assert!(!service.contains_retrievable_transmission(aborted_id));
     assert!(service.contains_aborted_transmission(aborted_id));
 
-    // An unknown ID is none of the three.
-    assert!(!service.contains_transmission(unknown_id));
+    // An unknown ID is neither.
     assert!(!service.contains_retrievable_transmission(unknown_id));
     assert!(!service.contains_aborted_transmission(unknown_id));
 }
@@ -142,7 +139,6 @@ fn check_an_id_can_be_aborted_and_retrievable_at_once(service: &impl StorageServ
     service.remove_transmissions(&storing, &indexset![stored_first]);
     assert!(!service.contains_retrievable_transmission(stored_first));
     assert!(service.contains_aborted_transmission(stored_first));
-    assert!(service.contains_transmission(stored_first));
 }
 
 /// Only the transmissions that storage lacks are returned, so the primary does not re-insert a
@@ -218,7 +214,7 @@ fn check_find_missing_transmissions_keeps_provided_bytes_for_an_aborted_id(
 
     // An earlier certificate recorded the ID as aborted, so storage contains it without bytes.
     record_as_aborted(service, transmission_id, rng);
-    assert!(service.contains_transmission(transmission_id));
+    assert!(service.contains_aborted_transmission(transmission_id));
     assert!(service.get_transmission(transmission_id).is_none());
 
     // A later certificate declares the same ID and provides its bytes.
