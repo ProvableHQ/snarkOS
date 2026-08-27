@@ -912,7 +912,7 @@ impl<N: Network> Storage<N> {
                     // was aborted before querying the ledger.
                     //
                     // Aborted transmissions only appear in the aborted set of the first block that contains them,
-                    // for subsequent blocks, we can check that `contains_transmission` is true to determine if the transmission was aborted.
+                    // for subsequent blocks, `contains_aborted_transmission` is what tells us the transmission was aborted.
                     //
                     // Note that the ledger only answers for the blocks it already holds: the block that
                     // aborted the ID may still be awaiting its availability check in `Sync::pending_blocks`,
@@ -936,7 +936,7 @@ impl<N: Network> Storage<N> {
                     // was aborted before querying the ledger.
                     //
                     // Aborted solutions only appear in the aborted set of the first block that contains them,
-                    // for subsequent blocks, we can check that `contains_transmission` is true to determine if the transaction was aborted.
+                    // for subsequent blocks, `contains_aborted_transmission` is what tells us the transaction was aborted.
                     //
                     // Note that the ledger only answers for the blocks it already holds: the block that
                     // aborted the ID may still be awaiting its availability check in `Sync::pending_blocks`,
@@ -1237,8 +1237,8 @@ pub(crate) mod tests {
     }
 
     /// Verify that when inserting a certificate with a mix of provided transmissions and aborted
-    /// transmission IDs, storage correctly records both: contains_transmission is true for all
-    /// (including aborted), and aborted IDs are stored so sync can resolve certificate references.
+    /// transmission IDs, storage correctly records both: every ID is recorded as either stored or
+    /// aborted, and aborted IDs are kept so sync can resolve certificate references.
     #[test]
     fn test_certificate_insert_with_aborted_transmissions() {
         use std::collections::HashSet;
