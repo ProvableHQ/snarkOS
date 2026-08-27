@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{MAX_PING_MESSAGE_SIZE, MESSAGE_ID_SIZE, UnconfirmedTransaction};
+use crate::{MAX_PING_MESSAGE_SIZE, UnconfirmedTransaction};
 use snarkvm::prelude::Network;
 
 /// The wire ID of a [`crate::Message`] variant: the `u16` that leads every message payload.
@@ -70,7 +70,7 @@ pub(crate) const MAXIMUM_MESSAGE_SIZE: usize = 128 * 1024 * 1024; // 128 MiB
 // `largest_honest_peer_response_is_accepted` (in the codec's tests) checks this same bound
 // against what `PeerResponse::write_le` really produces.
 const _: () = {
-    let peer_response = MESSAGE_ID_SIZE
+    let peer_response = MessageId::SIZE
         + 1 // the version indicator
         + 1 // the peer count
         + (u8::MAX as usize)
@@ -86,6 +86,9 @@ const _: () = {
 };
 
 impl MessageId {
+    /// The width, in bytes, of the message ID that leads every message payload.
+    pub const SIZE: usize = size_of::<u16>();
+
     /// Every message ID, in wire order.
     ///
     /// Derived from `from_u16` rather than restated, so there is one hand-maintained list here
@@ -97,6 +100,13 @@ impl MessageId {
     /// Returns the ID as it appears on the wire.
     pub const fn as_u16(self) -> u16 {
         self as u16
+    }
+
+    /// Reads the ID leading `bytes` - the first two bytes of a message frame - or `None` if
+    /// `bytes` is too short to hold one, or the ID isn't one this node recognizes.
+    pub fn peek(bytes: &[u8]) -> Option<Self> {
+        let id_bytes: [u8; Self::SIZE] = bytes.get(..Self::SIZE)?.try_into().ok()?;
+        Self::from_u16(u16::from_le_bytes(id_bytes))
     }
 
     /// Returns the ID for the given wire value, or `None` if no message this node understands
@@ -194,7 +204,7 @@ mod tests {
 
         for id in MessageId::all() {
             let max_size = id.max_size::<CurrentNetwork>();
-            assert!(max_size >= MESSAGE_ID_SIZE, "{id:?} cannot hold its own message ID");
+            assert!(max_size >= MessageId::SIZE, "{id:?} cannot hold its own message ID");
             assert!(max_size <= MAXIMUM_MESSAGE_SIZE, "{id:?} is allowed to exceed the general frame ceiling");
         }
     }

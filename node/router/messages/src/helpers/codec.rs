@@ -26,6 +26,10 @@ const MAXIMUM_HANDSHAKE_MESSAGE_SIZE: usize = 1024 * 1024; // 1 MiB
 /// The codec used to decode and encode network `Message`s.
 pub struct MessageCodec<N: Network> {
     codec: LengthDelimitedCodec,
+    /// Message IDs this codec refuses to decode, rejected the moment the ID is visible - before
+    /// deserializing the message, regardless of whether it is otherwise well-formed and within
+    /// its own size cap. Empty by default; see [`Self::excluding`].
+    excluded_ids: &'static [MessageId],
     _phantom: PhantomData<N>,
 }
 
@@ -37,19 +41,13 @@ impl<N: Network> MessageCodec<N> {
     }
 
     /// Builds a codec whose frame-length ceiling is the maximum over the sizes of the message
-    /// types in `allowed_ids` - not a per-message check at decode time, just the ceiling the
-    /// underlying length-delimited codec enforces before a frame is fully buffered.
-    ///
-    /// Restricting `allowed_ids` cannot hand an attacker any capability they don't already have:
-    /// whatever the resulting ceiling is, it is exactly the size of the largest type still
-    /// allowed on this connection, and an honest peer can already legitimately send that much of
-    /// that type. What it *does* buy is a smaller ceiling for a connection that structurally has
-    /// no legitimate reason to expect a large type at all - see [`Self::excluding`].
+    /// types in `allowed_ids`.
     fn for_allowed_ids(allowed_ids: impl IntoIterator<Item = MessageId>) -> Self {
         let max_frame_length =
             allowed_ids.into_iter().map(|id| id.max_size::<N>()).max().unwrap_or(MAX_SMALL_MESSAGE_SIZE);
         Self {
             codec: LengthDelimitedCodec::builder().max_frame_length(max_frame_length).little_endian().new_codec(),
+            excluded_ids: &[],
             _phantom: PhantomData,
         }
     }
@@ -57,10 +55,15 @@ impl<N: Network> MessageCodec<N> {
     /// Builds a codec for a connection that structurally has no legitimate reason to ever receive
     /// any of `excluded_ids` - for instance, a validator's router connections, which never expect
     /// a `BlockResponse` since validators sync blocks over the committee-gated BFT gateway
-    /// instead. See [`Self::for_allowed_ids`] for why this shrinks the connection's ceiling rather
-    /// than just relabeling it: the ceiling becomes the largest type *actually* expected here.
-    pub fn excluding(excluded_ids: &[MessageId]) -> Self {
-        Self::for_allowed_ids(MessageId::all().filter(|id| !excluded_ids.contains(id)))
+    /// instead.
+    ///
+    /// This does two things: it rejects any frame with an excluded ID outright (see `decode`
+    /// below), and it shrinks the connection's frame-length ceiling to the largest type that
+    /// remains allowed - so an excluded type can no longer be used to force as large an
+    /// allocation as its own (possibly much bigger) cap would have permitted.
+    pub fn excluding(excluded_ids: &'static [MessageId]) -> Self {
+        let allowed_ids = MessageId::all().filter(|id| !excluded_ids.contains(id));
+        Self { excluded_ids, ..Self::for_allowed_ids(allowed_ids) }
     }
 }
 
@@ -97,6 +100,15 @@ impl<N: Network> Decoder for MessageCodec<N> {
             None => return Ok(None),
         };
 
+        // Reject a message type this connection has no legitimate reason to ever receive - before
+        // checking its size or deserializing it. An ID this node doesn't recognize at all isn't
+        // rejected here; `Message::read_le` below rejects it instead, and reports it as unknown.
+        if let Some(id) = MessageId::peek(&bytes)
+            && self.excluded_ids.contains(&id)
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "message type is not permitted"));
+        }
+
         Self::Item::check_size(&bytes)?;
 
         // Convert the bytes to a message, or fail if it is not valid.
@@ -120,9 +132,9 @@ mod tests {
         BlockResponse,
         DataBlocks,
         MAX_SMALL_MESSAGE_SIZE,
-        MESSAGE_ID_SIZE,
         MessageId,
         PeerResponse,
+        Pong,
         PuzzleResponse,
         Transaction,
         UnconfirmedSolution,
@@ -272,14 +284,14 @@ mod tests {
             let max_size = id.max_size::<CurrentNetwork>();
 
             let mut bytes = vec![0u8; max_size];
-            bytes[..MESSAGE_ID_SIZE].copy_from_slice(&id.as_u16().to_le_bytes());
+            bytes[..MessageId::SIZE].copy_from_slice(&id.as_u16().to_le_bytes());
             assert!(
                 Message::<CurrentNetwork>::check_size(&bytes).is_ok(),
                 "{id:?} rejected a frame of exactly its maximum size ({max_size})"
             );
 
             let mut bytes = vec![0u8; max_size + 1];
-            bytes[..MESSAGE_ID_SIZE].copy_from_slice(&id.as_u16().to_le_bytes());
+            bytes[..MessageId::SIZE].copy_from_slice(&id.as_u16().to_le_bytes());
             assert!(
                 Message::<CurrentNetwork>::check_size(&bytes).is_err(),
                 "{id:?} admitted a frame one byte over its cap"
@@ -293,7 +305,7 @@ mod tests {
     fn unrecognized_message_id_is_not_size_capped() {
         let unrecognized_id: u16 = MessageId::all().count() as u16;
         let mut bytes = vec![0u8; MAX_SMALL_MESSAGE_SIZE + 1];
-        bytes[..MESSAGE_ID_SIZE].copy_from_slice(&unrecognized_id.to_le_bytes());
+        bytes[..MessageId::SIZE].copy_from_slice(&unrecognized_id.to_le_bytes());
         assert!(Message::<CurrentNetwork>::check_size(&bytes).is_ok());
     }
 
@@ -326,18 +338,31 @@ mod tests {
         assert_eq!(codec.codec.max_frame_length(), MessageId::Ping.max_size::<CurrentNetwork>());
     }
 
-    /// Excluding a type from a codec's allowed IDs only shrinks the frame-length ceiling - it does
-    /// not add a decode-time rejection for that type's ID. A small, legitimately-shaped
-    /// `BlockResponse` still decodes: rejecting an unexpected one is `Validator::block_response`'s
-    /// job, a layer up, which has the connection's actual role to reason with.
+    /// Excluding a type rejects it outright, even a small, well-formed, correctly-sized instance -
+    /// not just an oversized one. A connection that structurally never expects a type has no
+    /// legitimate reason to accept any instance of it, and rejecting it here, by ID, gives a
+    /// clearer signal for debugging than silently decoding it and relying on a much later,
+    /// semantic-level handler (e.g. `Validator::block_response`) to reject it instead.
     #[test]
-    fn excluding_a_type_does_not_forbid_decoding_a_small_instance_of_it() {
+    fn excluding_a_type_rejects_even_a_small_well_formed_instance_of_it() {
         let mut bytes = BytesMut::new();
         let mut encoder = MessageCodec::<CurrentNetwork>::default();
         encoder.encode(small_block_response(), &mut bytes).unwrap();
 
         let mut restricted = MessageCodec::<CurrentNetwork>::excluding(&[MessageId::BlockResponse]);
-        assert!(matches!(restricted.decode(&mut bytes), Ok(Some(Message::BlockResponse(_)))));
+        assert!(matches!(restricted.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    /// An exclusion is specific to the excluded ID - an unrelated, permitted message still decodes
+    /// normally on the same codec.
+    #[test]
+    fn excluding_a_type_still_allows_a_permitted_message() {
+        let mut bytes = BytesMut::new();
+        let mut encoder = MessageCodec::<CurrentNetwork>::default();
+        encoder.encode(Message::Pong(Pong { is_fork: Some(false) }), &mut bytes).unwrap();
+
+        let mut restricted = MessageCodec::<CurrentNetwork>::excluding(&[MessageId::BlockResponse]);
+        assert!(matches!(restricted.decode(&mut bytes), Ok(Some(Message::Pong(_)))));
     }
 
     /// The property that actually matters: a connection that excludes `BlockResponse` cannot be

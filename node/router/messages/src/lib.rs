@@ -81,9 +81,6 @@ use snarkvm::prelude::{
 
 use std::{borrow::Cow, io, net::SocketAddr};
 
-/// The width, in bytes, of the message ID that leads every message payload.
-pub const MESSAGE_ID_SIZE: usize = size_of::<u16>();
-
 // A compile-time compatibility check for the Message.
 const _: () = {
     let msg_versions = Message::<MainnetV0>::VERSIONS;
@@ -226,11 +223,11 @@ impl<N: Network> Message<N> {
     /// rejects it, and reports it as an unknown message rather than a size violation.
     pub fn check_size(bytes: &[u8]) -> io::Result<()> {
         let len = bytes.len();
-        if len < MESSAGE_ID_SIZE {
+        if len < MessageId::SIZE {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
         }
 
-        let id_bytes: [u8; MESSAGE_ID_SIZE] = (&bytes[..MESSAGE_ID_SIZE])
+        let id_bytes: [u8; MessageId::SIZE] = (&bytes[..MessageId::SIZE])
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "id couldn't be deserialized"))?;
         let id = u16::from_le_bytes(id_bytes);

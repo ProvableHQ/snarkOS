@@ -110,13 +110,12 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Validator<N, C> {
     fn codec(&self, _peer_addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
         // A validator syncs blocks exclusively over the committee-gated BFT gateway
         // (`ConnectionMode::Gateway`); it never issues a `BlockRequest` over the router, so it
-        // never has a legitimate reason to expect a `BlockResponse` there either. Excluding it
-        // from this connection's ceiling means an untrusted router peer cannot use a claimed
-        // `BlockResponse` to force as large an allocation as the general 128 MiB frame ceiling -
-        // the ceiling shrinks to `Ping`'s, the largest type actually expected here. This changes
-        // nothing about which messages decode successfully: a `BlockResponse` that fits under the
-        // new, smaller ceiling still decodes, and is rejected below, in `block_response`, exactly
-        // as before.
+        // never has a legitimate reason to accept a `BlockResponse` there either. Excluding it
+        // rejects one outright the moment its ID is visible, and shrinks this connection's frame
+        // ceiling from the general 128 MiB down to `Ping`'s (the largest type still allowed) - so
+        // an untrusted router peer can no longer use a claimed `BlockResponse` to force either a
+        // 128 MiB allocation or a successful decode that `block_response` below only rejects
+        // afterward.
         MessageCodec::excluding(&[MessageId::BlockResponse])
     }
 
