@@ -96,7 +96,11 @@ mod tests {
 
     use crate::{
         UnconfirmedTransaction,
-        unconfirmed_transaction::prop_tests::{any_large_unconfirmed_transaction, any_unconfirmed_transaction},
+        unconfirmed_transaction::prop_tests::{
+            any_large_unconfirmed_transaction,
+            any_max_size_unconfirmed_transaction,
+            any_unconfirmed_transaction,
+        },
     };
 
     use proptest::prelude::ProptestConfig;
@@ -120,5 +124,18 @@ mod tests {
         let mut codec = MessageCodec::<CurrentNetwork>::default();
         assert!(codec.encode(Message::UnconfirmedTransaction(tx), &mut bytes).is_ok());
         assert!(matches!(codec.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    /// A transaction of exactly `LATEST_MAX_TRANSACTION_SIZE` is valid - both the ledger service
+    /// and the REST endpoint accept one - so the message carrying it must be accepted too, even
+    /// though the frame is 39 bytes larger than the transaction itself.
+    #[proptest(ProptestConfig { cases : 10, ..ProptestConfig::default() })]
+    fn max_size_unconfirmed_transaction_is_accepted(
+        #[strategy(any_max_size_unconfirmed_transaction())] tx: UnconfirmedTransaction<CurrentNetwork>,
+    ) {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::UnconfirmedTransaction(tx), &mut bytes).is_ok());
+        assert!(codec.decode(&mut bytes).is_ok());
     }
 }

@@ -86,7 +86,28 @@ pub mod prop_tests {
             .boxed()
     }
 
+    /// A transaction body one byte larger than the cap allows - genuinely too large, since the
+    /// frame carrying it exceeds `LATEST_MAX_TRANSACTION_SIZE` plus its envelope either way.
     pub fn any_large_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
+        any::<u64>()
+            .prop_map(|seed| {
+                let mut rng = TestRng::fixed(seed);
+                let tx_id_field = Field::<CurrentNetwork>::rand(&mut rng);
+                let bytes: Vec<u8> =
+                    (0..CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE() + 1).map(|_| u8::rand(&mut rng)).collect();
+                UnconfirmedTransaction {
+                    transaction_id: tx_id_field.into(),
+                    transaction: Data::Buffer(Bytes::from(bytes)),
+                }
+            })
+            .boxed()
+    }
+
+    /// A transaction body of exactly `LATEST_MAX_TRANSACTION_SIZE` - the largest a transaction is
+    /// actually allowed to be, per the ledger service and the REST endpoint. The frame carrying
+    /// it is necessarily larger than the transaction itself (message ID, transaction ID, and
+    /// `Data`'s own tag and length prefix), so this is the case `check_size` must still accept.
+    pub fn any_max_size_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
         any::<u64>()
             .prop_map(|seed| {
                 let mut rng = TestRng::fixed(seed);
