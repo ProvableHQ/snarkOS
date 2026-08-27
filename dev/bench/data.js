@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787715682190,
+  "lastUpdate": 1787834970836,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17130,6 +17130,72 @@ window.BENCHMARK_DATA = {
             "value": 1.63,
             "unit": "blocks/s",
             "extra": "total_wait=153s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac7758ee7328dd7f6c6f293b76cf2b9c77b433a4",
+          "message": "Merge pull request #4411 from cbeck88/chore/pin-fmt-nightly-enum\n\nci: pin the nightly check-fmt formats with, via an enum",
+          "timestamp": "2026-08-27T14:30:09+02:00",
+          "tree_id": "2c2b85ed204ca533d7de04fd52b101c4ba87e218",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/ac7758ee7328dd7f6c6f293b76cf2b9c77b433a4"
+        },
+        "date": 1787834969771,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.416980618498654,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=50.97175192832947, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7099.14292821256,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.26896595954895, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2471.2461536875253,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.32372331619262695, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.93,
+            "unit": "blocks/s",
+            "extra": "total_wait=129s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.51232,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=126, mean_speed=1.262434, max_speed=3.166667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.66,
+            "unit": "blocks/s",
+            "extra": "total_wait=150s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.61,
+            "unit": "blocks/s",
+            "extra": "total_wait=155s, target_height=250"
           }
         ]
       }
