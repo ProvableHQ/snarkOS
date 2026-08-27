@@ -163,9 +163,8 @@ pub mod prop_tests {
         let hash_for = |height: u32| Field::<CurrentNetwork>::from_u64(height as u64).into();
 
         let last_checkpoint_height = (MAX_CHECKPOINTS as u32 - 1) * CHECKPOINT_INTERVAL;
-        let checkpoints = (0..MAX_CHECKPOINTS as u32)
-            .map(|i| (i * CHECKPOINT_INTERVAL, hash_for(i)))
-            .collect::<IndexMap<_, _>>();
+        let checkpoints =
+            (0..MAX_CHECKPOINTS as u32).map(|i| (i * CHECKPOINT_INTERVAL, hash_for(i))).collect::<IndexMap<_, _>>();
 
         // `recents` must end within [last_checkpoint_height, last_checkpoint_height +
         // CHECKPOINT_INTERVAL) - put its window at the very top of that range.
