@@ -313,14 +313,20 @@ impl<N: Network> Storage<N> {
     /// Returns `true` if the storage holds the specified transmission, i.e. exactly when
     /// [`Self::get_transmission`] would return `Some`.
     ///
-    /// Unlike [`Self::contains_transmission`], this is `false` for a transmission ID that is only
-    /// recorded as aborted.
+    /// Unlike [`Self::contains_transmission`], this is `false` for a transmission ID that storage
+    /// knows only as aborted.
     pub fn contains_retrievable_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_retrievable_transmission(transmission_id.into())
     }
 
-    /// Returns `true` if the specified transmission ID was recorded as aborted, i.e. the storage
-    /// knows the ID but holds no transmission for it.
+    /// Returns `true` if the specified transmission ID was recorded as aborted.
+    ///
+    /// This and [`Self::contains_retrievable_transmission`] are **not** mutually exclusive: one
+    /// certificate can record an ID as aborted while another provides the bytes for it - as
+    /// `sync_certificate_with_block` does when the block carries them - in which case both
+    /// queries answer `true`. Use `contains_aborted_transmission(id) &&
+    /// !contains_retrievable_transmission(id)` to ask whether an ID is aborted *and* has nothing to
+    /// hand back.
     pub fn contains_aborted_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         self.transmissions.contains_aborted_transmission(transmission_id.into())
     }

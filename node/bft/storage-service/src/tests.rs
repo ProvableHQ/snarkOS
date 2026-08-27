@@ -102,6 +102,49 @@ fn check_containment_queries_distinguish_stored_from_aborted_ids(service: &impl 
     assert!(!service.contains_aborted_transmission(unknown_id));
 }
 
+/// Being recorded as aborted and holding a transmission are not mutually exclusive: one certificate
+/// can record an ID as aborted while another provides the bytes for it.
+///
+/// Each entry is reference counted against its own certificates, so removing either certificate has
+/// to leave the other entry untouched. Code that means "aborted, with nothing to hand back" has to
+/// say so with both queries; `contains_aborted_transmission` alone does not express it.
+fn check_an_id_can_be_aborted_and_retrievable_at_once(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission = sample_transmission(b"payload");
+
+    // Puts an ID into the both-true state, returning the aborting and the storing certificate ID.
+    let record_both_ways = |transmission_id, rng: &mut TestRng| {
+        let (aborting, storing) = (Field::rand(rng), Field::rand(rng));
+        service.insert_transmissions(aborting, Default::default(), [transmission_id].into(), Default::default());
+        service.insert_transmissions(
+            storing,
+            indexset![transmission_id],
+            Default::default(),
+            [(transmission_id, transmission.clone())].into(),
+        );
+        assert!(service.contains_retrievable_transmission(transmission_id));
+        assert!(service.contains_aborted_transmission(transmission_id));
+        assert_eq!(service.get_transmission(transmission_id), Some(transmission.clone()));
+        (aborting, storing)
+    };
+
+    // Dropping the certificate that recorded the abort leaves the transmission retrievable.
+    let aborted_first = sample_transmission_id(rng);
+    let (aborting, _) = record_both_ways(aborted_first, rng);
+    service.remove_transmissions(&aborting, &indexset![aborted_first]);
+    assert!(service.contains_retrievable_transmission(aborted_first));
+    assert!(!service.contains_aborted_transmission(aborted_first));
+    assert_eq!(service.get_transmission(aborted_first), Some(transmission.clone()));
+
+    // Dropping the certificate that provided the bytes leaves the aborted entry in place.
+    let stored_first = sample_transmission_id(rng);
+    let (_, storing) = record_both_ways(stored_first, rng);
+    service.remove_transmissions(&storing, &indexset![stored_first]);
+    assert!(!service.contains_retrievable_transmission(stored_first));
+    assert!(service.contains_aborted_transmission(stored_first));
+    assert!(service.contains_transmission(stored_first));
+}
+
 /// Only the transmissions that storage lacks are returned, so the primary does not re-insert a
 /// payload it already holds.
 fn check_find_missing_transmissions_returns_only_what_storage_lacks(service: &impl StorageService<CurrentNetwork>) {
@@ -222,6 +265,11 @@ macro_rules! storage_service_tests {
             #[test]
             fn containment_queries_distinguish_stored_from_aborted_ids() {
                 check_containment_queries_distinguish_stored_from_aborted_ids(&$service);
+            }
+
+            #[test]
+            fn an_id_can_be_aborted_and_retrievable_at_once() {
+                check_an_id_can_be_aborted_and_retrievable_at_once(&$service);
             }
 
             #[test]

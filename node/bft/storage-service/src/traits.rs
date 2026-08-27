@@ -37,15 +37,18 @@ pub trait StorageService<N: Network>: Debug + Send + Sync {
     /// Returns `true` if the storage holds the transmission for the specified `transmission ID`,
     /// i.e. exactly when [`Self::get_transmission`] would return `Some`.
     ///
-    /// Unlike [`Self::contains_transmission`], this is `false` for an ID that is only recorded as
+    /// Unlike [`Self::contains_transmission`], this is `false` for an ID that storage knows only as
     /// aborted. Prefer this over `get_transmission(id).is_some()`, which clones the transmission.
     fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool;
 
-    /// Returns `true` if the specified `transmission ID` is recorded as aborted, i.e. the storage
-    /// knows the ID but holds no transmission for it.
+    /// Returns `true` if the specified `transmission ID` is recorded as aborted.
     ///
-    /// This is `true` for the IDs that [`Self::contains_transmission`] reports but
-    /// [`Self::contains_retrievable_transmission`] does not.
+    /// This and [`Self::contains_retrievable_transmission`] are **not** mutually exclusive: one
+    /// certificate can record an ID as aborted while another provides the bytes for it, in which
+    /// case storage holds both entries and both queries answer `true`. Each entry is reference
+    /// counted against its own certificates, so removing one leaves the other in place. Use
+    /// `contains_aborted_transmission(id) && !contains_retrievable_transmission(id)` to ask the
+    /// narrower question of whether an ID is aborted *and* has nothing to hand back.
     fn contains_aborted_transmission(&self, transmission_id: TransmissionID<N>) -> bool;
 
     /// Returns the transmission for the given `transmission ID`.
