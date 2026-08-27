@@ -45,6 +45,9 @@ features = [ "codec" ]
 [dependencies.tracing]
 workspace = true
 
+[dev-dependencies.indexmap]
+workspace = true
+
 [dev-dependencies.snarkos-node-sync-locators]
 workspace = true
 features = [ "test" ]

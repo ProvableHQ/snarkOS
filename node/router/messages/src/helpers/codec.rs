@@ -95,8 +95,10 @@ mod tests {
     use super::*;
 
     use crate::{
+        MAX_PING_MESSAGE_SIZE,
         Transaction,
         UnconfirmedTransaction,
+        ping::prop_tests::largest_possible_ping,
         unconfirmed_transaction::prop_tests::{
             any_large_unconfirmed_transaction,
             any_max_size_unconfirmed_transaction,
@@ -160,5 +162,38 @@ mod tests {
         let mut codec = MessageCodec::<CurrentNetwork>::default();
         assert!(codec.encode(Message::UnconfirmedTransaction(tx), &mut bytes).is_ok());
         assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::UnconfirmedTransaction(_)))));
+    }
+
+    /// The largest `Ping` the wire format permits must still be accepted - the failure mode a too
+    /// tight cap causes is disconnecting honest peers, which is worse than the DoS this exists to
+    /// prevent.
+    #[test]
+    fn largest_possible_ping_is_accepted() {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::Ping(largest_possible_ping()), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::Ping(_)))));
+    }
+
+    /// `check_size` is exercised directly here, rather than through a constructed `Ping`: nothing
+    /// past a `Ping`'s own wire-format ceiling (`MAX_CHECKPOINTS` checkpoints) can actually reach
+    /// `MAX_PING_MESSAGE_SIZE` - there's real headroom between the two - so a frame large enough
+    /// to violate the cap isn't representable as a legitimately-shaped `Ping` at all. The content
+    /// after the ID is irrelevant to `check_size`, which only inspects the ID and the length.
+    #[test]
+    fn oversized_ping_is_rejected() {
+        let id: u16 = 7; // Ping
+        let mut bytes = vec![0u8; MAX_PING_MESSAGE_SIZE + 1];
+        bytes[..2].copy_from_slice(&id.to_le_bytes());
+        assert!(Message::<CurrentNetwork>::check_size(&bytes).is_err());
+    }
+
+    /// The boundary itself: exactly `MAX_PING_MESSAGE_SIZE` must still be accepted by `check_size`.
+    #[test]
+    fn max_size_ping_frame_is_accepted_by_check_size() {
+        let id: u16 = 7; // Ping
+        let mut bytes = vec![0u8; MAX_PING_MESSAGE_SIZE];
+        bytes[..2].copy_from_slice(&id.to_le_bytes());
+        assert!(Message::<CurrentNetwork>::check_size(&bytes).is_ok());
     }
 }

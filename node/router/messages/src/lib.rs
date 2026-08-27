@@ -43,7 +43,7 @@ mod peer_response;
 pub use peer_response::PeerResponse;
 
 mod ping;
-pub use ping::Ping;
+pub use ping::{MAX_PING_MESSAGE_SIZE, Ping};
 
 mod pong;
 pub use pong::Pong;
@@ -236,6 +236,13 @@ impl<N: Network> Message<N> {
         // carrying it is necessarily larger than the transaction is.
         if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE().saturating_add(UnconfirmedTransaction::<N>::OVERHEAD) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
+        }
+
+        // SPECIAL CASE: check the ping message isn't too large. Unlike every other message type,
+        // Ping has no fixed shape - its block locators grow with chain height - so its cap is not
+        // a small constant; see MAX_PING_MESSAGE_SIZE for the derivation.
+        if id == 7 && len > MAX_PING_MESSAGE_SIZE {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "ping is too large"))?;
         }
 
         Ok(())
