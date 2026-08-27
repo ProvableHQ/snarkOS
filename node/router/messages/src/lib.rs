@@ -33,6 +33,9 @@ pub use challenge_request::ChallengeRequest;
 mod challenge_response;
 pub use challenge_response::ChallengeResponse;
 
+mod chunk;
+pub use chunk::MessageChunk;
+
 mod disconnect;
 pub use disconnect::Disconnect;
 
@@ -73,10 +76,12 @@ use snarkvm::prelude::{
     ToBytes,
     block::{Header, Transaction},
     error,
+    io_error,
     puzzle::{Solution, SolutionID},
 };
 
-use std::{borrow::Cow, io, net::SocketAddr};
+use sha2::{Digest, Sha256};
+use std::{borrow::Cow, io, marker::PhantomData, mem, net::SocketAddr};
 
 // A compile-time compatibility check for the Message.
 const _: () = {
@@ -111,6 +116,58 @@ pub enum Message<N: Network> {
     PuzzleResponse(PuzzleResponse<N>),
     UnconfirmedSolution(UnconfirmedSolution<N>),
     UnconfirmedTransaction(UnconfirmedTransaction<N>),
+    Chunk(MessageChunk),
+}
+
+/// An iterator that produces chunks from a Message.
+#[doc(hidden)]
+pub struct ChunkIter<N: Network> {
+    /// The hash of the complete Message.
+    hash: [u8; 32],
+    /// The remaining serialized bytes to build chunks from.
+    serialized: Vec<u8>,
+    /// The chunk index.
+    idx: u16,
+    _phantom: PhantomData<N>,
+}
+
+impl<N: Network> ChunkIter<N> {
+    pub fn new(message: &Message<N>) -> io::Result<Self> {
+        let serialized =
+            message.to_bytes_le().map_err(|_| io_error(format!("failed to serialize {}", message.name())))?;
+        let digest = Sha256::digest(&serialized);
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&digest);
+
+        Ok(Self { hash, serialized, idx: 0, _phantom: Default::default() })
+    }
+}
+
+impl<N: Network> Iterator for ChunkIter<N> {
+    type Item = MessageChunk;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let remaining_len = self.serialized.len();
+
+        // If the serialized bytes are exhausted, there is nothing more to chunk.
+        if remaining_len == 0 {
+            return None;
+        }
+
+        // Isolate a single chunk.
+        let chunk_len = Message::<N>::MAX_CHUNK_LEN.min(remaining_len);
+        let chunk = if remaining_len <= Message::<N>::MAX_CHUNK_LEN {
+            let chunk_blob = mem::take(&mut self.serialized).into();
+            MessageChunk::new(self.hash, self.idx, true, chunk_blob)
+        } else {
+            let chunk_blob: Box<[u8]> = self.serialized.drain(0..chunk_len).collect();
+            MessageChunk::new(self.hash, self.idx, false, chunk_blob)
+        };
+
+        self.idx += 1;
+
+        Some(chunk)
+    }
 }
 
 impl<N: Network> From<DisconnectReason> for Message<N> {
@@ -119,7 +176,40 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
     }
 }
 
+impl<N: Network> TryFrom<Vec<MessageChunk>> for Message<N> {
+    type Error = io::Error;
+
+    fn try_from(chunks: Vec<MessageChunk>) -> io::Result<Self> {
+        if chunks.is_empty() {
+            return Err(error("A message can't be reconstructed from an empty list of chunks"));
+        }
+
+        // Recreate the full Message from the chunks.
+        let mut full = Vec::new();
+        for chunk in &chunks {
+            full.extend_from_slice(&chunk.blob);
+        }
+        let full_len = full.len();
+
+        // Verify the hash of the recreated message.
+        let expected_hash = chunks.first().unwrap().hash;
+        let recreated_hash = Sha256::digest(&full);
+        if *recreated_hash != expected_hash {
+            return Err(error("The hash of a chunked message doesn't match its expected value"));
+        }
+
+        // Parse the full Message.
+        let mut reader = io::Cursor::new(full);
+        let message = Message::read_le(&mut reader)?;
+        debug!("recreated a {}B {} from {} chunks", full_len, message.name(), chunks.len());
+
+        Ok(message)
+    }
+}
+
 impl<N: Network> Message<N> {
+    /// The maximum size of a chunk in a chunked message.
+    pub const MAX_CHUNK_LEN: usize = 64 * 1024;
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
     pub const VERSIONS: [(ConsensusVersion, u32); 16] = [
@@ -190,6 +280,7 @@ impl<N: Network> Message<N> {
             Self::PuzzleResponse(message) => message.name(),
             Self::UnconfirmedSolution(message) => message.name(),
             Self::UnconfirmedTransaction(message) => message.name(),
+            Self::Chunk(message) => message.name(),
         }
     }
 
@@ -210,6 +301,7 @@ impl<N: Network> Message<N> {
             Self::PuzzleResponse(..) => 10,
             Self::UnconfirmedSolution(..) => 11,
             Self::UnconfirmedTransaction(..) => 12,
+            Self::Chunk(..) => 13,
         }
     }
 
@@ -254,6 +346,7 @@ impl<N: Network> ToBytes for Message<N> {
             Self::PuzzleResponse(message) => message.write_le(writer),
             Self::UnconfirmedSolution(message) => message.write_le(writer),
             Self::UnconfirmedTransaction(message) => message.write_le(writer),
+            Self::Chunk(message) => message.write_le(writer),
         }
     }
 }
@@ -280,7 +373,8 @@ impl<N: Network> FromBytes for Message<N> {
             10 => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
             11 => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
             12 => Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?),
-            13.. => return Err(error("Unknown message ID {id}")),
+            13 => Self::Chunk(MessageChunk::read_le(&mut reader)?),
+            14.. => return Err(error(format!("Unknown message ID {id}"))),
         };
 
         // Ensure that there are no "dangling" bytes.

@@ -21,6 +21,7 @@ use crate::{
         BlockRequest,
         BlockResponse,
         DataBlocks,
+        MAXIMUM_MESSAGE_SIZE,
         Message,
         PeerResponse,
         Ping,
@@ -32,13 +33,14 @@ use crate::{
 use snarkos_node_tcp::protocols::Reading;
 use snarkvm::prelude::{
     ConsensusVersion,
+    FromBytes,
     Network,
     block::{Block, Header, Transaction},
     puzzle::Solution,
 };
 
 use anyhow::{Result, anyhow, bail};
-use std::net::SocketAddr;
+use std::{collections::hash_map::Entry, io, net::SocketAddr};
 use tokio::task::spawn_blocking;
 
 /// The max number of peers to send in a `PeerResponse` message.
@@ -310,6 +312,59 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 match self.unconfirmed_transaction(peer_ip, serialized, transaction).await {
                     true => Ok(true),
                     false => bail!("Peer '{peer_ip}' sent an invalid unconfirmed transaction"),
+                }
+            }
+            Message::Chunk(chunk) => {
+                // Single-chunk messages don't require any lookups.
+                let message = if chunk.idx == 0 && chunk.last {
+                    let mut reader = io::Cursor::new(chunk.blob);
+                    Some(Message::read_le(&mut reader)?)
+                } else {
+                    let mut message_chunks = self.router().message_chunks.lock();
+                    let peers_chunks = message_chunks.entry(peer_ip).or_default();
+
+                    match peers_chunks.entry(chunk.hash) {
+                        Entry::Vacant(entry) => {
+                            // A new chunked message - start saving the chunks.
+                            let mut chunks = Vec::with_capacity(8);
+                            chunks.push(chunk);
+                            entry.insert(chunks);
+
+                            None
+                        }
+                        Entry::Occupied(mut entry) => {
+                            // Ensure correct chunk ordering.
+                            let previous_idx = entry.get().last().map(|c| c.idx).unwrap_or_default();
+                            if chunk.idx != previous_idx + 1 {
+                                entry.remove();
+                                bail!("Peer '{peer_ip}' sent an out-of-order message chunk");
+                            }
+
+                            // Ensure that the overall network message size hasn't been breached.
+                            if (chunk.idx as usize + 1) * Message::<N>::MAX_CHUNK_LEN > MAXIMUM_MESSAGE_SIZE {
+                                entry.remove();
+                                bail!("Peer '{peer_ip}' sent an oversized message");
+                            }
+
+                            if chunk.last {
+                                // Final chunk; remove the entry and recreate the full message.
+                                let mut chunks = entry.remove();
+                                chunks.push(chunk);
+                                let message = Message::<N>::try_from(chunks)?;
+
+                                Some(message)
+                            } else {
+                                // Save this chunk; more will follow.
+                                entry.get_mut().push(chunk);
+
+                                None
+                            }
+                        }
+                    }
+                };
+                match message {
+                    Some(message) => self.inbound(peer_addr, message).await,
+                    None => Ok(true),
                 }
             }
         }

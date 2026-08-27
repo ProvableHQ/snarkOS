@@ -5445,6 +5445,7 @@ version = "4.9.0"
 dependencies = [
  "bytes",
  "proptest",
+ "sha2",
  "snarkos-node-bft-events",
  "snarkos-node-network",
  "snarkos-node-sync-locators",

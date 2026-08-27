@@ -45,7 +45,7 @@ pub use routing::*;
 
 mod writing;
 
-use crate::messages::{BlockRequest, Message, MessageCodec};
+use crate::messages::{BlockRequest, Message, MessageChunk, MessageCodec};
 
 use snarkos_account::Account;
 use snarkos_node_bft_ledger_service::LedgerService;
@@ -115,6 +115,9 @@ impl<N: Network> PeerPoolHandling<N> for Router<N> {
     }
 }
 
+// A map from hashed of chunked Messages to their corresponding chunks.
+type ChunkedMessageMap = HashMap<[u8; 32], Vec<MessageChunk>>;
+
 pub struct InnerRouter<N: Network> {
     /// The TCP stack.
     tcp: Tcp,
@@ -126,6 +129,9 @@ pub struct InnerRouter<N: Network> {
     ledger: Arc<dyn LedgerService<N>>,
     /// The cache.
     cache: Cache<N>,
+    /// Chunks of messages that were split for delivery.
+    // TODO: decide how to clean it up and what to do about users leaving partial messages.
+    message_chunks: Mutex<HashMap<SocketAddr, ChunkedMessageMap>>,
     /// The resolver.
     resolver: RwLock<Resolver<N>>,
     /// The collection of both candidate and connected peers.
@@ -189,6 +195,7 @@ impl<N: Network> Router<N> {
             account,
             ledger,
             cache: Default::default(),
+            message_chunks: Default::default(),
             resolver: Default::default(),
             peer_pool: RwLock::new(initial_peers),
             handles: Default::default(),

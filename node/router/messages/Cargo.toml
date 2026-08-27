@@ -23,6 +23,10 @@ test = [ ]
 [dependencies.bytes]
 workspace = true
 
+[dependencies.sha2]
+version = "0.10"
+default-features = false
+
 [dependencies.snarkos-node-network]
 workspace = true
 
