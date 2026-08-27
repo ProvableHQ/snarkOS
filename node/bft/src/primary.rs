@@ -2746,6 +2746,34 @@ mod tests {
         );
     }
 
+    /// The worker must accept a transmission whose ID storage knows only as aborted: the aborted
+    /// marker holds no payload, so discarding the bytes throws away what a fetch just produced and
+    /// leaves this node unable to serve them to anyone else.
+    #[test_log::test(tokio::test)]
+    async fn test_worker_retains_a_transmission_for_an_aborted_id() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Record a certificate's transmission IDs as aborted, keeping the transmissions in hand.
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
+        primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions).unwrap();
+
+        let (transmission_id, transmission) = transmissions.iter().next().unwrap();
+        assert!(primary.storage.contains_aborted_transmission(*transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
+
+        // The worker takes the bytes rather than treating the aborted marker as already holding them.
+        primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        assert_eq!(
+            primary.workers()[0].get_transmission(*transmission_id),
+            Some(transmission.clone()),
+            "the worker discarded the payload, so it cannot be served or reused"
+        );
+    }
+
     /// A proposal referencing a transmission that storage knows only as aborted must not be signed:
     /// there is no payload for it, and none can be fetched, so the signature would help certify a
     /// batch committing to something that can never be materialized.
