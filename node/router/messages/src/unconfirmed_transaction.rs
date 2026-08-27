@@ -29,10 +29,12 @@ pub struct UnconfirmedTransaction<N: Network> {
 }
 
 /// The bytes an `UnconfirmedTransaction` frame carries in addition to the transaction itself:
-/// the message ID that precedes every message payload, `transaction_id`, and `Data`'s own
-/// version byte and length prefix around `transaction`. Kept next to `write_le` below, which is
-/// what actually defines these three numbers - changing that encoding without updating this
-/// would silently reintroduce the mismatch `check_size` was fixed to avoid.
+/// the message ID that precedes every message payload (written by `Message::write_le` in
+/// lib.rs, not here), `transaction_id`, and `Data`'s own version byte and length prefix around
+/// `transaction` - the latter two defined by `write_le` below. Changing either encoding without
+/// updating this would silently reintroduce the mismatch `check_size` was fixed to avoid; the
+/// `unconfirmed_transaction_overhead_matches_the_real_encoding` test pins it against the actual
+/// serializer rather than trusting this arithmetic on its own.
 pub const UNCONFIRMED_TRANSACTION_OVERHEAD: usize = 2 // the message ID
     + 32 // `transaction_id`
     + 5; // `Data`'s own version byte and length prefix, around `transaction`
@@ -95,20 +97,33 @@ pub mod prop_tests {
             .boxed()
     }
 
+    /// Fills a `Vec<u8>` of the given length, eight bytes per RNG call rather than one, since the
+    /// callers below need this at up to `LATEST_MAX_TRANSACTION_SIZE` (hundreds of KB).
+    fn random_bytes(rng: &mut TestRng, len: usize) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(len);
+        while bytes.len() < len {
+            bytes.extend_from_slice(&u64::rand(rng).to_le_bytes());
+        }
+        bytes.truncate(len);
+        bytes
+    }
+
+    /// Builds an `UnconfirmedTransaction` whose `Data::Buffer` is exactly `len` bytes of junk -
+    /// content doesn't matter for a pure frame-size test.
+    fn unconfirmed_transaction_of_size(seed: u64, len: usize) -> UnconfirmedTransaction<CurrentNetwork> {
+        let mut rng = TestRng::fixed(seed);
+        let tx_id_field = Field::<CurrentNetwork>::rand(&mut rng);
+        UnconfirmedTransaction {
+            transaction_id: tx_id_field.into(),
+            transaction: Data::Buffer(Bytes::from(random_bytes(&mut rng, len))),
+        }
+    }
+
     /// A transaction body one byte larger than the cap allows - genuinely too large, since the
     /// frame carrying it exceeds `LATEST_MAX_TRANSACTION_SIZE` plus its envelope either way.
     pub fn any_large_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
         any::<u64>()
-            .prop_map(|seed| {
-                let mut rng = TestRng::fixed(seed);
-                let tx_id_field = Field::<CurrentNetwork>::rand(&mut rng);
-                let bytes: Vec<u8> =
-                    (0..CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE() + 1).map(|_| u8::rand(&mut rng)).collect();
-                UnconfirmedTransaction {
-                    transaction_id: tx_id_field.into(),
-                    transaction: Data::Buffer(Bytes::from(bytes)),
-                }
-            })
+            .prop_map(|seed| unconfirmed_transaction_of_size(seed, CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE() + 1))
             .boxed()
     }
 
@@ -118,16 +133,7 @@ pub mod prop_tests {
     /// `Data`'s own tag and length prefix), so this is the case `check_size` must still accept.
     pub fn any_max_size_unconfirmed_transaction() -> BoxedStrategy<UnconfirmedTransaction<CurrentNetwork>> {
         any::<u64>()
-            .prop_map(|seed| {
-                let mut rng = TestRng::fixed(seed);
-                let tx_id_field = Field::<CurrentNetwork>::rand(&mut rng);
-                let bytes: Vec<u8> =
-                    (0..CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE()).map(|_| u8::rand(&mut rng)).collect();
-                UnconfirmedTransaction {
-                    transaction_id: tx_id_field.into(),
-                    transaction: Data::Buffer(Bytes::from(bytes)),
-                }
-            })
+            .prop_map(|seed| unconfirmed_transaction_of_size(seed, CurrentNetwork::LATEST_MAX_TRANSACTION_SIZE()))
             .boxed()
     }
 
