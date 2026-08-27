@@ -28,6 +28,15 @@ pub struct UnconfirmedTransaction<N: Network> {
     pub transaction: Data<Transaction<N>>,
 }
 
+/// The bytes an `UnconfirmedTransaction` frame carries in addition to the transaction itself:
+/// the message ID that precedes every message payload, `transaction_id`, and `Data`'s own
+/// version byte and length prefix around `transaction`. Kept next to `write_le` below, which is
+/// what actually defines these three numbers - changing that encoding without updating this
+/// would silently reintroduce the mismatch `check_size` was fixed to avoid.
+pub const UNCONFIRMED_TRANSACTION_OVERHEAD: usize = 2 // the message ID
+    + 32 // `transaction_id`
+    + 5; // `Data`'s own version byte and length prefix, around `transaction`
+
 impl<N: Network> From<Transaction<N>> for UnconfirmedTransaction<N> {
     /// Initializes a new `UnconfirmedTransaction` message.
     fn from(transaction: Transaction<N>) -> Self {
