@@ -197,22 +197,27 @@ impl<N: Network> Message<N> {
     }
 
     /// Returns the message ID.
+    ///
+    /// This match is exhaustive over `Message`'s variants with no fallback arm, so a new variant
+    /// forces an ID here - and, since [`MessageId::max_size`] has no fallback arm either, a cap -
+    /// before the crate compiles. See the type-level docs on [`MessageId`] for the one part of
+    /// the ID mapping this still can't enforce.
     #[inline]
-    pub fn id(&self) -> u16 {
+    pub fn id(&self) -> MessageId {
         match self {
-            Self::BlockRequest(..) => 0,
-            Self::BlockResponse(..) => 1,
-            Self::ChallengeRequest(..) => 2,
-            Self::ChallengeResponse(..) => 3,
-            Self::Disconnect(..) => 4,
-            Self::PeerRequest(..) => 5,
-            Self::PeerResponse(..) => 6,
-            Self::Ping(..) => 7,
-            Self::Pong(..) => 8,
-            Self::PuzzleRequest(..) => 9,
-            Self::PuzzleResponse(..) => 10,
-            Self::UnconfirmedSolution(..) => 11,
-            Self::UnconfirmedTransaction(..) => 12,
+            Self::BlockRequest(..) => MessageId::BlockRequest,
+            Self::BlockResponse(..) => MessageId::BlockResponse,
+            Self::ChallengeRequest(..) => MessageId::ChallengeRequest,
+            Self::ChallengeResponse(..) => MessageId::ChallengeResponse,
+            Self::Disconnect(..) => MessageId::Disconnect,
+            Self::PeerRequest(..) => MessageId::PeerRequest,
+            Self::PeerResponse(..) => MessageId::PeerResponse,
+            Self::Ping(..) => MessageId::Ping,
+            Self::Pong(..) => MessageId::Pong,
+            Self::PuzzleRequest(..) => MessageId::PuzzleRequest,
+            Self::PuzzleResponse(..) => MessageId::PuzzleResponse,
+            Self::UnconfirmedSolution(..) => MessageId::UnconfirmedSolution,
+            Self::UnconfirmedTransaction(..) => MessageId::UnconfirmedTransaction,
         }
     }
 
@@ -222,18 +227,12 @@ impl<N: Network> Message<N> {
     /// An ID this node doesn't recognize at all is not rejected here - `Message::read_le` already
     /// rejects it, and reports it as an unknown message rather than a size violation.
     pub fn check_size(bytes: &[u8]) -> io::Result<()> {
-        let len = bytes.len();
-        if len < MessageId::SIZE {
+        if bytes.len() < MessageId::SIZE {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
         }
 
-        let id_bytes: [u8; MessageId::SIZE] = (&bytes[..MessageId::SIZE])
-            .try_into()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "id couldn't be deserialized"))?;
-        let id = u16::from_le_bytes(id_bytes);
-
-        if let Some(id) = MessageId::from_u16(id) {
-            if len > id.max_size::<N>() {
+        if let Some(id) = MessageId::peek(bytes) {
+            if bytes.len() > id.max_size::<N>() {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large for its type"));
             }
         }
@@ -244,7 +243,7 @@ impl<N: Network> Message<N> {
 
 impl<N: Network> ToBytes for Message<N> {
     fn write_le<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
-        self.id().write_le(&mut writer)?;
+        self.id().as_u16().write_le(&mut writer)?;
 
         match self {
             Self::BlockRequest(message) => message.write_le(writer),
@@ -266,27 +265,31 @@ impl<N: Network> ToBytes for Message<N> {
 
 impl<N: Network> FromBytes for Message<N> {
     fn read_le<R: io::Read>(mut reader: R) -> io::Result<Self> {
-        // Read the event ID.
-        let mut id_bytes = [0u8; 2];
+        // Read the message ID.
+        let mut id_bytes = [0u8; MessageId::SIZE];
         reader.read_exact(&mut id_bytes)?;
         let id = u16::from_le_bytes(id_bytes);
+        let Some(id) = MessageId::from_u16(id) else {
+            return Err(error(format!("Unknown message ID {id}")));
+        };
 
         // Deserialize the data field.
         let message = match id {
-            0 => Self::BlockRequest(BlockRequest::read_le(&mut reader)?),
-            1 => Self::BlockResponse(BlockResponse::read_le(&mut reader)?),
-            2 => Self::ChallengeRequest(ChallengeRequest::read_le(&mut reader)?),
-            3 => Self::ChallengeResponse(ChallengeResponse::read_le(&mut reader)?),
-            4 => Self::Disconnect(Disconnect::read_le(&mut reader)?),
-            5 => Self::PeerRequest(PeerRequest::read_le(&mut reader)?),
-            6 => Self::PeerResponse(PeerResponse::read_le(&mut reader)?),
-            7 => Self::Ping(Ping::read_le(&mut reader)?),
-            8 => Self::Pong(Pong::read_le(&mut reader)?),
-            9 => Self::PuzzleRequest(PuzzleRequest::read_le(&mut reader)?),
-            10 => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
-            11 => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
-            12 => Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?),
-            13.. => return Err(error("Unknown message ID {id}")),
+            MessageId::BlockRequest => Self::BlockRequest(BlockRequest::read_le(&mut reader)?),
+            MessageId::BlockResponse => Self::BlockResponse(BlockResponse::read_le(&mut reader)?),
+            MessageId::ChallengeRequest => Self::ChallengeRequest(ChallengeRequest::read_le(&mut reader)?),
+            MessageId::ChallengeResponse => Self::ChallengeResponse(ChallengeResponse::read_le(&mut reader)?),
+            MessageId::Disconnect => Self::Disconnect(Disconnect::read_le(&mut reader)?),
+            MessageId::PeerRequest => Self::PeerRequest(PeerRequest::read_le(&mut reader)?),
+            MessageId::PeerResponse => Self::PeerResponse(PeerResponse::read_le(&mut reader)?),
+            MessageId::Ping => Self::Ping(Ping::read_le(&mut reader)?),
+            MessageId::Pong => Self::Pong(Pong::read_le(&mut reader)?),
+            MessageId::PuzzleRequest => Self::PuzzleRequest(PuzzleRequest::read_le(&mut reader)?),
+            MessageId::PuzzleResponse => Self::PuzzleResponse(PuzzleResponse::read_le(&mut reader)?),
+            MessageId::UnconfirmedSolution => Self::UnconfirmedSolution(UnconfirmedSolution::read_le(&mut reader)?),
+            MessageId::UnconfirmedTransaction => {
+                Self::UnconfirmedTransaction(UnconfirmedTransaction::read_le(&mut reader)?)
+            }
         };
 
         // Ensure that there are no "dangling" bytes.

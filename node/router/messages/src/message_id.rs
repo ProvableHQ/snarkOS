@@ -19,22 +19,20 @@ use snarkvm::prelude::Network;
 /// The wire ID of a [`crate::Message`] variant: the `u16` that leads every message payload.
 ///
 /// This exists to let a size cap be looked up for a message from its ID alone - before, or
-/// instead of, deserializing the message itself. It is deliberately independent of
-/// [`crate::Message::id`] (which keeps returning a plain `u16`, as every other part of the crate
-/// already expects): this type only needs to agree with that one at the numeric level, which
-/// `from_u16_agrees_with_discriminants` below checks.
+/// instead of, deserializing the message itself.
 ///
 /// # Adding a message
 ///
-/// This is intentionally not the type [`crate::Message::id`] returns (that stays a plain `u16`,
-/// as every existing caller expects) - it exists purely so a size cap can be looked up from an
-/// ID. That means adding a `Message` variant does not force a matching `MessageId` variant the
-/// way an exhaustive match would: a new message type that is never added here just never gets
-/// capped by `check_size`, which treats any ID `from_u16` doesn't recognize as "not this crate's
-/// business to cap" and leaves rejecting it to `Message::read_le`. So: **a new message needs a
-/// variant here, by hand, given the next ID in sequence** - `from_u16` and [`Self::max_size`] then
-/// enforce themselves (the latter has no fallback arm, so the crate does not compile until the new
-/// variant has a cap).
+/// [`crate::Message::id`] and [`Self::max_size`] are both exhaustive matches with no fallback arm,
+/// so a new `Message` variant forces a `MessageId` variant, which in turn forces a cap, before the
+/// crate compiles.
+///
+/// [`Self::from_u16`] is the one part of this **not** checked by the compiler, and cannot be on
+/// stable Rust - enumerating an enum's variants needs a macro, a derive, or the unstable
+/// `variant_count`. A variant missing there still compiles and every existing test still passes,
+/// but the node will happily *encode* the new message while every decoder - its own included -
+/// rejects the frame as an unrecognized ID and drops the connection. So: **a variant added to this
+/// enum must also be added to `from_u16` by hand.**
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u16)]
 pub enum MessageId {
