@@ -36,6 +36,9 @@ pub use challenge_response::ChallengeResponse;
 mod disconnect;
 pub use disconnect::Disconnect;
 
+mod message_id;
+pub use message_id::{MAX_SMALL_MESSAGE_SIZE, MessageId};
+
 mod peer_request;
 pub use peer_request::PeerRequest;
 
@@ -77,6 +80,9 @@ use snarkvm::prelude::{
 };
 
 use std::{borrow::Cow, io, net::SocketAddr};
+
+/// The width, in bytes, of the message ID that leads every message payload.
+pub const MESSAGE_ID_SIZE: usize = size_of::<u16>();
 
 // A compile-time compatibility check for the Message.
 const _: () = {
@@ -213,36 +219,26 @@ impl<N: Network> Message<N> {
         }
     }
 
-    /// Checks the message byte length. To be used before deserialization.
+    /// Checks the message byte length against the cap for its type. To be used before
+    /// deserialization.
+    ///
+    /// An ID this node doesn't recognize at all is not rejected here - `Message::read_le` already
+    /// rejects it, and reports it as an unknown message rather than a size violation.
     pub fn check_size(bytes: &[u8]) -> io::Result<()> {
-        // Store the length to be checked against the max message size for each variant.
         let len = bytes.len();
-        if len < 2 {
+        if len < MESSAGE_ID_SIZE {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
         }
 
-        // Check the first two bytes for the message ID.
-        let id_bytes: [u8; 2] = (&bytes[..2])
+        let id_bytes: [u8; MESSAGE_ID_SIZE] = (&bytes[..MESSAGE_ID_SIZE])
             .try_into()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "id couldn't be deserialized"))?;
         let id = u16::from_le_bytes(id_bytes);
 
-        // SPECIAL CASE: check the transaction message isn't too large.
-        //
-        // `len` is the whole frame, which is `UnconfirmedTransaction::OVERHEAD` bytes larger than
-        // the transaction it carries - so it has to be checked against the transaction cap plus
-        // that envelope, not the cap alone. A transaction of exactly `LATEST_MAX_TRANSACTION_SIZE`
-        // is valid (the ledger service and the REST endpoint both accept one), and the frame
-        // carrying it is necessarily larger than the transaction is.
-        if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE().saturating_add(UnconfirmedTransaction::<N>::OVERHEAD) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
-        }
-
-        // SPECIAL CASE: check the ping message isn't too large. Unlike every other message type,
-        // Ping has no fixed shape - its block locators grow with chain height - so its cap is not
-        // a small constant; see MAX_PING_MESSAGE_SIZE for the derivation.
-        if id == 7 && len > MAX_PING_MESSAGE_SIZE {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "ping is too large"))?;
+        if let Some(id) = MessageId::from_u16(id) {
+            if len > id.max_size::<N>() {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large for its type"));
+            }
         }
 
         Ok(())

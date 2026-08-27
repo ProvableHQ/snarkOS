@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::Message;
+use crate::{MAX_SMALL_MESSAGE_SIZE, Message, MessageId};
 use snarkvm::prelude::{FromBytes, Network, ToBytes};
 
 use ::bytes::{Buf, BufMut, BytesMut};
@@ -22,9 +22,6 @@ use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 /// The maximum size of a message that can be transmitted during the handshake.
 const MAXIMUM_HANDSHAKE_MESSAGE_SIZE: usize = 1024 * 1024; // 1 MiB
-
-/// The maximum size of a message that can be transmitted in the network.
-pub(crate) const MAXIMUM_MESSAGE_SIZE: usize = 128 * 1024 * 1024; // 128 MiB
 
 /// The codec used to decode and encode network `Message`s.
 pub struct MessageCodec<N: Network> {
@@ -38,14 +35,38 @@ impl<N: Network> MessageCodec<N> {
         codec.codec.set_max_frame_length(MAXIMUM_HANDSHAKE_MESSAGE_SIZE);
         codec
     }
+
+    /// Builds a codec whose frame-length ceiling is the maximum over the sizes of the message
+    /// types in `allowed_ids` - not a per-message check at decode time, just the ceiling the
+    /// underlying length-delimited codec enforces before a frame is fully buffered.
+    ///
+    /// Restricting `allowed_ids` cannot hand an attacker any capability they don't already have:
+    /// whatever the resulting ceiling is, it is exactly the size of the largest type still
+    /// allowed on this connection, and an honest peer can already legitimately send that much of
+    /// that type. What it *does* buy is a smaller ceiling for a connection that structurally has
+    /// no legitimate reason to expect a large type at all - see [`Self::excluding`].
+    fn for_allowed_ids(allowed_ids: impl IntoIterator<Item = MessageId>) -> Self {
+        let max_frame_length =
+            allowed_ids.into_iter().map(|id| id.max_size::<N>()).max().unwrap_or(MAX_SMALL_MESSAGE_SIZE);
+        Self {
+            codec: LengthDelimitedCodec::builder().max_frame_length(max_frame_length).little_endian().new_codec(),
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Builds a codec for a connection that structurally has no legitimate reason to ever receive
+    /// any of `excluded_ids` - for instance, a validator's router connections, which never expect
+    /// a `BlockResponse` since validators sync blocks over the committee-gated BFT gateway
+    /// instead. See [`Self::for_allowed_ids`] for why this shrinks the connection's ceiling rather
+    /// than just relabeling it: the ceiling becomes the largest type *actually* expected here.
+    pub fn excluding(excluded_ids: &[MessageId]) -> Self {
+        Self::for_allowed_ids(MessageId::all().filter(|id| !excluded_ids.contains(id)))
+    }
 }
 
 impl<N: Network> Default for MessageCodec<N> {
     fn default() -> Self {
-        Self {
-            codec: LengthDelimitedCodec::builder().max_frame_length(MAXIMUM_MESSAGE_SIZE).little_endian().new_codec(),
-            _phantom: Default::default(),
-        }
+        Self::for_allowed_ids(MessageId::all())
     }
 }
 
@@ -95,10 +116,20 @@ mod tests {
     use super::*;
 
     use crate::{
-        MAX_PING_MESSAGE_SIZE,
+        BlockRequest,
+        BlockResponse,
+        DataBlocks,
+        MAX_SMALL_MESSAGE_SIZE,
+        MESSAGE_ID_SIZE,
+        MessageId,
+        PeerResponse,
+        PuzzleResponse,
         Transaction,
+        UnconfirmedSolution,
         UnconfirmedTransaction,
         ping::prop_tests::largest_possible_ping,
+        puzzle_response::prop_tests::{any_large_puzzle_response, any_puzzle_response},
+        unconfirmed_solution::prop_tests::{any_large_unconfirmed_solution, any_unconfirmed_solution},
         unconfirmed_transaction::prop_tests::{
             any_large_unconfirmed_transaction,
             any_max_size_unconfirmed_transaction,
@@ -108,6 +139,8 @@ mod tests {
     };
 
     use proptest::prelude::ProptestConfig;
+    use snarkvm::console::network::ConsensusVersion;
+    use std::net::{Ipv6Addr, SocketAddr};
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
@@ -153,7 +186,7 @@ mod tests {
 
     /// A transaction of exactly `LATEST_MAX_TRANSACTION_SIZE` is valid - both the ledger service
     /// and the REST endpoint accept one - so the message carrying it must be accepted too, even
-    /// though the frame is 39 bytes larger than the transaction itself.
+    /// though the frame is larger than the transaction itself by its envelope.
     #[proptest(ProptestConfig { cases : 10, ..ProptestConfig::default() })]
     fn max_size_unconfirmed_transaction_is_accepted(
         #[strategy(any_max_size_unconfirmed_transaction())] tx: UnconfirmedTransaction<CurrentNetwork>,
@@ -175,25 +208,152 @@ mod tests {
         assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::Ping(_)))));
     }
 
-    /// `check_size` is exercised directly here, rather than through a constructed `Ping`: nothing
-    /// past a `Ping`'s own wire-format ceiling (`MAX_CHECKPOINTS` checkpoints) can actually reach
-    /// `MAX_PING_MESSAGE_SIZE` - there's real headroom between the two - so a frame large enough
-    /// to violate the cap isn't representable as a legitimately-shaped `Ping` at all. The content
-    /// after the ID is irrelevant to `check_size`, which only inspects the ID and the length.
-    #[test]
-    fn oversized_ping_is_rejected() {
-        let id: u16 = 7; // Ping
-        let mut bytes = vec![0u8; MAX_PING_MESSAGE_SIZE + 1];
-        bytes[..2].copy_from_slice(&id.to_le_bytes());
-        assert!(Message::<CurrentNetwork>::check_size(&bytes).is_err());
+    /// The bug this whole cap exists to fix: before it, nothing stopped a `PuzzleResponse` or
+    /// `UnconfirmedSolution` from carrying an arbitrarily large payload, up to the general frame
+    /// ceiling. Both are now bounded like every other small, fixed-shape message.
+    #[proptest(ProptestConfig { cases : 5, ..ProptestConfig::default() })]
+    fn overly_large_puzzle_response(#[strategy(any_large_puzzle_response())] message: PuzzleResponse<CurrentNetwork>) {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::PuzzleResponse(message), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
     }
 
-    /// The boundary itself: exactly `MAX_PING_MESSAGE_SIZE` must still be accepted by `check_size`.
+    #[proptest(ProptestConfig { cases : 5, ..ProptestConfig::default() })]
+    fn overly_large_unconfirmed_solution(
+        #[strategy(any_large_unconfirmed_solution())] solution: UnconfirmedSolution<CurrentNetwork>,
+    ) {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::UnconfirmedSolution(solution), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    #[proptest]
+    fn puzzle_response_is_accepted(#[strategy(any_puzzle_response())] message: PuzzleResponse<CurrentNetwork>) {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::PuzzleResponse(message), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::PuzzleResponse(_)))));
+    }
+
+    #[proptest]
+    fn unconfirmed_solution_is_accepted(
+        #[strategy(any_unconfirmed_solution())] solution: UnconfirmedSolution<CurrentNetwork>,
+    ) {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::UnconfirmedSolution(solution), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::UnconfirmedSolution(_)))));
+    }
+
+    /// The caps have to admit the largest message an honest node will actually send, or peers
+    /// start disconnecting each other. `PeerResponse` is the tightest of the small messages: a
+    /// full peer list of IPv6 addresses, every one of them carrying a height - the encoding's
+    /// actual worst case, not just a plausible-looking sample of one.
     #[test]
-    fn max_size_ping_frame_is_accepted_by_check_size() {
-        let id: u16 = 7; // Ping
-        let mut bytes = vec![0u8; MAX_PING_MESSAGE_SIZE];
-        bytes[..2].copy_from_slice(&id.to_le_bytes());
+    fn largest_honest_peer_response_is_accepted() {
+        let peers = (0..u8::MAX as u16)
+            .map(|i| (SocketAddr::new(Ipv6Addr::new(0x2001, 0xdb8, i, i, i, i, i, i).into(), 4130), Some(u32::MAX)))
+            .collect::<Vec<_>>();
+
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::PeerResponse(PeerResponse { peers }), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::PeerResponse(_)))));
+    }
+
+    /// `check_size` bounds every message type it recognizes, not just `Ping` and
+    /// `UnconfirmedTransaction` - this sweeps every `MessageId` and pins its boundary exactly: a
+    /// frame declaring precisely the type's maximum is accepted, one byte more is rejected.
+    #[test]
+    fn size_gate_boundary_is_exact() {
+        for id in MessageId::all() {
+            let max_size = id.max_size::<CurrentNetwork>();
+
+            let mut bytes = vec![0u8; max_size];
+            bytes[..MESSAGE_ID_SIZE].copy_from_slice(&id.as_u16().to_le_bytes());
+            assert!(
+                Message::<CurrentNetwork>::check_size(&bytes).is_ok(),
+                "{id:?} rejected a frame of exactly its maximum size ({max_size})"
+            );
+
+            let mut bytes = vec![0u8; max_size + 1];
+            bytes[..MESSAGE_ID_SIZE].copy_from_slice(&id.as_u16().to_le_bytes());
+            assert!(
+                Message::<CurrentNetwork>::check_size(&bytes).is_err(),
+                "{id:?} admitted a frame one byte over its cap"
+            );
+        }
+    }
+
+    /// An ID this node doesn't recognize is left uncapped by `check_size` - `Message::read_le`
+    /// rejects it instead, and reports it as an unknown message rather than a size violation.
+    #[test]
+    fn unrecognized_message_id_is_not_size_capped() {
+        let unrecognized_id: u16 = MessageId::all().count() as u16;
+        let mut bytes = vec![0u8; MAX_SMALL_MESSAGE_SIZE + 1];
+        bytes[..MESSAGE_ID_SIZE].copy_from_slice(&unrecognized_id.to_le_bytes());
         assert!(Message::<CurrentNetwork>::check_size(&bytes).is_ok());
+    }
+
+    /// Builds a small, well-formed `BlockResponse` - an empty block list is a legitimate wire
+    /// encoding (nothing in `write_le`/`read_le` requires a non-empty one), so this never has to
+    /// construct a real block just to exercise the codec. The request range just has to be
+    /// well-formed by `BlockRequest`'s own rules (non-zero start, start < end) - it does not have
+    /// to match the (empty) block list for the codec to accept the frame.
+    fn small_block_response() -> Message<CurrentNetwork> {
+        let request = BlockRequest { start_height: 1, end_height: 2 };
+        Message::BlockResponse(BlockResponse::new(request, DataBlocks(vec![]), ConsensusVersion::V12))
+    }
+
+    /// The default codec's frame ceiling is `BlockResponse`'s own cap: it is the largest of every
+    /// message type this node might decode on a connection with no further restriction.
+    #[test]
+    fn default_codec_ceiling_is_the_largest_allowed_type() {
+        let codec = MessageCodec::<CurrentNetwork>::default();
+        let expected = MessageId::all().map(|id| id.max_size::<CurrentNetwork>()).max().unwrap();
+        assert_eq!(expected, MessageId::BlockResponse.max_size::<CurrentNetwork>());
+        assert_eq!(codec.codec.max_frame_length(), expected);
+    }
+
+    /// Excluding `BlockResponse` shrinks the ceiling to `Ping`'s - the largest of what remains -
+    /// rather than to some hardcoded number, so tightening `Ping`'s own cap in the future
+    /// automatically tightens this ceiling too.
+    #[test]
+    fn excluding_block_response_shrinks_the_ceiling_to_the_next_largest_type() {
+        let codec = MessageCodec::<CurrentNetwork>::excluding(&[MessageId::BlockResponse]);
+        assert_eq!(codec.codec.max_frame_length(), MessageId::Ping.max_size::<CurrentNetwork>());
+    }
+
+    /// Excluding a type from a codec's allowed IDs only shrinks the frame-length ceiling - it does
+    /// not add a decode-time rejection for that type's ID. A small, legitimately-shaped
+    /// `BlockResponse` still decodes: rejecting an unexpected one is `Validator::block_response`'s
+    /// job, a layer up, which has the connection's actual role to reason with.
+    #[test]
+    fn excluding_a_type_does_not_forbid_decoding_a_small_instance_of_it() {
+        let mut bytes = BytesMut::new();
+        let mut encoder = MessageCodec::<CurrentNetwork>::default();
+        encoder.encode(small_block_response(), &mut bytes).unwrap();
+
+        let mut restricted = MessageCodec::<CurrentNetwork>::excluding(&[MessageId::BlockResponse]);
+        assert!(matches!(restricted.decode(&mut bytes), Ok(Some(Message::BlockResponse(_)))));
+    }
+
+    /// The property that actually matters: a connection that excludes `BlockResponse` cannot be
+    /// forced to buffer anywhere near the general 128 MiB ceiling by a peer merely claiming to
+    /// send one - the frame is rejected the moment its length prefix is visible, before the rest
+    /// of a peer-declared, possibly enormous, body has to arrive or be held.
+    #[test]
+    fn excluding_block_response_rejects_an_oversized_frame_far_below_the_general_ceiling() {
+        let declared_len = MessageId::Ping.max_size::<CurrentNetwork>() + 1;
+        let mut bytes = BytesMut::new();
+        bytes.extend_from_slice(&(declared_len as u32).to_le_bytes());
+        bytes.extend_from_slice(&MessageId::BlockResponse.as_u16().to_le_bytes());
+        // Deliberately no further bytes: a real peer sending this much data would need to
+        // actually transmit `declared_len` bytes, which we never provide here.
+
+        let mut restricted = MessageCodec::<CurrentNetwork>::excluding(&[MessageId::BlockResponse]);
+        assert!(matches!(restricted.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
     }
 }

@@ -22,6 +22,7 @@ use snarkos_node_router::messages::{
     DisconnectReason,
     Message,
     MessageCodec,
+    MessageId,
     Ping,
     Pong,
     UnconfirmedTransaction,
@@ -107,7 +108,16 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Validator<N, C> {
     /// Creates a [`Decoder`] used to interpret messages from the network.
     /// The `side` param indicates the connection side **from the node's perspective**.
     fn codec(&self, _peer_addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        Default::default()
+        // A validator syncs blocks exclusively over the committee-gated BFT gateway
+        // (`ConnectionMode::Gateway`); it never issues a `BlockRequest` over the router, so it
+        // never has a legitimate reason to expect a `BlockResponse` there either. Excluding it
+        // from this connection's ceiling means an untrusted router peer cannot use a claimed
+        // `BlockResponse` to force as large an allocation as the general 128 MiB frame ceiling -
+        // the ceiling shrinks to `Ping`'s, the largest type actually expected here. This changes
+        // nothing about which messages decode successfully: a `BlockResponse` that fits under the
+        // new, smaller ceiling still decodes, and is rejected below, in `block_response`, exactly
+        // as before.
+        MessageCodec::excluding(&[MessageId::BlockResponse])
     }
 
     /// Processes a message received from the network.
