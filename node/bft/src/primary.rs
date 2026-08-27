@@ -989,24 +989,6 @@ impl<N: Network> Primary<N> {
         // Inserts the missing transmissions into the workers.
         self.insert_missing_transmissions_into_workers(peer_ip, missing_transmissions.into_iter())?;
 
-        // Do not sign a proposal referencing a transmission this node knows only as aborted: storage
-        // holds no payload for it, and none can be fetched from anyone, so the signature would help
-        // certify a batch committing to something that can never be materialized.
-        //
-        // Note: this is deliberately stricter than the certificate and block sync paths, which have
-        // to keep accepting such IDs - see `StorageService::find_missing_transmissions`. It is also a
-        // judgment made from local sync state, so an honest peer that has not seen the aborting block
-        // yet can trip it; skip the proposal rather than treat the peer as malicious.
-        if let Some(transmission_id) =
-            batch_header.transmission_ids().iter().find(|id| self.storage.contains_aborted_transmission(**id))
-        {
-            debug!(
-                "Primary is safely skipping a batch proposal from '{peer_ip}' - {}",
-                format!("it references the aborted transmission '{}'", fmt_id(transmission_id)).dimmed()
-            );
-            return Ok(());
-        }
-
         /* Proceeding to sign the batch. */
 
         // Retrieve the batch ID.
@@ -2774,9 +2756,14 @@ mod tests {
         );
     }
 
-    /// A proposal referencing a transmission that storage knows only as aborted must not be signed:
-    /// there is no payload for it, and none can be fetched, so the signature would help certify a
-    /// batch committing to something that can never be materialized.
+    /// A proposal referencing a transmission that storage knows only as aborted is signed like any
+    /// other, once the bytes have been obtained from its author.
+    ///
+    /// The aborted marker is not a reason to withhold a signature: it only means this node holds no
+    /// payload, and the author of a batch is claiming it can serve one. Refusing here would be a
+    /// unilateral judgment made from local sync state, which an honest peer that has not yet seen
+    /// the aborting block would trip. A proposal whose author cannot serve the bytes fails earlier,
+    /// at the fetch, like any other proposal with a missing transmission.
     #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_with_an_aborted_transmission() {
         let mut rng = TestRng::default();
@@ -2819,11 +2806,11 @@ mod tests {
             .insert_certificate(certificate, transmissions, [aborted_transmission_id].into_iter().collect())
             .unwrap();
         assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(aborted_transmission_id));
 
-        // The proposal is skipped rather than rejected - an honest peer that has not seen the
-        // aborting block yet can send one - and no signature is produced for it.
+        // The payload is available from the author, so the proposal is signed like any other.
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
-        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_none());
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_some());
     }
 
     /// A proposal for the current round is left in place; once the round advances past it, the same
