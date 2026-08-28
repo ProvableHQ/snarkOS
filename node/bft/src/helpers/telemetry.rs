@@ -182,6 +182,10 @@ enum TelemetryUpdate<N: Network> {
     /// anything about the subdag itself.
     Subdag { gc_round: u64, metadata: Vec<CertificateMetadata<N>> },
     /// Insert the metadata of a single certificate.
+    ///
+    /// Only ever sent by the `#[cfg(test)]`-only `insert_certificate`, so a non-test build
+    /// never constructs it - hence the `allow` below.
+    #[cfg_attr(not(test), allow(dead_code))]
     Certificate(Box<CertificateMetadata<N>>),
     /// Acknowledge once every previously enqueued update has been applied and published.
     Flush(oneshot::Sender<()>),
