@@ -135,7 +135,7 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         &self,
         certificate_id: Field<N>,
         transmission_ids: IndexSet<TransmissionID<N>>,
-        aborted_transmission_ids: HashSet<TransmissionID<N>>,
+        mut aborted_transmission_ids: HashSet<TransmissionID<N>>,
         mut missing_transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
     ) {
         // Hold the cache lock for the entire update, to serialize the read-modify-write updates
@@ -161,10 +161,15 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                         // transmission, so asking whether it is aborted is the same question as
                         // asking whether storage knows the ID at all - without repeating the
                         // lookup that just came back empty.
-                        if !aborted_transmission_ids.contains(&transmission_id)
-                            && !self.contains_aborted_transmission(transmission_id)
-                        {
-                            error!("Failed to provide a missing transmission {transmission_id}");
+                        if !aborted_transmission_ids.contains(&transmission_id) {
+                            // An ID that storage already knows as aborted needs no bytes from
+                            // anyone, but this certificate still has to be counted against the
+                            // aborted entry: `remove_transmissions` decrements it either way.
+                            if self.contains_aborted_transmission(transmission_id) {
+                                aborted_transmission_ids.insert(transmission_id);
+                            } else {
+                                error!("Failed to provide a missing transmission {transmission_id}");
+                            }
                         }
                         continue 'outer;
                     };

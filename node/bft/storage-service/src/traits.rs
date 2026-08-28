@@ -96,6 +96,17 @@ pub trait StorageService<N: Network>: Debug + Send + Sync {
     }
 
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
+    ///
+    /// The certificate has to be counted against every ID it declares: against the transmission
+    /// entry for the IDs whose bytes storage holds or the caller provides, and against the aborted
+    /// entry for the rest - both the IDs the caller declares as aborted, and the ones storage
+    /// already recorded as aborted for an earlier certificate. [`Self::remove_transmissions`]
+    /// decrements both maps for every declared ID, so an ID that is credited to neither is dropped
+    /// from storage while this certificate still refers to it.
+    ///
+    /// Note that this makes the implementation, rather than the caller, responsible for recognizing
+    /// an already-aborted ID: only the implementation can decide it under the locks that
+    /// [`Self::remove_transmissions`] takes as well.
     fn insert_transmissions(
         &self,
         certificate_id: Field<N>,

@@ -710,26 +710,16 @@ impl<N: Network> Storage<N> {
         &self,
         certificate: BatchCertificate<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
-        mut aborted_transmissions: HashSet<TransmissionID<N>>,
+        aborted_transmissions: HashSet<TransmissionID<N>>,
     ) -> Result<()> {
         // Ensure the certificate round is above the GC round.
         ensure!(certificate.round() > self.gc_round(), "Certificate round is at or below the GC round");
         // Ensure the certificate and its transmissions are valid.
         let missing_transmissions =
             self.check_certificate(&certificate, transmissions, aborted_transmissions.clone())?;
-        // Declare as aborted every referenced ID that storage only knows as aborted and that nobody
-        // provided. Callers outside the block sync always pass an empty set of aborted IDs, so
-        // without this the certificate would be reference counted against neither the transmission
-        // nor the aborted entry - and removing the certificate that first recorded the abort would
-        // drop the entry while this certificate still refers to it.
-        for transmission_id in certificate.transmission_ids() {
-            if !missing_transmissions.contains_key(transmission_id)
-                && !self.contains_retrievable_transmission(*transmission_id)
-                && self.contains_aborted_transmission(*transmission_id)
-            {
-                aborted_transmissions.insert(*transmission_id);
-            }
-        }
+        // Note: a referenced ID that storage only knows as aborted, and that nobody provided, is
+        // counted against the certificate by `insert_transmissions` itself - callers outside the
+        // block sync always pass an empty set of aborted IDs.
         // Insert the certificate into storage.
         self.insert_certificate_atomic(certificate, aborted_transmissions, missing_transmissions);
         Ok(())

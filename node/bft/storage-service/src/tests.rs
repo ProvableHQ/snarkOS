@@ -252,6 +252,54 @@ fn check_aborted_transmission_ids_are_reference_counted_too(service: &impl Stora
     assert!(!service.contains_aborted_transmission(transmission_id));
 }
 
+/// A certificate that neither provides nor declares an ID that storage already recorded as aborted
+/// still has to be counted against the aborted entry.
+///
+/// Callers outside the block sync pass an empty set of aborted IDs, so this is the only place that
+/// can recognize such an ID - and it has to, because `remove_transmissions` decrements the aborted
+/// entry for every ID the certificate declares. Crediting neither map would let the certificate that
+/// first recorded the abort take the entry with it, leaving this one referring to an ID storage no
+/// longer knows.
+fn check_an_already_aborted_id_is_counted_against_a_later_certificate(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+    let (aborting, later) = (Field::rand(rng), Field::rand(rng));
+
+    // An earlier certificate records the ID as aborted.
+    service.insert_transmissions(aborting, Default::default(), [transmission_id].into(), Default::default());
+
+    // A later certificate declares the same ID, the way the primary does: no transmissions, and
+    // nothing declared as aborted.
+    service.insert_transmissions(later, indexset![transmission_id], Default::default(), Default::default());
+
+    // Dropping the certificate that recorded the abort must leave the entry for the later one...
+    service.remove_transmissions(&aborting, &indexset![transmission_id]);
+    assert!(
+        service.contains_aborted_transmission(transmission_id),
+        "the later certificate was not counted, so its transmission ID is now unknown to storage"
+    );
+
+    // ...and dropping that one as well must then remove it.
+    service.remove_transmissions(&later, &indexset![transmission_id]);
+    assert!(!service.contains_aborted_transmission(transmission_id));
+}
+
+/// An ID that storage does not know at all is not recorded as aborted on the way past.
+///
+/// The counting above applies only to an ID storage already recorded as aborted; a declared ID that
+/// nobody can produce is undeliverable, and must not be turned into an aborted entry that would
+/// answer for it.
+fn check_an_unknown_undeliverable_id_is_not_recorded_as_aborted(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+
+    service.insert_transmissions(Field::rand(rng), indexset![transmission_id], Default::default(), Default::default());
+
+    assert!(!service.contains_aborted_transmission(transmission_id));
+    assert!(!service.contains_retrievable_transmission(transmission_id));
+    assert!(service.as_hashmap().is_empty());
+}
+
 /// Being recorded as aborted and holding a transmission are not mutually exclusive: one certificate
 /// can record an ID as aborted while another provides the bytes for it.
 ///
@@ -454,6 +502,16 @@ macro_rules! storage_service_tests {
             #[test]
             fn aborted_transmission_ids_are_reference_counted_too() {
                 check_aborted_transmission_ids_are_reference_counted_too(&$service);
+            }
+
+            #[test]
+            fn an_already_aborted_id_is_counted_against_a_later_certificate() {
+                check_an_already_aborted_id_is_counted_against_a_later_certificate(&$service);
+            }
+
+            #[test]
+            fn an_unknown_undeliverable_id_is_not_recorded_as_aborted() {
+                check_an_unknown_undeliverable_id_is_not_recorded_as_aborted(&$service);
             }
 
             #[test]
