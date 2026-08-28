@@ -5444,6 +5444,7 @@ name = "snarkos-node-router-messages"
 version = "4.9.0"
 dependencies = [
  "bytes",
+ "indexmap 2.14.0",
  "proptest",
  "snarkos-node-bft-events",
  "snarkos-node-network",
