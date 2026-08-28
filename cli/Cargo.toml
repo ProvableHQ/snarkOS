@@ -142,6 +142,18 @@ workspace = true
 workspace = true
 features = [ "parameters", "circuit", "package" ]
 
+[dependencies.snarkvm-circuit-network]
+version = "=4.2.1"
+#path = "../../snarkVM/circuit/network"
+#git = "https://github.com/ProvableHQ/snarkVM.git"
+#rev = "ac93164b8"
+
+[dependencies.snarkvm-ledger-puzzle-epoch]
+version = "=4.2.1"
+#path = "../../snarkVM/ledger/puzzle/epoch"
+#git = "https://github.com/ProvableHQ/snarkVM.git"
+#rev = "ac93164b8"
+
 [dependencies.sys-info]
 version = "0.9"
 

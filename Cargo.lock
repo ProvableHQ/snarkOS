@@ -5101,6 +5101,8 @@ dependencies = [
  "snarkos-node-rest",
  "snarkos-utilities",
  "snarkvm",
+ "snarkvm-circuit-network",
+ "snarkvm-ledger-puzzle-epoch",
  "sys-info",
  "tempfile",
  "thiserror 2.0.20",
