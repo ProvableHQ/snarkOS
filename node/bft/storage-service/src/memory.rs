@@ -177,17 +177,17 @@ impl<N: Network> StorageService<N> for BFTMemoryService<N> {
     }
 }
 
+/// The expectations shared with every other service are asserted in `crate::tests`; what remains
+/// here is specific to this one's locking.
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use snarkvm::{
         console::network::MainnetV0,
-        ledger::narwhal::Data,
         prelude::{Rng, TestRng, Uniform},
     };
 
-    use bytes::Bytes;
     use std::{sync::mpsc, time::Duration};
 
     type CurrentNetwork = MainnetV0;
@@ -197,172 +197,6 @@ mod tests {
             <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
             <CurrentNetwork as Network>::TransmissionChecksum::from(rng.random::<u128>()),
         )
-    }
-
-    fn sample_transmission(payload: &[u8]) -> Transmission<CurrentNetwork> {
-        Transmission::Transaction(Data::Buffer(Bytes::from(payload.to_vec())))
-    }
-
-    #[test]
-    fn a_new_service_holds_nothing() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-
-        assert!(!service.contains_retrievable_transmission(transmission_id));
-        assert!(!service.contains_aborted_transmission(transmission_id));
-        assert!(service.get_transmission(transmission_id).is_none());
-        assert!(service.as_hashmap().is_empty());
-    }
-
-    #[test]
-    fn an_inserted_transmission_is_retrievable() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-        let transmission = sample_transmission(b"payload");
-        let certificate_id = Field::rand(rng);
-
-        service.insert_transmissions(
-            certificate_id,
-            indexset![transmission_id],
-            Default::default(),
-            [(transmission_id, transmission.clone())].into(),
-        );
-
-        assert!(service.contains_retrievable_transmission(transmission_id));
-        assert_eq!(service.get_transmission(transmission_id), Some(transmission));
-    }
-
-    #[test]
-    fn a_transmission_survives_until_its_last_certificate_is_removed() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-        let transmission = sample_transmission(b"payload");
-        let (first, second) = (Field::rand(rng), Field::rand(rng));
-
-        // Two certificates referencing one transmission, as happens when the primary processes
-        // batches from several peers that all include the same transaction.
-        service.insert_transmissions(
-            first,
-            indexset![transmission_id],
-            Default::default(),
-            [(transmission_id, transmission.clone())].into(),
-        );
-        service.insert_transmissions(second, indexset![transmission_id], Default::default(), Default::default());
-
-        let (_, certificate_ids) = service.as_hashmap().remove(&transmission_id).unwrap();
-        assert_eq!(certificate_ids.len(), 2);
-
-        // Dropping one reference must not drop the transmission...
-        service.remove_transmissions(&first, &indexset![transmission_id]);
-        assert!(service.contains_retrievable_transmission(transmission_id));
-
-        // ...but dropping the last one must.
-        service.remove_transmissions(&second, &indexset![transmission_id]);
-        assert!(!service.contains_retrievable_transmission(transmission_id));
-        assert!(service.get_transmission(transmission_id).is_none());
-    }
-
-    #[test]
-    fn a_stored_transmission_is_not_overwritten_by_a_later_insert() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-        let original = sample_transmission(b"original");
-        let (first, second) = (Field::rand(rng), Field::rand(rng));
-
-        service.insert_transmissions(
-            first,
-            indexset![transmission_id],
-            Default::default(),
-            [(transmission_id, original.clone())].into(),
-        );
-        // A second certificate arrives carrying a different payload under the same ID. The stored
-        // transmission wins: the occupied branch only records the new certificate ID.
-        service.insert_transmissions(
-            second,
-            indexset![transmission_id],
-            Default::default(),
-            [(transmission_id, sample_transmission(b"replacement"))].into(),
-        );
-
-        assert_eq!(service.get_transmission(transmission_id), Some(original));
-    }
-
-    #[test]
-    fn an_aborted_transmission_id_is_recorded_but_has_no_payload() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-
-        service.insert_transmissions(
-            Field::rand(rng),
-            Default::default(),
-            [transmission_id].into(),
-            Default::default(),
-        );
-
-        // The asymmetry is deliberate: an aborted ID is known to storage, but there is no
-        // transmission to hand back for it.
-        assert!(service.contains_aborted_transmission(transmission_id));
-        assert!(!service.contains_retrievable_transmission(transmission_id));
-        assert!(service.get_transmission(transmission_id).is_none());
-        assert!(service.as_hashmap().is_empty());
-    }
-
-    #[test]
-    fn aborted_transmission_ids_are_reference_counted_too() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-        let (first, second) = (Field::rand(rng), Field::rand(rng));
-
-        for certificate_id in [first, second] {
-            service.insert_transmissions(
-                certificate_id,
-                Default::default(),
-                [transmission_id].into(),
-                Default::default(),
-            );
-        }
-
-        service.remove_transmissions(&first, &indexset![transmission_id]);
-        assert!(service.contains_aborted_transmission(transmission_id));
-
-        service.remove_transmissions(&second, &indexset![transmission_id]);
-        assert!(!service.contains_aborted_transmission(transmission_id));
-    }
-
-    #[test]
-    fn removing_an_unrelated_certificate_leaves_the_transmission_in_place() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-        let transmission_id = sample_transmission_id(rng);
-        let certificate_id = Field::rand(rng);
-
-        service.insert_transmissions(
-            certificate_id,
-            indexset![transmission_id],
-            Default::default(),
-            [(transmission_id, sample_transmission(b"payload"))].into(),
-        );
-
-        // Removing a certificate that never referenced this transmission must not evict it.
-        service.remove_transmissions(&Field::rand(rng), &indexset![transmission_id]);
-
-        assert!(service.contains_retrievable_transmission(transmission_id));
-    }
-
-    #[test]
-    fn removing_from_an_empty_service_is_a_no_op() {
-        let rng = &mut TestRng::default();
-        let service = BFTMemoryService::<CurrentNetwork>::new();
-
-        service.remove_transmissions(&Field::rand(rng), &indexset![sample_transmission_id(rng)]);
-
-        assert!(service.as_hashmap().is_empty());
     }
 
     /// `insert_transmissions` must return when a declared transmission is neither provided nor

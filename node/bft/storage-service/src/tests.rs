@@ -77,6 +77,121 @@ fn record_as_aborted(
     service.insert_transmissions(Field::rand(rng), Default::default(), [transmission_id].into(), Default::default());
 }
 
+/// A service that was handed nothing knows nothing.
+fn check_a_new_service_holds_nothing(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+
+    assert!(!service.contains_retrievable_transmission(transmission_id));
+    assert!(!service.contains_aborted_transmission(transmission_id));
+    assert!(service.get_transmission(transmission_id).is_none());
+    assert!(service.as_hashmap().is_empty());
+}
+
+/// An inserted transmission is the one that comes back out.
+fn check_an_inserted_transmission_is_retrievable(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+    let transmission = sample_transmission(b"payload");
+    let certificate_id = Field::rand(rng);
+
+    service.insert_transmissions(
+        certificate_id,
+        indexset![transmission_id],
+        Default::default(),
+        [(transmission_id, transmission.clone())].into(),
+    );
+
+    assert!(service.contains_retrievable_transmission(transmission_id));
+    assert_eq!(service.get_transmission(transmission_id), Some(transmission));
+}
+
+/// A second certificate carrying a different payload under the same ID does not replace the stored
+/// transmission; it only adds its reference.
+fn check_a_stored_transmission_is_not_overwritten_by_a_later_insert(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+    let original = sample_transmission(b"original");
+    let (first, second) = (Field::rand(rng), Field::rand(rng));
+
+    service.insert_transmissions(
+        first,
+        indexset![transmission_id],
+        Default::default(),
+        [(transmission_id, original.clone())].into(),
+    );
+    // A second certificate arrives carrying a different payload under the same ID. The stored
+    // transmission wins: the occupied branch only records the new certificate ID.
+    service.insert_transmissions(
+        second,
+        indexset![transmission_id],
+        Default::default(),
+        [(transmission_id, sample_transmission(b"replacement"))].into(),
+    );
+
+    assert_eq!(service.get_transmission(transmission_id), Some(original));
+}
+
+/// A transmission is reference counted, and survives until its last certificate is removed.
+fn check_a_transmission_survives_until_its_last_certificate_is_removed(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+    let transmission = sample_transmission(b"payload");
+    let (first, second) = (Field::rand(rng), Field::rand(rng));
+
+    // Two certificates referencing one transmission, as happens when the primary processes
+    // batches from several peers that all include the same transaction.
+    service.insert_transmissions(
+        first,
+        indexset![transmission_id],
+        Default::default(),
+        [(transmission_id, transmission.clone())].into(),
+    );
+    service.insert_transmissions(second, indexset![transmission_id], Default::default(), Default::default());
+
+    let (_, certificate_ids) = service.as_hashmap().remove(&transmission_id).unwrap();
+    assert_eq!(certificate_ids.len(), 2);
+
+    // Dropping one reference must not drop the transmission...
+    service.remove_transmissions(&first, &indexset![transmission_id]);
+    assert!(service.contains_retrievable_transmission(transmission_id));
+
+    // ...but dropping the last one must.
+    service.remove_transmissions(&second, &indexset![transmission_id]);
+    assert!(!service.contains_retrievable_transmission(transmission_id));
+    assert!(service.get_transmission(transmission_id).is_none());
+}
+
+/// Removing a certificate that never referenced a transmission leaves it in place.
+fn check_removing_an_unrelated_certificate_leaves_the_transmission_in_place(
+    service: &impl StorageService<CurrentNetwork>,
+) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+    let certificate_id = Field::rand(rng);
+
+    service.insert_transmissions(
+        certificate_id,
+        indexset![transmission_id],
+        Default::default(),
+        [(transmission_id, sample_transmission(b"payload"))].into(),
+    );
+
+    // Removing a certificate that never referenced this transmission must not evict it.
+    service.remove_transmissions(&Field::rand(rng), &indexset![transmission_id]);
+
+    assert!(service.contains_retrievable_transmission(transmission_id));
+}
+
+/// Removing from a service that holds nothing is a no-op, rather than an error or a phantom entry.
+fn check_removing_from_an_empty_service_is_a_no_op(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+
+    service.remove_transmissions(&Field::rand(rng), &indexset![sample_transmission_id(rng)]);
+
+    assert!(service.as_hashmap().is_empty());
+}
+
 /// The two containment queries answer different questions: a stored transmission is retrievable,
 /// and an ID recorded as aborted is known but has nothing to return.
 fn check_containment_queries_distinguish_stored_from_aborted_ids(service: &impl StorageService<CurrentNetwork>) {
@@ -102,6 +217,39 @@ fn check_containment_queries_distinguish_stored_from_aborted_ids(service: &impl 
     // An unknown ID is neither.
     assert!(!service.contains_retrievable_transmission(unknown_id));
     assert!(!service.contains_aborted_transmission(unknown_id));
+}
+
+/// An aborted ID is recorded on its own, without creating an entry in the transmissions map.
+fn check_an_aborted_transmission_id_is_recorded_but_has_no_payload(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+
+    record_as_aborted(service, transmission_id, rng);
+
+    // The asymmetry is deliberate: an aborted ID is known to storage, but there is no
+    // transmission to hand back for it.
+    assert!(service.contains_aborted_transmission(transmission_id));
+    assert!(!service.contains_retrievable_transmission(transmission_id));
+    assert!(service.get_transmission(transmission_id).is_none());
+    assert!(service.as_hashmap().is_empty());
+}
+
+/// An aborted ID is reference counted the same way a transmission is, and survives until the last
+/// certificate that recorded it is removed.
+fn check_aborted_transmission_ids_are_reference_counted_too(service: &impl StorageService<CurrentNetwork>) {
+    let rng = &mut TestRng::default();
+    let transmission_id = sample_transmission_id(rng);
+    let (first, second) = (Field::rand(rng), Field::rand(rng));
+
+    for certificate_id in [first, second] {
+        service.insert_transmissions(certificate_id, Default::default(), [transmission_id].into(), Default::default());
+    }
+
+    service.remove_transmissions(&first, &indexset![transmission_id]);
+    assert!(service.contains_aborted_transmission(transmission_id));
+
+    service.remove_transmissions(&second, &indexset![transmission_id]);
+    assert!(!service.contains_aborted_transmission(transmission_id));
 }
 
 /// Being recorded as aborted and holding a transmission are not mutually exclusive: one certificate
@@ -264,8 +412,48 @@ macro_rules! storage_service_tests {
             use super::*;
 
             #[test]
+            fn a_new_service_holds_nothing() {
+                check_a_new_service_holds_nothing(&$service);
+            }
+
+            #[test]
+            fn an_inserted_transmission_is_retrievable() {
+                check_an_inserted_transmission_is_retrievable(&$service);
+            }
+
+            #[test]
+            fn a_stored_transmission_is_not_overwritten_by_a_later_insert() {
+                check_a_stored_transmission_is_not_overwritten_by_a_later_insert(&$service);
+            }
+
+            #[test]
+            fn a_transmission_survives_until_its_last_certificate_is_removed() {
+                check_a_transmission_survives_until_its_last_certificate_is_removed(&$service);
+            }
+
+            #[test]
+            fn removing_an_unrelated_certificate_leaves_the_transmission_in_place() {
+                check_removing_an_unrelated_certificate_leaves_the_transmission_in_place(&$service);
+            }
+
+            #[test]
+            fn removing_from_an_empty_service_is_a_no_op() {
+                check_removing_from_an_empty_service_is_a_no_op(&$service);
+            }
+
+            #[test]
             fn containment_queries_distinguish_stored_from_aborted_ids() {
                 check_containment_queries_distinguish_stored_from_aborted_ids(&$service);
+            }
+
+            #[test]
+            fn an_aborted_transmission_id_is_recorded_but_has_no_payload() {
+                check_an_aborted_transmission_id_is_recorded_but_has_no_payload(&$service);
+            }
+
+            #[test]
+            fn aborted_transmission_ids_are_reference_counted_too() {
+                check_aborted_transmission_ids_are_reference_counted_too(&$service);
             }
 
             #[test]
