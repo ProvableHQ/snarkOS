@@ -96,7 +96,6 @@ mod tests {
 
     use crate::{
         Transaction,
-        UNCONFIRMED_TRANSACTION_OVERHEAD,
         UnconfirmedTransaction,
         unconfirmed_transaction::prop_tests::{
             any_large_unconfirmed_transaction,
@@ -121,7 +120,7 @@ mod tests {
         assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::UnconfirmedTransaction(_)))));
     }
 
-    /// Pins `UNCONFIRMED_TRANSACTION_OVERHEAD` against what `Message::write_le` actually emits,
+    /// Pins `UnconfirmedTransaction::OVERHEAD` against what `Message::write_le` actually emits,
     /// rather than trusting the arithmetic in its doc comment: encodes a real transaction inside
     /// an `UnconfirmedTransaction` frame and checks the frame is exactly that much larger than
     /// the transaction's own serialized size, for every size a transaction actually takes.
@@ -137,7 +136,7 @@ mod tests {
         Message::UnconfirmedTransaction(transaction.into()).write_le(&mut frame).unwrap();
         let frame_len = frame.into_inner().len();
 
-        assert_eq!(frame_len, transaction_len + UNCONFIRMED_TRANSACTION_OVERHEAD);
+        assert_eq!(frame_len, transaction_len + UnconfirmedTransaction::<CurrentNetwork>::OVERHEAD);
     }
 
     #[proptest(ProptestConfig { cases : 10, ..ProptestConfig::default() })]

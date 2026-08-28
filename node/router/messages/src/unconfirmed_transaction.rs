@@ -17,7 +17,7 @@ use super::*;
 
 use snarkvm::{
     ledger::narwhal::Data,
-    prelude::{FromBytes, ToBytes},
+    prelude::{Field, FromBytes, ToBytes},
 };
 
 use std::borrow::Cow;
@@ -28,16 +28,30 @@ pub struct UnconfirmedTransaction<N: Network> {
     pub transaction: Data<Transaction<N>>,
 }
 
-/// The bytes an `UnconfirmedTransaction` frame carries in addition to the transaction itself:
-/// the message ID that precedes every message payload (written by `Message::write_le` in
-/// lib.rs, not here), `transaction_id`, and `Data`'s own version byte and length prefix around
-/// `transaction` - the latter two defined by `write_le` below. Changing either encoding without
-/// updating this would silently reintroduce the mismatch `check_size` was fixed to avoid; the
-/// `unconfirmed_transaction_overhead_matches_the_real_encoding` test pins it against the actual
-/// serializer rather than trusting this arithmetic on its own.
-pub const UNCONFIRMED_TRANSACTION_OVERHEAD: usize = 2 // the message ID
-    + 32 // `transaction_id`
-    + 5; // `Data`'s own version byte and length prefix, around `transaction`
+/// The bytes `Data`'s own encoding wraps around the object it carries: a version byte and a `u32`
+/// length prefix, both emitted by `Data::write_le` and expected back by `Data::read_le`.
+///
+/// TODO: this belongs in snarkVM, beside the encoding it describes (`ledger/narwhal/data/src`),
+/// so that changing `Data::write_le` forces this to be changed with it. Restating it here is a
+/// stopgap - replace it with the snarkVM constant once one is exported.
+pub const DATA_ENCODING_OVERHEAD: usize = size_of::<u8>() // the version byte
+    + size_of::<u32>(); // the length prefix
+
+impl<N: Network> UnconfirmedTransaction<N> {
+    /// The bytes an `UnconfirmedTransaction` frame carries in addition to the transaction itself:
+    /// the message ID that precedes every message payload (written by `Message::write_le` in
+    /// lib.rs, not here), `transaction_id`, and the `Data` envelope around `transaction` that
+    /// `write_le` below emits.
+    ///
+    /// Each term names what defines it rather than a literal, so widening any of them is a
+    /// compile-time change here too. Adding or removing a *field* still isn't, which is why
+    /// `unconfirmed_transaction_overhead_matches_the_real_encoding` pins the total against the
+    /// actual serializer rather than trusting this arithmetic on its own - getting it wrong would
+    /// silently reintroduce the mismatch `check_size` was fixed to avoid.
+    pub const OVERHEAD: usize = size_of::<u16>() // the message ID
+        + Field::<N>::SIZE_IN_BYTES // `transaction_id`, an `AleoID` wrapping one field element
+        + DATA_ENCODING_OVERHEAD; // `Data`'s envelope around `transaction`
+}
 
 impl<N: Network> From<Transaction<N>> for UnconfirmedTransaction<N> {
     /// Initializes a new `UnconfirmedTransaction` message.
