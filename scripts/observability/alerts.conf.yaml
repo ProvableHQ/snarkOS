@@ -1,0 +1,28 @@
+---
+groups:
+  - name: snarkos_alerts
+    interval: 60s
+    rules:
+      - alert: SnarkosBlockHeightNotIncreasing
+        expr: |
+          avg by (job,instance,name) (increase(snarkos_bft_height_total[5m])) < 1
+        for: 60s
+        labels:
+          severity: CRITICAL
+        annotations:
+          summary: "Block Height Not Increasing on {{ $labels.instance_name }}"
+          description: |
+            Block Height NOT Increasing.
+
+            Metric `snarkos_bft_height_total` is not increasing over the last 5 minutes.
+
+            If the alert fires, the blockchain has stopped advancing and you
+            should investigate the nodes for time-outs or mis-configurations.
+
+            Please investigate:
+            - Verify blockchain network connectivity
+            - Check application/service status
+            - Review recent changes or deployments
+
+            Details:
+            - Instance: {{ $labels.instance }}
