@@ -182,6 +182,10 @@ enum TelemetryUpdate<N: Network> {
     /// anything about the subdag itself.
     Subdag { gc_round: u64, metadata: Vec<CertificateMetadata<N>> },
     /// Insert the metadata of a single certificate.
+    ///
+    /// Only [`Telemetry::insert_certificate`] produces this, which is itself test-only, so the
+    /// variant is gated the same way rather than sitting unconstructable in a release build.
+    #[cfg(test)]
     Certificate(Box<CertificateMetadata<N>>),
     /// Acknowledge once every previously enqueued update has been applied and published.
     Flush(oneshot::Sender<()>),
@@ -434,6 +438,7 @@ impl<N: Network> TelemetryWorker<N> {
                         self.gc_round = self.gc_round.max(gc_round);
                         recompute = true;
                     }
+                    #[cfg(test)]
                     TelemetryUpdate::Certificate(metadata) => {
                         // Deliberately leaves `recompute` alone. A lone certificate barely moves
                         // the scores, and the next subdag recomputes and republishes them, so the

@@ -676,10 +676,15 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     continue;
                 }
 
-                // Check if the storage already contain the transmission.
-                // Note: We do not skip if this is the first transmission in the proposal, to ensure that
-                // the primary does not propose a batch with no transmissions.
-                if !transmissions.is_empty() && self.storage.contains_transmission(id) {
+                // Check if storage already knows the transmission, either way.
+                //
+                // This is the one place that wants both states: a transmission already in storage is
+                // already in the DAG, and an ID storage knows only as aborted holds no transmission
+                // to hand back, so proposing it would commit the batch to something peers cannot
+                // materialize. Both are skipped unconditionally - proposing an empty batch is valid,
+                // so there is no need to make an exception for the first transmission.
+                if self.storage.contains_retrievable_transmission(id) || self.storage.contains_aborted_transmission(id)
+                {
                     trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
                     continue;
                 }
@@ -2009,8 +2014,15 @@ impl<N: Network> Primary<N> {
         let num_workers = self.num_workers();
         // Iterate through the transmission IDs.
         for transmission_id in batch_header.transmission_ids() {
-            // If the transmission does not exist in storage, proceed to fetch the transmission.
-            if !self.storage.contains_transmission(*transmission_id) {
+            // If the transmission cannot be retrieved from storage, proceed to fetch it.
+            //
+            // Note that an ID storage knows only as aborted is deliberately fetched too: storage
+            // holds no payload for it, so treating the aborted marker as "already have it" would
+            // accept a certificate committing to a transmission this node can never materialize.
+            // A batch is an availability claim by its author, so ask for the bytes rather than
+            // excuse them - the author can serve them, and a certificate carries `2f + 1` such
+            // claims, so an honest peer holds them even if this one does not.
+            if !self.storage.contains_retrievable_transmission(*transmission_id) {
                 // Determine the worker ID.
                 let Ok(worker_id) = assign_to_worker(*transmission_id, num_workers) else {
                     bail!("Unable to assign transmission ID '{transmission_id}' to a worker")
@@ -2456,6 +2468,37 @@ mod tests {
         assert!(primary.proposed_batch.read().is_proposed());
     }
 
+    /// A transmission that storage only knows as aborted holds no bytes for peers to materialize, so
+    /// it must be skipped when proposing - including when it is the first item drained from the
+    /// worker, which used to bypass the storage check entirely.
+    #[test_log::test(tokio::test)]
+    async fn test_propose_batch_skips_an_aborted_first_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Queue a certificate's transmissions on the worker before recording them as aborted.
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        for (transmission_id, transmission) in &transmissions {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        }
+        assert_eq!(primary.workers()[0].num_transmissions(), transmissions.len());
+
+        // Record the queued transmission IDs as aborted in storage.
+        let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
+        primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions.clone()).unwrap();
+        for transmission_id in &aborted_transmissions {
+            assert!(primary.storage.contains_aborted_transmission(*transmission_id));
+            assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
+        }
+
+        // Every aborted ID is skipped, leaving an empty proposal rather than an uncommittable one.
+        assert!(primary.propose_batch().await.unwrap());
+        assert!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().is_empty());
+        assert_eq!(primary.workers()[0].num_transmissions(), 0);
+    }
+
     #[test_log::test(tokio::test)]
     async fn test_propose_batch_with_no_transmissions() {
         let mut rng = TestRng::default();
@@ -2639,6 +2682,137 @@ mod tests {
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_ok()
         );
+        // The primary signed the proposal.
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_some());
+    }
+
+    /// A transmission that storage knows only as aborted still has to be fetched from the peer:
+    /// storage holds no payload for it, so skipping the fetch is what leaves a certificate stored
+    /// with a transmission this node can never materialize.
+    #[test_log::test(tokio::test)]
+    async fn test_fetch_missing_transmissions_fetches_an_aborted_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // A proposal from a peer, whose transmissions the worker holds - as the peer's would.
+        let round = 1;
+        let proposal = create_test_proposal(
+            &accounts[1].1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            Default::default(),
+            now() + MIN_BATCH_DELAY.as_secs() as i64,
+            1,
+            &mut rng,
+        );
+        for (transmission_id, transmission) in proposal.transmissions() {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        }
+
+        // Record one of the referenced IDs as aborted, as an earlier certificate would have.
+        let aborted_transmission_id = *proposal.transmissions().keys().next().unwrap();
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[2].1.address(), &accounts, round, Default::default(), &mut rng);
+        primary
+            .storage
+            .insert_certificate(certificate, transmissions, [aborted_transmission_id].into_iter().collect())
+            .unwrap();
+        assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(aborted_transmission_id));
+
+        // The aborted ID is fetched like any other, rather than excused by its marker.
+        let fetched = primary.fetch_missing_transmissions(peer_ip, proposal.batch_header()).await.unwrap();
+        assert_eq!(
+            fetched.get(&aborted_transmission_id),
+            proposal.transmissions().get(&aborted_transmission_id),
+            "the aborted transmission ID was skipped, so its payload will never reach storage"
+        );
+    }
+
+    /// The worker must accept a transmission whose ID storage knows only as aborted: the aborted
+    /// marker holds no payload, so discarding the bytes throws away what a fetch just produced and
+    /// leaves this node unable to serve them to anyone else.
+    #[test_log::test(tokio::test)]
+    async fn test_worker_retains_a_transmission_for_an_aborted_id() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Record a certificate's transmission IDs as aborted, keeping the transmissions in hand.
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
+        primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions).unwrap();
+
+        let (transmission_id, transmission) = transmissions.iter().next().unwrap();
+        assert!(primary.storage.contains_aborted_transmission(*transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
+
+        // The worker takes the bytes rather than treating the aborted marker as already holding them.
+        primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        assert_eq!(
+            primary.workers()[0].get_transmission(*transmission_id),
+            Some(transmission.clone()),
+            "the worker discarded the payload, so it cannot be served or reused"
+        );
+    }
+
+    /// A proposal referencing a transmission that storage knows only as aborted is signed like any
+    /// other, once the bytes have been obtained from its author.
+    ///
+    /// The aborted marker is not a reason to withhold a signature: it only means this node holds no
+    /// payload, and the author of a batch is claiming it can serve one. Refusing here would be a
+    /// unilateral judgment made from local sync state, which an honest peer that has not yet seen
+    /// the aborting block would trip. A proposal whose author cannot serve the bytes fails earlier,
+    /// at the fetch, like any other proposal with a missing transmission.
+    #[test_log::test(tokio::test)]
+    async fn test_batch_propose_from_peer_with_an_aborted_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Create a valid proposal with an author that isn't the primary.
+        let round = 1;
+        let peer_account = &accounts[1];
+        let peer_ip = peer_account.0;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
+        let proposal = create_test_proposal(
+            &peer_account.1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            Default::default(),
+            timestamp,
+            1,
+            &mut rng,
+        );
+
+        // Make sure the primary is aware of the transmissions in the proposal.
+        for (transmission_id, transmission) in proposal.transmissions() {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+        }
+
+        // The author must be known to resolver to pass propose checks.
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
+
+        // The primary will only consider itself synced if we received
+        // block locators from a peer.
+        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
+        primary.sync.testing_only_set_sync_height_testing_only(20);
+
+        // Record one of the proposed transmission IDs as aborted, as an earlier certificate would have.
+        let aborted_transmission_id = *proposal.transmissions().keys().next().unwrap();
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[2].1.address(), &accounts, round, Default::default(), &mut rng);
+        primary
+            .storage
+            .insert_certificate(certificate, transmissions, [aborted_transmission_id].into_iter().collect())
+            .unwrap();
+        assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(aborted_transmission_id));
+
+        // The payload is available from the author, so the proposal is signed like any other.
+        primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_some());
     }
 
     /// A proposal for the current round is left in place; once the round advances past it, the same
@@ -3381,7 +3555,7 @@ mod tests {
         assert!(primary.storage.contains_certificate(certificate_id));
         // Ensure that the aborted transmission IDs exist in storage.
         for aborted_transmission_id in aborted_transmissions {
-            assert!(primary.storage.contains_transmission(aborted_transmission_id));
+            assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
             assert!(primary.storage.get_transmission(aborted_transmission_id).is_none());
         }
     }

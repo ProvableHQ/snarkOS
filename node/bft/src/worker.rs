@@ -185,12 +185,17 @@ impl<N: Network> Worker<N> {
     }
 
     /// Returns `true` if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
+    ///
+    /// Note that the storage check is the retrievable one: an ID that BFT storage knows only as
+    /// aborted holds no payload, so the worker still wants the bytes - to retain what a fetch just
+    /// produced, and to serve them to peers. The ledger check is deliberately the wider one, since
+    /// an ID the ledger knows - confirmed, rejected, or aborted - must not re-enter the queue.
     pub fn contains_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> bool {
         let transmission_id = transmission_id.into();
         // Check if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
         self.ready.read().contains(transmission_id)
             || matches!(&*self.proposed_batch.read(), ProposedBatchState::Certifying(p) if p.contains_transmission(transmission_id))
-            || self.storage.contains_transmission(transmission_id)
+            || self.storage.contains_retrievable_transmission(transmission_id)
             || self.ledger.contains_transmission(&transmission_id).unwrap_or(false)
     }
 

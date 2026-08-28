@@ -27,7 +27,7 @@ use snarkvm::{
             },
         },
     },
-    prelude::{Field, Network, Result, bail},
+    prelude::{Field, Network, Result},
 };
 
 use aleo_std::StorageMode;
@@ -82,15 +82,25 @@ impl<N: Network> BFTPersistentStorage<N> {
 }
 
 impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
-    /// Returns `true` if the storage contains the specified `transmission ID`.
-    fn contains_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
-        // Check if the transmission ID exists in storage.
-        match self.transmissions.contains_key_confirmed(&transmission_id) {
-            Ok(true) => return true,
-            Ok(false) => (),
-            Err(error) => error!("Failed to check if transmission ID exists in confirmed storage - {error}"),
+    /// Returns `true` if the storage holds the transmission for the specified `transmission ID`.
+    fn contains_retrievable_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
+        // Check the cache first: it only ever holds transmissions that are also in persistent
+        // storage, so a hit answers this without a storage read. This also keeps the check in
+        // agreement with `get_transmission`, which probes the cache first as well.
+        if self.cache_transmissions.lock().contains(&transmission_id) {
+            return true;
         }
-        // Check if the transmission ID is in aborted storage.
+        match self.transmissions.contains_key_confirmed(&transmission_id) {
+            Ok(result) => result,
+            Err(error) => {
+                error!("Failed to check if transmission ID exists in confirmed storage - {error}");
+                false
+            }
+        }
+    }
+
+    /// Returns `true` if the specified `transmission ID` is recorded as aborted.
+    fn contains_aborted_transmission(&self, transmission_id: TransmissionID<N>) -> bool {
         match self.aborted_transmission_ids.contains_key_confirmed(&transmission_id) {
             Ok(result) => result,
             Err(error) => {
@@ -120,44 +130,12 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
         }
     }
 
-    /// Takes a certificate and its transmissions, and returns the subset of transmissions that
-    /// did not yet exists in the storage.
-    fn find_missing_transmissions(
-        &self,
-        batch_header: &BatchHeader<N>,
-        mut transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
-        aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
-        // Initialize a list for the missing transmissions from storage.
-        let mut missing_transmissions = HashMap::new();
-        // Ensure the declared transmission IDs are all present in storage or the given transmissions map.
-        for transmission_id in batch_header.transmission_ids() {
-            // If the transmission ID does not exist, ensure it was provided by the caller or aborted.
-            if !self.contains_transmission(*transmission_id) {
-                // Retrieve the transmission.
-                match transmissions.remove(transmission_id) {
-                    // Append the transmission if it exists.
-                    Some(transmission) => {
-                        missing_transmissions.insert(*transmission_id, transmission);
-                    }
-                    // If the transmission does not exist, check if it was aborted.
-                    None => {
-                        if !aborted_transmissions.contains(transmission_id) {
-                            bail!("Failed to provide a transmission");
-                        }
-                    }
-                }
-            }
-        }
-        Ok(missing_transmissions)
-    }
-
     /// Inserts the given certificate ID for each of the transmission IDs, using the missing transmissions map, into storage.
     fn insert_transmissions(
         &self,
         certificate_id: Field<N>,
         transmission_ids: IndexSet<TransmissionID<N>>,
-        aborted_transmission_ids: HashSet<TransmissionID<N>>,
+        mut aborted_transmission_ids: HashSet<TransmissionID<N>>,
         mut missing_transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
     ) {
         // Hold the cache lock for the entire update, to serialize the read-modify-write updates
@@ -179,10 +157,19 @@ impl<N: Network> StorageService<N> for BFTPersistentStorage<N> {
                     // The transmission is missing from persistent storage.
                     // Check if it exists in the `missing_transmissions` map provided.
                     let Some(transmission) = missing_transmissions.remove(&transmission_id) else {
-                        if !aborted_transmission_ids.contains(&transmission_id)
-                            && !self.contains_transmission(transmission_id)
-                        {
-                            error!("Failed to provide a missing transmission {transmission_id}");
+                        // This is the branch where persistent storage does not hold the
+                        // transmission, so asking whether it is aborted is the same question as
+                        // asking whether storage knows the ID at all - without repeating the
+                        // lookup that just came back empty.
+                        if !aborted_transmission_ids.contains(&transmission_id) {
+                            // An ID that storage already knows as aborted needs no bytes from
+                            // anyone, but this certificate still has to be counted against the
+                            // aborted entry: `remove_transmissions` decrements it either way.
+                            if self.contains_aborted_transmission(transmission_id) {
+                                aborted_transmission_ids.insert(transmission_id);
+                            } else {
+                                error!("Failed to provide a missing transmission {transmission_id}");
+                            }
                         }
                         continue 'outer;
                     };
@@ -345,6 +332,20 @@ mod tests {
 
     type CurrentNetwork = MainnetV0;
 
+    // Note: these mirror the helpers in the in-memory service's tests; they are candidates for a
+    // shared harness once both services are exercised against the same expectations.
+
+    fn sample_transmission_id(rng: &mut TestRng) -> TransmissionID<CurrentNetwork> {
+        TransmissionID::Transaction(
+            <CurrentNetwork as Network>::TransactionID::from(Field::rand(rng)),
+            <CurrentNetwork as Network>::TransmissionChecksum::from(rng.random::<u128>()),
+        )
+    }
+
+    fn sample_transmission(payload: &[u8]) -> Transmission<CurrentNetwork> {
+        Transmission::Transaction(Data::Buffer(Bytes::from(payload.to_vec())))
+    }
+
     /// Every certificate that references a transmission must contribute its certificate ID to the
     /// transmission's reference set, even when the insertions happen concurrently — as they do when
     /// the primary processes batch certificates from multiple peers that include the same
@@ -432,6 +433,28 @@ mod tests {
         // The transmission must be gone from both the persistent storage and the cache.
         assert!(!storage.as_hashmap().contains_key(&transmission_id));
         assert!(storage.get_transmission(transmission_id).is_none());
-        assert!(!storage.contains_transmission(transmission_id));
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
+        assert!(!storage.contains_aborted_transmission(transmission_id));
+    }
+
+    /// The cache `contains_retrievable_transmission` consults first must not outlive the storage
+    /// entry it stands for, or the query would report a removed transmission as retrievable.
+    #[test]
+    fn test_contains_retrievable_transmission_follows_a_removal_through_the_cache() {
+        let rng = &mut TestRng::default();
+        let storage = BFTPersistentStorage::<CurrentNetwork>::open(StorageMode::new_test(None)).unwrap();
+        let transmission_id = sample_transmission_id(rng);
+        let certificate_id = Field::rand(rng);
+
+        storage.insert_transmissions(
+            certificate_id,
+            indexset![transmission_id],
+            Default::default(),
+            [(transmission_id, sample_transmission(b"payload"))].into(),
+        );
+        assert!(storage.contains_retrievable_transmission(transmission_id));
+
+        storage.remove_transmissions(&certificate_id, &indexset![transmission_id]);
+        assert!(!storage.contains_retrievable_transmission(transmission_id));
     }
 }
