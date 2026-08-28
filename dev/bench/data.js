@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787834970836,
+  "lastUpdate": 1787929824242,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17196,6 +17196,72 @@ window.BENCHMARK_DATA = {
             "value": 1.61,
             "unit": "blocks/s",
             "extra": "total_wait=155s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd8394c719a13eef5eeb48ae9be79a87dcdf4879",
+          "message": "Merge pull request #4418 from ProvableHQ/fix/telemetry-update-certificate-dead-code\n\nfix clippy & cargo audit failing",
+          "timestamp": "2026-08-28T08:51:47-06:00",
+          "tree_id": "006fdb23c10c032fff1aca37c0dc0179fd85e565",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/cd8394c719a13eef5eeb48ae9be79a87dcdf4879"
+        },
+        "date": 1787929822940,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 12.266579530416566,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=39.13071274757385, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 11776.03390712888,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.793458700180054, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 4065.4052449522333,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.19678235054016113, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.33,
+            "unit": "blocks/s",
+            "extra": "total_wait=107s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.756312,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=105, mean_speed=1.384921, max_speed=3.583333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.27,
+            "unit": "blocks/s",
+            "extra": "total_wait=110s, target_height=250, connect_time=13, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 2.13,
+            "unit": "blocks/s",
+            "extra": "total_wait=117s, target_height=250"
           }
         ]
       }
