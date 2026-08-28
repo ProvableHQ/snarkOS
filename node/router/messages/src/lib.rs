@@ -58,7 +58,7 @@ mod unconfirmed_solution;
 pub use unconfirmed_solution::UnconfirmedSolution;
 
 mod unconfirmed_transaction;
-pub use unconfirmed_transaction::UnconfirmedTransaction;
+pub use unconfirmed_transaction::{DATA_ENCODING_OVERHEAD, UnconfirmedTransaction};
 
 pub use snarkos_node_bft_events::DataBlocks;
 
@@ -228,7 +228,13 @@ impl<N: Network> Message<N> {
         let id = u16::from_le_bytes(id_bytes);
 
         // SPECIAL CASE: check the transaction message isn't too large.
-        if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE() {
+        //
+        // `len` is the whole frame, which is `UnconfirmedTransaction::OVERHEAD` bytes larger than
+        // the transaction it carries - so it has to be checked against the transaction cap plus
+        // that envelope, not the cap alone. A transaction of exactly `LATEST_MAX_TRANSACTION_SIZE`
+        // is valid (the ledger service and the REST endpoint both accept one), and the frame
+        // carrying it is necessarily larger than the transaction is.
+        if id == 12 && len > N::LATEST_MAX_TRANSACTION_SIZE().saturating_add(UnconfirmedTransaction::<N>::OVERHEAD) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "transaction is too large"))?;
         }
 

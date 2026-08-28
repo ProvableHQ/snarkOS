@@ -95,8 +95,14 @@ mod tests {
     use super::*;
 
     use crate::{
+        Transaction,
         UnconfirmedTransaction,
-        unconfirmed_transaction::prop_tests::{any_large_unconfirmed_transaction, any_unconfirmed_transaction},
+        unconfirmed_transaction::prop_tests::{
+            any_large_unconfirmed_transaction,
+            any_max_size_unconfirmed_transaction,
+            any_transaction,
+            any_unconfirmed_transaction,
+        },
     };
 
     use proptest::prelude::ProptestConfig;
@@ -109,7 +115,28 @@ mod tests {
         let mut bytes = BytesMut::new();
         let mut codec = MessageCodec::<CurrentNetwork>::default();
         assert!(codec.encode(Message::UnconfirmedTransaction(tx), &mut bytes).is_ok());
-        assert!(codec.decode(&mut bytes).is_ok());
+        // `Ok(None)` ("frame incomplete") would also pass a bare `.is_ok()` check, so this must
+        // pin down that a message was actually decoded, not merely that decoding didn't error.
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::UnconfirmedTransaction(_)))));
+    }
+
+    /// Pins `UnconfirmedTransaction::OVERHEAD` against what `Message::write_le` actually emits,
+    /// rather than trusting the arithmetic in its doc comment: encodes a real transaction inside
+    /// an `UnconfirmedTransaction` frame and checks the frame is exactly that much larger than
+    /// the transaction's own serialized size, for every size a transaction actually takes.
+    #[proptest]
+    fn unconfirmed_transaction_overhead_matches_the_real_encoding(
+        #[strategy(any_transaction())] transaction: Transaction<CurrentNetwork>,
+    ) {
+        let mut transaction_bytes = BytesMut::default().writer();
+        transaction.write_le(&mut transaction_bytes).unwrap();
+        let transaction_len = transaction_bytes.into_inner().len();
+
+        let mut frame = BytesMut::default().writer();
+        Message::UnconfirmedTransaction(transaction.into()).write_le(&mut frame).unwrap();
+        let frame_len = frame.into_inner().len();
+
+        assert_eq!(frame_len, transaction_len + UnconfirmedTransaction::<CurrentNetwork>::OVERHEAD);
     }
 
     #[proptest(ProptestConfig { cases : 10, ..ProptestConfig::default() })]
@@ -120,5 +147,18 @@ mod tests {
         let mut codec = MessageCodec::<CurrentNetwork>::default();
         assert!(codec.encode(Message::UnconfirmedTransaction(tx), &mut bytes).is_ok());
         assert!(matches!(codec.decode(&mut bytes), Err(err) if err.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    /// A transaction of exactly `LATEST_MAX_TRANSACTION_SIZE` is valid - both the ledger service
+    /// and the REST endpoint accept one - so the message carrying it must be accepted too, even
+    /// though the frame is 39 bytes larger than the transaction itself.
+    #[proptest(ProptestConfig { cases : 10, ..ProptestConfig::default() })]
+    fn max_size_unconfirmed_transaction_is_accepted(
+        #[strategy(any_max_size_unconfirmed_transaction())] tx: UnconfirmedTransaction<CurrentNetwork>,
+    ) {
+        let mut bytes = BytesMut::new();
+        let mut codec = MessageCodec::<CurrentNetwork>::default();
+        assert!(codec.encode(Message::UnconfirmedTransaction(tx), &mut bytes).is_ok());
+        assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::UnconfirmedTransaction(_)))));
     }
 }
