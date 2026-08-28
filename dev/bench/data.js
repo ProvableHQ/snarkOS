@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787956332264,
+  "lastUpdate": 1787956478353,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17394,6 +17394,72 @@ window.BENCHMARK_DATA = {
             "value": 1.63,
             "unit": "blocks/s",
             "extra": "total_wait=153s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2a3b2c24ce366698b0fc4c73cd544bb6bd6f223a",
+          "message": "Merge pull request #4419 from ProvableHQ/feat/per-connection-frame-length-cap\n\nfeat(router): cap each connection's frame length at its allowed types' max",
+          "timestamp": "2026-08-28T16:14:19-06:00",
+          "tree_id": "859f537224e48c89888dc3e264e709bb03aa2ca8",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/2a3b2c24ce366698b0fc4c73cd544bb6bd6f223a"
+        },
+        "date": 1787956477354,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 8.655126314362914,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=55.458462715148926, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 9607.888984926454,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=8.326490879058838, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3015.4565094702484,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.26529979705810547, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.62,
+            "unit": "blocks/s",
+            "extra": "total_wait=154s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.070109,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=150, mean_speed=1.159556, max_speed=2.666667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.48,
+            "unit": "blocks/s",
+            "extra": "total_wait=168s, target_height=250, connect_time=9, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.54,
+            "unit": "blocks/s",
+            "extra": "total_wait=162s, target_height=250"
           }
         ]
       }
