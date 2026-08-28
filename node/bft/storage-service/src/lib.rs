@@ -30,5 +30,5 @@ pub mod traits;
 pub use traits::*;
 
 // The expectations shared by every service, which need every service to assert them against.
-#[cfg(all(test, feature = "memory", feature = "persistent"))]
+#[cfg(all(test, any(feature = "memory", feature = "persistent")))]
 mod tests;
