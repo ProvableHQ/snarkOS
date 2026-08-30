@@ -171,64 +171,81 @@ impl<N: Network> Decoder for BootstrapClientCodec<N> {
     type Item = MessageOrEvent<N>;
 
     fn decode(&mut self, source: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // Decode a frame containing bytes belonging to a message.
-        let bytes = match self.codec.decode(source)? {
-            Some(bytes) => bytes,
-            None => return Ok(None),
-        };
-
-        // Reject invalid/truncated messages.
-        if bytes.len() < 2 {
-            warn!("Failed to deserialize a message: too short");
-            return Err(std::io::ErrorKind::InvalidData.into());
-        }
-
-        // Which of the two wire protocols this frame is in is a property of the connection, not of
-        // the frame - see `mode` on the struct for why the leading ID cannot settle it.
-        let Some(mode) = self.mode else {
-            // Only a codec bound to a connected peer decodes, and `Reading::codec` builds those
-            // with the mode set. Reaching this means the peer was gone by the time the reading
-            // protocol was enabled, so the connection is being torn down regardless.
-            debug!("Dropping a frame from a connection with no settled mode");
-            return Err(std::io::ErrorKind::InvalidData.into());
-        };
-
-        // The ID leading the frame. What it names depends on `mode`.
-        let message_id = u16::from_le_bytes(bytes[..2].try_into().unwrap());
-
-        // Discard the messages that aren't of interest to a bootstrapper node, without paying to
-        // deserialize them - a gateway peer sends a steady stream of batch and ping traffic that
-        // this node has no use for.
+        // Keep consuming frames until one is of interest, rather than returning `Ok(None)` the
+        // moment an unwanted one is skipped.
         //
-        // These are the same two ID sets the mode-blind version used, only applied to the mode
-        // each was written for. They are disjoint, which is what let them share one match and hid
-        // the bug: on a gateway connection the `Event`s numbered 2..=5 - `BatchCertified`,
-        // `BlockRequest`, `BlockResponse`, `CertificateRequest` - fell into the set meant for a
-        // router peer's `Message`s and were handed to `Message::read_le`, which rejected them and
-        // dropped the connection.
-        let decoded = match mode {
-            // ChallengeRequest, ChallengeResponse, Disconnect, PeerRequest.
-            ConnectionMode::Router if (2..=5).contains(&message_id) => Message::<N>::check_size(&bytes)
-                .and_then(|()| Message::read_le(&bytes[..]))
-                .map(MessageOrEvent::Message),
-            // ChallengeRequest, ChallengeResponse, Disconnect, ValidatorsRequest. There is no
-            // `Event` equivalent of `Message::check_size` to apply here - events carry no per-type
-            // caps - so a gateway frame is bounded only by the connection's ceiling.
-            ConnectionMode::Gateway if matches!(message_id, 7..=9 | 13) => {
-                Event::read_le(&bytes[..]).map(MessageOrEvent::Event)
-            }
-            _ => {
-                trace!("Ignoring an unhandled {mode:?} message (ID {message_id})");
-                return Ok(None);
-            }
-        };
+        // `Ok(None)` means "no frame yet, read more from the socket": `FramedImpl::poll_next`
+        // clears `is_readable` and falls through to `poll_read_buf`. That is a lie once a frame
+        // has already been consumed, because `source` may hold the next one - two frames arriving
+        // in a single TCP segment is ordinary, and a gateway peer's gossip is exactly the traffic
+        // skipped here. The frame behind it would wait for unrelated bytes to arrive, and if the
+        // peer then went quiet it would wait indefinitely.
+        //
+        // Only the length-delimited codec deciding it has no complete frame is a real `Ok(None)`,
+        // which is why that is the sole `return Ok(None)` below - looping on it instead would spin
+        // forever on a partially-received frame, since those leave `source` non-empty.
+        loop {
+            // Decode a frame containing bytes belonging to a message.
+            let bytes = match self.codec.decode(source)? {
+                Some(bytes) => bytes,
+                None => return Ok(None),
+            };
 
-        match decoded {
-            Ok(decoded) => Ok(Some(decoded)),
-            Err(error) => {
-                warn!("Failed to deserialize a {mode:?} message: {error}");
-                Err(std::io::ErrorKind::InvalidData.into())
+            // Reject invalid/truncated messages.
+            if bytes.len() < 2 {
+                warn!("Failed to deserialize a message: too short");
+                return Err(std::io::ErrorKind::InvalidData.into());
             }
+
+            // Which of the two wire protocols this frame is in is a property of the connection, not of
+            // the frame - see `mode` on the struct for why the leading ID cannot settle it.
+            let Some(mode) = self.mode else {
+                // Only a codec bound to a connected peer decodes, and `Reading::codec` builds those
+                // with the mode set. Reaching this means the peer was gone by the time the reading
+                // protocol was enabled, so the connection is being torn down regardless.
+                debug!("Dropping a frame from a connection with no settled mode");
+                return Err(std::io::ErrorKind::InvalidData.into());
+            };
+
+            // The ID leading the frame. What it names depends on `mode`.
+            let message_id = u16::from_le_bytes(bytes[..2].try_into().unwrap());
+
+            // Discard the messages that aren't of interest to a bootstrapper node, without paying to
+            // deserialize them - a gateway peer sends a steady stream of batch and ping traffic that
+            // this node has no use for.
+            //
+            // These are the same two ID sets the mode-blind version used, only applied to the mode
+            // each was written for. They are disjoint, which is what let them share one match and hid
+            // the bug: on a gateway connection the `Event`s numbered 2..=5 - `BatchCertified`,
+            // `BlockRequest`, `BlockResponse`, `CertificateRequest` - fell into the set meant for a
+            // router peer's `Message`s and were handed to `Message::read_le`, which rejected them and
+            // dropped the connection.
+            let decoded = match mode {
+                // ChallengeRequest, ChallengeResponse, Disconnect, PeerRequest.
+                ConnectionMode::Router if (2..=5).contains(&message_id) => Message::<N>::check_size(&bytes)
+                    .and_then(|()| Message::read_le(&bytes[..]))
+                    .map(MessageOrEvent::Message),
+                // ChallengeRequest, ChallengeResponse, Disconnect, ValidatorsRequest. There is no
+                // `Event` equivalent of `Message::check_size` to apply here - events carry no per-type
+                // caps - so a gateway frame is bounded only by the connection's ceiling.
+                ConnectionMode::Gateway if matches!(message_id, 7..=9 | 13) => {
+                    Event::read_le(&bytes[..]).map(MessageOrEvent::Event)
+                }
+                _ => {
+                    trace!("Ignoring an unhandled {mode:?} message (ID {message_id})");
+                    // This frame is consumed; whatever is behind it in `source` still needs
+                    // decoding, and nothing else will come back for it.
+                    continue;
+                }
+            };
+
+            return match decoded {
+                Ok(decoded) => Ok(Some(decoded)),
+                Err(error) => {
+                    warn!("Failed to deserialize a {mode:?} message: {error}");
+                    Err(std::io::ErrorKind::InvalidData.into())
+                }
+            };
         }
     }
 }
@@ -314,6 +331,73 @@ mod tests {
 
         let mut gateway = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
         assert!(matches!(gateway.decode(&mut encoded), Ok(Some(MessageOrEvent::Event(Event::ValidatorsRequest(_))))));
+    }
+
+    /// The stall this fixes. `Ok(None)` tells `FramedImpl::poll_next` to clear `is_readable` and
+    /// go read the socket, so a frame already sitting behind a skipped one waits for unrelated
+    /// bytes to arrive. Two frames in one TCP segment is ordinary, and on a gateway connection the
+    /// leading one is very often skipped gossip.
+    #[test]
+    fn a_frame_behind_a_skipped_one_is_decoded_without_waiting_for_more_bytes() {
+        let mut encoder = BootstrapClientCodec::<CurrentNetwork>::default();
+        let wanted = encode(&mut encoder, MessageOrEvent::Event(Event::ValidatorsRequest(events::ValidatorsRequest)));
+
+        // `BatchPropose` (ID 0) is skipped on a gateway connection; `ValidatorsRequest` is acted
+        // on. Pipeline them into one buffer, as a single read from the socket would deliver them.
+        let mut source = frame_with_id(0);
+        source.extend_from_slice(&wanted);
+
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+        assert!(
+            matches!(codec.decode(&mut source), Ok(Some(MessageOrEvent::Event(Event::ValidatorsRequest(_))))),
+            "the frame behind the skipped one was not decoded"
+        );
+        assert!(source.is_empty(), "both frames should have been consumed");
+    }
+
+    /// Several skipped frames in a row must not each cost a socket read either.
+    #[test]
+    fn a_run_of_skipped_frames_is_drained_in_one_call() {
+        let mut encoder = BootstrapClientCodec::<CurrentNetwork>::default();
+        let wanted = encode(&mut encoder, MessageOrEvent::Event(Event::ValidatorsRequest(events::ValidatorsRequest)));
+
+        let mut source = BytesMut::new();
+        // BatchPropose, BatchCertified, PrimaryPing, WorkerPing - the gossip a validator really
+        // does send a bootstrap client.
+        for id in [0, 2, 10, 15] {
+            source.extend_from_slice(&frame_with_id(id));
+        }
+        source.extend_from_slice(&wanted);
+
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+        assert!(matches!(codec.decode(&mut source), Ok(Some(MessageOrEvent::Event(Event::ValidatorsRequest(_))))));
+    }
+
+    /// The loop must terminate on a partially-received frame rather than spin: a partial frame
+    /// leaves `source` non-empty, so "keep going while bytes remain" would not do.
+    #[test]
+    fn a_partial_frame_after_a_skipped_one_terminates() {
+        let mut source = frame_with_id(0);
+        // A length prefix promising far more than follows.
+        source.extend_from_slice(&1024u32.to_le_bytes());
+        source.extend_from_slice(&[0xAB; 8]);
+
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+        assert!(matches!(codec.decode(&mut source), Ok(None)));
+    }
+
+    /// A buffer holding only skipped frames drains to `Ok(None)`, which is then honest: there is
+    /// genuinely nothing left to decode.
+    #[test]
+    fn a_buffer_of_only_skipped_frames_drains_to_none() {
+        let mut source = BytesMut::new();
+        for id in [0, 2, 10] {
+            source.extend_from_slice(&frame_with_id(id));
+        }
+
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+        assert!(matches!(codec.decode(&mut source), Ok(None)));
+        assert!(source.is_empty());
     }
 
     /// A codec that was never bound to a connected peer cannot know which protocol a frame is in,
