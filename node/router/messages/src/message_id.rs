@@ -100,6 +100,16 @@ impl MessageId {
         self as u16
     }
 
+    /// The largest frame any of `ids` may legitimately be: the frame-length ceiling for a
+    /// connection that expects exactly those message types, and nothing else.
+    ///
+    /// An empty `ids` falls back to [`MAX_SMALL_MESSAGE_SIZE`] rather than to zero, so a
+    /// connection that ends up allowing nothing still admits a frame large enough to carry the
+    /// disconnect that tells the peer so.
+    pub fn max_size_over<N: Network>(ids: impl IntoIterator<Item = Self>) -> usize {
+        ids.into_iter().map(|id| id.max_size::<N>()).max().unwrap_or(MAX_SMALL_MESSAGE_SIZE)
+    }
+
     /// Reads the ID leading `bytes` - the first two bytes of a message frame - or `None` if
     /// `bytes` is too short to hold one, or the ID isn't one this node recognizes.
     pub fn peek(bytes: &[u8]) -> Option<Self> {

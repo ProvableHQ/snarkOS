@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{MAX_SMALL_MESSAGE_SIZE, Message, MessageId};
+use crate::{Message, MessageId};
 use snarkvm::prelude::{FromBytes, Network, ToBytes};
 
 use ::bytes::{Buf, BufMut, BytesMut};
@@ -43,8 +43,7 @@ impl<N: Network> MessageCodec<N> {
     /// Builds a codec whose frame-length ceiling is the maximum over the sizes of the message
     /// types in `allowed_ids`.
     fn for_allowed_ids(allowed_ids: impl IntoIterator<Item = MessageId>) -> Self {
-        let max_frame_length =
-            allowed_ids.into_iter().map(|id| id.max_size::<N>()).max().unwrap_or(MAX_SMALL_MESSAGE_SIZE);
+        let max_frame_length = MessageId::max_size_over::<N>(allowed_ids);
         Self {
             codec: LengthDelimitedCodec::builder().max_frame_length(max_frame_length).little_endian().new_codec(),
             excluded_ids: &[],
