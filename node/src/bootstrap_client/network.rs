@@ -117,8 +117,20 @@ impl<N: Network> Reading for BootstrapClient<N> {
 
     /// Creates a [`Decoder`] used to interpret messages from the network.
     /// The `side` param indicates the connection side **from the node's perspective**.
-    fn codec(&self, _peer_addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        Default::default()
+    ///
+    /// The decoder has to be told which wire protocol the peer speaks: `Message` and `Event`
+    /// number their variants independently, so a frame's leading ID cannot distinguish them and
+    /// only the connection's mode can. `Tcp` enables the handshake protocol before the reading
+    /// one, so the peer is already recorded with its mode by the time this runs; a miss means it
+    /// disconnected in between, and the codec then refuses to decode rather than guess.
+    fn codec(&self, peer_addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
+        match self.resolve_to_listener(peer_addr).and_then(|listener_addr| self.get_connected_peer(listener_addr)) {
+            Some(peer) => BootstrapClientCodec::for_mode(peer.connection_mode),
+            None => {
+                debug!("No connected peer for '{peer_addr}'; its connection mode is unknown");
+                Default::default()
+            }
+        }
     }
 
     /// Processes a message received from the network.

@@ -16,6 +16,7 @@
 use crate::{
     bft::events::Event,
     bootstrap_client::network::MessageOrEvent,
+    network::ConnectionMode,
     router::messages::{Message, MessageId},
 };
 use snarkvm::prelude::{FromBytes, Network, ToBytes};
@@ -77,6 +78,16 @@ const MIN_EVENT_FRAME_SIZE: usize = 2 * 1024 * 1024; // 2 MiB
 /// The codec used to decode and encode network messages.
 pub struct BootstrapClientCodec<N: Network> {
     codec: LengthDelimitedCodec,
+    /// Which of the two wire protocols the peer on this connection speaks, or `None` on a codec
+    /// that is not bound to a connected peer (the handshake codec, and the encode-only codec
+    /// `Writing` builds).
+    ///
+    /// A frame's leading `u16` does **not** determine this. `Message` and `Event` number their
+    /// variants independently from zero, so the two ID spaces overlap completely and the same
+    /// value means different things on the two connection modes - ID 2 is a `ChallengeRequest`
+    /// to a router peer and a `BatchCertified` to a gateway peer. Only the connection knows
+    /// which, so `decode` is told rather than left to guess.
+    mode: Option<ConnectionMode>,
     _phantom: PhantomData<N>,
 }
 
@@ -85,6 +96,16 @@ impl<N: Network> BootstrapClientCodec<N> {
         let mut codec = Self::default();
         codec.codec.set_max_frame_length(MAX_HANDSHAKE_SIZE);
         codec
+    }
+
+    /// A codec for reading from a peer that has completed the handshake, and whose connection mode
+    /// is therefore settled.
+    ///
+    /// `Tcp` enables the handshake protocol before the reading protocol (see `enable_protocol!` in
+    /// `node/tcp/src/tcp.rs`), so by the time `Reading::codec` builds one of these the peer is
+    /// already recorded with its mode.
+    pub fn for_mode(mode: ConnectionMode) -> Self {
+        Self { mode: Some(mode), ..Self::default() }
     }
 }
 
@@ -95,6 +116,7 @@ impl<N: Network> Default for BootstrapClientCodec<N> {
                 .max_frame_length(max_post_handshake_size::<N>())
                 .little_endian()
                 .new_codec(),
+            mode: None,
             _phantom: Default::default(),
         }
     }
@@ -161,28 +183,51 @@ impl<N: Network> Decoder for BootstrapClientCodec<N> {
             return Err(std::io::ErrorKind::InvalidData.into());
         }
 
-        // Check the ID of the serialized Message or Event.
+        // Which of the two wire protocols this frame is in is a property of the connection, not of
+        // the frame - see `mode` on the struct for why the leading ID cannot settle it.
+        let Some(mode) = self.mode else {
+            // Only a codec bound to a connected peer decodes, and `Reading::codec` builds those
+            // with the mode set. Reaching this means the peer was gone by the time the reading
+            // protocol was enabled, so the connection is being torn down regardless.
+            debug!("Dropping a frame from a connection with no settled mode");
+            return Err(std::io::ErrorKind::InvalidData.into());
+        };
+
+        // The ID leading the frame. What it names depends on `mode`.
         let message_id = u16::from_le_bytes(bytes[..2].try_into().unwrap());
 
-        // Discard messages that aren't of interest to a bootstrapper node.
-        match message_id {
-            2..=5 => match Message::<N>::check_size(&bytes).and_then(|()| Message::read_le(&bytes[..])) {
-                Ok(message) => Ok(Some(MessageOrEvent::Message(message))),
-                Err(error) => {
-                    warn!("Failed to deserialize a message: {error}");
-                    Err(std::io::ErrorKind::InvalidData.into())
-                }
-            },
-            7..=9 | 13 => match Event::read_le(&bytes[..]) {
-                Ok(event) => Ok(Some(MessageOrEvent::Event(event))),
-                Err(error) => {
-                    warn!("Failed to deserialize a message: {error}");
-                    Err(std::io::ErrorKind::InvalidData.into())
-                }
-            },
-            id => {
-                trace!("Ignoring an unhandled message (ID {id})");
-                Ok(None)
+        // Discard the messages that aren't of interest to a bootstrapper node, without paying to
+        // deserialize them - a gateway peer sends a steady stream of batch and ping traffic that
+        // this node has no use for.
+        //
+        // These are the same two ID sets the mode-blind version used, only applied to the mode
+        // each was written for. They are disjoint, which is what let them share one match and hid
+        // the bug: on a gateway connection the `Event`s numbered 2..=5 - `BatchCertified`,
+        // `BlockRequest`, `BlockResponse`, `CertificateRequest` - fell into the set meant for a
+        // router peer's `Message`s and were handed to `Message::read_le`, which rejected them and
+        // dropped the connection.
+        let decoded = match mode {
+            // ChallengeRequest, ChallengeResponse, Disconnect, PeerRequest.
+            ConnectionMode::Router if (2..=5).contains(&message_id) => Message::<N>::check_size(&bytes)
+                .and_then(|()| Message::read_le(&bytes[..]))
+                .map(MessageOrEvent::Message),
+            // ChallengeRequest, ChallengeResponse, Disconnect, ValidatorsRequest. There is no
+            // `Event` equivalent of `Message::check_size` to apply here - events carry no per-type
+            // caps - so a gateway frame is bounded only by the connection's ceiling.
+            ConnectionMode::Gateway if matches!(message_id, 7..=9 | 13) => {
+                Event::read_le(&bytes[..]).map(MessageOrEvent::Event)
+            }
+            _ => {
+                trace!("Ignoring an unhandled {mode:?} message (ID {message_id})");
+                return Ok(None);
+            }
+        };
+
+        match decoded {
+            Ok(decoded) => Ok(Some(decoded)),
+            Err(error) => {
+                warn!("Failed to deserialize a {mode:?} message: {error}");
+                Err(std::io::ErrorKind::InvalidData.into())
             }
         }
     }
@@ -191,15 +236,93 @@ impl<N: Network> Decoder for BootstrapClientCodec<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{bft::events, router::messages};
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
-    /// Wraps a payload in the length prefix `LengthDelimitedCodec` expects.
+    /// Wraps a payload in the length prefix `LengthDelimitedCodec` expects, so a frame can be
+    /// built from a bare wire ID. The ignore path returns before deserializing, so for the tests
+    /// that exercise it the ID is the whole of the input that matters.
     fn frame(payload: &[u8]) -> BytesMut {
         let mut buffer = BytesMut::new();
         buffer.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         buffer.extend_from_slice(payload);
         buffer
+    }
+
+    fn frame_with_id(id: u16) -> BytesMut {
+        frame(&id.to_le_bytes())
+    }
+
+    fn encode(codec: &mut BootstrapClientCodec<CurrentNetwork>, item: MessageOrEvent<CurrentNetwork>) -> BytesMut {
+        let mut buffer = BytesMut::new();
+        codec.encode(item, &mut buffer).unwrap();
+        buffer
+    }
+
+    /// The bug this fixes. `Message` and `Event` number their variants independently from zero, so
+    /// wire ID 2 is a `Message::ChallengeRequest` to a router peer and an `Event::BatchCertified`
+    /// to a gateway one. The mode-blind decoder sent every ID in 2..=5 to `Message::read_le`,
+    /// which rejected the gateway events numbered the same and errored the frame - dropping the
+    /// connection over a message this node merely has no use for. `Gateway::broadcast` has no
+    /// bootstrap-client filter, so validators really do send `BatchCertified`.
+    #[test]
+    fn a_gateway_event_numbered_in_the_router_range_is_ignored_not_rejected() {
+        for id in 2..=5 {
+            let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+            assert!(matches!(codec.decode(&mut frame_with_id(id)), Ok(None)), "gateway event ID {id} was not ignored");
+        }
+    }
+
+    /// The mirror of the above, which was equally wrong and is latent only because nothing
+    /// currently sends a bootstrap client a `Ping`, `Pong` or `PuzzleRequest`: those are
+    /// `Message` IDs 7..=9, which the mode-blind decoder handed to `Event::read_le`.
+    #[test]
+    fn a_router_message_numbered_in_the_gateway_range_is_ignored_not_rejected() {
+        for id in [7, 8, 9, 13] {
+            let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Router);
+            assert!(matches!(codec.decode(&mut frame_with_id(id)), Ok(None)), "router message ID {id} was not ignored");
+        }
+    }
+
+    /// The same wire ID decodes as two different things depending only on the connection, which is
+    /// the property the mode-blind version could not express.
+    #[test]
+    fn the_same_wire_id_decodes_per_mode() {
+        // ID 5 is `Message::PeerRequest` on a router connection - the one message a bootstrap
+        // client acts on there - and `Event::CertificateRequest` on a gateway one.
+        let mut encoder = BootstrapClientCodec::<CurrentNetwork>::default();
+        let mut encoded = encode(&mut encoder, MessageOrEvent::Message(Message::PeerRequest(messages::PeerRequest)));
+
+        let mut router = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Router);
+        assert!(matches!(
+            router.decode(&mut encoded.clone()),
+            Ok(Some(MessageOrEvent::Message(Message::PeerRequest(_))))
+        ));
+
+        let mut gateway = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+        assert!(matches!(gateway.decode(&mut encoded), Ok(None)), "ID 5 must not be read as a Message on a gateway");
+    }
+
+    /// The gateway counterpart: `ValidatorsRequest` is the one event a bootstrap client acts on,
+    /// and it must survive the round trip on a gateway connection.
+    #[test]
+    fn a_gateway_validators_request_decodes() {
+        let mut encoder = BootstrapClientCodec::<CurrentNetwork>::default();
+        let mut encoded =
+            encode(&mut encoder, MessageOrEvent::Event(Event::ValidatorsRequest(events::ValidatorsRequest)));
+
+        let mut gateway = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Gateway);
+        assert!(matches!(gateway.decode(&mut encoded), Ok(Some(MessageOrEvent::Event(Event::ValidatorsRequest(_))))));
+    }
+
+    /// A codec that was never bound to a connected peer cannot know which protocol a frame is in,
+    /// so it refuses rather than guessing. In practice this only arises if the peer disconnected
+    /// between the handshake and the reading protocol being enabled.
+    #[test]
+    fn a_codec_with_no_mode_refuses_to_decode() {
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::default();
+        assert!(codec.decode(&mut frame_with_id(5)).is_err());
     }
 
     /// The ceiling is exactly `UnconfirmedTransaction`'s cap - the largest type a bootstrap client
@@ -244,7 +367,18 @@ mod tests {
             payload
         });
 
-        let mut codec = BootstrapClientCodec::<CurrentNetwork>::default();
+        // Bound to a router connection specifically: a modeless codec would refuse the frame for
+        // an unrelated reason, and this must fail on the type's own cap.
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Router);
         assert!(codec.decode(&mut source).is_err(), "a frame far over its type's cap was accepted");
+
+        // The same frame within the cap is accepted, so the rejection above is the cap and not
+        // the frame merely being malformed.
+        let mut within = frame(&MessageId::Disconnect.as_u16().to_le_bytes());
+        let mut codec = BootstrapClientCodec::<CurrentNetwork>::for_mode(ConnectionMode::Router);
+        assert!(
+            !matches!(codec.decode(&mut within), Err(ref e) if e.to_string().contains("too large")),
+            "a frame within its type's cap was rejected by the cap"
+        );
     }
 }
