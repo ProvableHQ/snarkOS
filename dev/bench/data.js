@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787956478353,
+  "lastUpdate": 1788301129680,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17460,6 +17460,72 @@ window.BENCHMARK_DATA = {
             "value": 1.54,
             "unit": "blocks/s",
             "extra": "total_wait=162s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3edcdb23cd02ee2d4a5d0af4e550679877693349",
+          "message": "Merge pull request #4425 from ProvableHQ/feat/optional-ping-block-locators\n\nfix(router): make Ping block locators optional for clients and validators",
+          "timestamp": "2026-09-01T15:59:19-06:00",
+          "tree_id": "b9196d56827c6de25cc2f155e118dda3520c641a",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/3edcdb23cd02ee2d4a5d0af4e550679877693349"
+        },
+        "date": 1788301128125,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.08914326460465,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=52.81025791168213, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7189.883945959099,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.126744270324707, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3180.4998080577816,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.25153279304504395, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.82,
+            "unit": "blocks/s",
+            "extra": "total_wait=137s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.280594,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=133, mean_speed=1.219799, max_speed=2.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.7,
+            "unit": "blocks/s",
+            "extra": "total_wait=147s, target_height=250, connect_time=13, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250"
           }
         ]
       }
