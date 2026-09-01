@@ -2038,6 +2038,8 @@ impl<N: Network> Primary<N> {
     }
 
     /// Fetches any missing previous certificates for the specified batch header from the specified peer.
+    // `BatchCertificate` contains a `OnceLock` cache which does not affect its `Hash` or `Eq`.
+    #[allow(clippy::mutable_key_type)]
     async fn fetch_missing_previous_certificates(
         &self,
         peer_ip: SocketAddr,
@@ -2064,6 +2066,8 @@ impl<N: Network> Primary<N> {
     }
 
     /// Fetches any missing certificates for the specified batch header from the specified peer.
+    // `BatchCertificate` contains a `OnceLock` cache which does not affect its `Hash` or `Eq`.
+    #[allow(clippy::mutable_key_type)]
     async fn fetch_missing_certificates(
         &self,
         peer_ip: SocketAddr,
