@@ -48,6 +48,8 @@ pub struct Cache<N: Network> {
     seen_inbound_block_requests: RwLock<HashMap<SocketAddr, VecDeque<OffsetDateTime>>>,
     /// The map of peer IPs to their recent unconfirmed solution timestamps.
     seen_inbound_unconfirmed_solutions: RwLock<HashMap<SocketAddr, VecDeque<OffsetDateTime>>>,
+    /// The map of peer IPs to their recent ping timestamps.
+    seen_inbound_pings: RwLock<HashMap<SocketAddr, VecDeque<OffsetDateTime>>>,
     /// The map of solution IDs to their last seen timestamp.
     seen_inbound_solutions: RwLock<LinkedHashMap<SolutionKey<N>, OffsetDateTime>>,
     /// The map of transaction IDs to their last seen timestamp.
@@ -73,6 +75,7 @@ impl<N: Network> Default for Cache<N> {
 
 impl<N: Network> Cache<N> {
     const INBOUND_BLOCK_REQUEST_INTERVAL: i64 = 60;
+    const INBOUND_PING_INTERVAL: i64 = 60;
     const INBOUND_PUZZLE_REQUEST_INTERVAL: i64 = 60;
     const INBOUND_UNCONFIRMED_SOLUTION_INTERVAL: i64 = 60;
 
@@ -84,6 +87,7 @@ impl<N: Network> Cache<N> {
             seen_inbound_puzzle_requests: Default::default(),
             seen_inbound_block_requests: Default::default(),
             seen_inbound_unconfirmed_solutions: Default::default(),
+            seen_inbound_pings: Default::default(),
             seen_inbound_solutions: RwLock::new(LinkedHashMap::with_capacity(MAX_CACHE_SIZE)),
             seen_inbound_transactions: RwLock::new(LinkedHashMap::with_capacity(MAX_CACHE_SIZE)),
             seen_outbound_block_requests: Default::default(),
@@ -123,6 +127,11 @@ impl<N: Network> Cache<N> {
             peer_ip,
             Self::INBOUND_UNCONFIRMED_SOLUTION_INTERVAL,
         )
+    }
+
+    /// Inserts a new timestamp for the given peer IP, returning the number of recent pings.
+    pub fn insert_inbound_ping(&self, peer_ip: SocketAddr) -> usize {
+        Self::retain_and_insert(&self.seen_inbound_pings, peer_ip, Self::INBOUND_PING_INTERVAL)
     }
 
     /// Inserts a solution ID into the cache, returning the previously seen timestamp if it existed.
@@ -239,6 +248,7 @@ impl<N: Network> Cache<N> {
             &self.seen_inbound_unconfirmed_solutions,
             Self::INBOUND_UNCONFIRMED_SOLUTION_INTERVAL,
         );
+        Self::clear_expired_entries(&self.seen_inbound_pings, Self::INBOUND_PING_INTERVAL);
     }
 }
 
@@ -385,6 +395,19 @@ mod tests {
 
         assert_eq!(cache.insert_inbound_unconfirmed_solution(peer_ip), 1);
         assert_eq!(cache.insert_inbound_unconfirmed_solution(peer_ip), 2);
+    }
+
+    #[test]
+    fn test_inbound_ping() {
+        let cache = Cache::<CurrentNetwork>::default();
+        let peer_ip = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1234);
+
+        assert_eq!(cache.insert_inbound_ping(peer_ip), 1);
+        assert_eq!(cache.insert_inbound_ping(peer_ip), 2);
+
+        // A different peer has its own count.
+        let other_peer_ip = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1235);
+        assert_eq!(cache.insert_inbound_ping(other_peer_ip), 1);
     }
 
     #[test]
@@ -586,6 +609,8 @@ mod tests {
             map.insert(peer_ip, VecDeque::from([old]));
             let mut map = cache.seen_inbound_unconfirmed_solutions.write();
             map.insert(peer_ip, VecDeque::from([old]));
+            let mut map = cache.seen_inbound_pings.write();
+            map.insert(peer_ip, VecDeque::from([old]));
             let mut map = cache.seen_inbound_connections.write();
             map.insert(peer_ip.ip(), VecDeque::from([old]));
         }
@@ -594,9 +619,10 @@ mod tests {
         assert_eq!(cache.seen_inbound_block_requests.read().len(), 1);
         assert_eq!(cache.seen_inbound_puzzle_requests.read().len(), 1);
         assert_eq!(cache.seen_inbound_unconfirmed_solutions.read().len(), 1);
+        assert_eq!(cache.seen_inbound_pings.read().len(), 1);
         assert_eq!(cache.seen_inbound_connections.read().len(), 1);
 
-        // 120s is older than every window of (10, 5) and the internal Self::INBOUND_*_INTERVAL constants (60). So all 5 must reap.
+        // 120s is older than every window of (10, 5) and the internal Self::INBOUND_*_INTERVAL constants (60). So all 6 must reap.
         cache.clear_stale_entries(10, 5);
 
         // assert that all maps are empty
@@ -604,6 +630,7 @@ mod tests {
         assert!(cache.seen_inbound_block_requests.read().is_empty());
         assert!(cache.seen_inbound_puzzle_requests.read().is_empty());
         assert!(cache.seen_inbound_unconfirmed_solutions.read().is_empty());
+        assert!(cache.seen_inbound_pings.read().is_empty());
         assert!(cache.seen_inbound_connections.read().is_empty());
     }
 }

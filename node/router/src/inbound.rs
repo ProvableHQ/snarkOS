@@ -52,8 +52,22 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     const MAXIMUM_BLOCK_REQUESTS_PER_INTERVAL: usize = 256;
     /// The maximum number of unconfirmed solutions per interval (~3800 per hour at 60s interval).
     const MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL: usize = 64;
-    /// The duration in seconds to sleep in between ping requests with a connected peer.
-    const PING_SLEEP_IN_SECS: u64 = 20; // 20 seconds
+    /// The maximum number of pings per interval (60 seconds).
+    ///
+    /// This is sized for the transition, not for hardening. A peer running
+    /// `snarkos_node_sync::Ping` sends at most one ping per second per peer, i.e. 60 per interval,
+    /// but a peer predating that floor re-pings on every batch of newly synced blocks - paced only
+    /// by the round trip to us - so one catching up over a low-latency link can legitimately burst
+    /// far above the steady-state rate of three per minute. Dropping such a peer mid-sync is worse
+    /// than the looser bound, the more so because its entry outlives the disconnect: the window is
+    /// keyed by listener address and deliberately not cleared by `Cache::clear_peer_entries`, so a
+    /// peer dropped for this re-trips on its first message back - a reconnecting peer's first
+    /// router message is a `Ping` - and stays unusable for the rest of the interval. Clearing the
+    /// window on disconnect is not the fix: it would let a peer reset its budget by reconnecting,
+    /// which is why none of the sibling counters are cleared there either.
+    ///
+    /// Once the floor is ubiquitous this can drop to ~120, which is where it bounds anything.
+    const MAXIMUM_PINGS_PER_INTERVAL: usize = 1200;
     /// The maximum number of messages accepted within `MESSAGE_LIMIT_TIME_FRAME_IN_SECS`.
     const MESSAGE_LIMIT: usize = 500;
 
@@ -189,6 +203,13 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                 // Ensure the message protocol version is not outdated.
                 if !self.is_valid_message_version(message.version) {
                     bail!("Dropping '{peer_ip}' on message version {} (outdated)", message.version);
+                }
+
+                // Insert the ping for the peer, and fetch the recent frequency.
+                let frequency = self.router().cache.insert_inbound_ping(peer_ip);
+                // Check if the number of pings is within the limit.
+                if frequency > Self::MAXIMUM_PINGS_PER_INTERVAL {
+                    bail!("Peer '{peer_ip}' is not following the protocol (excessive pings)")
                 }
 
                 // If the peer is a client or validator, ensure there are block locators.
