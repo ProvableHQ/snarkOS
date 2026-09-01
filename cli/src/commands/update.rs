@@ -45,9 +45,9 @@ impl Update {
                 if !self.quiet {
                     match result {
                         Ok(status) => {
-                            if status.uptodate() {
+                            if status.is_up_to_date() {
                                 Ok("\nsnarkOS is already on the latest version".to_string())
-                            } else if status.updated() {
+                            } else if status.is_updated() {
                                 Ok(format!("\nsnarkOS has updated to version {}", status.version()))
                             } else {
                                 Ok(String::new())

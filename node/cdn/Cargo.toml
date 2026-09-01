@@ -19,7 +19,7 @@ edition = "2024"
 [features]
 default = [ ]
 serial = [ 
-  "snarkos-node-metrics/locktick",
+  "snarkos-node-metrics/serial",
   "snarkvm/serial",
 ]
 locktick = [
