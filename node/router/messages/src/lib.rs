@@ -61,7 +61,7 @@ mod unconfirmed_solution;
 pub use unconfirmed_solution::UnconfirmedSolution;
 
 mod unconfirmed_transaction;
-pub use unconfirmed_transaction::{DATA_ENCODING_OVERHEAD, UnconfirmedTransaction};
+pub use unconfirmed_transaction::UnconfirmedTransaction;
 
 pub use snarkos_node_bft_events::DataBlocks;
 
