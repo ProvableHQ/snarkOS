@@ -96,8 +96,10 @@ use tokio::{sync::Notify, task::JoinHandle};
 
 /// The state of the primary's batch proposal.
 #[derive(Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ProposedBatchState<N: Network> {
     /// No batch is currently being proposed.
+    #[default]
     None,
     /// A batch is being proposed and awaiting signatures.
     Certifying(Box<Proposal<N>>),
@@ -106,11 +108,6 @@ pub enum ProposedBatchState<N: Network> {
     Certified(Field<N>),
 }
 
-impl<N: Network> Default for ProposedBatchState<N> {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 impl<N: Network> ProposedBatchState<N> {
     /// Returns `true` if the primary has no active batch proposal.

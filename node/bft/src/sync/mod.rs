@@ -143,7 +143,7 @@ impl<N: Network> Sync<N> {
 
     /// Returns `None` if the node is already synced.
     /// Otherwise, returns a future that completes once the node becomes synced.
-    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<()>> {
+    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
         self.block_sync.wait_for_synced_if_syncing()
     }
 

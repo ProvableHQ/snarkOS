@@ -45,7 +45,7 @@ executors:
   # The default docker image used in the main-workflow
   rust-docker:
      docker:
-      - image: cimg/rust:1.88.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+      - image: cimg/rust:1.96.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
   # The default VM used for devnet tests
   ubuntu-vm:
       machine:

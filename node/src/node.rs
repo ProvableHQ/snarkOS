@@ -132,11 +132,10 @@ impl<N: Network> Node<N> {
         let node = Self::Validator(validator.clone());
 
         // Perform automatic ledger checkpoints.
-        if let Some(path) = auto_db_checkpoints {
-            if let Some(handle) = node.perform_auto_checkpoints(path)? {
+        if let Some(path) = auto_db_checkpoints
+            && let Some(handle) = node.perform_auto_checkpoints(path)? {
                 validator.handles.lock().push(handle);
             }
-        }
 
         #[cfg(feature = "metrics")]
         if let Some(handle) = node.spawn_rocksdb_metrics_polling() {
@@ -211,11 +210,10 @@ impl<N: Network> Node<N> {
         let node = Self::Client(client.clone());
 
         // Perform automatic ledger checkpoints.
-        if let Some(path) = auto_db_checkpoints {
-            if let Some(handle) = node.perform_auto_checkpoints(path)? {
+        if let Some(path) = auto_db_checkpoints
+            && let Some(handle) = node.perform_auto_checkpoints(path)? {
                 client.handles.lock().push(handle);
             }
-        }
 
         #[cfg(feature = "metrics")]
         if let Some(handle) = node.spawn_rocksdb_metrics_polling() {
@@ -482,11 +480,10 @@ impl<N: Network> Node<N> {
                 // If we have a sufficient number of checkpoints, delete the oldest one(s).
                 let surplus_checkpoints = existing_checkpoints.len().saturating_sub(MAX_AUTO_CHECKPOINTS);
                 for _ in 0..surplus_checkpoints {
-                    if let Some((checkpoint_path, _)) = existing_checkpoints.pop() {
-                        if let Err(e) = fs::remove_dir_all(checkpoint_path) {
+                    if let Some((checkpoint_path, _)) = existing_checkpoints.pop()
+                        && let Err(e) = fs::remove_dir_all(checkpoint_path) {
                             warn!("Couldn't remove an automatic ledger checkpoint: {e}");
                         }
-                    }
                 }
             }
         });

@@ -758,8 +758,8 @@ impl<N: Network> BFT<N> {
             );
 
             // Trigger consensus (skipped if the round was already committed by a prior call).
-            if !skip_consensus {
-                if let Some(consensus_sender) = self.consensus_sender.get() {
+            if !skip_consensus
+                && let Some(consensus_sender) = self.consensus_sender.get() {
                     // Initialize a callback sender and receiver.
                     let (callback_sender, callback_receiver) = oneshot::channel();
                     // Send the subdag and transmissions to consensus.
@@ -781,7 +781,6 @@ impl<N: Network> BFT<N> {
                         }
                     }
                 }
-            }
 
             info!(
                 "Committing a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?}",
