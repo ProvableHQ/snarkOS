@@ -13,6 +13,24 @@ Formatting requires the nightly `.circleci/config.yml` pins as `fmt_nightly` --
 `.rustfmt.toml` uses nightly-only options, and plain `cargo fmt` drops them
 silently rather than refusing.
 
+## Code comments
+
+Comments must describe the state of the code today -- not a previous state or an
+alternative state.
+
+Exception: Comments may describe an alternative possible state of the code,
+*if* they are documenting a hazard that a future developer may otherwise walk into.
+
+Comments must not describe the rationale for a change.
+
+**Rationale may appear in: the commit message and the pull request.**
+You may self-comment on your own github pull request at select positions in the code to aide reviewers.
+
+Comments must help someone who has never heard of this change you are making.
+
+Comments must not state the obvious. Comments that explain what attributes
+do or how language constructs work are unhelpful.
+
 ## Modifying BFT Code
 
 When making changes to BFT-related code (anything under `node/bft/`), run the following checks in order:
