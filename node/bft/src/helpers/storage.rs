@@ -564,9 +564,8 @@ impl<N: Network> Storage<N> {
         let committee_lookback = self.ledger.get_committee_lookback_for_round(certificate_round)?;
 
         // Ensure that the signers of the certificate reach the quorum threshold.
-        // Note that certificate.signatures() only returns the endorsing signatures, not the author's signature.
-        let mut signers: HashSet<Address<N>> =
-            certificate.signatures().map(|signature| signature.to_address()).collect();
+        // Note that certificate.signers() only returns the endorsing signers, not the author.
+        let mut signers: HashSet<Address<N>> = certificate.signers().iter().copied().collect();
         signers.insert(certificate_author);
         ensure!(
             committee_lookback.is_quorum_threshold_reached(&signers),
@@ -647,14 +646,12 @@ impl<N: Network> Storage<N> {
         };
 
         // Initialize a set of the signers.
-        let mut signers = HashSet::with_capacity(certificate.signatures().len() + 1);
+        let mut signers = HashSet::with_capacity(certificate.signers().len() + 1);
         // Append the batch author.
         signers.insert(certificate.author());
 
-        // Iterate over the signatures.
-        for signature in certificate.signatures() {
-            // Retrieve the signer.
-            let signer = signature.to_address();
+        // Iterate over the signers.
+        for signer in certificate.signers().iter().copied() {
             // Ensure the signer is in the committee.
             if !committee_lookback.is_committee_member(signer) {
                 bail!("Signer {signer} is not in the committee for round {round} {gc_log}")
