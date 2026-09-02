@@ -1208,10 +1208,12 @@ mod tests {
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
-            let addresses = [Address::try_from(private_keys[0]).unwrap(),
+            let addresses = [
+                Address::try_from(private_keys[0]).unwrap(),
                 Address::try_from(private_keys[1]).unwrap(),
                 Address::try_from(private_keys[2]).unwrap(),
-                Address::try_from(private_keys[3]).unwrap()];
+                Address::try_from(private_keys[3]).unwrap(),
+            ];
 
             let committee = ledger.latest_committee().unwrap();
 

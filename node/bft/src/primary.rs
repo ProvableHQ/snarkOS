@@ -623,9 +623,10 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
             {
                 // If we are using a hotswapped dev committee, use simplified checks to more easily advance.
                 if let Some(dev_committee) = self.ledger.dev_committee_for_round(previous_round)?
-                    && round <= dev_committee.starting_round() {
-                        is_ready = true;
-                    }
+                    && round <= dev_committee.starting_round()
+                {
+                    is_ready = true;
+                }
             }
         }
         // If the batch is not ready to be proposed, return early.
