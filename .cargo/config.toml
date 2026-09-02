@@ -8,6 +8,3 @@ rustflags = [
     # you explicitly set target-cpu yourself when building.
     "-C", "link-arg=-fuse-ld=lld", "-C", "target-cpu=skylake"
 ]
-
-[env]
-CXXFLAGS = "-include cstdint" #TODO: remove once RocksDB 0.24 is released
