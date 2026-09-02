@@ -101,8 +101,7 @@ mod tests {
                 vec![
                     (Identifier::from_str("a")?, Entry::Private(Plaintext::from(Literal::Field(Field::rand(rng))))),
                     (Identifier::from_str("b")?, Entry::Private(Plaintext::from(Literal::Scalar(Scalar::rand(rng))))),
-                ]
-                .into_iter(),
+                ],
             ),
             N::g_scalar_multiply(&randomizer),
             version,
