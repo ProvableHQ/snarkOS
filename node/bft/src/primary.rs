@@ -95,8 +95,7 @@ use tokio::sync::RwLock as TRwLock;
 use tokio::{sync::Notify, task::JoinHandle};
 
 /// The state of the primary's batch proposal.
-#[derive(Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum ProposedBatchState<N: Network> {
     /// No batch is currently being proposed.
     #[default]
@@ -107,7 +106,6 @@ pub enum ProposedBatchState<N: Network> {
     /// Carries the batch ID so late-arriving signatures can be recognized and silently dropped.
     Certified(Field<N>),
 }
-
 
 impl<N: Network> ProposedBatchState<N> {
     /// Returns `true` if the primary has no active batch proposal.

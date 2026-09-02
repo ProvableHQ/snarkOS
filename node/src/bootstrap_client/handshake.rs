@@ -469,11 +469,12 @@ impl<N: Network> BootstrapClient<N> {
                 if msg.node_type == NodeType::Validator
                     && let Some(current_committee) =
                         self.get_or_update_committee().await.map_err(|_| io_error("Couldn't load the committee"))?
-                        && !current_committee.contains(&msg.address) {
-                            let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
-                            send_msg!(msg, framed, peer_addr)?;
-                            return Ok(false);
-                        }
+                    && !current_committee.contains(&msg.address)
+                {
+                    let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
+                    send_msg!(msg, framed, peer_addr)?;
+                    return Ok(false);
+                }
             }
             MessageOrEvent::Event(Event::ChallengeRequest(msg)) => {
                 log_repo_sha_comparison(peer_addr, &msg.snarkos_sha, Self::OWNER);
@@ -487,11 +488,12 @@ impl<N: Network> BootstrapClient<N> {
                 // Reject validators that aren't members of the committee.
                 if let Some(current_committee) =
                     self.get_or_update_committee().await.map_err(|_| io_error("Couldn't load the committee"))?
-                    && !current_committee.contains(&msg.address) {
-                        let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
-                        send_msg!(msg, framed, peer_addr)?;
-                        return Ok(false);
-                    }
+                    && !current_committee.contains(&msg.address)
+                {
+                    let msg = Message::Disconnect::<N>(messages::DisconnectReason::ProtocolViolation.into());
+                    send_msg!(msg, framed, peer_addr)?;
+                    return Ok(false);
+                }
             }
             _ => unreachable!(),
         }

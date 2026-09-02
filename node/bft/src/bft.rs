@@ -758,29 +758,27 @@ impl<N: Network> BFT<N> {
             );
 
             // Trigger consensus (skipped if the round was already committed by a prior call).
-            if !skip_consensus
-                && let Some(consensus_sender) = self.consensus_sender.get() {
-                    // Initialize a callback sender and receiver.
-                    let (callback_sender, callback_receiver) = oneshot::channel();
-                    // Send the subdag and transmissions to consensus.
-                    consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
-                    // Await the callback to continue.
-                    match callback_receiver.await {
-                        Ok(Ok(_)) => (),
-                        Ok(Err(err)) => {
-                            let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
-                            error!("{}", &flatten_error(err));
-                            return Ok(());
-                        }
-                        Err(err) => {
-                            let err: anyhow::Error = err.into();
-                            let err =
-                                err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
-                            error!("{}", flatten_error(err));
-                            return Ok(());
-                        }
+            if !skip_consensus && let Some(consensus_sender) = self.consensus_sender.get() {
+                // Initialize a callback sender and receiver.
+                let (callback_sender, callback_receiver) = oneshot::channel();
+                // Send the subdag and transmissions to consensus.
+                consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
+                // Await the callback to continue.
+                match callback_receiver.await {
+                    Ok(Ok(_)) => (),
+                    Ok(Err(err)) => {
+                        let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
+                        error!("{}", &flatten_error(err));
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        let err: anyhow::Error = err.into();
+                        let err = err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
+                        error!("{}", flatten_error(err));
+                        return Ok(());
                     }
                 }
+            }
 
             info!(
                 "Committing a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?}",
