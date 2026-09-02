@@ -143,7 +143,7 @@ impl<N: Network> Sync<N> {
 
     /// Returns `None` if the node is already synced.
     /// Otherwise, returns a future that completes once the node becomes synced.
-    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<()>> {
+    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
         self.block_sync.wait_for_synced_if_syncing()
     }
 
@@ -1208,7 +1208,7 @@ mod tests {
 
         // Sample 5 rounds of batch certificates starting at the genesis round from a static set of 4 authors.
         let (round_to_certificates_map, committee) = {
-            let addresses = vec![
+            let addresses = [
                 Address::try_from(private_keys[0]).unwrap(),
                 Address::try_from(private_keys[1]).unwrap(),
                 Address::try_from(private_keys[2]).unwrap(),
@@ -1296,7 +1296,7 @@ mod tests {
 
         // Create a list of all certificates.
         let certificates: Vec<_> =
-            round_to_certificates_map.into_iter().flat_map(|(_, certificates)| certificates.into_iter()).collect();
+            round_to_certificates_map.into_values().flat_map(|certificates| certificates.into_iter()).collect();
 
         // insert all certificates into storage.
         for certificate in certificates.iter() {

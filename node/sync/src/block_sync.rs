@@ -333,7 +333,7 @@ impl<N: Network> BlockSync<N> {
     /// # Concurrency
     /// * This method is atomic, unlike calling `is_synced` and `wait_for_synced` sequentially.
     /// * Multiple tasks can wait on this at the same time safely.
-    pub fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<()>> {
+    pub fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
         let mut notified = Box::pin(self.synced_notify.notified());
 
         {

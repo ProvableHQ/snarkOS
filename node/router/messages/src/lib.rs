@@ -231,10 +231,10 @@ impl<N: Network> Message<N> {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
         }
 
-        if let Some(id) = MessageId::peek(bytes) {
-            if bytes.len() > id.max_size::<N>() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large for its type"));
-            }
+        if let Some(id) = MessageId::peek(bytes)
+            && bytes.len() > id.max_size::<N>()
+        {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large for its type"));
         }
 
         Ok(())

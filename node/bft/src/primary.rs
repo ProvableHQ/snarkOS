@@ -95,21 +95,16 @@ use tokio::sync::RwLock as TRwLock;
 use tokio::{sync::Notify, task::JoinHandle};
 
 /// The state of the primary's batch proposal.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum ProposedBatchState<N: Network> {
     /// No batch is currently being proposed.
+    #[default]
     None,
     /// A batch is being proposed and awaiting signatures.
     Certifying(Box<Proposal<N>>),
     /// A batch has reached quorum and is being inserted into storage.
     /// Carries the batch ID so late-arriving signatures can be recognized and silently dropped.
     Certified(Field<N>),
-}
-
-impl<N: Network> Default for ProposedBatchState<N> {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl<N: Network> ProposedBatchState<N> {
@@ -627,10 +622,10 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
             #[cfg(feature = "test_network")]
             {
                 // If we are using a hotswapped dev committee, use simplified checks to more easily advance.
-                if let Some(dev_committee) = self.ledger.dev_committee_for_round(previous_round)? {
-                    if round <= dev_committee.starting_round() {
-                        is_ready = true;
-                    }
+                if let Some(dev_committee) = self.ledger.dev_committee_for_round(previous_round)?
+                    && round <= dev_committee.starting_round()
+                {
+                    is_ready = true;
                 }
             }
         }
@@ -2051,6 +2046,7 @@ impl<N: Network> Primary<N> {
         }
 
         // Fetch the missing previous certificates.
+        #[allow(clippy::mutable_key_type)]
         let missing_previous_certificates =
             self.fetch_missing_certificates(peer_ip, round, batch_header.previous_certificate_ids()).await?;
         if !missing_previous_certificates.is_empty() {
@@ -2073,6 +2069,7 @@ impl<N: Network> Primary<N> {
         // Initialize a list for the missing certificates.
         let mut fetch_certificates = FuturesUnordered::new();
         // Initialize a set for the missing certificates.
+        #[allow(clippy::mutable_key_type)]
         let mut missing_certificates = HashSet::default();
         // Iterate through the certificate IDs.
         for certificate_id in certificate_ids {
