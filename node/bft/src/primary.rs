@@ -2048,6 +2048,7 @@ impl<N: Network> Primary<N> {
         }
 
         // Fetch the missing previous certificates.
+        #[allow(clippy::mutable_key_type)]
         let missing_previous_certificates =
             self.fetch_missing_certificates(peer_ip, round, batch_header.previous_certificate_ids()).await?;
         if !missing_previous_certificates.is_empty() {
@@ -2070,6 +2071,7 @@ impl<N: Network> Primary<N> {
         // Initialize a list for the missing certificates.
         let mut fetch_certificates = FuturesUnordered::new();
         // Initialize a set for the missing certificates.
+        #[allow(clippy::mutable_key_type)]
         let mut missing_certificates = HashSet::default();
         // Iterate through the certificate IDs.
         for certificate_id in certificate_ids {
