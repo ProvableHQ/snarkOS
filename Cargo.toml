@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.9.0"
+version = "4.10.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -48,8 +48,9 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "14c38bf07" #testnet-4.9.1
-#version = "=4.9.0"
+rev = "7b032dac9" #test_net_v4100
+#version = "=4.10.0"
+default-features = false
 
 [workspace.dependencies.anyhow]
 version = "1.0"
@@ -87,6 +88,11 @@ features = [ "std" ]
 [workspace.dependencies.colored]
 version = "3"
 
+[workspace.dependencies.criterion]
+version = "0.7"
+default-features = false
+features = [ "cargo_bench_support" ]
+
 [workspace.dependencies.crossterm]
 version = "0.29"
 
@@ -107,6 +113,9 @@ version = "1"
 
 [workspace.dependencies.once_cell]
 version = "1"
+
+[workspace.dependencies.pea2pea]
+version = "0.57.2"
 
 [workspace.dependencies.proptest]
 # Pin to 1.6 to match the version used in snarkVM. Avoids pulling in rand >=0.9.
@@ -165,6 +174,9 @@ version = "0.13"
 [workspace.dependencies.smol_str]
 version = "=0.3.2" # Update after Rust >1.88
 
+[workspace.dependencies.snow]
+version = "0.10"
+
 [workspace.dependencies.tracing]
 version = "0.1"
 default-features = false
@@ -185,95 +197,97 @@ version = "0.2"
 
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.9.0"
+version = "=4.10.0"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [workspace.dependencies.snarkos-utilities]
 path = "utilities"
-version = "=4.9.0"
+version = "=4.10.0"
 
 [[bin]]
 name = "snarkos"
 path = "snarkos/main.rs"
 
 [features]
-default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics", "telemetry" ]
+default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
 history = [ "snarkos-node/history" ]
 history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
 slipstream-plugins = [ "snarkos-node/slipstream-plugins", "snarkos-cli/slipstream-plugins" ]
-telemetry = [ "snarkos-node/telemetry" ]
+# Deprecated alias for the metrics feature, which now carries the validator telemetry.
+# Retained so that build commands naming this feature keep resolving.
+telemetry = [ "snarkos-node/metrics" ]
 cuda = [
   "snarkos-account/cuda",
   "snarkos-cli/cuda",
@@ -417,7 +431,7 @@ incremental = true
 
 [profile.test]
 opt-level = 2
-lto = "thin"
+lto = "off"
 incremental = true
 debug = true
 debug-assertions = true

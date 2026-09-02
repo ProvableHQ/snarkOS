@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-bft"
-version = "4.9.0"
+version = "4.10.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A memory pool for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -18,7 +18,6 @@ edition = "2024"
 
 [features]
 default = [ ]
-telemetry = [ ]
 locktick = [
   "dep:locktick",
   "snarkos-node-bft-ledger-service/locktick",
@@ -183,7 +182,7 @@ version = "5"
 version = "1"
 
 [dev-dependencies.pea2pea]
-version = "0.49"
+workspace = true
 
 [dev-dependencies.proptest]
 workspace = true

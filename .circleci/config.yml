@@ -13,6 +13,30 @@ parameters:
   twoxlarge:
     type: string
     default: 2xlarge
+  # The toolchain `check-fmt` formats with.
+  #
+  # `.rustfmt.toml` uses options that only exist on nightly -- imports_layout,
+  # imports_granularity, overflow_delimited_expr, reorder_impl_items and
+  # style_edition -- so the formatter cannot be the 1.88.0 this project builds
+  # with, and `cargo fmt` without a toolchain silently drops all five rather
+  # than refusing. The formatter is therefore a second toolchain, and pinning
+  # it is the same act as pinning the first.
+  #
+  # Resolves to rustfmt 1.9.0-nightly (7e46c5f6fb 2026-04-01); rustup's dated
+  # nightlies are built from the previous day's commit. Bumping it may reformat
+  # the tree, so it should be a deliberate change with the reformatting in the
+  # same commit.
+  #
+  # `enum` rather than `string`: this value is interpolated unquoted into the
+  # `rustup toolchain install` and `cargo fmt` commands below, so a `string`
+  # parameter would let anyone able to trigger a pipeline with custom
+  # parameters inject arbitrary shell commands into the job. `enum` rejects
+  # any pipeline-trigger value that isn't in the list below before the config
+  # is compiled, closing that off. Add the new pin to the list when bumping.
+  fmt_nightly:
+    type: enum
+    enum: [nightly-2026-04-02]
+    default: nightly-2026-04-02
 
 orbs:
   windows: circleci/windows@5.0
@@ -413,6 +437,11 @@ commands:
     steps:
       - run: rustup toolchain install nightly-x86_64-unknown-linux-gnu
 
+  install_fmt_nightly:
+    description: "Install the pinned Rust nightly toolchain used for formatting"
+    steps:
+      - run: rustup toolchain install << pipeline.parameters.fmt_nightly >>-x86_64-unknown-linux-gnu --profile minimal --component rustfmt
+
   install_rust:
     description: "Install Rust using rustup.rs"
     steps:
@@ -446,6 +475,14 @@ jobs:
       - run_serial:
           workspace_member: cli
           cache_key: cli
+
+  utilities:
+    executor: rust-docker
+    resource_class: << pipeline.parameters.medium >>
+    steps:
+      - run_serial:
+          workspace_member: utilities
+          cache_key: utilities
 
   node:
     executor: rust-docker
@@ -486,6 +523,7 @@ jobs:
       - run_serial:
           workspace_member: node/bft/storage-service
           cache_key: node-bft-storage-service
+          flags: --features memory,persistent
 
   node-cdn:
     executor: rust-docker
@@ -670,7 +708,7 @@ jobs:
       - run:
           name: Check snarkos-display crate
           no_output_timeout: 10m
-          command: cargo check --package=snarkos-node-metrics --all-features
+          command: cargo check --package=snarkos-display --all-features
 
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
@@ -680,13 +718,13 @@ jobs:
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
-      - install_rust_nightly
+      - install_fmt_nightly
       - setup_environment:
           cache_key: v4.2.0-rust-1.88.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
-          command: cargo +nightly fmt --all -- --check
+          command: cargo +<< pipeline.parameters.fmt_nightly >> fmt --all -- --check
       - clear_environment:
           cache_key: v4.2.0-rust-1.88.0-fmt-cache
 
@@ -813,7 +851,7 @@ workflows:
           filters:
             branches:
               only:
-                - release-testnet-4.9.0
+                - test_net_v4100
                 - canary
                 - testnet
                 - mainnet
@@ -823,7 +861,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_net_v491
+                - test_net_v4100
                 - canary
                 - testnet
                 - mainnet
@@ -833,7 +871,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_net_v491
+                - test_net_v4100
                 - canary
                 - testnet
                 - mainnet
@@ -842,7 +880,7 @@ workflows:
           filters:
             branches:
               only:
-                - test_net_v491
+                - test_net_v4100
                 - canary
                 - testnet
                 - mainnet
@@ -853,6 +891,7 @@ workflows:
       - snarkos
       - account
       - cli
+      - utilities
 
   windows-workflow:
     jobs:
@@ -860,6 +899,7 @@ workflows:
           filters:
             branches:
               only:
+                - test_net_v4100
                 - canary
                 - testnet
                 - mainnet

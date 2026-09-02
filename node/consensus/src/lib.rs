@@ -662,7 +662,7 @@ impl<N: Network> Consensus<N> {
         #[cfg(feature = "metrics")]
         metrics::histogram(metrics::consensus::ADVANCE_TO_NEXT_BLOCK_SECS, advance_elapsed.as_secs_f64());
 
-        #[cfg(feature = "telemetry")]
+        #[cfg(feature = "metrics")]
         // Fetch the committee lookback for the latest round.
         // Note: Do not abort here if this returns an error, because the committee is only needed for telemetry,
         // not for block advancement itself.
@@ -716,17 +716,24 @@ impl<N: Network> Consensus<N> {
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);
 
             // If telemetry is enabled, update participation scores.
-            #[cfg(feature = "telemetry")]
+            #[cfg(feature = "metrics")]
             {
+                let telemetry = self.bft().primary().gateway().validator_telemetry();
+
+                // Publish the vintage of the snapshot the scores are read from, and the number of
+                // updates that never reached it. The scores are eventually consistent, so a reader
+                // comparing them against block height needs both to tell a lagging snapshot and a
+                // lossy one apart from an actual change in participation.
+                metrics::gauge(
+                    metrics::consensus::VALIDATOR_PARTICIPATION_GC_ROUND,
+                    telemetry.published_gc_round() as f64,
+                );
+                metrics::gauge(metrics::consensus::VALIDATOR_PARTICIPATION_DROPPED, telemetry.num_dropped() as f64);
+
                 match latest_committee {
                     Ok(latest_committee) => {
                         // Retrieve the individual participation scores.
-                        let participation_scores = self
-                            .bft()
-                            .primary()
-                            .gateway()
-                            .validator_telemetry()
-                            .get_participation_scores(&latest_committee);
+                        let participation_scores = telemetry.get_participation_scores(&latest_committee);
 
                         // Export the certificate and signature participation scores as individual gauges.
                         for (address, (certificate_score, signature_score)) in participation_scores {
