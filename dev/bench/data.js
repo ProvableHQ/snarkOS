@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788382183330,
+  "lastUpdate": 1788386018859,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17784,6 +17784,72 @@ window.BENCHMARK_DATA = {
             "value": 1.74,
             "unit": "blocks/s",
             "extra": "total_wait=143s, target_height=250, connect_time=12, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.53,
+            "unit": "blocks/s",
+            "extra": "total_wait=163s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "149f425aa0c8f68316780954dcc9b70807189442",
+          "message": "Merge pull request #4433 from ProvableHQ/feat/agent-guidance-for-code-comments\n\nadd guidance for code comments to AGENTS.md",
+          "timestamp": "2026-09-02T15:35:05-06:00",
+          "tree_id": "4c86c61d0eff0480fe0706f19a3bb6a1493c1b3f",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/149f425aa0c8f68316780954dcc9b70807189442"
+        },
+        "date": 1788386017479,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.354385817141294,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=51.31282901763916, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 9543.49251207832,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=8.382675409317017, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3268.9118348204674,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.24472975730895996, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.92,
+            "unit": "blocks/s",
+            "extra": "total_wait=130s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.565857,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=127, mean_speed=1.226640, max_speed=3.250000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.61,
+            "unit": "blocks/s",
+            "extra": "total_wait=155s, target_height=250, connect_time=9, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
