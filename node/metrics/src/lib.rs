@@ -202,6 +202,11 @@ pub fn gauge_label<V: Into<f64>>(name: &'static str, label_key: &'static str, la
     ::metrics::gauge!(name, label_key => label_value).set(value.into());
 }
 
+/// Increments a labelled counter with the given name by one.
+pub fn increment_counter_label(name: &'static str, label_key: &'static str, label_value: &'static str) {
+    ::metrics::counter!(name, label_key => label_value).increment(1);
+}
+
 // Include the generated build information
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
