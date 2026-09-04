@@ -228,6 +228,9 @@ pub struct InnerGateway<N: Network> {
     resolver: RwLock<Resolver<N>>,
     /// The collection of both candidate and connected peers.
     peer_pool: RwLock<HashMap<SocketAddr, Peer<N>>>,
+    /// The deepest per-connection outbound queue seen since the node started, across all peers.
+    #[cfg(feature = "metrics")]
+    outbound_queue_high_water_mark: std::sync::atomic::AtomicUsize,
     /// The handle to the validator telemetry tracker.
     #[cfg(feature = "metrics")]
     validator_telemetry: Telemetry<N>,
@@ -343,6 +346,8 @@ impl<N: Network> Gateway<N> {
             cache: Default::default(),
             resolver: Default::default(),
             peer_pool: RwLock::new(initial_peers),
+            #[cfg(feature = "metrics")]
+            outbound_queue_high_water_mark: Default::default(),
             #[cfg(feature = "metrics")]
             validator_telemetry,
             #[cfg(feature = "metrics")]
@@ -593,6 +598,35 @@ impl<N: Network> Gateway<N> {
         if let Some(count) = self.number_of_connecting_peers() {
             metrics::gauge(metrics::bft::CONNECTING, count as f64);
         }
+        self.update_outbound_queue_metrics();
+    }
+
+    /// Samples the occupancy of every per-connection outbound queue.
+    ///
+    /// The high-water mark this publishes is maintained by [`Self::send_inner`], not by this
+    /// sampler: a queue that fills and drains between two ticks is invisible here.
+    #[cfg(feature = "metrics")]
+    fn update_outbound_queue_metrics(&self) {
+        let mut deepest = 0;
+        for (_peer_addr, depth, _capacity) in self.outbound_queue_occupancies() {
+            metrics::histogram(metrics::bft::GATEWAY_OUTBOUND_QUEUE_DEPTH, depth as f64);
+            deepest = deepest.max(depth);
+        }
+        metrics::gauge(metrics::bft::GATEWAY_OUTBOUND_QUEUE_DEPTH_MAX, deepest as f64);
+        metrics::gauge(metrics::bft::GATEWAY_OUTBOUND_QUEUE_CAPACITY, per_connection_queue_depth::<N>() as f64);
+        metrics::gauge(
+            metrics::bft::GATEWAY_OUTBOUND_QUEUE_HIGH_WATER_MARK,
+            self.outbound_queue_high_water_mark.load(std::sync::atomic::Ordering::Relaxed) as f64,
+        );
+    }
+
+    /// Raises the outbound queue high-water mark to the current depth of the given peer's queue,
+    /// if that is a new maximum.
+    #[cfg(feature = "metrics")]
+    fn record_outbound_queue_depth(&self, peer_addr: SocketAddr) {
+        if let Some((depth, _capacity)) = self.outbound_queue_occupancy(peer_addr) {
+            self.outbound_queue_high_water_mark.fetch_max(depth, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// Inserts the given peer into the connected peers. This is only used in testing.
@@ -624,6 +658,8 @@ impl<N: Network> Gateway<N> {
         // Resolve the listener IP to the (ambiguous) peer address.
         let Some(peer_addr) = self.resolve_to_ambiguous(peer_ip) else {
             warn!("Unable to resolve the listener IP address '{peer_ip}'");
+            #[cfg(feature = "metrics")]
+            metrics::increment_counter_label(metrics::bft::GATEWAY_SEND_FAILURES, "reason", "unresolved");
             return None;
         };
         // Retrieve the event name.
@@ -632,10 +668,29 @@ impl<N: Network> Gateway<N> {
         trace!("{CONTEXT} Sending '{name}' to '{peer_ip}'");
         let result = self.unicast(peer_addr, event);
         // If the event was unable to be sent, disconnect.
-        if let Err(err) = &result {
-            warn!("{CONTEXT} Failed to send '{name}' to '{peer_ip}': {err:?}");
-            debug!("{CONTEXT} Disconnecting from '{peer_ip}' (unable to send)");
-            self.disconnect(peer_ip);
+        match &result {
+            Ok(_) => {
+                #[cfg(feature = "metrics")]
+                self.record_outbound_queue_depth(peer_addr);
+            }
+            Err(err) => {
+                #[cfg(feature = "metrics")]
+                metrics::increment_counter_label(
+                    metrics::bft::GATEWAY_SEND_FAILURES,
+                    "reason",
+                    send_failure_reason(err),
+                );
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    warn!(
+                        "{CONTEXT} Failed to send '{name}' to '{peer_ip}': the outbound queue is full ({} slots)",
+                        per_connection_queue_depth::<N>()
+                    );
+                } else {
+                    warn!("{CONTEXT} Failed to send '{name}' to '{peer_ip}': {err:?}");
+                }
+                debug!("{CONTEXT} Disconnecting from '{peer_ip}' (unable to send)");
+                self.disconnect(peer_ip);
+            }
         }
         result.ok()
     }
@@ -1357,6 +1412,81 @@ impl<N: Network> Gateway<N> {
     }
 }
 
+/// Classifies an error from [`Writing::unicast`] into a stable label for
+/// [`metrics::bft::GATEWAY_SEND_FAILURES`].
+#[cfg(feature = "metrics")]
+fn send_failure_reason(err: &io::Error) -> &'static str {
+    match err.kind() {
+        // The per-connection outbound queue is at capacity.
+        io::ErrorKind::WouldBlock => "queue_full",
+        // The connection's writer task has already exited.
+        io::ErrorKind::BrokenPipe => "writer_gone",
+        // There is no outbound queue for this peer.
+        io::ErrorKind::NotConnected => "not_connected",
+        // `enable_writing` has not been called.
+        io::ErrorKind::Unsupported => "writing_disabled",
+        _ => "other",
+    }
+}
+
+/// Holds [`metrics::bft::GATEWAY_SENDS_IN_FLIGHT`] up for the lifetime of one
+/// [`Transport::send`] call.
+///
+/// Almost every caller of `Transport::send` spawns a task per event and drops the join handle, so
+/// this gauge is also the number of outstanding send tasks.
+#[cfg(feature = "metrics")]
+struct InFlightSendGuard;
+
+#[cfg(feature = "metrics")]
+impl InFlightSendGuard {
+    fn new() -> Self {
+        metrics::increment_gauge(metrics::bft::GATEWAY_SENDS_IN_FLIGHT, 1f64);
+        Self
+    }
+}
+
+#[cfg(feature = "metrics")]
+impl Drop for InFlightSendGuard {
+    fn drop(&mut self) {
+        metrics::decrement_gauge(metrics::bft::GATEWAY_SENDS_IN_FLIGHT, 1f64);
+    }
+}
+
+/// Accounts for one send parked in the outbound rate limiter's retry loop: it holds
+/// [`metrics::bft::GATEWAY_SENDS_RATE_LIMITED`] up while it lives, and records the total wait on
+/// drop.
+///
+/// A send parked in that loop is typically running in a spawned task whose join handle was
+/// dropped, so it can be cancelled at any await point. Doing this on drop rather than after the
+/// loop keeps the gauge balanced, and the wait recorded, when that happens.
+#[cfg(feature = "metrics")]
+struct RateLimitWaitGuard {
+    limit: &'static str,
+    start: std::time::Instant,
+}
+
+#[cfg(feature = "metrics")]
+impl RateLimitWaitGuard {
+    fn new(limit: &'static str) -> Self {
+        metrics::increment_gauge(metrics::bft::GATEWAY_SENDS_RATE_LIMITED, 1f64);
+        metrics::increment_counter_label(metrics::bft::GATEWAY_RATE_LIMITED_SENDS, "limit", limit);
+        Self { limit, start: std::time::Instant::now() }
+    }
+}
+
+#[cfg(feature = "metrics")]
+impl Drop for RateLimitWaitGuard {
+    fn drop(&mut self) {
+        metrics::decrement_gauge(metrics::bft::GATEWAY_SENDS_RATE_LIMITED, 1f64);
+        metrics::histogram_label(
+            metrics::bft::GATEWAY_RATE_LIMIT_DELAY,
+            "limit",
+            self.limit.to_string(),
+            self.start.elapsed().as_secs_f64(),
+        );
+    }
+}
+
 #[async_trait]
 impl<N: Network> Transport<N> for Gateway<N> {
     /// Sends the given event to specified peer.
@@ -1367,6 +1497,9 @@ impl<N: Network> Transport<N> for Gateway<N> {
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
     async fn send(&self, peer_ip: SocketAddr, mut event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
+        #[cfg(feature = "metrics")]
+        let _in_flight = InFlightSendGuard::new();
+
         // Serialize the payload here, rather than leaving it for the connection's writer task.
         //
         // `Data` defers serialization until the event is written to the stream, which puts it on
@@ -1393,12 +1526,22 @@ impl<N: Network> Transport<N> for Gateway<N> {
         }
 
         macro_rules! send {
-            ($self:ident, $cache_map:ident, $interval:expr, $freq:ident) => {{
+            ($self:ident, $cache_map:ident, $interval:expr, $freq:ident, $limit:literal) => {{
+                // Present only while this send is parked in the loop below.
+                #[cfg(feature = "metrics")]
+                let mut wait = None;
                 // Rate limit the number of certificate requests sent to the peer.
                 while $self.cache.$cache_map(peer_ip, $interval) > $self.$freq() {
+                    #[cfg(feature = "metrics")]
+                    {
+                        wait.get_or_insert_with(|| RateLimitWaitGuard::new($limit));
+                        metrics::increment_counter_label(metrics::bft::GATEWAY_RATE_LIMIT_SLEEPS, "limit", $limit);
+                    }
                     // Sleep for a short period of time to allow the cache to clear.
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
+                #[cfg(feature = "metrics")]
+                drop(wait);
                 // Send the event to the peer.
                 $self.send_inner(peer_ip, event)
             }};
@@ -1410,23 +1553,35 @@ impl<N: Network> Transport<N> for Gateway<N> {
                 // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
                 self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
                 // Send the event to the peer.
-                send!(self, insert_outbound_certificate, CACHE_REQUESTS_INTERVAL, max_cache_certificates)
+                send!(
+                    self,
+                    insert_outbound_certificate,
+                    CACHE_REQUESTS_INTERVAL,
+                    max_cache_certificates,
+                    "certificates"
+                )
             }
             Event::TransmissionRequest(_) | Event::TransmissionResponse(_) => {
                 // Update the outbound event cache. This is necessary to ensure we don't under count the outbound events.
                 self.cache.insert_outbound_event(peer_ip, CACHE_EVENTS_INTERVAL);
                 // Send the event to the peer.
-                send!(self, insert_outbound_transmission, CACHE_REQUESTS_INTERVAL, max_cache_transmissions)
+                send!(
+                    self,
+                    insert_outbound_transmission,
+                    CACHE_REQUESTS_INTERVAL,
+                    max_cache_transmissions,
+                    "transmissions"
+                )
             }
             Event::BlockRequest(request) => {
                 // Insert the outbound request so we can match it to responses.
                 self.cache.insert_outbound_block_request(peer_ip, request);
                 // Send the event to the peer and update the outbound event cache, use the general rate limit.
-                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
+                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events, "block_request")
             }
             _ => {
                 // Send the event to the peer, use the general rate limit.
-                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events)
+                send!(self, insert_outbound_event, CACHE_EVENTS_INTERVAL, max_cache_events, "events")
             }
         }
     }

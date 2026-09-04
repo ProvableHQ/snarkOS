@@ -115,7 +115,9 @@ where
     ///
     /// The following errors can be returned:
     /// - [`io::ErrorKind::NotConnected`] if the node is not connected to the provided address
-    /// - [`io::ErrorKind::Other`] if the outbound message queue for this address is full
+    /// - [`io::ErrorKind::WouldBlock`] if the outbound message queue for this address is full
+    /// - [`io::ErrorKind::BrokenPipe`] if the outbound message queue for this address is closed,
+    ///   i.e. the connection's writer task has already exited
     /// - [`io::ErrorKind::Unsupported`] if [`Writing::enable_writing`] hadn't been called yet
     fn unicast(&self, addr: SocketAddr, message: Self::Message) -> io::Result<oneshot::Receiver<io::Result<()>>> {
         // access the protocol handler
@@ -128,7 +130,10 @@ where
                     .map_err(|e| {
                         let conn_span = create_connection_span(addr, self.tcp().span());
                         error!(parent: conn_span, "can't send a message: {e}");
-                        io::ErrorKind::Other.into()
+                        match e {
+                            mpsc::error::TrySendError::Full(_) => io::Error::from(io::ErrorKind::WouldBlock),
+                            mpsc::error::TrySendError::Closed(_) => io::Error::from(io::ErrorKind::BrokenPipe),
+                        }
                     })
                     .map(|_| delivery)
             } else {
@@ -137,6 +142,36 @@ where
         } else {
             Err(io::ErrorKind::Unsupported.into())
         }
+    }
+
+    /// Returns the current occupancy of the outbound message queue for the given address, as a
+    /// `(depth, capacity)` pair, or `None` if the node is not connected to it.
+    ///
+    /// The capacity is [`Writing::message_queue_depth`] as it was when the connection was
+    /// established; a send that finds the queue at capacity fails with
+    /// [`io::ErrorKind::WouldBlock`].
+    fn outbound_queue_occupancy(&self, addr: SocketAddr) -> Option<(usize, usize)> {
+        let handler = self.tcp().protocols.writing.get()?;
+        let senders = handler.senders.read();
+        let sender = senders.get(&addr)?;
+        let capacity = sender.max_capacity();
+        Some((capacity.saturating_sub(sender.capacity()), capacity))
+    }
+
+    /// Returns the current occupancy of every outbound message queue, keyed by address. See
+    /// [`Writing::outbound_queue_occupancy`].
+    fn outbound_queue_occupancies(&self) -> Vec<(SocketAddr, usize, usize)> {
+        let Some(handler) = self.tcp().protocols.writing.get() else {
+            return Vec::new();
+        };
+        let senders = handler.senders.read();
+        senders
+            .iter()
+            .map(|(addr, sender)| {
+                let capacity = sender.max_capacity();
+                (*addr, capacity.saturating_sub(sender.capacity()), capacity)
+            })
+            .collect()
     }
 
     /// Broadcasts the provided message to all connected peers. Returns as soon as the message is queued to
@@ -253,6 +288,12 @@ impl<W: Writing> WritingInternal for W {
                     }
                     Err(e) => {
                         error!(parent: &conn_span, "couldn't send a message: {e}");
+                        #[cfg(feature = "metrics")]
+                        if e.kind() == io::ErrorKind::TimedOut {
+                            metrics::increment_counter(metrics::tcp::WRITE_TIMEOUT_DISCONNECTS);
+                        } else {
+                            metrics::increment_counter(metrics::tcp::WRITE_ERROR_DISCONNECTS);
+                        }
                         let _ = wrapped_msg.delivery_notification.send(Err(e));
                         break;
                     }
@@ -382,6 +423,62 @@ mod tests {
         let peer = *sender.tcp().connected_addrs().first().unwrap();
         flood(&sender, peer);
         assert!(disconnected(&sender, peer, Duration::from_secs(10)).await, "stalled peer not disconnected");
+    }
+
+    /// A node whose outbound queue is small enough to fill deterministically in a test.
+    #[derive(Clone)]
+    struct TinyQueueNode(Tcp);
+    impl P2P for TinyQueueNode {
+        fn tcp(&self) -> &Tcp {
+            &self.0
+        }
+    }
+    #[async_trait]
+    impl Writing for TinyQueueNode {
+        type Codec = BytesCodec;
+        type Message = Bytes;
+
+        // Long enough that the writer parks on the stalled socket rather than disconnecting.
+        const TIMEOUT: Duration = Duration::from_secs(60);
+
+        fn codec(&self, _a: SocketAddr, _s: ConnectionSide) -> Self::Codec {
+            Default::default()
+        }
+
+        fn message_queue_depth(&self) -> usize {
+            4
+        }
+    }
+
+    #[tokio::test]
+    async fn full_outbound_queue_is_reported_as_would_block() {
+        let sender = TinyQueueNode(Tcp::new(test_config()));
+        sender.tcp().enable_listener().await.unwrap();
+        sender.enable_writing().await;
+        let receiver = Tcp::new(test_config());
+        let ip = receiver.enable_listener().await.unwrap();
+        sender.tcp().connect(ip).await.unwrap();
+        let peer = *sender.tcp().connected_addrs().first().unwrap();
+
+        assert_eq!(sender.outbound_queue_occupancy(peer), Some((0, 4)));
+        let unconnected = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1);
+        assert_eq!(sender.outbound_queue_occupancy(unconnected), None);
+
+        // The receiver never reads its socket, so the writer task stalls and the queue fills.
+        let msg = Bytes::from(vec![0u8; 1024 * 1024]);
+        let mut err = None;
+        for _ in 0..64 {
+            if let Err(e) = sender.unicast(peer, msg.clone()) {
+                err = Some(e);
+                break;
+            }
+        }
+        let err = err.expect("the outbound queue never filled");
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+
+        let (depth, capacity) = sender.outbound_queue_occupancy(peer).unwrap();
+        assert_eq!(capacity, 4);
+        assert!(depth > 0, "a queue that just rejected a message should not be reported as empty");
     }
 
     #[tokio::test]
