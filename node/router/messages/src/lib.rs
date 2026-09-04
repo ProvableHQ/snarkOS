@@ -46,7 +46,7 @@ mod peer_response;
 pub use peer_response::PeerResponse;
 
 mod ping;
-pub use ping::{MAX_PING_MESSAGE_SIZE, Ping};
+pub use ping::{MAX_PING_LOCATOR_HEIGHT, MAX_PING_MESSAGE_SIZE, Ping};
 
 mod pong;
 pub use pong::Pong;
