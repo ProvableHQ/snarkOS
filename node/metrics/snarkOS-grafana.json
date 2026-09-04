@@ -2272,7 +2272,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "snarkos_tcp_tasks_total",
+          "expr": "snarkos_tcp_queued_inbound_messages",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": false,

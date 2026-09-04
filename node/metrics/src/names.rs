@@ -44,7 +44,7 @@ pub(super) const GAUGE_NAMES: [&str; 28] = [
     router::CONNECTED,
     router::CANDIDATE,
     router::RESTRICTED,
-    tcp::TCP_TASKS,
+    tcp::QUEUED_INBOUND_MESSAGES,
 ];
 
 pub(super) const HISTOGRAM_NAMES: [&str; 9] = [
@@ -125,7 +125,9 @@ pub mod router {
 }
 
 pub mod tcp {
-    pub const TCP_TASKS: &str = "snarkos_tcp_tasks_total";
+    /// The number of inbound messages that have been read off a socket and are waiting to be
+    /// processed, across all connections.
+    pub const QUEUED_INBOUND_MESSAGES: &str = "snarkos_tcp_queued_inbound_messages";
 }
 
 pub mod build {
