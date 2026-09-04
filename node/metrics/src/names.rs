@@ -13,10 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub(super) const COUNTER_NAMES: [&str; 3] =
-    [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSACTIONS, consensus::STALE_UNCONFIRMED_SOLUTIONS];
+pub(super) const COUNTER_NAMES: [&str; 5] = [
+    bft::LEADERS_ELECTED,
+    consensus::STALE_UNCONFIRMED_TRANSACTIONS,
+    consensus::STALE_UNCONFIRMED_SOLUTIONS,
+    tcp::WRITE_TIMEOUT_DISCONNECTS,
+    tcp::WRITE_ERROR_DISCONNECTS,
+];
 
-pub(super) const GAUGE_NAMES: [&str; 28] = [
+pub(super) const GAUGE_NAMES: [&str; 33] = [
     bft::CONNECTED,
     bft::CONNECTED_STAKE,
     bft::CONNECTED_STAKE_WITH_MATCHING_SHA,
@@ -27,6 +32,11 @@ pub(super) const GAUGE_NAMES: [&str; 28] = [
     bft::HEIGHT,
     bft::LAST_COMMITTED_ROUND,
     bft::IS_SYNCED,
+    bft::GATEWAY_OUTBOUND_QUEUE_CAPACITY,
+    bft::GATEWAY_OUTBOUND_QUEUE_DEPTH_MAX,
+    bft::GATEWAY_OUTBOUND_QUEUE_HIGH_WATER_MARK,
+    bft::GATEWAY_SENDS_IN_FLIGHT,
+    bft::GATEWAY_SENDS_RATE_LIMITED,
     blocks::SOLUTIONS,
     blocks::TRANSACTIONS,
     blocks::ACCEPTED_DEPLOY,
@@ -47,10 +57,11 @@ pub(super) const GAUGE_NAMES: [&str; 28] = [
     tcp::TCP_TASKS,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 9] = [
+pub(super) const HISTOGRAM_NAMES: [&str; 10] = [
     bft::COMMIT_ROUNDS_LATENCY,
     bft::COMMIT_LEADER_CERTIFICATE_LATENCY,
     bft::BATCH_CERTIFICATION_LATENCY,
+    bft::GATEWAY_OUTBOUND_QUEUE_DEPTH,
     consensus::CERTIFICATE_COMMIT_LATENCY,
     consensus::BLOCK_LATENCY,
     consensus::BLOCK_LAG,
@@ -74,6 +85,33 @@ pub mod bft {
     pub const HEIGHT: &str = "snarkos_bft_height_total";
     pub const LAST_COMMITTED_ROUND: &str = "snarkos_bft_last_committed_round";
     pub const IS_SYNCED: &str = "snarkos_bft_is_synced";
+
+    /// The depth of the per-connection queue used to send outbound messages, sampled once per
+    /// peer per metrics tick.
+    pub const GATEWAY_OUTBOUND_QUEUE_DEPTH: &str = "snarkos_bft_gateway_outbound_queue_depth";
+    /// The deepest per-connection outbound queue at the most recent metrics tick.
+    pub const GATEWAY_OUTBOUND_QUEUE_DEPTH_MAX: &str = "snarkos_bft_gateway_outbound_queue_depth_max";
+    /// The deepest per-connection outbound queue observed since the node started, measured at
+    /// every send rather than sampled.
+    pub const GATEWAY_OUTBOUND_QUEUE_HIGH_WATER_MARK: &str = "snarkos_bft_gateway_outbound_queue_high_water_mark";
+    /// The capacity of each per-connection outbound queue, i.e. the depth at which a send fails
+    /// and the peer is disconnected.
+    pub const GATEWAY_OUTBOUND_QUEUE_CAPACITY: &str = "snarkos_bft_gateway_outbound_queue_capacity";
+    /// Outbound sends that could not be queued, labelled by `reason`. The `queue_full` label is
+    /// the per-connection outbound queue being at capacity.
+    pub const GATEWAY_SEND_FAILURES: &str = "snarkos_bft_gateway_send_failures_total";
+    /// Outbound sends that entered the rate limiter's retry loop, labelled by `limit`.
+    pub const GATEWAY_RATE_LIMITED_SENDS: &str = "snarkos_bft_gateway_rate_limited_sends_total";
+    /// Iterations of the rate limiter's retry loop, labelled by `limit`. Each iteration is one
+    /// backoff sleep.
+    pub const GATEWAY_RATE_LIMIT_SLEEPS: &str = "snarkos_bft_gateway_rate_limit_sleeps_total";
+    /// Time an outbound send spent in the rate limiter's retry loop, labelled by `limit`.
+    pub const GATEWAY_RATE_LIMIT_DELAY: &str = "snarkos_bft_gateway_rate_limit_delay_secs";
+    /// Outbound sends currently in `Transport::send`. Nearly every call site spawns a task per
+    /// send, so this is also the number of outstanding send tasks.
+    pub const GATEWAY_SENDS_IN_FLIGHT: &str = "snarkos_bft_gateway_sends_in_flight";
+    /// Outbound sends currently parked in the rate limiter's retry loop.
+    pub const GATEWAY_SENDS_RATE_LIMITED: &str = "snarkos_bft_gateway_sends_rate_limited";
 }
 
 pub mod blocks {
@@ -126,6 +164,10 @@ pub mod router {
 
 pub mod tcp {
     pub const TCP_TASKS: &str = "snarkos_tcp_tasks_total";
+    /// Connections dropped because a single write to the socket exceeded `Writing::TIMEOUT`.
+    pub const WRITE_TIMEOUT_DISCONNECTS: &str = "snarkos_tcp_write_timeout_disconnects_total";
+    /// Connections dropped because a write to the socket failed for any other reason.
+    pub const WRITE_ERROR_DISCONNECTS: &str = "snarkos_tcp_write_error_disconnects_total";
 }
 
 pub mod build {

@@ -32,7 +32,8 @@ metrics = [
   "dep:snarkos-node-metrics",
   "snarkos-node-bft-events/metrics",
   "snarkos-node-bft-ledger-service/metrics",
-  "snarkos-node-network/metrics"
+  "snarkos-node-network/metrics",
+  "snarkos-node-tcp/metrics"
 ]
 cuda = [
   "snarkvm/cuda",
