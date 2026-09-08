@@ -77,19 +77,37 @@ pub fn initialize_metrics(ip: Option<SocketAddr>) {
     // Register the snarkVM metrics.
     snarkvm::metrics::register_metrics();
 
-    // Register the metrics so they exist on init.
-    for name in crate::names::GAUGE_NAMES {
-        register_gauge(name);
-    }
-    for name in crate::names::COUNTER_NAMES {
-        register_counter(name);
-    }
-    for name in crate::names::HISTOGRAM_NAMES {
-        register_histogram(name);
-    }
+    describe_and_register_metrics();
 
     // Set the build information metric
     set_build_info();
+}
+
+/// Publishes every declared metric's `HELP` text, and creates a series for each metric that is not
+/// labelled, so that it is present in the exposition before it is first recorded.
+///
+/// This acts on whichever recorder is currently installed.
+fn describe_and_register_metrics() {
+    for metric in crate::names::ALL_METRICS {
+        let description = metric.description.trim();
+        match metric.kind {
+            MetricKind::Counter => {
+                describe_counter(metric.name, description);
+                register_counter(metric.name);
+            }
+            MetricKind::Gauge => {
+                describe_gauge(metric.name, description);
+                register_gauge(metric.name);
+            }
+            MetricKind::Histogram => {
+                describe_histogram(metric.name, description);
+                register_histogram(metric.name);
+            }
+            MetricKind::LabeledCounter => describe_counter(metric.name, description),
+            MetricKind::LabeledGauge => describe_gauge(metric.name, description),
+            MetricKind::LabeledHistogram => describe_histogram(metric.name, description),
+        }
+    }
 }
 
 /// Stops the task running the metrics exporter, if one was started.
@@ -202,6 +220,21 @@ pub fn gauge_label<V: Into<f64>>(name: &'static str, label_key: &'static str, la
     ::metrics::gauge!(name, label_key => label_value).set(value.into());
 }
 
+/// Sets the `HELP` text published for a counter.
+pub fn describe_counter(name: &'static str, description: &'static str) {
+    ::metrics::describe_counter!(name, description);
+}
+
+/// Sets the `HELP` text published for a gauge.
+pub fn describe_gauge(name: &'static str, description: &'static str) {
+    ::metrics::describe_gauge!(name, description);
+}
+
+/// Sets the `HELP` text published for a histogram.
+pub fn describe_histogram(name: &'static str, description: &'static str) {
+    ::metrics::describe_histogram!(name, description);
+}
+
 // Include the generated build information
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
@@ -220,4 +253,52 @@ pub fn set_build_info() {
     ::metrics::gauge!(build::BUILD_INFO, "git_commit" => git_commit.to_string()).set(1.0);
     ::metrics::gauge!(build::BUILD_INFO, "git_branch" => git_branch.to_string()).set(1.0);
     ::metrics::gauge!(build::BUILD_INFO, "features" => features).set(1.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `HELP` text is one line of the exposition format, so a description that is empty,
+    /// duplicated across names, or contains a newline would produce output that is wrong rather
+    /// than merely unhelpful.
+    #[test]
+    fn metric_declarations_are_well_formed() {
+        let mut names = HashMap::new();
+        for metric in crate::names::ALL_METRICS {
+            let name = metric.name;
+            let description = metric.description.trim();
+
+            assert!(name.starts_with("snarkos_"), "{name} is missing the snarkos_ prefix");
+            assert!(!description.is_empty(), "{name} has an empty description");
+            assert!(!description.contains('\n'), "{name} has a multi-line description");
+            assert!(description.ends_with('.'), "{name}'s description should be a sentence");
+            if let Some(previous) = names.insert(name, metric.kind) {
+                panic!("{name} is declared twice, as {previous:?} and as {:?}", metric.kind);
+            }
+        }
+    }
+
+    /// Guards the whole path from a doc comment to the scrape output, which is otherwise only
+    /// exercised by running a node and reading its metrics endpoint.
+    #[test]
+    fn descriptions_reach_the_prometheus_exposition() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        ::metrics::with_local_recorder(&recorder, describe_and_register_metrics);
+        let rendered = handle.render();
+
+        for metric in crate::names::ALL_METRICS {
+            // A labelled metric has no series until one is recorded with its labels, and the
+            // exporter only renders the description of a metric it is rendering samples for.
+            if matches!(
+                metric.kind,
+                MetricKind::LabeledCounter | MetricKind::LabeledGauge | MetricKind::LabeledHistogram
+            ) {
+                continue;
+            }
+            let expected = format!("# HELP {} {}", metric.name, metric.description.trim());
+            assert!(rendered.contains(&expected), "the exposition is missing the line `{expected}`");
+        }
+    }
 }
