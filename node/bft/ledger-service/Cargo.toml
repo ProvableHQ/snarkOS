@@ -18,7 +18,7 @@ edition = "2024"
 
 [features]
 default = [ ]
-ledger = [ "parking_lot", "rand", "rayon", "tokio", "tracing" ]
+ledger = [ "num_cpus", "parking_lot", "rand", "rayon", "tokio", "tracing" ]
 ledger-write = [ ]
 locktick = [
   "dep:locktick",
@@ -57,6 +57,10 @@ optional = true
 
 [dependencies.snarkos-utilities]
 workspace = true
+
+[dependencies.num_cpus]
+workspace = true
+optional = true
 
 [dependencies.parking_lot]
 workspace = true

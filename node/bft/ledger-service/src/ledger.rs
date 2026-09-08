@@ -69,6 +69,29 @@ use rayon::prelude::*;
 
 use std::{fmt, ops::Range, sync::Arc};
 
+/// Stack size for the block-prep rayon pool, matching the process-wide pool in `cli`.
+const BLOCK_PREP_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+/// Returns the shared block-prep rayon pool, creating it on first use.
+///
+/// Sized to half the logical cores so proposal-time work (`check_transaction_basic`,
+/// deserialization, etc.) can still run on the process-wide pool.
+fn block_prep_thread_pool() -> Arc<rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Arc<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let num_threads = (num_cpus::get() / 2).max(1);
+        Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .thread_name(|index| format!("block-prep-{index}"))
+                .stack_size(BLOCK_PREP_STACK_SIZE)
+                .num_threads(num_threads)
+                .build()
+                .expect("Failed to build the block-prep rayon thread pool"),
+        )
+    })
+    .clone()
+}
+
 /// A core ledger service.
 #[allow(clippy::type_complexity)]
 pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
@@ -76,12 +99,16 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
     stoppable: Arc<dyn Stoppable>,
     update_lock: Arc<Mutex<()>>,
+    /// Dedicated rayon pool for block construction and next-block checks.
+    /// Nested snarkVM `par_iter` / `execute_with_max_available_threads` inherit this pool via `install`.
+    block_prep_pool: Arc<rayon::ThreadPool>,
 }
 
 /// A transactional update to the ledger.
 #[cfg(feature = "ledger-write")]
 pub struct LedgerUpdate<'a, N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
+    block_prep_pool: Arc<rayon::ThreadPool>,
     #[cfg(feature = "locktick")]
     _lock: LockGuard<MutexGuard<'a, ()>>,
     #[cfg(not(feature = "locktick"))]
@@ -99,13 +126,19 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
     }
 
     fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>> {
-        self.ledger.check_block_content(block, &mut rand::rng())
+        // Clone the ledger so the closure does not capture `self` (`MutexGuard` is `!Send`).
+        let ledger = self.ledger.clone();
+        self.block_prep_pool.install(move || ledger.check_block_content(block, &mut rand::rng()))
     }
 
     /// Checks the given block is valid next block.
     fn check_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>> {
-        let pending = self.ledger.check_block_subdag(block, &[])?;
-        self.check_block_content(pending)
+        // Clone the ledger so the closure does not capture `self` (`MutexGuard` is `!Send`).
+        let ledger = self.ledger.clone();
+        self.block_prep_pool.install(move || {
+            let pending = ledger.check_block_subdag(block, &[])?;
+            ledger.check_block_content(pending, &mut rand::rng())
+        })
     }
 
     /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
@@ -114,7 +147,10 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
         subdag: Subdag<N>,
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
     ) -> Result<Block<N>, CheckBlockError<N>> {
-        self.ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::rng())
+        // Clone the ledger so the closure does not capture `self` (`MutexGuard` is `!Send`).
+        let ledger = self.ledger.clone();
+        self.block_prep_pool
+            .install(move || ledger.prepare_advance_to_next_quorum_block(subdag, transmissions, &mut rand::rng()))
     }
 
     /// Adds the given block as the next block in the ledger.
@@ -146,7 +182,13 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
         #[cfg(feature = "metrics")]
         metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
 
-        Self { ledger, latest_leader: Default::default(), stoppable, update_lock: Default::default() }
+        Self {
+            ledger,
+            latest_leader: Default::default(),
+            stoppable,
+            update_lock: Default::default(),
+            block_prep_pool: block_prep_thread_pool(),
+        }
     }
 
     /// Returns the deterministic dev committee for rounds at or after the hotswap start,
@@ -528,7 +570,11 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             return Err(BeginLedgerUpdateError::ShuttingDown);
         }
 
-        Ok(Box::new(LedgerUpdate { ledger: self.ledger.clone(), _lock: self.update_lock.lock() }))
+        Ok(Box::new(LedgerUpdate {
+            ledger: self.ledger.clone(),
+            block_prep_pool: self.block_prep_pool.clone(),
+            _lock: self.update_lock.lock(),
+        }))
     }
 
     /// Returns the spend for a transaction in microcredits.
@@ -555,5 +601,14 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
 
     fn is_stopped(&self) -> bool {
         self.stoppable.is_stopped()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn block_prep_pool_uses_half_of_logical_cores() {
+        let pool = super::block_prep_thread_pool();
+        assert_eq!(pool.current_num_threads(), (num_cpus::get() / 2).max(1));
     }
 }

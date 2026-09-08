@@ -5254,6 +5254,7 @@ dependencies = [
  "async-trait",
  "indexmap 2.14.0",
  "locktick",
+ "num_cpus",
  "parking_lot",
  "rand 0.10.2",
  "rayon",
