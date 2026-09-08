@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788777856290,
+  "lastUpdate": 1788836794248,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -17922,6 +17922,72 @@ window.BENCHMARK_DATA = {
             "value": 1.53,
             "unit": "blocks/s",
             "extra": "total_wait=163s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3288f102d1c4df4f83e1591039ab07b65b48a667",
+          "message": "Merge pull request #4436 from cbeck88/fix/tcp-queued-inbound-messages-gauge\n\nfix(tcp): stop the inbound queue gauge from drifting upward forever",
+          "timestamp": "2026-09-07T20:48:26-06:00",
+          "tree_id": "f189e35e8fe93d30bc74ea901b022d46cc0a8827",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/3288f102d1c4df4f83e1591039ab07b65b48a667"
+        },
+        "date": 1788836793079,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 9.811776739911547,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=48.92080330848694, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 6910.99651562892,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.575754642486572, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2345.386210671041,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.3410952091217041, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2,
+            "unit": "blocks/s",
+            "extra": "total_wait=125s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.472565,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=122, mean_speed=1.226503, max_speed=3.166667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.93,
+            "unit": "blocks/s",
+            "extra": "total_wait=129s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.64,
+            "unit": "blocks/s",
+            "extra": "total_wait=152s, target_height=250"
           }
         ]
       }
