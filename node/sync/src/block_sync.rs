@@ -101,9 +101,9 @@ type FailedRequests<H> = BTreeMap<u32, (Option<H>, Option<H>)>;
 struct OutstandingRequest<N: Network> {
     request: SyncRequest<N>,
     timestamp: Instant,
-    /// The corresponding response (if any).
-    /// This is guaranteed to be Some if sync_ips for the given request are empty.
-    response: Option<Block<N>>,
+    /// The candidate blocks received for this request, keyed by block hash.
+    /// This is guaranteed to be non-empty if sync_ips for the given request are empty.
+    response_map: HashMap<N::BlockHash, Block<N>>,
 }
 
 /// Information about a block request (used for the REST API).
@@ -146,8 +146,6 @@ pub enum InsertBlockResponseError<N: Network> {
         "The previous block hash in candidate block {height} from '{peer_ip}' is incorrect: expected {expected}, but got {actual}"
     )]
     InvalidPreviousBlockHash { height: u32, peer_ip: SocketAddr, expected: N::BlockHash, actual: N::BlockHash },
-    #[error("Candidate block {height} from '{peer_ip}' is malformed")]
-    MalformedBlock { height: u32, peer_ip: SocketAddr },
     #[error("The sync pool did not request block {height} from '{peer_ip}'")]
     WrongSyncPeer { height: u32, peer_ip: SocketAddr },
     #[error("{}", flatten_error(.0))]
@@ -483,7 +481,8 @@ impl<N: Network> BlockSync<N> {
 
     /// Returns true if there are pending responses to block requests that need to be processed.
     pub fn has_pending_responses(&self) -> bool {
-        self.requests.read().iter().filter(|(_, req)| req.response.is_some() && req.sync_ips().is_empty()).count() > 0
+        self.requests.read().iter().filter(|(_, req)| !req.response_map.is_empty() && req.sync_ips().is_empty()).count()
+            > 0
     }
 
     /// Send a batch of block requests.
@@ -645,7 +644,7 @@ impl<N: Network> BlockSync<N> {
 
     /// Inserts a new block response from the given peer IP.
     ///
-    /// Returns an error if the block was malformed, or we already received a different block for this height.
+    /// Returns an error if the block was malformed.
     /// This function also removes all block requests from the given peer IP on failure.
     ///
     /// Note, that this only queues the response. After this, you most likely want to call `Self::try_advancing_block_synchronization`.
@@ -709,26 +708,27 @@ impl<N: Network> BlockSync<N> {
         result
     }
 
-    /// Returns the next block for the given `next_height` if the request is complete,
-    /// or `None` otherwise. This does not remove the block from the `responses` map.
+    /// Returns the candidate blocks for the given `next_height` if the request is complete,
+    /// or `None` otherwise. This does not remove the blocks from the `responses` map.
+    ///
+    /// Note: more than one candidate can be returned if multiple peers responded with different
+    /// blocks for the same height (e.g. competing forks).
     #[inline]
-    pub fn peek_next_block(&self, next_height: u32) -> Option<Block<N>> {
+    pub fn peek_next_block(&self, next_height: u32) -> Option<Vec<Block<N>>> {
         // Determine if the request is complete:
         // either there is no request for `next_height`, or the request has no peer socket addresses left.
-        if let Some(entry) = self.requests.read().get(&next_height) {
-            let is_complete = entry.sync_ips().is_empty();
-            if !is_complete {
-                return None;
-            }
-
-            // If the request is complete, return the block from the responses, if there is one.
-            if entry.response.is_none() {
-                warn!("Request for height {next_height} is complete but no response exists");
-            }
-            entry.response.clone()
-        } else {
-            None
+        let lock = self.requests.read();
+        let entry = lock.get(&next_height)?;
+        if !entry.sync_ips().is_empty() {
+            return None;
         }
+
+        if entry.response_map.is_empty() {
+            warn!("Request for height {next_height} is complete but no response exists");
+            return None;
+        }
+
+        Some(entry.response_map.values().cloned().collect())
     }
 
     /// Attempts to advance synchronization by processing completed block responses.
@@ -760,68 +760,93 @@ impl<N: Network> BlockSync<N> {
             self.get_sync_speed()
         );
 
-        loop {
+        'outer: loop {
             let next_height = current_height + 1;
 
-            let Some(block) = self.peek_next_block(next_height) else {
+            let Some(candidates) = self.peek_next_block(next_height) else {
                 break;
             };
 
-            // Ensure the block height matches.
-            if block.height() != next_height {
-                warn!("Block height mismatch: expected {}, found {}", current_height + 1, block.height());
-                break;
-            }
+            // Try each candidate block for this height in turn - more than one peer may have
+            // responded with a different block (e.g. competing forks). The first candidate that
+            // the ledger accepts (or that reveals the height is already settled) wins; the rest
+            // are simply discarded.
+            let mut stop = false;
+            let mut last_error = None;
 
-            let ledger = self.ledger.clone();
+            for block in candidates {
+                // Ensure the block height matches.
+                if block.height() != next_height {
+                    warn!("Block height mismatch: expected {}, found {}", current_height + 1, block.height());
+                    break 'outer;
+                }
 
-            let (advanced, stop) = tokio::task::spawn_blocking(move || {
-                let ledger_update = match ledger.begin_ledger_update() {
-                    Ok(update) => update,
-                    Err(BeginLedgerUpdateError::ShuttingDown) => {
-                        info!("BlockSync cannot advance the ledger any more. The node is shutting down.");
-                        return Ok((false, true));
+                let ledger = self.ledger.clone();
+
+                let result = tokio::task::spawn_blocking(move || {
+                    let ledger_update = match ledger.begin_ledger_update() {
+                        Ok(update) => update,
+                        Err(BeginLedgerUpdateError::ShuttingDown) => {
+                            info!("BlockSync cannot advance the ledger any more. The node is shutting down.");
+                            return Ok((false, true));
+                        }
+                        Err(err) => {
+                            return Err(anyhow!("Unexpected error when beginning ledger update: {err}"));
+                        }
+                    };
+
+                    // Try to check the next block and advance to it.
+                    let block = match ledger_update.check_next_block(block) {
+                        Ok(block) => block,
+                        Err(CheckBlockError::InvalidHeight { .. })
+                        | Err(CheckBlockError::BlockAlreadyExists { .. })
+                        | Err(CheckBlockError::InvalidRound { .. }) => {
+                            debug!("Skipping a block at height {next_height}. The ledger already advanced",);
+                            return Ok((false, false));
+                        }
+                        Err(err) => {
+                            warn!("{err}");
+                            return Err(err.into_anyhow());
+                        }
+                    };
+
+                    ledger_update.advance_to_next_block(&block).with_context(|| {
+                        format!(
+                            "Failed to advance to next block (height: {height}, hash: {hash})",
+                            height = block.height(),
+                            hash = block.hash(),
+                        )
+                    })?;
+
+                    Ok((true, false))
+                })
+                .await?;
+
+                match result {
+                    Ok((advanced, did_stop)) => {
+                        // Only count successful advances.
+                        // We may not always advance, for example, if the block was already added to the ledger.
+                        if advanced {
+                            self.count_request_completed();
+                        }
+                        stop = did_stop;
+                        last_error = None;
+                        break;
                     }
                     Err(err) => {
-                        return Err(anyhow!("Unexpected error when beginning ledger update: {err}"));
+                        // This candidate was invalid (e.g. it lost a fork); try the next one.
+                        last_error = Some(err);
                     }
-                };
-
-                // Try to check the next block and advance to it.
-                let block = match ledger_update.check_next_block(block) {
-                    Ok(block) => block,
-                    Err(CheckBlockError::InvalidHeight { .. })
-                    | Err(CheckBlockError::BlockAlreadyExists { .. })
-                    | Err(CheckBlockError::InvalidRound { .. }) => {
-                        debug!("Skipping a block at height {next_height}. The ledger already advanced",);
-                        return Ok((false, false));
-                    }
-                    Err(err) => {
-                        warn!("{err}");
-                        return Err(err.into_anyhow());
-                    }
-                };
-
-                ledger_update.advance_to_next_block(&block).with_context(|| {
-                    format!(
-                        "Failed to advance to next block (height: {height}, hash: {hash})",
-                        height = block.height(),
-                        hash = block.hash(),
-                    )
-                })?;
-
-                Ok((true, false))
-            })
-            .await??;
-
-            // Only count successful advances.
-            // We may not always advance, for example, if the block was already added to the ledger.
-            if advanced {
-                self.count_request_completed();
+                }
             }
 
             // Remove the block response.
             self.remove_block_response(next_height);
+
+            // If every candidate for this height failed, propagate the last error.
+            if let Some(err) = last_error {
+                return Err(err);
+            }
 
             // If the node is shutting down, exit the loop.
             if stop {
@@ -1260,7 +1285,7 @@ impl<N: Network> BlockSync<N> {
         self.requests.write().insert(height, OutstandingRequest {
             request: (hash, previous_hash, sync_ips),
             timestamp: Instant::now(),
-            response: None,
+            response_map: HashMap::new(),
         });
         Ok(())
     }
@@ -1282,16 +1307,17 @@ impl<N: Network> BlockSync<N> {
 
         // Retrieve the request entry for the candidate block.
         let (expected_hash, expected_previous_hash, sync_ips) = &entry.request;
+        let block_hash = block.hash();
 
         // Ensure the candidate block hash matches the expected hash.
         if let Some(expected_hash) = expected_hash
-            && block.hash() != *expected_hash
+            && block_hash != *expected_hash
         {
             return Err(InsertBlockResponseError::InvalidBlockHash {
                 height,
                 peer_ip,
                 expected_hash: *expected_hash,
-                actual_hash: block.hash(),
+                actual_hash: block_hash,
             });
         }
         // Ensure the previous block hash matches if it exists.
@@ -1313,14 +1339,8 @@ impl<N: Network> BlockSync<N> {
         // Remove the peer IP from the request entry.
         entry.sync_ips_mut().swap_remove(&peer_ip);
 
-        if let Some(existing_block) = &entry.response {
-            // If the candidate block was already present, ensure it is the same block.
-            if block != *existing_block {
-                return Err(InsertBlockResponseError::MalformedBlock { height, peer_ip });
-            }
-        } else {
-            entry.response = Some(block.clone());
-        }
+        // Insert the block in the responses map.
+        entry.response_map.insert(block_hash, block);
 
         trace!("Received a new and valid block response for height {height}");
 
@@ -1381,14 +1401,14 @@ impl<N: Network> BlockSync<N> {
         self.requests.write().retain(|height, e| {
             let had_peer = e.sync_ips_mut().swap_remove(peer_ip);
 
-            if had_peer && e.response.is_none() {
+            if had_peer && e.response_map.is_empty() {
                 trace!("Removed outstanding block request to peer {peer_ip} at height {height}");
                 heights.push(*height);
             }
 
             // Only remove requests that were sent to this peer, that have no other peer that can respond instead,
             // and that were not completed yet.
-            let retain = !had_peer || !e.sync_ips().is_empty() || e.response.is_some();
+            let retain = !had_peer || !e.sync_ips().is_empty() || !e.response_map.is_empty();
             if !retain {
                 // Record the request to be re-issued.
                 let (hash, previous_hash, _) = &e.request;
@@ -1461,7 +1481,7 @@ impl<N: Network> BlockSync<N> {
                 // Determine if the duration since the request timestamp has exceeded the request timeout.
                 let timer_elapsed = now.duration_since(e.timestamp) > BLOCK_REQUEST_TIMEOUT;
                 // Determine if the request is complete.
-                let is_complete = e.sync_ips().is_empty() && e.response.is_some();
+                let is_complete = e.sync_ips().is_empty() && !e.response_map.is_empty();
                 // If any assigned peer is still actively responding, the request is not stuck.
                 let has_responsive_peer = e.sync_ips().iter().any(|ip| responsive_peers.contains(ip));
 
@@ -2327,7 +2347,7 @@ mod tests {
         sync.requests.write().insert(1, OutstandingRequest {
             request: (block_hash, None, [peer_ip].into()),
             timestamp,
-            response: None,
+            response_map: HashMap::new(),
         });
 
         assert_eq!(sync.requests.read().len(), 1);
@@ -2367,14 +2387,14 @@ mod tests {
         sync.requests.write().insert(1, OutstandingRequest {
             request: (block_hash1, None, [peer_ip1].into()),
             timestamp,
-            response: None,
+            response_map: HashMap::new(),
         });
 
         // Add a timed-out request
         sync.requests.write().insert(2, OutstandingRequest {
             request: (block_hash2, None, [peer_ip2].into()),
             timestamp: Instant::now(),
-            response: None,
+            response_map: HashMap::new(),
         });
 
         assert_eq!(sync.requests.read().len(), 2);
