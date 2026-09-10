@@ -98,15 +98,20 @@ fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, Res
 }
 
 fn map_missing_resource_error(err: anyhow::Error) -> RestError {
-    let error_message = err.to_string();
-    if error_message.contains("Missing")
-        || error_message.contains("does not exist in storage")
-        || error_message.contains("Failed to find")
-    {
-        RestError::not_found(err)
-    } else {
-        RestError::from(err)
-    }
+    /// The markers that identify an absent resource rather than a fault.
+    const MISSING_RESOURCE_MARKERS: [&str; 3] = ["Missing", "does not exist in storage", "Failed to find"];
+
+    // Inspect the whole chain rather than just the outermost message. Callers attach context with
+    // `with_context`, which is what `to_string` then reports, so a marker added by the ledger ends
+    // up buried one level down. `/block/{height}` was the visible case: `get_block` wraps the
+    // ledger's "Missing block hash for block {h}" in "Failed to get a block's hash", so a height
+    // the node did not have was reported as a 500 instead of a 404.
+    let is_missing_resource = err.chain().any(|cause| {
+        let message = cause.to_string();
+        MISSING_RESOURCE_MARKERS.iter().any(|marker| message.contains(marker))
+    });
+
+    if is_missing_resource { RestError::not_found(err) } else { RestError::from(err) }
 }
 
 /// Deserialize a CSV string into a vector of strings.
@@ -531,7 +536,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(hash): Path<N::BlockHash>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_height(&hash)?))
+        Ok(ErasedJson::pretty(rest.ledger.get_height(&hash).map_err(map_missing_resource_error)?))
     }
 
     /// GET /<network>/block/{height}/header
@@ -689,7 +694,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
         // Get the program from the ledger.
-        let program = rest.ledger.get_program(id).with_context(|| format!("Failed to find program `{id}`"))?;
+        let program = rest
+            .ledger
+            .get_program(id)
+            .with_context(|| format!("Failed to find program `{id}`"))
+            .map_err(map_missing_resource_error)?;
         // Check if metadata is requested and return the program with metadata if so.
         if metadata.metadata.unwrap_or(false) {
             // Get the edition of the program.

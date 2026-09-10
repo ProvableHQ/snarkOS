@@ -338,10 +338,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .layer(trace_layer)
     }
 
-    async fn spawn_server(&mut self, rest_ip: SocketAddr, rest_rps: u32) -> Result<()> {
-        // Log the REST rate limit per IP.
-        debug!("REST rate limit per IP - {rest_rps} RPS");
-
+    /// Builds the router served by `spawn_server`: the routes under the default, `/v1` and `/v2`
+    /// prefixes, with the v1 error middleware applied to the first two.
+    ///
+    /// This is separate from `spawn_server` so that the version prefixes can be exercised in tests
+    /// without binding a port.
+    fn build_versioned_router(&self, rest_rps: u32) -> axum::Router {
         // Add the v1 API as default and under "/v1".
         let default_router = axum::Router::new().nest(
             &format!("/{}", N::SHORT_NAME),
@@ -357,7 +359,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             axum::Router::new().nest(&format!("/{API_VERSION_V2}/{}", N::SHORT_NAME), self.build_routes(rest_rps));
 
         // Combine all routes.
-        let router = default_router.merge(v1_router).merge(v2_router);
+        default_router.merge(v1_router).merge(v2_router)
+    }
+
+    async fn spawn_server(&mut self, rest_ip: SocketAddr, rest_rps: u32) -> Result<()> {
+        // Log the REST rate limit per IP.
+        debug!("REST rate limit per IP - {rest_rps} RPS");
+
+        let router = self.build_versioned_router(rest_rps);
 
         let rest_listener =
             TcpListener::bind(rest_ip).await.with_context(|| "Failed to bind TCP port for REST endpoints")?;
@@ -383,20 +392,39 @@ async fn v1_error_middleware(response: Response) -> Response {
         return response;
     }
 
-    // Returns a opaque error instead of panicking.
-    let fallback = || {
-        let mut response = Response::new(Body::from("Failed to convert error"));
+    // The status the route or a layer actually produced. v1 replaces it with a 500, so it has to
+    // be carried in the message: without it a rate-limit rejection is indistinguishable from a
+    // fault or from missing data, which is what made `--rest-rps` failures read as a data problem.
+    let original_status = response.status();
+
+    // Builds a v1 error response with the given message.
+    let build = |message: String| {
+        let mut response = Response::new(Body::from(message));
         *response.status_mut() = V1_STATUS_CODE;
         response
     };
 
+    // Returns an opaque error instead of panicking, naming the status that was replaced.
+    let fallback = |body: Option<&[u8]>| {
+        // Not every non-success response carries a `SerializedRestError`: the rate limiting layer
+        // emits a plain string, and some layers emit nothing at all. Keep whatever text there is.
+        let text = body.map(|bytes| String::from_utf8_lossy(bytes).trim().to_string()).unwrap_or_default();
+        let status = original_status.as_u16();
+
+        build(if text.is_empty() {
+            format!("Failed to convert error (HTTP {status})")
+        } else {
+            format!("{text} (HTTP {status})")
+        })
+    };
+
     let Ok(bytes) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
-        return fallback();
+        return fallback(None);
     };
 
     // Deserialize REST error so we can convert it to a string
     let Ok(json_err) = serde_json::from_slice::<SerializedRestError>(&bytes) else {
-        return fallback();
+        return fallback(Some(&bytes));
     };
 
     let mut message = json_err.message;
@@ -404,11 +432,7 @@ async fn v1_error_middleware(response: Response) -> Response {
         message = format!("{message} — {next}");
     }
 
-    let mut response = Response::new(Body::from(message));
-
-    *response.status_mut() = V1_STATUS_CODE;
-
-    response
+    build(message)
 }
 
 /// Formats an ID into a truncated identifier (for logging purposes).
@@ -664,5 +688,181 @@ mod route_tests {
             let (status, _) = get(&rest, &format!("/blocks/hashes{query}")).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "the query '{query}' was not rejected");
         }
+    }
+
+    /// Sends a request through the full versioned router, so the version prefixes apply.
+    async fn get_versioned(rest: &CurrentRest, uri: &str) -> (StatusCode, String) {
+        send(&rest.build_versioned_router(TEST_RPS), uri).await
+    }
+
+    /// Sends a request through an already-built router, so that state held by its layers -- the
+    /// rate limiter in particular -- persists across calls.
+    async fn send(router: &axum::Router, uri: &str) -> (StatusCode, String) {
+        let mut request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        request.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 4130))));
+
+        let response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
+    #[tokio::test]
+    async fn an_unknown_route_is_not_found_on_every_prefix() {
+        let rest = sample_rest().await;
+
+        // An unmatched path is answered by the outer router, above where the v1 middleware is
+        // layered, so it is a plain 404 with an empty body on every prefix rather than a 500.
+        for prefix in ["/mainnet", "/v1/mainnet", "/v2/mainnet"] {
+            let (status, body) = get_versioned(&rest, &format!("{prefix}/no-such-route")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{prefix} did not 404 an unknown route");
+            assert!(body.is_empty(), "{prefix} returned a body for an unknown route: {body}");
+        }
+
+        // An unknown network prefix is equally unmatched.
+        let (status, _) = get_versioned(&rest, "/nosuchnet/block/height/latest").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_known_route_rejects_the_wrong_method() {
+        let rest = sample_rest().await;
+
+        let mut request =
+            Request::builder().method("DELETE").uri("/v2/mainnet/block/height/latest").body(Body::empty()).unwrap();
+        request.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 4130))));
+
+        let response = rest.build_versioned_router(TEST_RPS).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn rate_limiting_reports_429_on_v2() {
+        let rest = sample_rest().await;
+        // A burst of one, so the second request through this router is over the limit.
+        let router = rest.build_versioned_router(1);
+
+        let (status, _) = send(&router, "/v2/mainnet/block/height/latest").await;
+        assert_eq!(status, StatusCode::OK, "the first request should be within the limit");
+
+        let (status, body) = send(&router, "/v2/mainnet/block/height/latest").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(body.contains("Too Many Requests"), "unexpected rate limit body: {body}");
+    }
+
+    #[tokio::test]
+    async fn rate_limiting_is_identifiable_on_v1() {
+        let rest = sample_rest().await;
+        let router = rest.build_versioned_router(1);
+
+        let (status, _) = send(&router, "/mainnet/block/height/latest").await;
+        assert_eq!(status, StatusCode::OK);
+
+        // v1 replaces every error status with a 500 by design, so a rate-limited caller cannot
+        // learn what happened from the status. The message has to say so instead; it previously
+        // read only "Failed to convert error", which is what made `--rest-rps` rejections look
+        // like missing data. See ProvableHQ/snarkOS#4443.
+        let (status, body) = send(&router, "/mainnet/block/height/latest").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains("429"), "the v1 rate limit message does not name the status: {body}");
+        assert!(body.contains("Too Many Requests"), "the v1 rate limit message lost the reason: {body}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_block_is_not_found_rather_than_a_fault() {
+        let rest = sample_rest().await;
+
+        // The ledger holds only the genesis block. `get_block` wraps the ledger's "Missing block
+        // hash" in its own context, which used to hide the marker from the error mapping and
+        // produce a 500 for a height the node simply did not have. See ProvableHQ/snarkOS#4337.
+        let (status, _) = get_versioned(&rest, "/v2/mainnet/block/1").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // An unknown block hash resolves through a different getter, which also reports a missing
+        // resource rather than a fault.
+        let unknown_hash = "ab1jsexppseyf8f9ymgqxmalnehwnhk75pv4agv7vsdl4nudvayy5rscjnfpx";
+        let (status, _) = get_versioned(&rest, &format!("/v2/mainnet/height/{unknown_hash}")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = get_versioned(&rest, "/v2/mainnet/program/nonexistent.aleo").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn the_same_routes_are_served_on_every_prefix_with_different_error_shapes() {
+        let rest = sample_rest().await;
+
+        // There is no per-route versioning: `build_versioned_router` mounts one route set under
+        // the default, `/v1` and `/v2` prefixes, so every route is reachable on all three. What
+        // differs is only how an error is represented, which a consumer has to plan for.
+        for prefix in ["/mainnet", "/v1/mainnet", "/v2/mainnet"] {
+            let (status, body) = get_versioned(&rest, &format!("{prefix}/blocks/hashes?start=0&end=1")).await;
+            assert_eq!(status, StatusCode::OK, "{prefix} does not serve the route");
+            assert!(body.contains("ab1"), "{prefix} returned an unexpected body: {body}");
+        }
+
+        // The same missing height is a 404 with a json body on v2, and a 500 with a flattened
+        // string on v1 and the default prefix. A consumer that needs to tell "not yet synced"
+        // apart from a fault has to use `/v2`.
+        let (status, body) = get_versioned(&rest, "/v2/mainnet/blocks/hashes?start=0&end=2").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(body.starts_with('{'), "v2 should carry a serialized error: {body}");
+
+        for prefix in ["/mainnet", "/v1/mainnet"] {
+            let (status, body) = get_versioned(&rest, &format!("{prefix}/blocks/hashes?start=0&end=2")).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{prefix} no longer forces a 500");
+            assert!(!body.starts_with('{'), "{prefix} should flatten the error to a string: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_malformed_block_identifier_is_a_bad_request() {
+        let rest = sample_rest().await;
+
+        // Neither a height nor a hash, so this is rejected before any lookup.
+        let (status, _) = get_versioned(&rest, "/v2/mainnet/block/not-a-height-or-hash").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn state_root_serves_null_for_a_missing_height() {
+        let rest = sample_rest().await;
+
+        // This pins current behavior rather than endorsing it: the singular state root route
+        // answers a height it does not have with `200 null`, while the range route and most other
+        // routes report a missing resource as a 404. Changing it needs a version bump, so it is
+        // recorded here to keep the inconsistency visible. See ProvableHQ/snarkOS#4097.
+        for prefix in ["/mainnet", "/v2/mainnet"] {
+            let (status, body) = get_versioned(&rest, &format!("{prefix}/stateRoot/1")).await;
+            assert_eq!(status, StatusCode::OK, "{prefix} changed the missing state root status");
+            assert_eq!(body.trim(), "null", "{prefix} changed the missing state root body");
+        }
+    }
+
+    #[tokio::test]
+    async fn routes_needing_consensus_are_unavailable_without_it() {
+        let rest = sample_rest().await;
+
+        // The harness builds a `Rest` with no consensus, as a client node has, so the routes that
+        // read the memory pool report that they do not apply to this node type.
+        for route in ["memoryPool/transmissions", "memoryPool/solutions", "memoryPool/transactions"] {
+            let (status, _) = get_versioned(&rest, &format!("/v2/mainnet/{route}")).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route} did not report being unavailable");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_genesis_ledger_answers_the_latest_block_routes() {
+        let rest = sample_rest().await;
+
+        let (status, body) = get_versioned(&rest, "/v2/mainnet/block/height/latest").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.trim(), "0");
+
+        let (status, body) = get_versioned(&rest, "/v2/mainnet/block/hash/latest").await;
+        assert_eq!(status, StatusCode::OK);
+        let hash: <CurrentNetwork as Network>::BlockHash = serde_json::from_str(&body).unwrap();
+        assert_eq!(hash, sample_genesis_block::<CurrentNetwork>().hash());
     }
 }
