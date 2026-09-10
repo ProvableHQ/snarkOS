@@ -58,13 +58,31 @@ pub fn fmt_id(id: impl ToString) -> String {
     formatted_id
 }
 
+/// Records how long a blocking task waited for a thread in the `tokio` blocking pool.
+///
+/// Only called by [`spawn_blocking!`], which cannot reference the metrics crate directly because
+/// its body is expanded in the calling crate.
+#[doc(hidden)]
+pub fn record_blocking_wait(submitted: std::time::Instant) {
+    #[cfg(feature = "metrics")]
+    metrics::histogram(metrics::cpu::BLOCKING_WAIT_SECS, submitted.elapsed().as_secs_f64());
+    #[cfg(not(feature = "metrics"))]
+    let _ = submitted;
+}
+
 /// A helper macro to spawn a blocking task.
 #[macro_export]
 macro_rules! spawn_blocking {
-    ($expr:expr) => {
-        match tokio::task::spawn_blocking(move || $expr).await {
+    ($expr:expr) => {{
+        let submitted = ::std::time::Instant::now();
+        match tokio::task::spawn_blocking(move || {
+            $crate::record_blocking_wait(submitted);
+            $expr
+        })
+        .await
+        {
             Ok(value) => value,
             Err(error) => Err(snarkvm::prelude::anyhow!("[tokio::spawn_blocking] {error}")),
         }
-    };
+    }};
 }

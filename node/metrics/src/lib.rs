@@ -40,12 +40,19 @@ use std::{
         OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
+    time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::task::JoinHandle;
+use tokio::{runtime::RuntimeMetrics, task::JoinHandle};
 
 /// The handle to the task running the metrics exporter.
 static EXPORTER_TASK: OnceLock<JoinHandle<()>> = OnceLock::new();
+
+/// The handle to the task sampling the `tokio` runtime's own counters.
+static RUNTIME_SAMPLER_TASK: OnceLock<JoinHandle<()>> = OnceLock::new();
+
+/// How often the `tokio` runtime's counters are sampled.
+const RUNTIME_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Initializes the metrics and starts the metrics exporter.
 ///
@@ -74,6 +81,11 @@ pub fn initialize_metrics(ip: Option<SocketAddr>) {
         tracing::warn!("The metrics exporter was already initialized");
     }
 
+    // Start reporting on the runtime that everything else runs on.
+    if let Err(task) = RUNTIME_SAMPLER_TASK.set(spawn_runtime_sampler()) {
+        task.abort();
+    }
+
     // Register the snarkVM metrics.
     snarkvm::metrics::register_metrics();
 
@@ -97,6 +109,89 @@ pub fn shut_down_metrics() {
     if let Some(task) = EXPORTER_TASK.get() {
         tracing::info!("Shutting down the metrics exporter...");
         task.abort();
+    }
+    if let Some(task) = RUNTIME_SAMPLER_TASK.get() {
+        task.abort();
+    }
+}
+
+/// Samples the counters that the `tokio` runtime keeps about itself into gauges.
+fn spawn_runtime_sampler() -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let runtime = tokio::runtime::Handle::current().metrics();
+        gauge(tokio_rt::WORKERS, runtime.num_workers() as f64);
+        gauge(rayon_pool::THREADS, rayon::current_num_threads() as f64);
+
+        let mut previous = RuntimeTotals::sample(&runtime);
+        loop {
+            tokio::time::sleep(RUNTIME_SAMPLE_INTERVAL).await;
+
+            gauge(tokio_rt::ALIVE_TASKS, runtime.num_alive_tasks() as f64);
+            gauge(tokio_rt::GLOBAL_QUEUE_DEPTH, runtime.global_queue_depth() as f64);
+
+            #[cfg(tokio_unstable)]
+            {
+                gauge(tokio_rt::BLOCKING_THREADS, runtime.num_blocking_threads() as f64);
+                gauge(tokio_rt::BLOCKING_THREADS_IDLE, runtime.num_idle_blocking_threads() as f64);
+                gauge(tokio_rt::BLOCKING_QUEUE_DEPTH, runtime.blocking_queue_depth() as f64);
+            }
+
+            let current = RuntimeTotals::sample(&runtime);
+            current.publish_change_since(&previous);
+            previous = current;
+        }
+    })
+}
+
+/// The `tokio` runtime counters that only mean something as a rate.
+///
+/// The runtime reports these as totals accumulated since it started, so a sample is kept from one
+/// tick to the next and subtracted to recover what happened in between.
+struct RuntimeTotals {
+    sampled_at: Instant,
+    /// Time each worker spent running tasks rather than waiting for them, indexed by worker.
+    worker_busy: Vec<Duration>,
+    worker_parks: u64,
+    #[cfg(tokio_unstable)]
+    worker_steals: u64,
+    #[cfg(tokio_unstable)]
+    worker_noops: u64,
+}
+
+impl RuntimeTotals {
+    fn sample(runtime: &RuntimeMetrics) -> Self {
+        let workers = runtime.num_workers();
+        Self {
+            sampled_at: Instant::now(),
+            worker_busy: (0..workers).map(|worker| runtime.worker_total_busy_duration(worker)).collect(),
+            worker_parks: (0..workers).map(|worker| runtime.worker_park_count(worker)).sum(),
+            #[cfg(tokio_unstable)]
+            worker_steals: (0..workers).map(|worker| runtime.worker_steal_count(worker)).sum(),
+            #[cfg(tokio_unstable)]
+            worker_noops: (0..workers).map(|worker| runtime.worker_noop_count(worker)).sum(),
+        }
+    }
+
+    /// Publishes how far each total moved between `previous` and this sample.
+    fn publish_change_since(&self, previous: &Self) {
+        let elapsed = self.sampled_at.duration_since(previous.sampled_at).as_secs_f64();
+
+        let mut busy_cores = 0.0;
+        let mut busiest_ratio: f64 = 0.0;
+        for (busy, previously_busy) in self.worker_busy.iter().zip(&previous.worker_busy) {
+            let ratio = busy.saturating_sub(*previously_busy).as_secs_f64() / elapsed;
+            busy_cores += ratio;
+            busiest_ratio = busiest_ratio.max(ratio);
+        }
+        gauge(tokio_rt::WORKER_BUSY_CORES, busy_cores);
+        gauge(tokio_rt::WORKER_BUSY_RATIO_MAX, busiest_ratio);
+        gauge(tokio_rt::WORKER_PARKS, self.worker_parks.saturating_sub(previous.worker_parks) as f64);
+
+        #[cfg(tokio_unstable)]
+        {
+            gauge(tokio_rt::WORKER_STEALS, self.worker_steals.saturating_sub(previous.worker_steals) as f64);
+            gauge(tokio_rt::WORKER_NOOPS, self.worker_noops.saturating_sub(previous.worker_noops) as f64);
+        }
     }
 }
 

@@ -88,13 +88,31 @@ pub const PRIMARY_PING_INTERVAL: Duration = Duration::from_millis(2 * (MAX_BATCH
 /// The interval at which each worker broadcasts a ping to every other node.
 pub const WORKER_PING_INTERVAL: Duration = Duration::from_millis(4 * (MAX_BATCH_DELAY.as_millis() as u64));
 
+/// Records how long a blocking task waited for a thread in the `tokio` blocking pool.
+///
+/// Only called by [`spawn_blocking!`], which cannot reference the metrics crate directly because
+/// its body is expanded in the calling crate.
+#[doc(hidden)]
+pub fn record_blocking_wait(submitted: std::time::Instant) {
+    #[cfg(feature = "metrics")]
+    metrics::histogram(metrics::cpu::BLOCKING_WAIT_SECS, submitted.elapsed().as_secs_f64());
+    #[cfg(not(feature = "metrics"))]
+    let _ = submitted;
+}
+
 /// A helper macro to spawn a blocking task.
 #[macro_export]
 macro_rules! spawn_blocking {
-    ($expr:expr) => {
-        match tokio::task::spawn_blocking(move || $expr).await {
+    ($expr:expr) => {{
+        let submitted = ::std::time::Instant::now();
+        match tokio::task::spawn_blocking(move || {
+            $crate::record_blocking_wait(submitted);
+            $expr
+        })
+        .await
+        {
             Ok(value) => value,
             Err(error) => Err(anyhow::anyhow!("[tokio::spawn_blocking] {error}")),
         }
-    };
+    }};
 }
