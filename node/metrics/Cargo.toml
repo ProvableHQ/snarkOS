@@ -51,7 +51,7 @@ workspace = true
 
 [dependencies.tokio]
 workspace = true
-features = [ "rt" ]
+features = [ "rt", "time" ]
 
 [dependencies.tracing]
 workspace = true

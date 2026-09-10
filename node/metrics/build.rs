@@ -38,5 +38,8 @@ fn emit_version_env() {
 
 fn main() {
     emit_version_env();
+    // `tokio_unstable` is set through `RUSTFLAGS`, not through a Cargo feature, so it has to be
+    // declared here or `unexpected_cfgs` fires on the profiling-only metrics that depend on it.
+    println!("cargo::rustc-check-cfg=cfg(tokio_unstable)");
     built::write_built_file().expect("Failed to acquire build-time information");
 }
