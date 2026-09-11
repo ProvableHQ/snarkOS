@@ -751,25 +751,6 @@ impl<N: Network> BFT<N> {
             // Retrieve metadata about the subdag.
             let subdag_metadata = subdag.iter().map(|(round, c)| (*round, c.len())).collect::<Vec<_>>();
 
-            // Update subdag/DAG-density metrics.
-            #[cfg(feature = "metrics")]
-            {
-                metrics::histogram(metrics::bft::SUBDAG_ROUNDS_PER_BLOCK, subdag_metadata.len() as f64);
-                for (_, certs_in_round) in &subdag_metadata {
-                    metrics::histogram(metrics::bft::SUBDAG_CERTIFICATES_PER_ROUND, *certs_in_round as f64);
-                }
-                for certificate in commit_subdag.values().flatten() {
-                    metrics::histogram(
-                        metrics::bft::SUBDAG_CERTIFICATE_SIGNATURES,
-                        certificate.signatures().len() as f64,
-                    );
-                    metrics::histogram(
-                        metrics::bft::SUBDAG_CERTIFICATE_PREVIOUS_REFS,
-                        certificate.previous_certificate_ids().len() as f64,
-                    );
-                }
-            }
-
             // Ensure the subdag anchor round matches the leader round.
             ensure!(
                 anchor_round == leader_round,
@@ -780,8 +761,10 @@ impl<N: Network> BFT<N> {
             if !skip_consensus && let Some(consensus_sender) = self.consensus_sender.get() {
                 // Initialize a callback sender and receiver.
                 let (callback_sender, callback_receiver) = oneshot::channel();
+
                 // Send the subdag and transmissions to consensus.
                 consensus_sender.tx_consensus_subdag.send((subdag, transmissions, callback_sender)).await?;
+
                 // Await the callback to continue.
                 match callback_receiver.await {
                     Ok(Ok(_)) => (),
@@ -795,6 +778,25 @@ impl<N: Network> BFT<N> {
                         let err = err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
                         error!("{}", flatten_error(err));
                         return Ok(());
+                    }
+                }
+
+                // Update subdag/DAG-density metrics.
+                #[cfg(feature = "metrics")]
+                {
+                    metrics::histogram(metrics::bft::SUBDAG_ROUNDS_PER_BLOCK, subdag_metadata.len() as f64);
+                    for (_, certs_in_round) in &subdag_metadata {
+                        metrics::histogram(metrics::bft::SUBDAG_CERTIFICATES_PER_ROUND, *certs_in_round as f64);
+                    }
+                    for certificate in commit_subdag.values().flatten() {
+                        metrics::histogram(
+                            metrics::bft::SUBDAG_CERTIFICATE_SIGNATURES,
+                            certificate.signatures().len() as f64,
+                        );
+                        metrics::histogram(
+                            metrics::bft::SUBDAG_CERTIFICATE_PREVIOUS_REFS,
+                            certificate.previous_certificate_ids().len() as f64,
+                        );
                     }
                 }
             }
