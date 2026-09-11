@@ -751,6 +751,25 @@ impl<N: Network> BFT<N> {
             // Retrieve metadata about the subdag.
             let subdag_metadata = subdag.iter().map(|(round, c)| (*round, c.len())).collect::<Vec<_>>();
 
+            // Update subdag/DAG-density metrics.
+            #[cfg(feature = "metrics")]
+            {
+                metrics::histogram(metrics::bft::SUBDAG_ROUNDS_PER_BLOCK, subdag_metadata.len() as f64);
+                for (_, certs_in_round) in &subdag_metadata {
+                    metrics::histogram(metrics::bft::SUBDAG_CERTIFICATES_PER_ROUND, *certs_in_round as f64);
+                }
+                for certificate in commit_subdag.values().flatten() {
+                    metrics::histogram(
+                        metrics::bft::SUBDAG_CERTIFICATE_SIGNATURES,
+                        certificate.signatures().len() as f64,
+                    );
+                    metrics::histogram(
+                        metrics::bft::SUBDAG_CERTIFICATE_PREVIOUS_REFS,
+                        certificate.previous_certificate_ids().len() as f64,
+                    );
+                }
+            }
+
             // Ensure the subdag anchor round matches the leader round.
             ensure!(
                 anchor_round == leader_round,
