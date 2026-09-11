@@ -47,10 +47,14 @@ pub(super) const GAUGE_NAMES: [&str; 28] = [
     tcp::QUEUED_INBOUND_MESSAGES,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 9] = [
+pub(super) const HISTOGRAM_NAMES: [&str; 13] = [
     bft::COMMIT_ROUNDS_LATENCY,
     bft::COMMIT_LEADER_CERTIFICATE_LATENCY,
     bft::BATCH_CERTIFICATION_LATENCY,
+    bft::SUBDAG_CERTIFICATES_PER_ROUND,
+    bft::SUBDAG_CERTIFICATE_SIGNATURES,
+    bft::SUBDAG_CERTIFICATE_PREVIOUS_REFS,
+    bft::SUBDAG_ROUNDS_PER_BLOCK,
     consensus::CERTIFICATE_COMMIT_LATENCY,
     consensus::BLOCK_LATENCY,
     consensus::BLOCK_LAG,
@@ -74,6 +78,15 @@ pub mod bft {
     pub const HEIGHT: &str = "snarkos_bft_height_total";
     pub const LAST_COMMITTED_ROUND: &str = "snarkos_bft_last_committed_round";
     pub const IS_SYNCED: &str = "snarkos_bft_is_synced";
+    /// The number of certificates in a round of a committed subdag (one observation per round).
+    pub const SUBDAG_CERTIFICATES_PER_ROUND: &str = "snarkos_bft_subdag_certificates_per_round";
+    /// The number of signatures on a certificate in a committed subdag (one observation per certificate).
+    pub const SUBDAG_CERTIFICATE_SIGNATURES: &str = "snarkos_bft_subdag_certificate_signatures";
+    /// The number of previous-round certificate references on a certificate in a committed subdag
+    /// (one observation per certificate) — a proxy for DAG density/connectivity.
+    pub const SUBDAG_CERTIFICATE_PREVIOUS_REFS: &str = "snarkos_bft_subdag_certificate_previous_refs";
+    /// The number of rounds spanned by a committed subdag (one observation per committed block).
+    pub const SUBDAG_ROUNDS_PER_BLOCK: &str = "snarkos_bft_subdag_rounds_per_block";
 }
 
 pub mod blocks {
