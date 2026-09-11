@@ -404,9 +404,7 @@ version = "0.9"
 version = "2"
 
 [profile.release]
-opt-level = 3
 lto = "thin"
-incremental = false
 # uncomment the 2 lines below when building with the locktick feature or use the `release-locktick` profile
 # debug = "line-tables-only"
 # strip = "none"
@@ -416,25 +414,11 @@ inherits = "release"
 debug = "line-tables-only"
 strip = "none"
 
-[profile.bench]
-opt-level = 3
-debug = false
-rpath = false
-lto = "thin"
-incremental = false
-debug-assertions = false
-
 [profile.dev]
-opt-level = 2
-lto = "off"
-incremental = true
+debug = "line-tables-only"
 
 [profile.test]
 opt-level = 2
-lto = "off"
-incremental = true
-debug = true
-debug-assertions = true
 
 [package.metadata.cargo-machete]
 ignored = [

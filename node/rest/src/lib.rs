@@ -323,8 +323,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
-            // Cap the request body size at 1.5MiB.
-            .layer(DefaultBodyLimit::max(2 * 768 * 1024))
+            // JSON encodings of transactions can exceed the binary size, so this is 2x
+            // `LATEST_MAX_TRANSACTION_SIZE`.
+            .layer(DefaultBodyLimit::max(2 * N::LATEST_MAX_TRANSACTION_SIZE()))
             .layer(GovernorLayer {
                 config: governor_config.into(),
             })
