@@ -1,3 +1,4 @@
+.helix/
 **/*.idea/
 **/target
 **.DS_Store
@@ -23,7 +24,7 @@ validator-*
 **.bft-storage-*/
 **jwt_secret*.txt
 
-# For release upgrde CI
+# For release upgrade CI
 .ci/release-snarkos
 .ci/release-snarkos-src
 

@@ -851,40 +851,41 @@ workflows:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
                 - staging
-
+                - bruno/locators_fix
+                
       - chaotic-minority-reset-test:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/locators_fix
 
       - chaotic-majority-reset-test:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/locators_fix
+
       - upgrade-test:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/locators_fix
 
   snarkos-workflow:
     jobs:

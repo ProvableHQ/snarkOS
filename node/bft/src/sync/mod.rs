@@ -603,17 +603,29 @@ impl<N: Network> Sync<N> {
             // If we already were within GC or successfully caught up with GC, try to advance BFT normally again.
             loop {
                 let next_height = current_height + 1;
-                let Some(block) = self.block_sync.peek_next_block(next_height) else {
+                let Some(candidates) = self.block_sync.peek_next_block(next_height) else {
                     break;
                 };
-                info!("Trying to sync next block at height {} with the BFT...", block.height());
-                // Sync the storage with the block.
-                match self.sync_storage_with_block(block, true).await {
-                    Ok(_) => {
-                        // Update the current height if sync succeeds.
-                        current_height = next_height;
+
+                // Try each candidate block for this height in turn, since more than one peer may
+                // have responded with a different block (e.g. competing forks).
+                let mut last_error = None;
+                for block in candidates {
+                    info!("Trying to sync next block at height {} with the BFT...", block.height());
+                    // Sync the storage with the block.
+                    match self.sync_storage_with_block(block, true).await {
+                        Ok(_) => {
+                            last_error = None;
+                            break;
+                        }
+                        Err(err) => last_error = Some(err),
                     }
-                    Err(err) => {
+                }
+
+                match last_error {
+                    // Update the current height if sync succeeds.
+                    None => current_height = next_height,
+                    Some(err) => {
                         // Mark the current height as processed in block_sync.
                         self.block_sync.remove_block_response(next_height);
                         return cleanup(start_height, current_height, Some(err));
@@ -646,19 +658,32 @@ impl<N: Network> Sync<N> {
             loop {
                 let next_height = current_height + 1;
 
-                let Some(block) = self.block_sync.peek_next_block(next_height) else {
+                let Some(candidates) = self.block_sync.peek_next_block(next_height) else {
                     break;
                 };
-                info!("Syncing the ledger to block {}...", block.height());
 
-                // Sync the ledger with the block without BFT.
-                match self.sync_storage_with_block(block, false).await {
-                    Ok(_) => {
+                // Try each candidate block for this height in turn, since more than one peer may
+                // have responded with a different block (e.g. competing forks).
+                let mut last_error = None;
+                for block in candidates {
+                    info!("Syncing the ledger to block {}...", block.height());
+                    // Sync the ledger with the block without BFT.
+                    match self.sync_storage_with_block(block, false).await {
+                        Ok(_) => {
+                            last_error = None;
+                            break;
+                        }
+                        Err(err) => last_error = Some(err),
+                    }
+                }
+
+                match last_error {
+                    None => {
                         // Update the current height if sync succeeds.
                         current_height = next_height;
                         self.block_sync.count_request_completed();
                     }
-                    Err(err) => {
+                    Some(err) => {
                         // Mark the current height as processed in block_sync.
                         self.block_sync.remove_block_response(next_height);
                         return cleanup(start_height, current_height, Some(err));
