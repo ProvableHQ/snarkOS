@@ -240,17 +240,6 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
             false => self.is_leader_quorum_or_nonleaders_available(current_round),
         };
 
-        #[cfg(feature = "metrics")]
-        {
-            let start = self.leader_certificate_timer.load(Ordering::SeqCst);
-            // Only log if the timer was set, otherwise we get a time difference since the EPOCH.
-            if start > 0 {
-                let end = now();
-                let elapsed = std::time::Duration::from_secs((end - start) as u64);
-                metrics::histogram(metrics::bft::COMMIT_ROUNDS_LATENCY, elapsed.as_secs_f64());
-            }
-        }
-
         // Log whether the round is going to update.
         if current_round.is_multiple_of(2) {
             // Determine if there is a leader certificate.
@@ -288,6 +277,18 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
                 warn!("{}", &flatten_error(err));
                 return false;
             }
+
+            #[cfg(feature = "metrics")]
+            {
+                let start = self.leader_certificate_timer.load(Ordering::SeqCst);
+                // Only log if the timer was set, otherwise we get a time difference since the EPOCH.
+                if start > 0 {
+                    let end = now();
+                    let elapsed = std::time::Duration::from_secs((end - start) as u64);
+                    metrics::histogram(metrics::bft::COMMIT_ROUNDS_LATENCY, elapsed.as_secs_f64());
+                }
+            }
+
             // Update the timer for the leader certificate.
             self.leader_certificate_timer.store(now(), Ordering::SeqCst);
         }
