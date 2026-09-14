@@ -61,7 +61,10 @@ use std::{
     io::IsTerminal,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 use tokio::{
     runtime::{self, Handle, Runtime},
@@ -991,6 +994,7 @@ impl Start {
         // Set up the rayon thread pool.
         // A custom panic handler is not needed here, as rayon propagates the panic to the calling thread by default (except for `rayon::spawn` which we do not use).
         rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("rayon-{index}"))
             .stack_size(8 * 1024 * 1024)
             .num_threads(num_rayon_cores_global)
             .build_global()
@@ -1000,11 +1004,35 @@ impl Start {
         // TODO(kaimast): set up a panic handler here for each worker thread once [`tokio::runtime::Builder::unhandled_panic`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.unhandled_panic) is stabilized.
         runtime::Builder::new_multi_thread()
             .enable_all()
+            .thread_name_fn(tokio_thread_namer(num_tokio_worker_threads))
             .thread_stack_size(8 * 1024 * 1024)
             .worker_threads(num_tokio_worker_threads)
             .max_blocking_threads(max_tokio_blocking_threads)
             .build()
             .expect("Failed to initialize a runtime for the router")
+    }
+}
+
+/// Returns a naming function that distinguishes the runtime's worker threads from its blocking
+/// threads, so that per-thread CPU time can be attributed to one pool or the other.
+///
+/// Tokio applies a single naming function to both kinds of thread, so they are told apart by spawn
+/// order: `Builder::build` launches every worker before it returns, and a blocking thread cannot be
+/// spawned until a caller holds the handle that `build` hands back.
+///
+/// Two hazards for anyone reading these names off a running process:
+/// - Linux truncates a thread name to 15 bytes, which cuts the index off `tokio-blocking-`. The
+///   prefixes stay distinct, so group by prefix rather than parsing the number.
+/// - Blocking threads idle out and respawn, so their indices climb over the life of the process and
+///   do not correspond to the number of threads currently alive.
+fn tokio_thread_namer(num_worker_threads: usize) -> impl Fn() -> String {
+    let spawned = AtomicUsize::new(0);
+    move || {
+        let index = spawned.fetch_add(1, Ordering::Relaxed);
+        match index.checked_sub(num_worker_threads) {
+            None => format!("tokio-worker-{index}"),
+            Some(blocking_index) => format!("tokio-blocking-{blocking_index}"),
+        }
     }
 }
 
