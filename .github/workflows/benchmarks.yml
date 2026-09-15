@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.88 # Update this when the MSRV changes.
+        uses: dtolnay/rust-toolchain@1.96 # Update this when the MSRV changes.
 
       - name: Install required Debian packages
         run: |
