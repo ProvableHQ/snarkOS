@@ -37,7 +37,7 @@ macro_rules! test_reject_unsolicited_peer_response {
 
                     // Spin up a test peer (synthetic node), it doesn't really matter what type it is.
                     let peer = TestPeer::validator().await;
-                    let peer_addr = peer.node().listening_addr().unwrap();
+                    let peer_addr = peer.node().listening_addr().await.unwrap();
 
                     // Connect the node to the test peer.
                     node.router().connect(peer_addr).unwrap().await.unwrap().unwrap();

@@ -49,7 +49,7 @@ macro_rules! test_disconnect {
 
             // Spin up a test peer (synthetic node).
             let peer = $crate::TestPeer::$peer_type().await;
-            let peer_addr = peer.node().listening_addr().unwrap();
+            let peer_addr = peer.node().listening_addr().await.unwrap();
 
             // Connect the node to the test peer.
             node.router().connect(peer_addr).unwrap().await.unwrap().unwrap();

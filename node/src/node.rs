@@ -62,6 +62,10 @@ const CHECKPOINT_BLOCK_FREQUENCY: u32 = 1000;
 /// The maximum number of automatic database checkpoints kept at any time.
 const MAX_AUTO_CHECKPOINTS: usize = 5;
 
+/// How often to publish RocksDB internal metrics to Prometheus.
+#[cfg(feature = "metrics")]
+const ROCKSDB_METRICS_INTERVAL: Duration = Duration::from_secs(15);
+
 fn existing_startup_checkpoint_height(auto_checkpoint_path: &Path, startup_height: u32) -> Option<u32> {
     let mut checkpoint_path = auto_checkpoint_path.to_path_buf();
     checkpoint_path.push(format!("checkpoint_{startup_height}"));
@@ -132,6 +136,11 @@ impl<N: Network> Node<N> {
             if let Some(handle) = node.perform_auto_checkpoints(path)? {
                 validator.handles.lock().push(handle);
             }
+        }
+
+        #[cfg(feature = "metrics")]
+        if let Some(handle) = node.spawn_rocksdb_metrics_polling() {
+            validator.handles.lock().push(handle);
         }
 
         Ok(node)
@@ -206,6 +215,11 @@ impl<N: Network> Node<N> {
             if let Some(handle) = node.perform_auto_checkpoints(path)? {
                 client.handles.lock().push(handle);
             }
+        }
+
+        #[cfg(feature = "metrics")]
+        if let Some(handle) = node.spawn_rocksdb_metrics_polling() {
+            client.handles.lock().push(handle);
         }
 
         Ok(node)
@@ -341,6 +355,19 @@ impl<N: Network> Node<N> {
             Self::Client(node) => node.wait_for_signals(signal_handler).await,
             Self::BootstrapClient(node) => node.wait_for_signals(signal_handler).await,
         }
+    }
+
+    /// Spawns a background task that periodically publishes RocksDB internal metrics.
+    #[cfg(feature = "metrics")]
+    pub fn spawn_rocksdb_metrics_polling(&self) -> Option<task::JoinHandle<()>> {
+        let ledger = self.ledger()?.clone();
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(ROCKSDB_METRICS_INTERVAL);
+            loop {
+                interval.tick().await;
+                ledger.vm().block_store().export_rocksdb_metrics();
+            }
+        }))
     }
 
     /// Periodically creates automated ledger checkpoints.

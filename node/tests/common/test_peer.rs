@@ -38,6 +38,7 @@ use pea2pea::{
     Config,
     Connection,
     ConnectionSide,
+    DisconnectOrigin,
     Node,
     Pea2Pea,
     protocols::{Handshake, OnDisconnect, Reading, Writing},
@@ -88,6 +89,9 @@ impl TestPeer {
         let peer = Self {
             node: Node::new(Config {
                 max_connections: 200,
+                // Everything in these tests shares the loopback address, and the default outside
+                // pea2pea's own `test` feature is a single connection per IP.
+                max_connections_per_ip: 200,
                 listener_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
                 ..Default::default()
             }),
@@ -98,11 +102,16 @@ impl TestPeer {
         peer.enable_handshake().await;
         peer.enable_reading().await;
         peer.enable_writing().await;
-        peer.enable_disconnect().await;
+        peer.enable_on_disconnect().await;
 
-        peer.node().start_listening().await.unwrap();
+        peer.node().toggle_listener().await.unwrap();
 
         peer
+    }
+
+    /// Returns the address the peer is listening on.
+    pub async fn listening_addr(&self) -> SocketAddr {
+        self.node().listening_addr().await.expect("listening address should be present")
     }
 
     pub fn node_type(&self) -> NodeType {
@@ -128,7 +137,7 @@ impl TestPeer {
     async fn perform_handshake_inner(&self, mut conn: Connection) -> Result<Connection, ConnectError> {
         let rng = &mut TestRng::default();
 
-        let local_ip = self.node().listening_addr().expect("listening address should be present");
+        let local_ip = self.listening_addr().await;
 
         let peer_addr = conn.addr();
         let node_side = !conn.side();
@@ -216,11 +225,9 @@ impl Reading for TestPeer {
         Default::default()
     }
 
-    async fn process_message(&self, _peer_ip: SocketAddr, _message: Self::Message) -> io::Result<()> {
-        Ok(())
-    }
+    async fn process_message(&self, _peer_ip: SocketAddr, _message: Self::Message) {}
 }
 
 impl OnDisconnect for TestPeer {
-    async fn on_disconnect(&self, _peer_addr: SocketAddr) {}
+    async fn on_disconnect(&self, _peer_addr: SocketAddr, _origin: DisconnectOrigin) {}
 }

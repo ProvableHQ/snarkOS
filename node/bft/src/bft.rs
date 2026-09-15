@@ -800,7 +800,7 @@ impl<N: Network> BFT<N> {
             }
 
             // Update the validator telemetry.
-            #[cfg(feature = "telemetry")]
+            #[cfg(feature = "metrics")]
             self.primary().gateway().validator_telemetry().insert_subdag(&Subdag::from(commit_subdag)?);
         }
 

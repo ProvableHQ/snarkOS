@@ -16,6 +16,7 @@
 use crate::{
     Outbound,
     PeerPoolHandling,
+    Router,
     messages::{
         BlockRequest,
         BlockResponse,
@@ -53,8 +54,6 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
     const MAXIMUM_UNCONFIRMED_SOLUTIONS_PER_INTERVAL: usize = 64;
     /// The duration in seconds to sleep in between ping requests with a connected peer.
     const PING_SLEEP_IN_SECS: u64 = 20; // 20 seconds
-    /// The time frame to enforce the `MESSAGE_LIMIT`.
-    const MESSAGE_LIMIT_TIME_FRAME_IN_SECS: i64 = 5;
     /// The maximum number of messages accepted within `MESSAGE_LIMIT_TIME_FRAME_IN_SECS`.
     const MESSAGE_LIMIT: usize = 500;
 
@@ -91,7 +90,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
         // Drop the peer, if they have sent more than `MESSAGE_LIMIT` messages
         // in the last `MESSAGE_LIMIT_TIME_FRAME_IN_SECS` seconds.
-        let num_messages = self.router().cache.insert_inbound_message(peer_ip, Self::MESSAGE_LIMIT_TIME_FRAME_IN_SECS);
+        let num_messages =
+            self.router().cache.insert_inbound_message(peer_ip, Router::<N>::MESSAGE_LIMIT_TIME_FRAME_IN_SECS);
         if num_messages > Self::MESSAGE_LIMIT {
             bail!("Dropping '{peer_ip}' for spamming messages (num_messages = {num_messages})")
         }

@@ -277,7 +277,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         };
 
         // If the node is a validator and `telemetry` features is enabled, enable the additional endpoint.
-        #[cfg(feature = "telemetry")]
+        #[cfg(feature = "metrics")]
         let routes = match self.consensus {
             Some(_) => routes.route("/validators/participation", get(Self::get_validator_participation_scores)),
             None => routes,

@@ -32,7 +32,7 @@ use tokio::time::sleep;
 // Trait to unify Pea2Pea and P2P traits.
 #[async_trait::async_trait]
 trait Connect {
-    fn listening_addr(&self) -> SocketAddr;
+    async fn listening_addr(&self) -> SocketAddr;
 
     async fn connect(&self, target: SocketAddr) -> Result<(), ConnectError>;
 }
@@ -43,7 +43,7 @@ macro_rules! impl_connect {
         $(
             #[async_trait::async_trait]
             impl Connect for $node_type<CurrentNetwork, ConsensusMemory<CurrentNetwork>> {
-                fn listening_addr(&self) -> SocketAddr {
+                async fn listening_addr(&self) -> SocketAddr {
                     self.tcp().listening_addr().expect("node listener should exist")
                 }
 
@@ -66,8 +66,8 @@ impl Connect for TestPeer
 where
     Self: Pea2Pea,
 {
-    fn listening_addr(&self) -> SocketAddr {
-        self.node().listening_addr().expect("node listener should exist")
+    async fn listening_addr(&self) -> SocketAddr {
+        self.node().listening_addr().await.expect("node listener should exist")
     }
 
     async fn connect(&self, target: SocketAddr) -> Result<(), ConnectError> {
@@ -83,7 +83,7 @@ where
     T: Connect,
     U: Connect,
 {
-    initiator.connect(responder.listening_addr()).await.unwrap()
+    initiator.connect(responder.listening_addr().await).await.unwrap()
 }
 
 // Macro to simply construct handshake cases.
@@ -190,9 +190,9 @@ async fn simultaneous_connection_attempt() {
 
     // Spin up 2 full nodes.
     let node1 = validator().await;
-    let addr1 = node1.listening_addr();
+    let addr1 = node1.listening_addr().await;
     let node2 = validator().await;
-    let addr2 = node2.listening_addr();
+    let addr2 = node2.listening_addr().await;
 
     // Prepare connection attempts.
     let node1_clone = node1.clone();
@@ -250,7 +250,7 @@ async fn duplicate_connection_attempts() {
     // Spin up 2 full nodes.
     let node1 = client().await;
     let node2 = client().await;
-    let addr2 = node2.listening_addr();
+    let addr2 = node2.listening_addr().await;
 
     // Prepare connection attempts.
     let node1_clone = node1.clone();

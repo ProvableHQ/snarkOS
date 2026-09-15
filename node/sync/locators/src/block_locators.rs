@@ -27,7 +27,11 @@ const RECENT_INTERVAL: u32 = 1; // 1 block intervals
 /// The interval between block checkpoints.
 pub const CHECKPOINT_INTERVAL: u32 = 10_000; // 10,000 block intervals
 // The maximum number of checkpoints that there can be
-const MAX_CHECKPOINTS: usize = (u32::MAX / CHECKPOINT_INTERVAL) as usize;
+/// The maximum number of checkpoints a valid `BlockLocators` can ever contain: one checkpoint
+/// every `CHECKPOINT_INTERVAL` blocks, up to the largest height the wire format can express.
+/// `pub` so callers outside this crate - e.g. a message-size cap on whatever carries block
+/// locators - can size themselves against this bound instead of restating it.
+pub const MAX_CHECKPOINTS: usize = (u32::MAX / CHECKPOINT_INTERVAL) as usize;
 
 /// Block locator maps.
 ///

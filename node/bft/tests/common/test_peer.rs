@@ -26,6 +26,7 @@ use pea2pea::{
     Config,
     Connection,
     ConnectionSide,
+    DisconnectOrigin,
     Node,
     Pea2Pea,
     protocols::{Handshake, OnDisconnect, Reading, Writing},
@@ -35,6 +36,7 @@ use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time::timeout,
 };
+use tracing::warn;
 
 pub struct TestPeer {
     inner_node: InnerNode,
@@ -56,6 +58,9 @@ impl TestPeer {
         let inner_node = InnerNode {
             node: Node::new(Config {
                 max_connections: 200,
+                // Everything in these tests shares the loopback address, and the default outside
+                // pea2pea's own `test` feature is a single connection per IP.
+                max_connections_per_ip: 200,
                 listener_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
                 ..Default::default()
             }),
@@ -65,14 +70,14 @@ impl TestPeer {
         inner_node.enable_handshake().await;
         inner_node.enable_reading().await;
         inner_node.enable_writing().await;
-        inner_node.enable_disconnect().await;
-        inner_node.node().start_listening().await.unwrap();
+        inner_node.enable_on_disconnect().await;
+        inner_node.node().toggle_listener().await.unwrap();
 
         Self { inner_node, inbound_rx: rx }
     }
 
-    pub fn listening_addr(&self) -> SocketAddr {
-        self.inner_node.node().listening_addr().expect("addr should be present")
+    pub async fn listening_addr(&self) -> SocketAddr {
+        self.inner_node.node().listening_addr().await.expect("addr should be present")
     }
 
     pub async fn connect(&self, target: SocketAddr) -> io::Result<()> {
@@ -135,14 +140,15 @@ impl Reading for InnerNode {
         Default::default()
     }
 
-    async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) -> io::Result<()> {
-        self.inbound_tx
-            .send((peer_addr, message))
-            .await
-            .map_err(|_| io::Error::other("failed to send message to test peer, all receivers have been dropped"))
+    async fn process_message(&self, peer_addr: SocketAddr, message: Self::Message) {
+        // The hook can no longer report failure, and a dropped receiver only means the test has
+        // stopped reading; there is nothing useful to do beyond noting it.
+        if self.inbound_tx.send((peer_addr, message)).await.is_err() {
+            warn!("failed to hand a message to the test peer, all receivers have been dropped");
+        }
     }
 }
 
 impl OnDisconnect for InnerNode {
-    async fn on_disconnect(&self, _peer_addr: SocketAddr) {}
+    async fn on_disconnect(&self, _peer_addr: SocketAddr, _origin: DisconnectOrigin) {}
 }

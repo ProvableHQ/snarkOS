@@ -5,9 +5,13 @@
 Always run the following after any code modification:
 
 ```bash
-cargo +nightly fmt
+cargo +nightly-2026-04-02 fmt
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
+
+Formatting requires the nightly `.circleci/config.yml` pins as `fmt_nightly` --
+`.rustfmt.toml` uses nightly-only options, and plain `cargo fmt` drops them
+silently rather than refusing.
 
 ## Modifying BFT Code
 
