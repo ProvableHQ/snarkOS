@@ -22,6 +22,9 @@ mod helpers;
 // Imports custom `Path` type, to be used instead of `axum`'s.
 pub use helpers::*;
 
+mod history_compat;
+use history_compat::*;
+
 mod routes;
 
 mod version;
@@ -96,19 +99,28 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     num_verifying_solutions: Arc<Semaphore>,
     /// A cache containing recently requested blocks.
     block_cache: Arc<Mutex<LruCache<N::BlockHash, ErasedJson>>>,
+    /// The upstream for the routes of the removed `history` feature, if `--history-compat-mode` is set.
+    history_compat: Option<Arc<HistoryCompat>>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// Initializes a new instance of the server.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         rest_ip: SocketAddr,
         rest_rps: u32,
+        history_api_url: Option<String>,
         consensus: Option<Consensus<N>>,
         ledger: Ledger<N, C>,
         routing: Arc<R>,
         cdn_sync: Option<Arc<CdnBlockSync>>,
         block_sync: Arc<BlockSync<N>>,
     ) -> Result<Self> {
+        // Initialize the history compatibility upstream, if requested.
+        let history_compat = match history_api_url {
+            Some(url) => Some(Arc::new(HistoryCompat::new(&url, N::SHORT_NAME)?)),
+            None => None,
+        };
         // Initialize the server.
         let mut server = Self {
             consensus,
@@ -121,6 +133,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
             num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
+            history_compat,
         };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
@@ -290,16 +303,26 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Register the view-at-latest-height endpoint (always available, no history required).
         let routes = routes.route("/program/{id}/view/{function}", post(Self::evaluate_view_latest));
 
-        // If the `history` feature is enabled, enable the additional endpoints.
-        #[cfg(feature = "history")]
-        let routes = routes
-            .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
-            .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch))
-            .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view));
+        // In history compatibility mode, serve the routes of the removed `history` feature from the
+        // upstream historical API (see `history_compat`).
+        let routes = if self.history_compat.is_some() {
+            routes
+                .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history_compat))
+                .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch_compat))
+                .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view_at_height_compat))
+                .route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward_compat))
+        } else {
+            routes
+        };
 
-        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint.
+        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint (unless
+        // compatibility mode already serves it).
         #[cfg(feature = "history-staking-rewards")]
-        let routes = routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward));
+        let routes = if self.history_compat.is_some() {
+            routes
+        } else {
+            routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward))
+        };
 
         let trace_layer = TraceLayer::new_for_http()
             .make_span_with(|request: &Request<_>| {
@@ -570,17 +593,24 @@ mod route_tests {
             num_verifying_executions: Arc::new(Semaphore::new(1)),
             num_verifying_solutions: Arc::new(Semaphore::new(1)),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
+            history_compat: None,
         }
     }
 
     /// Issues a GET request against the routes, without the network prefix that `spawn_server`
     /// nests them under.
+    async fn get(rest: &CurrentRest, uri: &str) -> (StatusCode, String) {
+        request(rest, Method::GET, uri).await
+    }
+
+    /// Issues a request against the routes, without the network prefix that `spawn_server` nests
+    /// them under.
     ///
     /// The governor layer keys on the peer IP taken from `ConnectInfo`, which a request built by
     /// hand does not carry, so this attaches one; without it every request fails the rate limiter's
     /// key extractor rather than reaching a handler.
-    async fn get(rest: &CurrentRest, uri: &str) -> (StatusCode, String) {
-        let mut request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    async fn request(rest: &CurrentRest, method: Method, uri: &str) -> (StatusCode, String) {
+        let mut request = Request::builder().method(method).uri(uri).body(Body::empty()).unwrap();
         request.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 4130))));
 
         let response = rest.build_routes(TEST_RPS).oneshot(request).await.unwrap();
@@ -908,5 +938,137 @@ mod route_tests {
         assert_eq!(status, StatusCode::OK);
         let hash: <CurrentNetwork as Network>::BlockHash = serde_json::from_str(&body).unwrap();
         assert_eq!(hash, sample_genesis_block::<CurrentNetwork>().hash());
+    }
+
+    /// The routes of the removed `history` feature, in history compatibility mode.
+    mod history_compat {
+        use super::*;
+        use crate::history_compat::fixtures;
+
+        /// A stand-in for the upstream historical API: serves the block-1,000,000 fixtures at every
+        /// height for the mappings it has, and for `withdraw` the 500 that the real upstream answers
+        /// for a height it has no snapshot of.
+        async fn spawn_upstream() -> String {
+            async fn snapshot(Path((_height, mapping)): Path<(u32, String)>) -> (StatusCode, &'static str) {
+                match mapping.as_str() {
+                    "unbonding" => (StatusCode::OK, fixtures::UNBONDING),
+                    "bonded" => (StatusCode::OK, fixtures::BONDED),
+                    "stakingrewards" => (StatusCode::OK, fixtures::STAKING_REWARDS),
+                    "metadata" => (StatusCode::OK, fixtures::METADATA),
+                    _ => (StatusCode::INTERNAL_SERVER_ERROR, fixtures::MISSING),
+                }
+            }
+            let app =
+                axum::Router::new().route("/mainnet/block/{height}/history/{mapping}", axum::routing::get(snapshot));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            format!("http://{address}")
+        }
+
+        /// A `Rest` in history compatibility mode against the stub upstream.
+        async fn sample_compat_rest() -> CurrentRest {
+            let mut rest = sample_rest().await;
+            rest.history_compat = Some(Arc::new(HistoryCompat::new(&spawn_upstream().await, "mainnet").unwrap()));
+            rest
+        }
+
+        const UNBONDING_STAKER: &str = "aleo1sdjqhlcm9qltpu74ek0vxewt52zsdmn6swmpjn6m0tp9xf57dvpq740r8j";
+        const BONDED_STAKER: &str = "aleo1qy4qufq03wcph05fdf5aj09ez67vcmmlrzqf0zza352qwaq43gyqt3wdf6";
+        const VALIDATOR: &str = "aleo1vfukg8ky2mhfprw63s0k0hl4vvd8573s6fkn8cv9y0ca6q27eq8qwdnxls";
+
+        #[tokio::test]
+        async fn history_serves_the_value_from_the_upstream_snapshot() {
+            let rest = sample_compat_rest().await;
+            // The test ledger is at height 0, so that is the one height the upstream is asked for.
+            let (status, body) =
+                get(&rest, &format!("/program/credits.aleo/mapping/unbonding/{UNBONDING_STAKER}/history/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            // The body is the value's plaintext string, as the removed feature returned it.
+            let value: Option<String> = serde_json::from_str(&body).unwrap();
+            assert_eq!(value.as_deref(), Some("{\n  microcredits: 10113730488u64,\n  height: 621255u32\n}"));
+        }
+
+        #[tokio::test]
+        async fn history_answers_null_for_an_absent_key_and_for_a_future_height() {
+            let rest = sample_compat_rest().await;
+            // A key absent from the snapshot: e.g. an unbond that was claimed.
+            let (status, body) =
+                get(&rest, &format!("/program/credits.aleo/mapping/unbonding/{BONDED_STAKER}/history/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+            // A height above the node's, answered without consulting the upstream.
+            let (status, body) =
+                get(&rest, &format!("/program/credits.aleo/mapping/unbonding/{UNBONDING_STAKER}/history/5")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+        }
+
+        #[tokio::test]
+        async fn history_batch_serves_every_key_from_one_snapshot() {
+            let rest = sample_compat_rest().await;
+            let (status, body) = get(
+                &rest,
+                &format!("/program/credits.aleo/mapping/unbonding/history/0?keys={UNBONDING_STAKER},{BONDED_STAKER}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let values: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+            assert_eq!(values.len(), 2);
+            assert_eq!(values[0]["key"], UNBONDING_STAKER);
+            assert_eq!(values[0]["value"], "{\n  microcredits: 10113730488u64,\n  height: 621255u32\n}");
+            assert_eq!(values[1]["key"], BONDED_STAKER);
+            assert_eq!(values[1]["value"], serde_json::Value::Null);
+        }
+
+        #[tokio::test]
+        async fn history_rejects_what_the_upstream_does_not_record() {
+            let rest = sample_compat_rest().await;
+            // A `credits.aleo` mapping the upstream has no snapshot of.
+            let (status, body) =
+                get(&rest, &format!("/program/credits.aleo/mapping/committee/{VALIDATOR}/history/0")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("credits.aleo/committee"), "{body}");
+            // Another program.
+            let (status, body) = get(&rest, "/program/other.aleo/mapping/bonded/1field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("other.aleo/bonded"), "{body}");
+            // A supported mapping for which the upstream has no snapshot at that height (which it
+            // reports as a 500, not a 404).
+            let (status, body) =
+                get(&rest, &format!("/program/credits.aleo/mapping/withdraw/{VALIDATOR}/history/0")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("No snapshot of 'withdraw'"), "{body}");
+            // A view at a past height.
+            let (status, body) = request(&rest, Method::POST, "/program/credits.aleo/view/anything/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("latest height"), "{body}");
+        }
+
+        #[tokio::test]
+        async fn staking_reward_joins_the_rewards_and_bonded_snapshots() {
+            let rest = sample_compat_rest().await;
+            let (status, body) = get(&rest, &format!("/staking/rewards/{BONDED_STAKER}/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            // `[validator, reward, new_stake]`, as the `history-staking-rewards` feature returned it.
+            let reward: (String, u64, u64) = serde_json::from_str(&body).unwrap();
+            assert_eq!(reward, (VALIDATOR.to_string(), 6477, 141_347_021_440));
+            // A staker with no reward at that height.
+            let (status, body) = get(&rest, &format!("/staking/rewards/{UNBONDING_STAKER}/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+            // A future height.
+            let (status, body) = get(&rest, &format!("/staking/rewards/{BONDED_STAKER}/5")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+        }
+
+        #[tokio::test]
+        async fn history_routes_are_absent_without_compatibility_mode() {
+            let rest = sample_rest().await;
+            let (status, _) =
+                get(&rest, &format!("/program/credits.aleo/mapping/unbonding/{UNBONDING_STAKER}/history/0")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+        }
     }
 }

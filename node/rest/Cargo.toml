@@ -18,7 +18,6 @@ edition = "2024"
 
 [features]
 default = [ ]
-history = [ "snarkvm/history" ]
 history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
 slipstream-plugins = [ "snarkvm/slipstream-plugins" ]
 metrics = [ "snarkos-node-consensus/metrics" ]
@@ -102,6 +101,10 @@ workspace = true
 
 [dependencies.rand]
 workspace = true
+
+[dependencies.reqwest]
+workspace = true
+features = [ "rustls" ]
 
 [dependencies.rayon]
 workspace = true

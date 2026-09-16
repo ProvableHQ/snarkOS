@@ -5386,6 +5386,7 @@ dependencies = [
  "parking_lot",
  "rand 0.10.2",
  "rayon",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_with",

@@ -185,6 +185,12 @@ pub struct Start {
     #[clap(long, default_value_t = 10, group = "rest_flags")]
     pub rest_rps: u32,
 
+    /// Serve the routes of the removed `history` feature (`/program/{id}/mapping/{name}/{key}/history/{height}`,
+    /// `/staking/rewards/{address}/{height}`, ...) from the Provable historical staking API instead of local
+    /// tables. Takes an optional base URL of that API; by default, the network's own instance is used.
+    #[clap(long, value_name = "URL", num_args = 0..=1, group = "rest_flags")]
+    pub history_compat_mode: Option<Option<String>>,
+
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
     #[clap(long, group = "jwt_flags")]
     pub jwt_secret: Option<String>,
@@ -378,6 +384,34 @@ impl Start {
             true => Ok(vec![]),
             false => list.split(',').map(resolve_potential_hostnames).collect(),
         }
+    }
+
+    /// Returns the base URL of the historical staking API to serve the `history` routes from, if
+    /// `--history-compat-mode` is set: the given URL, or by default the network's own instance,
+    /// `https://{network}.historical-staking.provable.com` (mainnet and testnet have one; canary
+    /// does not, so it needs an explicit URL).
+    ///
+    /// A `--dev` network has no upstream: its heights and addresses are unrelated to any public
+    /// network's, so the default would serve unrelated data, and an explicit URL is required.
+    fn parse_history_api_url<N: Network>(&self) -> Result<Option<String>> {
+        let Some(url) = &self.history_compat_mode else {
+            return Ok(None);
+        };
+        let url = match url {
+            Some(url) => url.clone(),
+            None if self.dev.is_some() => {
+                bail!("`--history-compat-mode` needs an explicit URL on a development network")
+            }
+            None => format!("https://{}.historical-staking.provable.com", N::SHORT_NAME),
+        };
+        // Fail at startup rather than on every request.
+        let parsed =
+            http::Uri::try_from(&url).with_context(|| format!("Invalid `--history-compat-mode` URL '{url}'"))?;
+        ensure!(
+            parsed.scheme().is_some() && parsed.host().is_some(),
+            "The `--history-compat-mode` URL '{url}' must be absolute, e.g. https://mainnet.historical-staking.provable.com"
+        );
+        Ok(Some(url))
     }
 
     /// Returns the CDN to prefetch initial blocks from, or `None` if fetching from the CDN is disabled.
@@ -865,6 +899,12 @@ impl Start {
             dev_num_validators: self.dev_num_validators,
         });
 
+        // Determine the historical API to serve the `history` routes from, if in compatibility mode.
+        let history_api_url = self.parse_history_api_url::<N>()?;
+        if let (Some(url), Some(_)) = (&history_api_url, rest_ip) {
+            println!("🕰️  History compatibility mode is enabled; historical routes are served from {url}");
+        }
+
         // TODO(kaimast): start the display earlier and show sync progress.
         if !self.nodisplay && cdn.is_some() {
             println!("🪧 The terminal UI will not start until the node has finished syncing from the CDN. If this step takes too long, consider restarting with `--nodisplay`.");
@@ -881,9 +921,9 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_hotswap_config, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, history_api_url.clone(), account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, slipstream_configs, dev_hotswap_config, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, slipstream_configs, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, history_api_url.clone(), account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, slipstream_configs, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
@@ -1432,6 +1472,44 @@ mod tests {
             ["snarkos", "--validator", "--dev", "1", "--peers", "127.0.0.1:3030", "--dev-num-clients", "1"].iter(),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn history_compat_mode_flag() {
+        type N = snarkvm::prelude::MainnetV0;
+
+        // Absent.
+        let config = Start::try_parse_from(["snarkos"].iter()).unwrap();
+        assert_eq!(config.parse_history_api_url::<N>().unwrap(), None);
+
+        // Present without a URL: the network's own instance.
+        let config = Start::try_parse_from(["snarkos", "--history-compat-mode"].iter()).unwrap();
+        assert_eq!(
+            config.parse_history_api_url::<N>().unwrap().as_deref(),
+            Some("https://mainnet.historical-staking.provable.com")
+        );
+
+        // Present with a URL.
+        let config =
+            Start::try_parse_from(["snarkos", "--history-compat-mode", "http://127.0.0.1:8080"].iter()).unwrap();
+        assert_eq!(config.parse_history_api_url::<N>().unwrap().as_deref(), Some("http://127.0.0.1:8080"));
+
+        // A URL without a scheme, or an empty one, is refused at startup.
+        for url in ["example.com", ""] {
+            let config = Start::try_parse_from(["snarkos", "--history-compat-mode", url].iter()).unwrap();
+            assert!(config.parse_history_api_url::<N>().is_err(), "{url:?}");
+        }
+
+        // A development network has no default upstream.
+        let config = Start::try_parse_from(["snarkos", "--dev", "0", "--history-compat-mode"].iter()).unwrap();
+        assert!(config.parse_history_api_url::<N>().is_err());
+        let config =
+            Start::try_parse_from(["snarkos", "--dev", "0", "--history-compat-mode", "http://127.0.0.1:8080"].iter())
+                .unwrap();
+        assert_eq!(config.parse_history_api_url::<N>().unwrap().as_deref(), Some("http://127.0.0.1:8080"));
+
+        // The flag belongs to the REST server.
+        assert!(Start::try_parse_from(["snarkos", "--norest", "--history-compat-mode"].iter()).is_err());
     }
 
     #[test]
