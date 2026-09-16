@@ -366,6 +366,9 @@ The following are the options for the `snarkos start` command:
           
           [default: 10]
 
+      --history-compat-mode [<URL>]
+          Serve the routes of the removed `history` feature (`/program/{id}/mapping/{name}/{key}/history/{height}`, `/staking/rewards/{address}/{height}`, ...) from the Provable historical staking API instead of local tables. Takes an optional base URL of that API; by default, the network's own instance is used
+
       --jwt-secret <JWT_SECRET>
           Specify the JWT secret for the REST server (16B, base64-encoded)
 

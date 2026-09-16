@@ -26,6 +26,7 @@ use snarkvm::{
         ConsensusVersion,
         Identifier,
         LimitedWriter,
+        Literal,
         Plaintext,
         Program,
         ToBytes,
@@ -43,22 +44,17 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, fs, str::FromStr};
 
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use version::VersionInfo;
 
-#[cfg(feature = "history")]
 const MAX_KEYS_PER_REQUEST: usize = 1 << 7;
-#[cfg(feature = "history")]
 type HistoricalMappingKey<N> = (ProgramID<N>, Identifier<N>, Plaintext<N>, u32);
-#[cfg(feature = "history")]
 type HistoricalMappingRoute<N> = (ProgramID<N>, Identifier<N>, u32);
-#[cfg(feature = "history")]
 type ViewFunctionRoute<N> = (ProgramID<N>, Identifier<N>, u32);
 
-#[cfg(feature = "history")]
 fn parse_historical_mapping_keys<N: Network>(keys: &[String]) -> Result<Vec<Plaintext<N>>, RestError> {
     // Retrieve the number of keys.
     let num_keys = keys.len();
@@ -214,8 +210,31 @@ pub(crate) struct Commitments {
     commitments: Vec<String>,
 }
 
-/// The query object for `get_history_batch`.
-#[cfg(feature = "history")]
+/// Resolves a `/history/` route's program and mapping to the upstream snapshot that serves it in
+/// history compatibility mode.
+///
+/// The upstream only records five `credits.aleo` mappings. The removed `history` feature served
+/// every mapping of every program, so a client of it may well ask for `credits.aleo/committee`
+/// or `credits.aleo/account` or another program entirely; those are answered with a 404 that
+/// names what is available rather than being forwarded (the upstream would answer 500).
+fn history_compat_mapping<N: Network>(
+    program_id: &ProgramID<N>,
+    mapping_name: &Identifier<N>,
+) -> Result<SnapshotMapping, RestError> {
+    let mapping = match program_id.to_string() == SUPPORTED_PROGRAM {
+        true => SnapshotMapping::from_name(&mapping_name.to_string()),
+        false => None,
+    };
+    mapping.ok_or_else(|| {
+        RestError::not_found(anyhow!(
+            "History compatibility mode serves only the mappings {:?} of '{SUPPORTED_PROGRAM}'; \
+             '{program_id}/{mapping_name}' is not available",
+            SnapshotMapping::ALL.map(SnapshotMapping::name),
+        ))
+    })
+}
+
+/// The query object for `get_history_batch_compat`.
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct HistoricalKeys {
     #[serde(deserialize_with = "de_csv")]
@@ -1387,103 +1406,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         })))
     }
 
-    /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
-    #[cfg(feature = "history")]
-    pub(crate) async fn get_history(
-        State(rest): State<Self>,
-        Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        // Retrieve the history for the given block height and variant.
-        let value = rest.ledger.vm().finalize_store().get_historical_mapping_value(program_id, mapping_name, mapping_key.clone(), height)
-            .map_err(|err| {
-                RestError::not_found(err.context(format!("Could not load mapping '{mapping_name}/{mapping_key}' for program '{program_id}' from block '{height}'")))
-            })?;
-
-        Ok((StatusCode::OK, ErasedJson::pretty(value)))
-    }
-
-    /// GET /{network}/program/{id}/mapping/{name}/history/{height}?keys=key1,key2,...
-    #[cfg(feature = "history")]
-    pub(crate) async fn get_history_batch(
-        State(rest): State<Self>,
-        Path((program_id, mapping_name, height)): Path<HistoricalMappingRoute<N>>,
-        Query(historical_keys): Query<HistoricalKeys>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
-
-        let values = match tokio::task::spawn_blocking(move || cfg_into_iter!(historical_keys
-            .keys)
-            .zip(mapping_keys)
-            .map(|(key, mapping_key)| {
-                let value = rest
-                    .ledger
-                    .vm()
-                    .finalize_store()
-                    .get_historical_mapping_value(program_id, mapping_name, mapping_key, height)
-                    .map_err(|err| {
-                        RestError::not_found(err.context(format!(
-                            "Could not load mapping '{mapping_name}/{key}' for program '{program_id}' from block '{height}'"
-                        )))
-                    })?;
-
-                Ok(json!({ "key": key, "value": value }))
-            })
-            .collect::<Result<Vec<_>, RestError>>())
-            .await {
-                Ok(Ok(values)) => values,
-                Ok(Err(err)) => return Err(RestError::internal_server_error(anyhow!(err).context("Unable to get historical mapping values"))),
-                Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
-            };
-
-        Ok((StatusCode::OK, ErasedJson::pretty(values)))
-    }
-
-    /// POST /{network}/program/{id}/view/{functionName}/{height}
-    ///
-    /// Evaluates a view function against the ledger state at the given block `height`.
-    /// The request body must be a JSON array of string-encoded inputs, e.g.:
-    ///
-    /// ```json
-    /// ["aleo1...", "10u64"]
-    /// ```
-    ///
-    /// Returns the outputs as a JSON array of string-encoded values.
-    #[cfg(feature = "history")]
-    pub(crate) async fn evaluate_view(
-        State(rest): State<Self>,
-        Path((program_id, view_name, height)): Path<ViewFunctionRoute<N>>,
-        json_result: Result<Json<Vec<String>>, JsonRejection>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        // Parse the inputs from the request body.
-        let Json(raw_inputs) = match json_result {
-            Ok(json) => json,
-            Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),
-        };
-
-        // Parse the inputs into `Value<N>`.
-        let inputs = parse_view_inputs::<N>(&raw_inputs)?;
-
-        // Evaluate the view function in a blocking task.
-        let outputs = match tokio::task::spawn_blocking(move || {
-            rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
-        })
-        .await
-        {
-            Ok(Ok(outputs)) => outputs,
-            Ok(Err(err)) => {
-                return Err(RestError::bad_request(
-                    err.context(format!("Failed to evaluate view '{view_name}' for '{program_id}' at height {height}")),
-                ));
-            }
-            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
-        };
-
-        // Encode each output as a string.
-        let output_strings: Vec<String> = outputs.iter().map(|v| v.to_string()).collect();
-
-        Ok((StatusCode::OK, ErasedJson::pretty(output_strings)))
-    }
-
     /// POST /{network}/program/{id}/view/{functionName}
     ///
     /// Evaluates a view function against the ledger state at the latest block height.
@@ -1565,6 +1487,169 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         Ok(ErasedJson::pretty(output_strings))
+    }
+
+    /// Returns the history compatibility upstream, which is present whenever these routes are registered.
+    fn history_compat(&self) -> &HistoryCompat {
+        self.history_compat.as_deref().expect("the history routes are registered only in compatibility mode")
+    }
+
+    /// Decides whether a `/history/{height}` request can be answered, and whether the upstream
+    /// needs to be consulted for it:
+    ///
+    /// - `Err(503)` while this node is still syncing. Its own height is then meaningless as a
+    ///   bound, and answering `null` for a height it has not reached would read as "the key was
+    ///   absent" -- the wrong answer for, say, an unbond that the upstream knows is pending.
+    /// - `Ok(false)` for a height above this node's: the block may not exist yet, so it is
+    ///   answered with `null` without asking the upstream, as the removed feature did.
+    /// - `Ok(true)` otherwise: the upstream has (or should have) a snapshot.
+    fn history_compat_height_available(&self, height: u32) -> Result<bool, RestError> {
+        if !self.routing.is_within_sync_leniency() {
+            return Err(RestError::service_unavailable(anyhow!(
+                "Unable to answer for block {height} (node is syncing)"
+            )));
+        }
+        Ok(height <= self.ledger.latest_height())
+    }
+
+    /// Returns the upstream snapshot of a mapping at `height`, or `None` if the height is above
+    /// this node's (see `history_compat_height_available`).
+    async fn history_compat_mapping_at(
+        &self,
+        height: u32,
+        mapping: SnapshotMapping,
+    ) -> Result<Option<Arc<MappingSnapshot>>, RestError> {
+        match self.history_compat_height_available(height)? {
+            true => self.history_compat().mapping(height, mapping).await.map(Some),
+            false => Ok(None),
+        }
+    }
+
+    /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
+    ///
+    /// History compatibility mode. The value is read from the upstream snapshot of the mapping at
+    /// `height`. The response is the removed feature's: the value's plaintext string, or `null`
+    /// if the key is absent at that height (or the height is above this node's). For example:
+    ///
+    /// ```text
+    /// GET /mainnet/program/credits.aleo/mapping/unbonding/aleo1qgtv...4ukl2/history/1000000
+    /// -> 200
+    /// "{\n  microcredits: 31712836548u64,\n  height: 883089u32\n}"
+    ///
+    /// GET /mainnet/program/credits.aleo/mapping/unbonding/aleo1qy4q...wdf6/history/1000000
+    /// -> 200
+    /// null
+    /// ```
+    pub(crate) async fn get_history_compat(
+        State(rest): State<Self>,
+        Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        let mapping = history_compat_mapping(&program_id, &mapping_name)?;
+        let snapshot = rest.history_compat_mapping_at(height, mapping).await?;
+        // The key is reprinted so that it matches the upstream's canonical spelling.
+        let value = snapshot.as_ref().and_then(|snapshot| snapshot.get(&mapping_key.to_string()));
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
+    }
+
+    /// GET /{network}/program/{id}/mapping/{name}/history/{height}?keys=key1,key2,...
+    ///
+    /// History compatibility mode. Every key is read from the one upstream snapshot of the mapping
+    /// at `height`; the response is the removed feature's, one `{key, value}` object per key in
+    /// the order given, with `value` as in the single-key route:
+    ///
+    /// ```text
+    /// GET /mainnet/program/credits.aleo/mapping/unbonding/history/1000000?keys=aleo1qgtv...,aleo1qy4q...
+    /// -> 200
+    /// [
+    ///   { "key": "aleo1qgtv...4ukl2", "value": "{\n  microcredits: 31712836548u64,\n  height: 883089u32\n}" },
+    ///   { "key": "aleo1qy4q...wdf6", "value": null }
+    /// ]
+    /// ```
+    pub(crate) async fn get_history_batch_compat(
+        State(rest): State<Self>,
+        Path((program_id, mapping_name, height)): Path<HistoricalMappingRoute<N>>,
+        Query(historical_keys): Query<HistoricalKeys>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        let mapping = history_compat_mapping(&program_id, &mapping_name)?;
+        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
+        let snapshot = rest.history_compat_mapping_at(height, mapping).await?;
+        let values = historical_keys
+            .keys
+            .iter()
+            .zip(&mapping_keys)
+            .map(|(key, mapping_key)| {
+                let value = snapshot.as_ref().and_then(|snapshot| snapshot.get(&mapping_key.to_string()));
+                json!({ "key": key, "value": value })
+            })
+            .collect::<Vec<_>>();
+        Ok((StatusCode::OK, ErasedJson::pretty(values)))
+    }
+
+    /// POST /{network}/program/{id}/view/{functionName}/{height}
+    ///
+    /// History compatibility mode: this route cannot be served, and always answers 404. The
+    /// removed `history` feature evaluated the view's body against its own per-height record of
+    /// *every* mapping of every program; the upstream historical API only holds snapshots of five
+    /// `credits.aleo` staking mappings, which is not enough state to evaluate an arbitrary view
+    /// at a past height, and it cannot evaluate Aleo instructions anyway. The route is registered
+    /// regardless so that a client of the old feature gets an explanation rather than a routing
+    /// miss, and is pointed at `POST /program/{id}/view/{function}`, which evaluates against the
+    /// latest state and is always available.
+    pub(crate) async fn evaluate_view_at_height_compat(
+        Path((program_id, view_name, height)): Path<ViewFunctionRoute<N>>,
+    ) -> RestError {
+        RestError::not_found(anyhow!(
+            "History compatibility mode cannot evaluate '{program_id}/{view_name}' at height {height}: views at a \
+             past height are not available; use POST /program/{program_id}/view/{view_name} for the latest height"
+        ))
+    }
+
+    /// GET /{network}/staking/rewards/{address}/{height}
+    ///
+    /// History compatibility mode. The response is the `history-staking-rewards` feature's:
+    /// `[validator, reward, new_stake]` for the reward paid to `address` at block `height`, or
+    /// `null` if it received none (it was not bonded, or the height is above this node's):
+    ///
+    /// ```text
+    /// GET /mainnet/staking/rewards/aleo1qy4q...wdf6/1000000
+    /// -> 200
+    /// [
+    ///   "aleo1vfukg8ky2mhfprw63s0k0hl4vvd8573s6fkn8cv9y0ca6q27eq8qwdnxls",
+    ///   6477,
+    ///   141347021440
+    /// ]
+    /// ```
+    ///
+    /// The upstream's `stakingrewards` snapshot holds only `[validator, reward]`. The third
+    /// element, the stake after the reward, is the staker's `bonded` entry at the same height:
+    /// the upstream writes `bonded` after applying the block's rewards, so
+    /// `bonded[staker]@h == bonded[staker]@(h-1) + reward@h` (checked against the live API at
+    /// block 1,000,000).
+    pub(crate) async fn get_staking_reward_compat(
+        State(rest): State<Self>,
+        Path((address, height)): Path<(Address<N>, u32)>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        if !rest.history_compat_height_available(height)? {
+            return Ok((StatusCode::OK, ErasedJson::pretty(None::<()>)));
+        }
+        let staker = address.to_string();
+        let rewards = rest.history_compat().staking_rewards(height).await?;
+        let Some((validator, reward)) = rewards.get(&staker) else {
+            return Ok((StatusCode::OK, ErasedJson::pretty(None::<()>)));
+        };
+        let bonded = rest.history_compat().mapping(height, SnapshotMapping::Bonded).await?;
+        let Some(bonded_value) = bonded.get(&staker) else {
+            return Err(RestError::not_found(anyhow!(
+                "The upstream records a reward for {staker} at block {height} but no bonded stake"
+            )));
+        };
+        // The bonded value is the plaintext `{\n  validator: aleo1...,\n  microcredits: 141347021440u64\n}`;
+        // parsing it as a `Plaintext` and taking the member is what `bonded_map_into_stakers` does.
+        let new_stake = match Plaintext::<N>::from_str(bonded_value)?.find(&[Identifier::from_str("microcredits")?])? {
+            Plaintext::Literal(Literal::U64(microcredits), _) => *microcredits,
+            other => return Err(RestError::internal_server_error(anyhow!("Unexpected bonded stake: {other}"))),
+        };
+        Ok((StatusCode::OK, ErasedJson::pretty((validator, reward, new_stake))))
     }
 
     /// GET /{network}/staking/rewards/{address}/{height}
@@ -1713,10 +1798,29 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     // TODO: PUT /{network}/slipstream/plugins/{name} (reload) is not yet implemented.
 }
 
-#[cfg(all(test, feature = "history"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use snarkvm::prelude::MainnetV0;
+
+    #[test]
+    fn history_compat_mapping_accepts_only_the_upstream_snapshots() {
+        let credits = ProgramID::<MainnetV0>::from_str("credits.aleo").unwrap();
+        for mapping in SnapshotMapping::ALL {
+            let name = Identifier::from_str(mapping.name()).unwrap();
+            assert_eq!(history_compat_mapping(&credits, &name).unwrap(), mapping);
+        }
+        let committee = Identifier::from_str("committee").unwrap();
+        let err = history_compat_mapping(&credits, &committee).unwrap_err();
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert!(err.to_string().contains("credits.aleo/committee"), "{err}");
+
+        let other = ProgramID::<MainnetV0>::from_str("other.aleo").unwrap();
+        let bonded = Identifier::from_str("bonded").unwrap();
+        let err = history_compat_mapping(&other, &bonded).unwrap_err();
+        assert_eq!(err, StatusCode::NOT_FOUND);
+        assert!(err.to_string().contains("other.aleo/bonded"), "{err}");
+    }
 
     #[test]
     fn parse_historical_mapping_keys_rejects_empty() {
