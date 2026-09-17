@@ -851,7 +851,6 @@ workflows:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
@@ -861,7 +860,6 @@ workflows:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
@@ -871,7 +869,6 @@ workflows:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
@@ -880,7 +877,6 @@ workflows:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
@@ -899,7 +895,6 @@ workflows:
           filters:
             branches:
               only:
-                - fix/codec-roundtrip-and-audit
                 - canary
                 - testnet
                 - mainnet
