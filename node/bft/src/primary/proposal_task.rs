@@ -149,20 +149,30 @@ impl<N: Network> ProposalTask<N> {
 
     /// Stage 2: Propose a batch.
     ///
-    /// Calls `propose_batch()` with CREATE_BATCH_INTERVAL retries until it returns `Ok(true)`
-    /// (batch submitted to the network).
+    /// Calls `propose_batch()` until it returns `Ok(true)` (batch submitted to the network),
+    /// retrying from CREATE_BATCH_INTERVAL and backing off to at most MAX_BATCH_DELAY.
     ///
     /// Returns `true` if the batch was submitted, `false` if the round changed (caller should
     /// restart).
     async fn propose<P: BatchPropose>(primary: &P, round: u64) -> bool {
         let mut attempt = 1u32;
+        let mut backoff = CREATE_BATCH_INTERVAL;
         loop {
+            // The round advances both when this primary certifies a batch and when block sync
+            // applies a block (`Storage::sync_round_with_block`), so this doubles as the local
+            // "we were behind and have since caught up" check: a syncing node restarts here
+            // rather than retrying against a round it has already moved past.
             if primary.current_round() != round {
                 return false;
             }
 
             if attempt > 1 {
-                sleep(CREATE_BATCH_INTERVAL).await;
+                // The round only advances on an external event (a certificate or an applied
+                // block), so a round that is not progressing would otherwise hold the 250ms
+                // retry cadence indefinitely, each attempt taking the proposal lock and reading
+                // the committee lookback from the ledger.
+                sleep(backoff).await;
+                backoff = (backoff.saturating_mul(2)).min(MAX_BATCH_DELAY);
                 debug!("Retrying batch proposal for round {round} (attempt #{attempt})");
             }
 
