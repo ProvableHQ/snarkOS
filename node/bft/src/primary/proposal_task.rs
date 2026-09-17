@@ -485,5 +485,4 @@ mod tests {
         // Stage 3 may make additional rebroadcast calls after success, so use >.
         assert!(propose_count.load(Ordering::SeqCst) > RETRIES, "expected at least {} total attempts", RETRIES + 1);
     }
-
 }

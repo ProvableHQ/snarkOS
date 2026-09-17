@@ -219,8 +219,9 @@ impl<N: Network> Storage<N> {
         let storage_round = self.current_round();
         // Retrieve the GC round.
         let gc_round = self.gc_round();
-        // Ensure the next round matches in storage.
-        ensure!(next_round == storage_round, "The next round {next_round} does not match in storage ({storage_round})");
+        // Ensure storage has advanced to at least the next round. It may be ahead of it if a
+        // concurrent sync-applied round update landed in between (see `update_current_round`).
+        ensure!(storage_round >= next_round, "Storage round {storage_round} is behind the expected round {next_round}");
         // Ensure the next round is greater than or equal to the GC round.
         ensure!(next_round >= gc_round, "The next round {next_round} is behind the GC round {gc_round}");
 
@@ -230,9 +231,13 @@ impl<N: Network> Storage<N> {
     }
 
     /// Updates the storage to the next round.
+    ///
+    /// This is called concurrently from two independent paths: the BFT round-certification path
+    /// (`increment_to_next_round`) and the sync-applied-block path (`sync_round_with_block`).
+    /// `fetch_max` ensures the round only ever advances, regardless of interleaving, instead of a
+    /// plain store letting a stale writer regress it.
     fn update_current_round(&self, next_round: u64) {
-        // Update the current round.
-        self.current_round.store(next_round, Ordering::SeqCst);
+        self.current_round.fetch_max(next_round, Ordering::SeqCst);
     }
 
     /// Update the storage by performing garbage collection based on the next round.
@@ -822,8 +827,9 @@ impl<N: Network> Storage<N> {
     pub(crate) fn sync_height_with_block(&self, next_height: u32) {
         // If the block height is greater than the current height in storage, sync the height.
         if next_height > self.current_height() {
-            // Update the current height in storage.
-            self.current_height.store(next_height, Ordering::SeqCst);
+            // Update the current height in storage. `fetch_max` ensures the height only ever
+            // advances, even if a concurrent writer already stored a higher value in between.
+            self.current_height.fetch_max(next_height, Ordering::SeqCst);
         }
     }
 
@@ -1629,6 +1635,65 @@ pub(crate) mod tests {
                 previous_certs = new_certs.into_iter().skip(6).collect();
             }
         }
+    }
+
+    /// `current_round`/`current_height` are written concurrently by two independent paths: the
+    /// BFT round-certification path (`increment_to_next_round`) and the sync-applied-block path
+    /// (`sync_round_with_block`/`sync_height_with_block`). A third, observing thread continuously
+    /// samples both values while the writers race; neither value may ever be seen to regress.
+    ///
+    /// The sync writer deliberately syncs in descending order, so a "stale" (lower) write can
+    /// land after a fresher (higher) one — exactly the interleaving the old check-then-act code
+    /// (load, compare, then a separate `store`) could get wrong.
+    #[test]
+    fn test_concurrent_round_and_height_updates_never_regress() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 10_000).unwrap();
+
+        let start_round = storage.current_round();
+        const ITERATIONS: u64 = 2_000;
+
+        // Thread A mimics the normal BFT path, incrementing one round at a time.
+        let storage_a = storage.clone();
+        let increment_handle = std::thread::spawn(move || {
+            for _ in 0..ITERATIONS {
+                let _ = storage_a.increment_to_next_round(storage_a.current_round());
+            }
+        });
+
+        // Thread B mimics a sync-applied block, syncing rounds/heights in descending order.
+        let storage_b = storage.clone();
+        let sync_handle = std::thread::spawn(move || {
+            for i in (0..ITERATIONS).rev() {
+                storage_b.sync_round_with_block(start_round + i);
+                storage_b.sync_height_with_block(i as u32);
+            }
+        });
+
+        // Thread C repeatedly samples both values and asserts they never go backwards.
+        let storage_c = storage.clone();
+        let observer_handle = std::thread::spawn(move || {
+            let mut last_round = storage_c.current_round();
+            let mut last_height = storage_c.current_height();
+            for _ in 0..(ITERATIONS * 10) {
+                let round = storage_c.current_round();
+                let height = storage_c.current_height();
+                assert!(round >= last_round, "current_round regressed: {round} < {last_round}");
+                assert!(height >= last_height, "current_height regressed: {height} < {last_height}");
+                last_round = round;
+                last_height = height;
+            }
+        });
+
+        increment_handle.join().unwrap();
+        sync_handle.join().unwrap();
+        observer_handle.join().unwrap();
     }
 }
 
