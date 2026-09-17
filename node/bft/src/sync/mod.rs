@@ -135,18 +135,6 @@ impl<N: Network> Sync<N> {
         }
     }
 
-    /// Waits until the node is synced (has connected peers and is block-synced).
-    /// Returns immediately if already synced.
-    pub async fn wait_for_synced(&self) {
-        self.block_sync.wait_for_synced().await;
-    }
-
-    /// Returns `None` if the node is already synced.
-    /// Otherwise, returns a future that completes once the node becomes synced.
-    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
-        self.block_sync.wait_for_synced_if_syncing()
-    }
-
     /// Initializes the sync module and sync the storage with the ledger at bootup.
     pub fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
         // If a callback was provided, set it.

@@ -442,14 +442,6 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         Primary::current_round(self)
     }
 
-    fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
-        self.sync.wait_for_synced_if_syncing()
-    }
-
-    fn is_synced(&self) -> bool {
-        self.sync.is_synced()
-    }
-
     /// Proposes the batch for the current round.
     ///
     /// This method performs the following steps:
@@ -1459,12 +1451,6 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, batch_propose)) = rx_batch_propose.recv().await {
-                // If the primary is not synced, then do not sign the batch.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a batch proposal from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-
                 // Spawn a task to process the proposed batch.
                 let self_ = self_.clone();
                 tokio::spawn(async move {
@@ -1482,11 +1468,6 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, batch_signature)) = rx_batch_signature.recv().await {
-                // If the primary is not synced, then do not store the signature.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a batch signature from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
                 // Process the batch signature.
                 // Note: Do NOT spawn a task around this function call. Processing signatures from peers
                 // is a critical path, and we should only store the minimum required number of signatures.
@@ -1504,11 +1485,6 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, batch_certificate)) = rx_batch_certified.recv().await {
-                // If the primary is not synced, then do not store the certificate.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a certified batch from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
                 // Spawn a task to process the batch certificate.
                 let self_ = self_.clone();
                 tokio::spawn(async move {
@@ -1555,15 +1531,7 @@ impl<N: Network> Primary<N> {
                     // expires, even when no further certificates arrive (e.g. an even round where
                     // the elected leader was absent and quorum was reached without their cert).
                     futures.push(Box::pin(tokio::time::sleep(MAX_LEADER_CERTIFICATE_DELAY)));
-                    if !self_.sync.is_synced() {
-                        futures.push(Box::pin(self_.sync.wait_for_synced()));
-                    }
                     let _ = futures::future::select_all(futures).await;
-
-                    if !self_.sync.is_synced() {
-                        trace!("Skipping round increment {}", "(node is syncing)".dimmed());
-                        continue;
-                    }
 
                     let next_round = current_round.saturating_add(1);
                     let is_quorum_threshold_reached = {
@@ -1704,7 +1672,7 @@ impl<N: Network> Primary<N> {
             };
 
             // Notify the proposal task if the new round is ready.
-            if is_ready && self.is_synced() {
+            if is_ready {
                 debug!("Primary is ready to propose the next round");
                 self.proposal_task.signal();
             } else {
@@ -1882,14 +1850,6 @@ impl<N: Network> Primary<N> {
             return Ok(());
         }
 
-        // If node is not in sync mode and the node is not synced. Then return an error.
-        if !IS_SYNCING && !self.is_synced() {
-            bail!(
-                "Failed to process certificate `{}` at round {batch_round} from '{peer_ip}' (node is syncing)",
-                fmt_id(certificate.id())
-            );
-        }
-
         // If the peer is ahead, use the batch header to sync up to the peer.
         let missing_transmissions =
             self.sync_with_batch_header_from_peer::<IS_SYNCING, false>(peer_ip, batch_header).await?;
@@ -1922,14 +1882,6 @@ impl<N: Network> Primary<N> {
         // If the certificate round is outdated, do not store it.
         if batch_round <= self.storage.gc_round() {
             bail!("Round {batch_round} is too far in the past")
-        }
-
-        // If node is not in sync mode and the node is not synced, then return an error.
-        if !IS_SYNCING && !self.is_synced() {
-            bail!(
-                "Failed to process batch header `{}` at round {batch_round} from '{peer_ip}' (node is syncing)",
-                fmt_id(batch_header.batch_id())
-            );
         }
 
         // Determine if quorum threshold is reached on the batch round.
@@ -2537,6 +2489,31 @@ mod tests {
         assert!(primary.proposed_batch.read().is_proposed());
     }
 
+    /// The previous round must reach quorum before the primary is allowed to propose the next
+    /// round. This is now the sole local safeguard against proposing without adequate DAG state -
+    /// `is_synced()` (peer-height-based) no longer gates this decision.
+    #[test_log::test(tokio::test)]
+    async fn test_propose_batch_without_previous_round_quorum() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Insert a single round-1 certificate, authored by only one other committee member - well
+        // below the quorum threshold (3 of the 4 validators).
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        primary.storage.insert_certificate(certificate, transmissions, Default::default()).unwrap();
+
+        // Advance storage's round pointer to 2, as `store_certificate_chain` does internally.
+        // This simulates the round pointer moving ahead (e.g. via a sync-applied block) without
+        // the local certificate set actually supporting it.
+        primary.storage.increment_to_next_round(1).unwrap();
+        assert_eq!(primary.current_round(), 2);
+
+        // The primary must refuse to propose: it does not have quorum for the previous round.
+        assert!(!primary.propose_batch().await.unwrap());
+        assert!(primary.proposed_batch.read().is_none());
+    }
+
     #[test_log::test(tokio::test)]
     async fn test_propose_batch_skip_transmissions_from_previous_certificates() {
         let round = 3;
@@ -2901,43 +2878,6 @@ mod tests {
         let other_sig = account.sign(&[other_id], &mut rng).unwrap();
         assert!(primary.cache_signed_proposal(other_author, 1, other_id, other_sig));
         assert_eq!(primary.signed_proposals.read().get(&author).copied().unwrap().0, 3);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn test_batch_propose_from_peer_when_not_synced() {
-        let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
-
-        // Create a valid proposal with an author that isn't the primary.
-        let round = 1;
-        let peer_account = &accounts[1];
-        let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
-        let proposal = create_test_proposal(
-            &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
-            round,
-            Default::default(),
-            timestamp,
-            1,
-            &mut rng,
-        );
-
-        // Make sure the primary is aware of the transmissions in the proposal.
-        for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
-        }
-
-        // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-
-        // Add a high block locator to indicate we are not synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-
-        // Try to process the batch proposal from the peer, should fail
-        assert!(
-            primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_err()
-        );
     }
 
     #[test_log::test(tokio::test)]
