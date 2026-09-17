@@ -23,7 +23,7 @@ use crate::{
 
 use snarkos_account::Account;
 use snarkos_node_network::{ConnectionMode, NodeType};
-use snarkos_node_rest::Rest;
+use snarkos_node_rest::{Rest, RestVerificationLimits};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
@@ -136,6 +136,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         node_ip: SocketAddr,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
+        rest_verification_limits: RestVerificationLimits,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
@@ -218,8 +219,17 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Initialize the REST server.
         if let Some(rest_ip) = rest_ip {
             node.rest = Some(
-                Rest::start(rest_ip, rest_rps, None, ledger.clone(), Arc::new(node.clone()), cdn_sync.clone(), sync)
-                    .await?,
+                Rest::start(
+                    rest_ip,
+                    rest_rps,
+                    None,
+                    ledger.clone(),
+                    Arc::new(node.clone()),
+                    cdn_sync.clone(),
+                    sync,
+                    rest_verification_limits,
+                )
+                .await?,
             );
         }
 

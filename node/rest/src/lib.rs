@@ -39,7 +39,7 @@ use snarkvm::{
     prelude::{Ledger, Network, VM, cfg_into_iter, store::ConsensusStorage},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use axum::{
     body::Body,
     extract::{ConnectInfo, DefaultBodyLimit, Query, State},
@@ -65,6 +65,52 @@ use tracing::Span;
 
 /// The default port used for the REST API
 pub const DEFAULT_REST_PORT: u16 = 3030;
+
+/// Concurrent REST verification limits for unconfirmed deployments, executions, and solutions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RestVerificationLimits {
+    /// Maximum number of concurrent REST deploy transaction verifications.
+    pub num_verifying_deploys: usize,
+    /// Maximum number of concurrent REST execute transaction verifications.
+    pub num_verifying_executions: usize,
+    /// Maximum number of concurrent REST solution verifications.
+    pub num_verifying_solutions: usize,
+}
+
+impl RestVerificationLimits {
+    /// Returns the protocol maximums, which are also the defaults.
+    pub fn max<N: Network, C: ConsensusStorage<N>>() -> Self {
+        Self {
+            num_verifying_deploys: VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
+            num_verifying_executions: VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
+            num_verifying_solutions: N::MAX_SOLUTIONS,
+        }
+    }
+
+    /// Constructs limits, rejecting values above the protocol maximums.
+    pub fn new<N: Network, C: ConsensusStorage<N>>(
+        num_verifying_deploys: usize,
+        num_verifying_executions: usize,
+        num_verifying_solutions: usize,
+    ) -> Result<Self> {
+        ensure!(
+            num_verifying_deploys <= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
+            "`num_verifying_deploys` ({num_verifying_deploys}) cannot exceed MAX_PARALLEL_DEPLOY_VERIFICATIONS ({})",
+            VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS
+        );
+        ensure!(
+            num_verifying_executions <= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
+            "`num_verifying_executions` ({num_verifying_executions}) cannot exceed MAX_PARALLEL_EXECUTE_VERIFICATIONS ({})",
+            VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS
+        );
+        ensure!(
+            num_verifying_solutions <= N::MAX_SOLUTIONS,
+            "`num_verifying_solutions` ({num_verifying_solutions}) cannot exceed MAX_SOLUTIONS ({})",
+            N::MAX_SOLUTIONS
+        );
+        Ok(Self { num_verifying_deploys, num_verifying_executions, num_verifying_solutions })
+    }
+}
 
 /// The API version prefixes.
 pub const API_VERSION_V1: &str = "v1";
@@ -100,6 +146,7 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// Initializes a new instance of the server.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         rest_ip: SocketAddr,
         rest_rps: u32,
@@ -108,7 +155,14 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
         routing: Arc<R>,
         cdn_sync: Option<Arc<CdnBlockSync>>,
         block_sync: Arc<BlockSync<N>>,
+        rest_verification_limits: RestVerificationLimits,
     ) -> Result<Self> {
+        let rest_verification_limits = RestVerificationLimits::new::<N, C>(
+            rest_verification_limits.num_verifying_deploys,
+            rest_verification_limits.num_verifying_executions,
+            rest_verification_limits.num_verifying_solutions,
+        )?;
+
         // Initialize the server.
         let mut server = Self {
             consensus,
@@ -117,9 +171,9 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             cdn_sync,
             block_sync,
             handles: Default::default(),
-            num_verifying_deploys: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS)),
-            num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
-            num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
+            num_verifying_deploys: Arc::new(Semaphore::new(rest_verification_limits.num_verifying_deploys)),
+            num_verifying_executions: Arc::new(Semaphore::new(rest_verification_limits.num_verifying_executions)),
+            num_verifying_solutions: Arc::new(Semaphore::new(rest_verification_limits.num_verifying_solutions)),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
         };
         // Spawn the server.
