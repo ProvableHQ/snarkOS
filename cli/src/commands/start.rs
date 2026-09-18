@@ -983,10 +983,17 @@ impl Start {
         let num_cores = num_cpus::get();
 
         // Initialize the number of tokio worker threads, max tokio blocking threads, and rayon cores.
-        // Note: We intentionally set the number of tokio worker threads and number of rayon cores to be
-        // more than the number of physical cores, because the node is expected to be I/O-bound.
+        //
+        // One worker per core is enough because the async runtime only drives I/O and coordination:
+        // everything CPU-bound is handed to the blocking pool, and from there to rayon. Adding
+        // workers beyond the core count buys no parallelism, it only adds threads for the OS to
+        // schedule against rayon.
+        //
+        // The blocking pool is a safety valve rather than a target, so its cap sits well above the
+        // concurrency the node is expected to reach. Lowering it to around peak demand would turn
+        // bursts into queueing ahead of rayon.
         let (num_tokio_worker_threads, max_tokio_blocking_threads, num_rayon_cores_global) =
-            (2 * num_cores, 512, num_cores);
+            (num_cores, 256, num_cores);
 
         // Set up the rayon thread pool.
         // A custom panic handler is not needed here, as rayon propagates the panic to the calling thread by default (except for `rayon::spawn` which we do not use).
