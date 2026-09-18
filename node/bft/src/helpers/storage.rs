@@ -1651,11 +1651,14 @@ pub(crate) mod tests {
     /// `current_round`/`current_height` are written concurrently by two independent paths: the
     /// BFT round-certification path (`increment_to_next_round`) and the sync-applied-block path
     /// (`sync_round_with_block`/`sync_height_with_block`). A third, observing thread continuously
-    /// samples both values while the writers race; neither value may ever be seen to regress.
+    /// samples both values while the writers race; neither value may ever be seen to regress, and
+    /// the final values must converge to the max of what each writer proposed.
     ///
     /// The sync writer deliberately syncs in descending order, so a "stale" (lower) write can
     /// land after a fresher (higher) one — exactly the interleaving the old check-then-act code
-    /// (load, compare, then a separate `store`) could get wrong.
+    /// (load, compare, then a separate `store`) could get wrong. A shared barrier keeps all three
+    /// threads in lockstep, one round per iteration, so the observer is reading concurrently with
+    /// the writers on every iteration instead of racing ahead and finishing before they do.
     #[test]
     fn test_concurrent_round_and_height_updates_never_regress() {
         let rng = &mut TestRng::default();
@@ -1668,20 +1671,29 @@ pub(crate) mod tests {
         let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 10_000).unwrap();
 
         let start_round = storage.current_round();
+        let start_height = storage.current_height();
         const ITERATIONS: u64 = 2_000;
 
-        // Thread A mimics the normal BFT path, incrementing one round at a time.
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+
+        // Thread A mimics the normal BFT path, incrementing one round at a time, from a fixed,
+        // known sequence of rounds (rather than re-reading live storage) so its maximum proposed
+        // round is known ahead of time.
         let storage_a = storage.clone();
+        let barrier_a = barrier.clone();
         let increment_handle = std::thread::spawn(move || {
-            for _ in 0..ITERATIONS {
-                let _ = storage_a.increment_to_next_round(storage_a.current_round());
+            for round in start_round..start_round + ITERATIONS {
+                barrier_a.wait();
+                storage_a.increment_to_next_round(round).expect("increment_to_next_round should not fail");
             }
         });
 
         // Thread B mimics a sync-applied block, syncing rounds/heights in descending order.
         let storage_b = storage.clone();
+        let barrier_b = barrier.clone();
         let sync_handle = std::thread::spawn(move || {
             for i in (0..ITERATIONS).rev() {
+                barrier_b.wait();
                 storage_b.sync_round_with_block(start_round + i);
                 storage_b.sync_height_with_block(i as u32);
             }
@@ -1689,10 +1701,12 @@ pub(crate) mod tests {
 
         // Thread C repeatedly samples both values and asserts they never go backwards.
         let storage_c = storage.clone();
+        let barrier_c = barrier.clone();
         let observer_handle = std::thread::spawn(move || {
             let mut last_round = storage_c.current_round();
             let mut last_height = storage_c.current_height();
-            for _ in 0..(ITERATIONS * 10) {
+            for _ in 0..ITERATIONS {
+                barrier_c.wait();
                 let round = storage_c.current_round();
                 let height = storage_c.current_height();
                 assert!(round >= last_round, "current_round regressed: {round} < {last_round}");
@@ -1705,6 +1719,10 @@ pub(crate) mod tests {
         increment_handle.join().unwrap();
         sync_handle.join().unwrap();
         observer_handle.join().unwrap();
+
+        // The final values must converge to the max of what each writer ever proposed.
+        assert_eq!(storage.current_round(), start_round + ITERATIONS);
+        assert_eq!(storage.current_height(), start_height.max(ITERATIONS as u32 - 1));
     }
 }
 
