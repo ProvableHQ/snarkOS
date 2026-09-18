@@ -609,6 +609,18 @@ impl<N: Network> Consensus<N> {
         let prepare_instant = std::time::Instant::now();
         let block = match ledger_update.prepare_advance_to_next_quorum_block(subdag, transmissions) {
             Ok(block) => block,
+            Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                debug!("The given block hash already exists in the ledger");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidHeight { .. }) => {
+                debug!("The ledger advanced while we were constructing the next block");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidRound { new, previous }) => {
+                debug!("The subDAG round is too low. Expected >{previous}, got {new}");
+                return Ok(false);
+            }
             Err(err) => return Err(err.into_anyhow()),
         };
         let prepare_elapsed = prepare_instant.elapsed();

@@ -135,18 +135,6 @@ impl<N: Network> Sync<N> {
         }
     }
 
-    /// Waits until the node is synced (has connected peers and is block-synced).
-    /// Returns immediately if already synced.
-    pub async fn wait_for_synced(&self) {
-        self.block_sync.wait_for_synced().await;
-    }
-
-    /// Returns `None` if the node is already synced.
-    /// Otherwise, returns a future that completes once the node becomes synced.
-    pub fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
-        self.block_sync.wait_for_synced_if_syncing()
-    }
-
     /// Initializes the sync module and sync the storage with the ledger at bootup.
     pub fn initialize(&self, sync_callback: Option<Arc<dyn SyncCallback<N>>>) -> Result<()> {
         // If a callback was provided, set it.
@@ -323,12 +311,6 @@ impl<N: Network> Sync<N> {
     async fn try_issuing_block_requests(&self) {
         self.block_sync.try_issuing_block_requests(&self.gateway).await;
     }
-
-    /// Test-only method that allows setting the sync height to the given nubmer    
-    #[cfg(test)]
-    pub(crate) fn testing_only_set_sync_height_testing_only(&self, height: u32) {
-        self.block_sync.set_sync_height(height);
-    }
 }
 
 // Callbacks used when receiving messages from the Gateway
@@ -354,15 +336,6 @@ impl<N: Network> Sync<N> {
     /// A peer disconnected.
     fn remove_peer(&self, peer_ip: SocketAddr) {
         self.block_sync.remove_peer(&peer_ip)
-    }
-
-    #[cfg(test)]
-    pub fn testing_only_update_peer_locators_testing_only(
-        &self,
-        peer_ip: SocketAddr,
-        locators: BlockLocators<N>,
-    ) -> Result<()> {
-        self.update_peer_locators(peer_ip, locators)
     }
 }
 
