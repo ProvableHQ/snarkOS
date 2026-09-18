@@ -349,27 +349,6 @@ impl<N: Network> Storage<N> {
         self.transmissions.get_transmission(transmission_id.into())
     }
 
-    /// Returns the round for the given `certificate ID`.
-    /// If the certificate ID does not exist in storage, `None` is returned.
-    pub fn get_round_for_certificate(&self, certificate_id: Field<N>) -> Option<u64> {
-        // Get the round.
-        self.certificates.read().get(&certificate_id).map(|certificate| certificate.round())
-    }
-
-    /// Returns the round for the given `batch ID`.
-    /// If the batch ID does not exist in storage, `None` is returned.
-    pub fn get_round_for_batch(&self, batch_id: Field<N>) -> Option<u64> {
-        // Get the round.
-        self.batch_ids.read().get(&batch_id).copied()
-    }
-
-    /// Returns the certificate round for the given `certificate ID`.
-    /// If the certificate ID does not exist in storage, `None` is returned.
-    pub fn get_certificate_round(&self, certificate_id: Field<N>) -> Option<u64> {
-        // Get the batch certificate and return the round.
-        self.certificates.read().get(&certificate_id).map(|certificate| certificate.round())
-    }
-
     /// Returns the certificate for the given `certificate ID`.
     /// If the certificate ID does not exist in storage, `None` is returned.
     pub fn get_certificate(&self, certificate_id: Field<N>) -> Option<BatchCertificate<N>> {

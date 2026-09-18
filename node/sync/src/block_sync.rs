@@ -429,11 +429,6 @@ impl<N: Network> BlockSync<N> {
         BlockLocators::new(recents, checkpoints)
     }
 
-    /// Returns true if there are pending responses to block requests that need to be processed.
-    pub fn has_pending_responses(&self) -> bool {
-        self.requests.read().iter().filter(|(_, req)| req.response.is_some() && req.sync_ips().is_empty()).count() > 0
-    }
-
     /// Send a batch of block requests.
     pub async fn send_block_requests<C: CommunicationService>(
         &self,

@@ -16,7 +16,7 @@
 use snarkvm::prelude::{FromBytes, IoResult, Network, Read, ToBytes, Write, error, has_duplicates};
 
 use anyhow::{Result, bail, ensure};
-use indexmap::{IndexMap, indexmap};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, btree_map::IntoIter};
 
@@ -99,11 +99,6 @@ impl<N: Network> BlockLocators<N> {
     fn new_unchecked(recents: IndexMap<u32, N::BlockHash>, checkpoints: IndexMap<u32, N::BlockHash>) -> Self {
         Self { recents, checkpoints }
     }
-
-    /// Initializes a new genesis instance of the block locators.
-    pub fn new_genesis(genesis_hash: N::BlockHash) -> Self {
-        Self { recents: indexmap![0 => genesis_hash], checkpoints: indexmap![0 => genesis_hash] }
-    }
 }
 
 impl<N: Network> IntoIterator for BlockLocators<N> {
@@ -127,16 +122,6 @@ impl<N: Network> BlockLocators<N> {
     /// Returns the block hash for the given block height, if it exists.
     pub fn get_hash(&self, height: u32) -> Option<N::BlockHash> {
         self.recents.get(&height).copied().or_else(|| self.checkpoints.get(&height).copied())
-    }
-
-    /// Returns `true` if the block locators are well-formed.
-    pub fn is_valid(&self) -> bool {
-        // Ensure the block locators are well-formed.
-        if let Err(error) = self.ensure_is_valid() {
-            warn!("Block locators are invalid: {error}");
-            return false;
-        }
-        true
     }
 
     /// Returns `true` if the given block locators are consistent with this one.
@@ -471,7 +456,7 @@ pub mod test_helpers {
             assert_eq!(block_locators.recents.len(), expected_num_recents as usize);
             assert_eq!(block_locators.latest_locator_height(), expected_height);
             // Note that `sample_block_locators` always returns well-formed block locators,
-            // so we don't need to check `is_valid()` here.
+            // so we don't need to check `ensure_is_valid()` here.
         }
     }
 }

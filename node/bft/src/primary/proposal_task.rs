@@ -255,7 +255,7 @@ mod tests {
 
     /// A minimal [`BatchPropose`] implementation for testing.
     ///
-    /// Always reports round 1 and synced. Records how many times [`propose_batch`] is called and
+    /// Always reports round 1. Records how many times [`propose_batch`] is called and
     /// fires a [`Notify`] on each call.
     struct DummyProposer {
         propose_count: Arc<AtomicU32>,
