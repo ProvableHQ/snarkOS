@@ -221,7 +221,10 @@ impl<N: Network> Storage<N> {
         let gc_round = self.gc_round();
         // Storage is guaranteed to have advanced to at least the next round, since
         // `update_current_round` only ever moves it forward via `fetch_max`.
-        debug_assert!(storage_round >= next_round, "Storage round {storage_round} is behind the expected round {next_round}");
+        debug_assert!(
+            storage_round >= next_round,
+            "Storage round {storage_round} is behind the expected round {next_round}"
+        );
         // Ensure the next round is greater than or equal to the GC round. This can legitimately
         // fail under normal operation: a concurrent sync may have advanced the GC round past this
         // (now stale) round update.
@@ -836,12 +839,9 @@ impl<N: Network> Storage<N> {
 impl<N: Network> Storage<N> {
     /// Syncs the current height with the block.
     pub(crate) fn sync_height_with_block(&self, next_height: u32) {
-        // If the block height is greater than the current height in storage, sync the height.
-        if next_height > self.current_height() {
-            // Update the current height in storage. `fetch_max` ensures the height only ever
-            // advances, even if a concurrent writer already stored a higher value in between.
-            self.current_height.fetch_max(next_height, Ordering::SeqCst);
-        }
+        // Update the current height in storage. `fetch_max` ensures the height only ever
+        // advances, even if a concurrent writer already stored a higher value in between.
+        self.current_height.fetch_max(next_height, Ordering::SeqCst);
     }
 
     /// Syncs the current round with the block.
