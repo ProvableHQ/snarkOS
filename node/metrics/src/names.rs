@@ -54,7 +54,7 @@ pub(super) const GAUGE_NAMES: [&str; 35] = [
     tokio_rt::WORKER_PARKS,
 ];
 
-pub(super) const HISTOGRAM_NAMES: [&str; 14] = [
+pub(super) const HISTOGRAM_NAMES: [&str; 18] = [
     bft::COMMIT_ROUNDS_LATENCY,
     bft::COMMIT_LEADER_CERTIFICATE_LATENCY,
     bft::BATCH_CERTIFICATION_LATENCY,
@@ -68,6 +68,10 @@ pub(super) const HISTOGRAM_NAMES: [&str; 14] = [
     consensus::PREPARE_ADVANCE_TO_NEXT_QUORUM_BLOCK_LATENCY,
     consensus::CHECK_NEXT_BLOCK_LATENCY,
     consensus::ADVANCE_TO_NEXT_BLOCK_LATENCY,
+    consensus::PREPARE_ADVANCE_SECS,
+    consensus::CHECK_NEXT_BLOCK_SECS,
+    consensus::ADVANCE_TO_NEXT_BLOCK_SECS,
+    consensus::UPDATE_LOCK_WAIT_SECS,
     cpu::BLOCKING_WAIT_SECS,
 ];
 
@@ -126,6 +130,8 @@ pub mod consensus {
     pub const CHECK_NEXT_BLOCK_SECS: &str = "snarkos_consensus_check_next_block_secs";
     /// Time spent in advance_to_next_block (ledger write).
     pub const ADVANCE_TO_NEXT_BLOCK_SECS: &str = "snarkos_consensus_advance_to_next_block_secs";
+    /// Time spent waiting to acquire the ledger `update_lock`.
+    pub const UPDATE_LOCK_WAIT_SECS: &str = "snarkos_consensus_update_lock_wait_secs";
     pub const UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_unconfirmed_transactions_total";
     pub const UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_unconfirmed_solutions_total";
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";

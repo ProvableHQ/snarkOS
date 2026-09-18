@@ -528,7 +528,12 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             return Err(BeginLedgerUpdateError::ShuttingDown);
         }
 
-        Ok(Box::new(LedgerUpdate { ledger: self.ledger.clone(), _lock: self.update_lock.lock() }))
+        let lock_wait_start = std::time::Instant::now();
+        let _lock = self.update_lock.lock();
+        #[cfg(feature = "metrics")]
+        metrics::histogram(metrics::consensus::UPDATE_LOCK_WAIT_SECS, lock_wait_start.elapsed().as_secs_f64());
+
+        Ok(Box::new(LedgerUpdate { ledger: self.ledger.clone(), _lock }))
     }
 
     /// Returns the spend for a transaction in microcredits.
