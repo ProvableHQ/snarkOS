@@ -39,7 +39,7 @@ use snarkvm::{
     prelude::{Ledger, Network, VM, cfg_into_iter, store::ConsensusStorage},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use axum::{
     body::Body,
     extract::{ConnectInfo, DefaultBodyLimit, Query, State},
@@ -55,7 +55,11 @@ use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    sync::{Semaphore, SemaphorePermit},
+    task::JoinHandle,
+};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -66,12 +70,115 @@ use tracing::Span;
 /// The default port used for the REST API
 pub const DEFAULT_REST_PORT: u16 = 3030;
 
+/// Concurrent REST verification limits for unconfirmed deployments, executions, and solutions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RestVerificationLimits {
+    /// Maximum number of concurrent REST deploy transaction verifications.
+    pub num_verifying_deploys: usize,
+    /// Maximum number of concurrent REST execute transaction verifications.
+    pub num_verifying_executions: usize,
+    /// Maximum number of concurrent REST solution verifications.
+    pub num_verifying_solutions: usize,
+}
+
+impl RestVerificationLimits {
+    /// Returns the protocol maximums, which are also the defaults.
+    pub fn max<N: Network, C: ConsensusStorage<N>>() -> Self {
+        Self {
+            num_verifying_deploys: VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
+            num_verifying_executions: VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
+            num_verifying_solutions: N::MAX_SOLUTIONS,
+        }
+    }
+
+    /// Constructs limits, rejecting values above the protocol maximums.
+    pub fn new<N: Network, C: ConsensusStorage<N>>(
+        num_verifying_deploys: usize,
+        num_verifying_executions: usize,
+        num_verifying_solutions: usize,
+    ) -> Result<Self> {
+        ensure!(
+            num_verifying_deploys <= VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS,
+            "`num_verifying_deploys` ({num_verifying_deploys}) cannot exceed MAX_PARALLEL_DEPLOY_VERIFICATIONS ({})",
+            VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS
+        );
+        ensure!(
+            num_verifying_executions <= VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS,
+            "`num_verifying_executions` ({num_verifying_executions}) cannot exceed MAX_PARALLEL_EXECUTE_VERIFICATIONS ({})",
+            VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS
+        );
+        ensure!(
+            num_verifying_solutions <= N::MAX_SOLUTIONS,
+            "`num_verifying_solutions` ({num_verifying_solutions}) cannot exceed MAX_SOLUTIONS ({})",
+            N::MAX_SOLUTIONS
+        );
+        Ok(Self { num_verifying_deploys, num_verifying_executions, num_verifying_solutions })
+    }
+}
+
 /// The API version prefixes.
 pub const API_VERSION_V1: &str = "v1";
 pub const API_VERSION_V2: &str = "v2";
 
 /// The capacity of the LRU holding recently requested blocks.
 const BLOCK_CACHE_SIZE: usize = 128;
+
+/// Permits that keep a REST verification in a type's queue and in a concurrent slot.
+#[derive(Debug)]
+pub(crate) struct VerificationSlot<'a> {
+    _queued: SemaphorePermit<'a>,
+    _concurrent: SemaphorePermit<'a>,
+}
+
+/// Concurrent and queued REST verification permits for deployments, executions, and solutions.
+pub(crate) struct VerificationSlots {
+    pub(crate) deploys: VerificationLane,
+    pub(crate) executions: VerificationLane,
+    pub(crate) solutions: VerificationLane,
+}
+
+/// A concurrent semaphore and a queued semaphore for one kind of REST verification.
+pub(crate) struct VerificationLane {
+    /// Maximum number of verifications of this kind that may run at once.
+    pub(crate) concurrent: Semaphore,
+    /// Maximum number of verifications of this kind that may be waiting or in progress.
+    ///
+    /// Capacity is twice that of `concurrent`.
+    pub(crate) queued: Semaphore,
+}
+
+impl VerificationSlots {
+    fn new(limits: RestVerificationLimits) -> Self {
+        Self {
+            deploys: VerificationLane::new(limits.num_verifying_deploys),
+            executions: VerificationLane::new(limits.num_verifying_executions),
+            solutions: VerificationLane::new(limits.num_verifying_solutions),
+        }
+    }
+}
+
+impl VerificationLane {
+    fn new(concurrent_limit: usize) -> Self {
+        Self {
+            concurrent: Semaphore::new(concurrent_limit),
+            queued: Semaphore::new(concurrent_limit.saturating_mul(2)),
+        }
+    }
+
+    /// Rejects immediately when this lane's queue is already full.
+    pub(crate) async fn acquire(&self) -> Result<VerificationSlot<'_>, RestError> {
+        let queued = self
+            .queued
+            .try_acquire()
+            .map_err(|_| RestError::too_many_requests(anyhow::anyhow!("Too many verifications in progress")))?;
+        let concurrent = self
+            .concurrent
+            .acquire()
+            .await
+            .map_err(|_| RestError::too_many_requests(anyhow::anyhow!("Too many verifications in progress")))?;
+        Ok(VerificationSlot { _queued: queued, _concurrent: concurrent })
+    }
+}
 
 /// A REST API server for the ledger.
 #[derive(Clone)]
@@ -88,18 +195,15 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// A reference to BlockSync,
     block_sync: Arc<BlockSync<N>>,
-    /// The number of ongoing deploy transaction verifications via REST.
-    num_verifying_deploys: Arc<Semaphore>,
-    /// The number of ongoing execute transaction verifications via REST.
-    num_verifying_executions: Arc<Semaphore>,
-    /// The number of ongoing solution verifications via REST.
-    num_verifying_solutions: Arc<Semaphore>,
+    /// Concurrent and queued REST verification slots for deploys, executions, and solutions.
+    verification_slots: Arc<VerificationSlots>,
     /// A cache containing recently requested blocks.
     block_cache: Arc<Mutex<LruCache<N::BlockHash, ErasedJson>>>,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// Initializes a new instance of the server.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         rest_ip: SocketAddr,
         rest_rps: u32,
@@ -108,7 +212,14 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
         routing: Arc<R>,
         cdn_sync: Option<Arc<CdnBlockSync>>,
         block_sync: Arc<BlockSync<N>>,
+        rest_verification_limits: RestVerificationLimits,
     ) -> Result<Self> {
+        let rest_verification_limits = RestVerificationLimits::new::<N, C>(
+            rest_verification_limits.num_verifying_deploys,
+            rest_verification_limits.num_verifying_executions,
+            rest_verification_limits.num_verifying_solutions,
+        )?;
+
         // Initialize the server.
         let mut server = Self {
             consensus,
@@ -117,9 +228,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             cdn_sync,
             block_sync,
             handles: Default::default(),
-            num_verifying_deploys: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_DEPLOY_VERIFICATIONS)),
-            num_verifying_executions: Arc::new(Semaphore::new(VM::<N, C>::MAX_PARALLEL_EXECUTE_VERIFICATIONS)),
-            num_verifying_solutions: Arc::new(Semaphore::new(N::MAX_SOLUTIONS)),
+            verification_slots: Arc::new(VerificationSlots::new(rest_verification_limits)),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
         };
         // Spawn the server.
@@ -506,6 +615,31 @@ mod tests {
             app.oneshot(Request::builder().uri("/v2/service_unavailable").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
+
+    #[test]
+    fn queued_capacity_is_twice_the_concurrent_limit() {
+        let slots = VerificationSlots::new(RestVerificationLimits {
+            num_verifying_deploys: 1,
+            num_verifying_executions: 3,
+            num_verifying_solutions: 4,
+        });
+
+        for (lane, queued_capacity) in [(&slots.deploys, 2), (&slots.executions, 6), (&slots.solutions, 8)] {
+            let held: Vec<_> = (0..queued_capacity).map(|_| lane.queued.try_acquire().expect("queue permit")).collect();
+            assert!(lane.queued.try_acquire().is_err(), "queue should be full at {queued_capacity}");
+            drop(held);
+            assert!(lane.queued.try_acquire().is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_verification_queue_is_too_many_requests() {
+        let lane = VerificationLane::new(1);
+        let _held: Vec<_> = (0..2).map(|_| lane.queued.try_acquire().expect("queue permit")).collect();
+
+        let err = lane.acquire().await.unwrap_err();
+        assert_eq!(err, StatusCode::TOO_MANY_REQUESTS);
+    }
 }
 
 #[cfg(test)]
@@ -566,9 +700,11 @@ mod route_tests {
             routing: Arc::new(client(0, 10, rng).await),
             handles: Default::default(),
             block_sync: Arc::new(BlockSync::new(ledger_service, ConnectionMode::Router)),
-            num_verifying_deploys: Arc::new(Semaphore::new(1)),
-            num_verifying_executions: Arc::new(Semaphore::new(1)),
-            num_verifying_solutions: Arc::new(Semaphore::new(1)),
+            verification_slots: Arc::new(VerificationSlots::new(RestVerificationLimits {
+                num_verifying_deploys: 1,
+                num_verifying_executions: 1,
+                num_verifying_solutions: 1,
+            })),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
         }
     }

@@ -1196,16 +1196,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
         if check_transaction {
-            // Select the semaphore based on the transaction type.
-            let (slot, err_msg) = if tx.is_execute() {
-                (rest.num_verifying_executions.acquire().await, "Too many execution verifications in progress")
+            let _verification_slot = if tx.is_execute() {
+                rest.verification_slots.executions.acquire().await?
             } else {
-                (rest.num_verifying_deploys.acquire().await, "Too many deploy verifications in progress")
+                rest.verification_slots.deploys.acquire().await?
             };
-
-            if slot.is_err() {
-                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
-            }
 
             // Perform the check.
             let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map_err(|err| {
@@ -1285,11 +1280,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         if check_solution {
-            // Try to acquire a slot.
-            let slot = rest.num_verifying_solutions.acquire().await;
-            if slot.is_err() {
-                return Err(RestError::too_many_requests(anyhow!("Too many solution verifications in progress")));
-            }
+            let _verification_slot = rest.verification_slots.solutions.acquire().await?;
 
             // Compute the current epoch hash.
             let epoch_hash = rest.ledger.latest_epoch_hash()?;
