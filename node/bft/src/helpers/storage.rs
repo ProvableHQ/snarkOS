@@ -219,11 +219,22 @@ impl<N: Network> Storage<N> {
         let storage_round = self.current_round();
         // Retrieve the GC round.
         let gc_round = self.gc_round();
-        // Ensure storage has advanced to at least the next round. It may be ahead of it if a
-        // concurrent sync-applied round update landed in between (see `update_current_round`).
-        ensure!(storage_round >= next_round, "Storage round {storage_round} is behind the expected round {next_round}");
-        // Ensure the next round is greater than or equal to the GC round.
-        ensure!(next_round >= gc_round, "The next round {next_round} is behind the GC round {gc_round}");
+        // Storage is guaranteed to have advanced to at least the next round, since
+        // `update_current_round` only ever moves it forward via `fetch_max`.
+        debug_assert!(storage_round >= next_round, "Storage round {storage_round} is behind the expected round {next_round}");
+        // Ensure the next round is greater than or equal to the GC round. This can legitimately
+        // fail under normal operation: a concurrent sync may have advanced the GC round past this
+        // (now stale) round update.
+        ensure!(
+            next_round >= gc_round,
+            "The next round {next_round} is behind the current GC round {gc_round}, likely because a concurrent sync advanced past it"
+        );
+
+        // Storage may already be ahead of `next_round` if a concurrent sync-applied round update
+        // landed in between; return the true storage round rather than the stale `next_round`.
+        if storage_round > next_round {
+            return Ok(storage_round);
+        }
 
         // Log the updated round.
         info!("Starting round {next_round}...");
