@@ -326,6 +326,7 @@ test_targets = [ "snarkos-cli/test_targets" ]
 test_consensus_heights = [ "snarkos-cli/test_consensus_heights" ]
 test_network = [ "snarkos-cli/test_network", "snarkos-node/test_network" ]
 tokio_console = [ "snarkos-cli/tokio_console" ]
+dev_skip_state_root_check = [ "snarkvm/dev_skip_state_root_check" ]
 
 [dependencies.clap]
 workspace = true
