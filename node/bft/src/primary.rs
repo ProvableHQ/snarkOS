@@ -1393,13 +1393,7 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, primary_certificate)) = rx_primary_ping.recv().await {
-                // If the primary is not synced, then do not process the primary ping.
-                if self_.sync.is_synced() {
-                    trace!("Processing new primary ping from '{peer_ip}'");
-                } else {
-                    trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
+                trace!("Processing new primary ping from '{peer_ip}'");
 
                 // Spawn a task to process the primary certificate.
                 {
@@ -1415,7 +1409,7 @@ impl<N: Network> Primary<N> {
                         let id = fmt_id(primary_certificate.id());
                         let round = primary_certificate.round();
                         if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, primary_certificate).await {
-                            warn!("Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}");
+                            debug!("Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}");
                         }
                     });
                 }
@@ -1427,11 +1421,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             loop {
                 tokio::time::sleep(WORKER_PING_INTERVAL).await;
-                // If the primary is not synced, then do not broadcast the worker ping(s).
-                if !self_.sync.is_synced() {
-                    trace!("Skipping worker ping(s) {}", "(node is syncing)".dimmed());
-                    continue;
-                }
+
                 // Broadcast the worker ping(s).
                 for worker in self_.workers() {
                     worker.broadcast_ping();
