@@ -17,7 +17,6 @@ use crate::{
     helpers::{PeerPair, PrepareSyncRequest, SyncRequest},
     locators::BlockLocators,
 };
-use futures::future::BoxFuture;
 use snarkos_node_bft_ledger_service::{BeginLedgerUpdateError, LedgerService};
 use snarkos_node_network::ConnectionMode;
 use snarkos_node_router::messages::DataBlocks;
@@ -31,7 +30,6 @@ use snarkvm::{
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use futures::FutureExt;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 #[cfg(feature = "locktick")]
@@ -249,9 +247,6 @@ pub struct BlockSync<N: Network> {
     /// Used in `handle_block_request_timeouts` to avoid banning peers that are actively
     /// responding but cannot keep up with the request rate.
     last_response_at: Mutex<HashMap<SocketAddr, Instant>>,
-
-    /// Condition variable that wakes up waiting tasks when the node is synced.
-    synced_notify: Notify,
 }
 
 impl<N: Network> BlockSync<N> {
@@ -274,7 +269,6 @@ impl<N: Network> BlockSync<N> {
             prepare_requests_lock: Default::default(),
             failed_requests: Default::default(),
             last_response_at: Default::default(),
-            synced_notify: Default::default(),
         }
     }
 
@@ -303,56 +297,6 @@ impl<N: Network> BlockSync<N> {
     #[inline]
     pub fn is_block_synced(&self) -> bool {
         self.sync_state.read().is_block_synced()
-    }
-
-    /// This futures blocks until the node is synced.
-    ///
-    /// # Concurrency
-    /// Multiple tasks can wait on this at the same time safely.
-    pub async fn wait_for_synced(&self) {
-        loop {
-            let mut fut = std::pin::pin!(self.synced_notify.notified());
-
-            {
-                let sync_state = self.sync_state.read();
-                if sync_state.is_block_synced() {
-                    return;
-                }
-
-                // Register this task as waiting before dropping the lock.
-                fut.as_mut().enable();
-            }
-
-            fut.await;
-        }
-    }
-
-    /// Similar as [`Self::wait_for_synced`] but returns `None` if the node is already synced.
-    /// Otherwise, it will return a future that behaves like `wait_for_synced`.
-    ///
-    /// # Concurrency
-    /// * This method is atomic, unlike calling `is_synced` and `wait_for_synced` sequentially.
-    /// * Multiple tasks can wait on this at the same time safely.
-    pub fn wait_for_synced_if_syncing(&self) -> Option<BoxFuture<'_, ()>> {
-        let mut notified = Box::pin(self.synced_notify.notified());
-
-        {
-            let sync_state = self.sync_state.read();
-            if sync_state.is_block_synced() {
-                return None;
-            }
-
-            // Register this task as waiting before dropping the lock.
-            notified.as_mut().enable();
-        }
-
-        Some(
-            async move {
-                notified.await;
-                self.wait_for_synced().await;
-            }
-            .boxed(),
-        )
     }
 
     /// Returns the number of blocks the node is behind the greatest peer height,
@@ -958,21 +902,12 @@ impl<N: Network> BlockSync<N> {
             }
         }
 
-        // -- Finally, update sync state and notify the sync loop about the change. --
-        let is_synced = if let Some(greatest_peer_height) =
-            self.locators.read().values().map(|l| l.latest_locator_height()).max()
-        {
+        // -- Finally, update sync state. --
+        if let Some(greatest_peer_height) = self.locators.read().values().map(|l| l.latest_locator_height()).max() {
             let mut sync_state = self.sync_state.write();
             sync_state.set_greatest_peer_height(greatest_peer_height);
-            sync_state.is_block_synced()
         } else {
             error!("Got new block locators but greatest peer height is zero.");
-            false
-        };
-
-        // For the unlikely case a peer's height gets lowered.
-        if is_synced {
-            self.synced_notify.notify_waiters();
         }
 
         // Even if the greatest peer height did not change, we still received new block locators
@@ -1000,7 +935,7 @@ impl<N: Network> BlockSync<N> {
         // Remove all block requests to the peer.
         self.remove_block_requests_to_peer(peer_ip);
 
-        let synced = {
+        {
             // Do not lock sync state and locators at the same time.
             let max_height = self.locators.read().values().map(|l| l.latest_locator_height()).max();
             let mut sync_state = self.sync_state.write();
@@ -1012,13 +947,6 @@ impl<N: Network> BlockSync<N> {
                 // There are no more peers left.
                 sync_state.clear_greatest_peer_height();
             }
-
-            sync_state.is_block_synced()
-        };
-
-        // For the case where the maximum peer height gets lowered.
-        if synced {
-            self.synced_notify.notify_waiters();
         }
 
         // Notify the sync loop that something changed.
@@ -1229,18 +1157,14 @@ impl<N: Network> BlockSync<N> {
     /// This is a no-op if `new_height` is equal or less to the current sync height.
     pub fn set_sync_height(&self, new_height: u32) {
         // Scope state lock to avoid locking state and metrics at the same time.
-        let (synced, fully_synced) = {
+        let fully_synced = {
             let mut state = self.sync_state.write();
             state.set_sync_height(new_height);
-            (state.is_block_synced(), !state.can_issue_new_block_requests())
+            !state.can_issue_new_block_requests()
         };
 
         if fully_synced {
             self.metrics.mark_fully_synced();
-        }
-
-        if synced {
-            self.synced_notify.notify_waiters();
         }
     }
 
@@ -1834,7 +1758,6 @@ mod tests {
             common_ancestors: RwLock::new(sync.common_ancestors.read().clone()),
             requests: RwLock::new(sync.requests.read().clone()),
             sync_state: RwLock::new(sync.sync_state.read().clone()),
-            synced_notify: Notify::new(),
             advance_with_sync_blocks_lock: Default::default(),
             metrics: Default::default(),
             prepare_requests_lock: Default::default(),

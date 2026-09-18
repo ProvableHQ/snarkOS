@@ -2126,7 +2126,7 @@ mod tests {
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
-    use snarkos_node_sync::{BlockSync, locators::test_helpers::sample_block_locators};
+    use snarkos_node_sync::BlockSync;
     use snarkvm::{
         ledger::{
             committee::{Committee, MIN_VALIDATOR_STAKE},
@@ -2650,11 +2650,6 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
-        // The primary will only consider itself synced if we received
-        // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
-
         // Try to process the batch proposal from the peer, should succeed.
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_ok()
@@ -2770,11 +2765,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-
-        // The primary will only consider itself synced if we received
-        // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Record one of the proposed transmission IDs as aborted, as an earlier certificate would have.
         let aborted_transmission_id = *proposal.transmissions().keys().next().unwrap();
@@ -2911,11 +2901,6 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
-        // The primary will only consider itself synced if we received
-        // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
-
         // Try to process the batch proposal from the peer, should succeed.
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
     }
@@ -2947,9 +2932,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-        // The primary must be considered synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2993,9 +2975,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-        // The primary must be considered synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -3050,9 +3029,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-        // The primary must be considered synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
