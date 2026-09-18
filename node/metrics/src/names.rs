@@ -16,7 +16,7 @@
 pub(super) const COUNTER_NAMES: [&str; 3] =
     [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSACTIONS, consensus::STALE_UNCONFIRMED_SOLUTIONS];
 
-pub(super) const GAUGE_NAMES: [&str; 35] = [
+pub(super) const GAUGE_NAMES: [&str; 38] = [
     bft::CONNECTED,
     bft::CONNECTED_STAKE,
     bft::CONNECTED_STAKE_WITH_MATCHING_SHA,
@@ -38,9 +38,12 @@ pub(super) const GAUGE_NAMES: [&str; 35] = [
     blocks::PROOF_TARGET,
     blocks::COINBASE_TARGET,
     blocks::CUMULATIVE_PROOF_TARGET,
+    bft::WORKER_READY_DEPTH,
     consensus::COMMITTED_CERTIFICATES,
     consensus::UNCONFIRMED_SOLUTIONS,
     consensus::UNCONFIRMED_TRANSACTIONS,
+    consensus::INBOUND_DEPLOYMENTS_DEPTH,
+    consensus::INBOUND_EXECUTIONS_DEPTH,
     router::CONNECTED,
     router::CANDIDATE,
     router::RESTRICTED,
@@ -90,6 +93,14 @@ pub mod bft {
     pub const HEIGHT: &str = "snarkos_bft_height_total";
     pub const LAST_COMMITTED_ROUND: &str = "snarkos_bft_last_committed_round";
     pub const IS_SYNCED: &str = "snarkos_bft_is_synced";
+    /// Transmissions taken off a worker while building a batch proposal, labelled by `outcome`.
+    ///
+    /// Building a proposal pops every transmission off the worker, so each one is either proposed,
+    /// put back, or gone. Only `batch_full`, `worker_limit` and `spend_limit` put it back; every
+    /// other outcome means the transmission was discarded and will not be retried.
+    pub const PROPOSAL_TRANSMISSIONS: &str = "snarkos_bft_proposal_transmissions_total";
+    /// Transmissions sitting in the worker's ready queue, waiting to be proposed.
+    pub const WORKER_READY_DEPTH: &str = "snarkos_bft_worker_ready_depth";
     /// The number of certificates in a round of a committed subdag (one observation per round).
     pub const SUBDAG_CERTIFICATES_PER_ROUND: &str = "snarkos_bft_subdag_certificates_per_round";
     /// The number of signatures on a certificate in a committed subdag (one observation per certificate).
@@ -143,6 +154,13 @@ pub mod consensus {
     pub const VALIDATOR_PARTICIPATION_GC_ROUND: &str = "snarkos_consensus_validator_participation_gc_round";
     /// The number of telemetry updates dropped because the worker queue was full.
     pub const VALIDATOR_PARTICIPATION_DROPPED: &str = "snarkos_consensus_validator_participation_dropped_total";
+    /// Deployments held in the inbound queue, waiting to be handed to a BFT worker.
+    ///
+    /// Distinct from [`UNCONFIRMED_TRANSACTIONS`], which only ever counts up and so reports
+    /// everything admitted since startup rather than what is waiting now.
+    pub const INBOUND_DEPLOYMENTS_DEPTH: &str = "snarkos_consensus_inbound_deployments_depth";
+    /// Executions held in the inbound queue, waiting to be handed to a BFT worker.
+    pub const INBOUND_EXECUTIONS_DEPTH: &str = "snarkos_consensus_inbound_executions_depth";
 }
 
 pub mod cpu {

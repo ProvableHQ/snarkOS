@@ -434,6 +434,15 @@ impl<N: Network> Consensus<N> {
     /// Processes unconfirmed transactions in the mempool, and passes them to the BFT layer
     /// (if sufficient space is available).
     async fn process_unconfirmed_transactions(&self) -> Result<()> {
+        // Report what is waiting to be handed onward. Sampled before the early return below, so a
+        // node that is refusing to forward still reports its depth rather than going silent.
+        #[cfg(feature = "metrics")]
+        {
+            let tx_queue = self.transactions_queue.read();
+            metrics::gauge(metrics::consensus::INBOUND_DEPLOYMENTS_DEPTH, tx_queue.deployments.len() as f64);
+            metrics::gauge(metrics::consensus::INBOUND_EXECUTIONS_DEPTH, tx_queue.executions.len() as f64);
+        }
+
         // If the memory pool of this node is full, return early.
         let num_unconfirmed_transmissions = self.num_unconfirmed_transmissions();
         if num_unconfirmed_transmissions >= Primary::<N>::MAX_TRANSMISSIONS_TOLERANCE {

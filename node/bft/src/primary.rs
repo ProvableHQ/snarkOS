@@ -130,6 +130,18 @@ impl<N: Network> ProposedBatchState<N> {
 /// A helper type to keep track of the state of the primary's batch proposal.
 pub type ProposedBatch<N> = RwLock<ProposedBatchState<N>>;
 
+/// Records what became of one transmission that was popped off a worker while proposing a batch.
+///
+/// Every path out of the selection loop in [`Primary::propose_batch`] reports here, because the
+/// transmission has already left the worker by then: unless it is proposed or explicitly put back,
+/// it is gone, and nothing else in the node would notice.
+fn record_proposal_outcome(outcome: &'static str) {
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter_label(metrics::bft::PROPOSAL_TRANSMISSIONS, "outcome", outcome);
+    #[cfg(not(feature = "metrics"))]
+    let _ = outcome;
+}
+
 /// This callback trait allows listening to changes in the Primary, such as round advancement.
 /// This is implemented by [`BFT`].
 #[async_trait::async_trait]
@@ -647,6 +659,14 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         // provided by one worker (FIFO) is no longer guaranteed with multiple workers.
         debug_assert_eq!(MAX_WORKERS, 1);
 
+        // Record how much was waiting before the drain, so the outcome counts below can be read as
+        // a breakdown of it.
+        #[cfg(feature = "metrics")]
+        metrics::gauge(
+            metrics::bft::WORKER_READY_DEPTH,
+            self.workers().iter().map(|worker| worker.num_transmissions()).sum::<usize>() as f64,
+        );
+
         'outer: for worker in self.workers().iter() {
             let mut num_worker_transmissions = 0usize;
 
@@ -655,6 +675,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                 if transmissions.len() >= BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH {
                     // Reinsert the transmission into the worker.
                     worker.insert_front(id, transmission);
+                    record_proposal_outcome("batch_full");
                     break 'outer;
                 }
 
@@ -662,13 +683,26 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                 if num_worker_transmissions >= Worker::<N>::MAX_TRANSMISSIONS_PER_WORKER {
                     // Reinsert the transmission into the worker.
                     worker.insert_front(id, transmission);
+                    record_proposal_outcome("worker_limit");
                     continue 'outer;
                 }
 
                 // Check if the ledger already contains the transmission.
-                if self.ledger.contains_transmission(&id).unwrap_or(true) {
-                    trace!("Proposing - Skipping transmission '{}' - Already in ledger", fmt_id(id));
-                    continue;
+                //
+                // A storage error is counted apart from a genuine duplicate: both discard the
+                // transmission, but only one of them is the ledger doing its job.
+                match self.ledger.contains_transmission(&id) {
+                    Ok(true) => {
+                        trace!("Proposing - Skipping transmission '{}' - Already in ledger", fmt_id(id));
+                        record_proposal_outcome("in_ledger");
+                        continue;
+                    }
+                    Err(e) => {
+                        trace!("Proposing - Skipping transmission '{}' - Ledger lookup failed: {e}", fmt_id(id));
+                        record_proposal_outcome("ledger_error");
+                        continue;
+                    }
+                    Ok(false) => {}
                 }
 
                 // Check if storage already knows the transmission, either way.
@@ -683,6 +717,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                 if self.storage.contains_retrievable_transmission(id) || self.storage.contains_aborted_transmission(id)
                 {
                     trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
+                    record_proposal_outcome("in_storage");
                     continue;
                 }
 
@@ -693,11 +728,13 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                         if !matches!(solution.to_checksum::<N>(), Ok(solution_checksum) if solution_checksum == checksum)
                         {
                             trace!("Proposing - Skipping solution '{}' - Checksum mismatch", fmt_id(solution_id));
+                            record_proposal_outcome("checksum_mismatch");
                             continue;
                         }
                         // Check if the solution is still valid.
                         if let Err(e) = self.ledger.check_solution_basic(solution_id, solution).await {
                             trace!("Proposing - Skipping solution '{}' - {e}", fmt_id(solution_id));
+                            record_proposal_outcome("invalid_solution");
                             continue;
                         }
                     }
@@ -706,11 +743,21 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                         if !matches!(transaction.to_checksum::<N>(), Ok(transaction_checksum) if transaction_checksum == checksum )
                         {
                             trace!("Proposing - Skipping transaction '{}' - Checksum mismatch", fmt_id(transaction_id));
+                            record_proposal_outcome("checksum_mismatch");
                             continue;
                         }
 
                         // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!(deserialize_transaction_strict(transaction))?;
+                        //
+                        // This abandons the whole proposal, discarding every transmission already
+                        // drained from the worker, so it is counted separately from a single skip.
+                        let transaction = match spawn_blocking!(deserialize_transaction_strict(transaction)) {
+                            Ok(transaction) => transaction,
+                            Err(e) => {
+                                record_proposal_outcome("proposal_aborted");
+                                return Err(e);
+                            }
+                        };
 
                         // Fetch the current block height and consensus version.
                         let current_block_height = self.ledger.latest_block_height();
@@ -724,12 +771,14 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                                 "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
                                 fmt_id(transaction_id)
                             );
+                            record_proposal_outcome("spend_cost_error");
                             continue;
                         };
 
                         // Check if the transaction is still valid.
                         if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction).await {
                             trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
+                            record_proposal_outcome("invalid_transaction");
                             continue;
                         }
 
@@ -740,6 +789,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                                 "Proposing - Skipping and discarding transaction '{}' - Proposal cost overflowed",
                                 fmt_id(transaction_id)
                             );
+                            record_proposal_outcome("cost_overflow");
                             continue;
                         };
 
@@ -754,6 +804,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
 
                             // Reinsert the transmission into the worker.
                             worker.insert_front(id, transmission);
+                            record_proposal_outcome("spend_limit");
                             break 'outer;
                         }
 
@@ -763,12 +814,19 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
 
                     // Note: We explicitly forbid including ratifications,
                     // as the protocol currently does not support ratifications.
-                    (TransmissionID::Ratification, Transmission::Ratification) => continue,
+                    (TransmissionID::Ratification, Transmission::Ratification) => {
+                        record_proposal_outcome("ratification");
+                        continue;
+                    }
                     // All other combinations are clearly invalid.
-                    _ => continue,
+                    _ => {
+                        record_proposal_outcome("id_mismatch");
+                        continue;
+                    }
                 }
 
                 // If the transmission is valid, insert it into the proposal's transmission list.
+                record_proposal_outcome("proposed");
                 transmissions.insert(id, transmission);
                 num_worker_transmissions = num_worker_transmissions.saturating_add(1);
             }
