@@ -54,11 +54,32 @@ pub const CONTEXT: &str = "[MemoryPool]";
 pub const MEMORY_POOL_PORT: u16 = 5000; // port
 
 /// The maximum time to wait before proposing a batch.
+///
+/// Unlike [`MIN_BATCH_DELAY`] this is local, but it is the unit for [`MAX_FETCH_TIMEOUT`],
+/// [`MAX_LEADER_CERTIFICATE_DELAY`], [`PRIMARY_PING_INTERVAL`] and [`WORKER_PING_INTERVAL`], so
+/// lowering it shortens how long a node will wait for a transmission fetch and how quickly it
+/// declares a leader failed.
 pub const MAX_BATCH_DELAY: Duration = Duration::from_millis(2500);
 
 /// The minimum time that needs to elapse between two consecutive batch proposals.
 /// This creates a lower bound on the block interval, and ensures the network will not be overwhelmed with too many blocks/certificates.
+///
+/// This is not a local tuning knob. [`Primary::check_peer_proposal_timestamp`] rejects a peer's
+/// proposal that arrives sooner than this after their previous certificate, so a node running a
+/// different value has its batches refused by the rest of the network. Changing it means upgrading
+/// every validator together.
+///
+/// Batch timestamps are whole seconds ([`helpers::now`] returns `unix_timestamp()`), and the check
+/// compares them with `as_secs()`. A sub-second value therefore cannot be enforced at all: it
+/// truncates to zero and silently turns the check off, which is the opposite of tightening it. The
+/// assertion below rejects such a value at compile time.
 pub const MIN_BATCH_DELAY: Duration = Duration::from_secs(1);
+
+const _: () = assert!(
+    MIN_BATCH_DELAY.subsec_nanos() == 0 && MIN_BATCH_DELAY.as_secs() >= 1,
+    "MIN_BATCH_DELAY must be a whole number of seconds and at least one second, because batch \
+     timestamps have one-second resolution and peer validation compares them with `as_secs()`"
+);
 
 /// The time a primary waits between attempts to create a new batch (only relevant after `MIN_BATCH_DELAY` has passed).
 /// This only serves as a failsafe in case the task does not get woken up through other means.
