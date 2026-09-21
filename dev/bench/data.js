@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790003874339,
+  "lastUpdate": 1790010350867,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -18714,6 +18714,72 @@ window.BENCHMARK_DATA = {
             "value": 1.62,
             "unit": "blocks/s",
             "extra": "total_wait=154s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0d51f74f67c5e5b9a9a307ba045bac41c56a6fd8",
+          "message": "Merge pull request #4469 from ProvableHQ/bruno/annotations\n\nfeat(metrics): add `snarkos_consensus_version` gauge",
+          "timestamp": "2026-09-21T18:48:45+02:00",
+          "tree_id": "f86a7e04b395c8623a9e4d16e6dfba12c25fe8c3",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/0d51f74f67c5e5b9a9a307ba045bac41c56a6fd8"
+        },
+        "date": 1790010349362,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 12.255867992576835,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=39.164912700653076, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 10601.768191913736,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=7.545911073684692, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3310.3822764529227,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.24166393280029297, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.31,
+            "unit": "blocks/s",
+            "extra": "total_wait=108s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.949045,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=106, mean_speed=1.406447, max_speed=3.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.33,
+            "unit": "blocks/s",
+            "extra": "total_wait=107s, target_height=250, connect_time=7, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.93,
+            "unit": "blocks/s",
+            "extra": "total_wait=129s, target_height=250"
           }
         ]
       }
