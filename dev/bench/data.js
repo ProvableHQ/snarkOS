@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790010350867,
+  "lastUpdate": 1790017325069,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -18774,6 +18774,72 @@ window.BENCHMARK_DATA = {
             "value": 2.33,
             "unit": "blocks/s",
             "extra": "total_wait=107s, target_height=250, connect_time=7, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.93,
+            "unit": "blocks/s",
+            "extra": "total_wait=129s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b6716460f0e089f9a351bd3b21ebc97662d83a1",
+          "message": "Merge pull request #4464 from ProvableHQ/perf/tokio-pool-sizing\n\nperf(cli): size the tokio pools from measured demand",
+          "timestamp": "2026-09-21T20:45:59+02:00",
+          "tree_id": "b6839c1b240f23ff8bd5c92a1e22b78dcbc9d6e8",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/7b6716460f0e089f9a351bd3b21ebc97662d83a1"
+        },
+        "date": 1790017323736,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 14.296662494055472,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=33.57426953315735, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 11779.585497612097,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.791410446166992, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3557.113764901066,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.22490143775939941, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.57,
+            "unit": "blocks/s",
+            "extra": "total_wait=97s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.913049,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=95, mean_speed=1.360702, max_speed=3.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.33,
+            "unit": "blocks/s",
+            "extra": "total_wait=107s, target_height=250, connect_time=6, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "cdn-sync",
