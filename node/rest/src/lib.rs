@@ -826,6 +826,54 @@ mod route_tests {
     }
 
     #[tokio::test]
+    async fn blocks_returns_the_pretty_json_of_the_blocks_and_caches_them() {
+        let rest = sample_rest().await;
+        let block = rest.ledger.get_block(0).unwrap();
+        let expected = serde_json::to_string_pretty(&vec![block]).unwrap();
+
+        let (status, body) = get(&rest, "/blocks?start=0&end=1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, expected);
+
+        // The request stored the serialization where a single-block read looks.
+        let hash = rest.ledger.get_hash(0).unwrap();
+        assert!(rest.block_cache.lock().contains(&hash), "the block was not cached");
+    }
+
+    #[tokio::test]
+    async fn blocks_serves_a_serialization_already_in_the_cache() {
+        let rest = sample_rest().await;
+
+        // Distinct from anything the ledger would serialize for genesis, which carries `authority`.
+        let cached = serde_json::json!({"cached": true});
+        let hash = rest.ledger.get_hash(0).unwrap();
+        rest.block_cache.lock().put(hash, ErasedJson::pretty(&cached));
+
+        let (status, body) = get(&rest, "/blocks?start=0&end=1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::to_string_pretty(&vec![cached]).unwrap());
+    }
+
+    #[tokio::test]
+    async fn blocks_empty_range_is_an_empty_array() {
+        let rest = sample_rest().await;
+
+        let (status, body) = get(&rest, "/blocks?start=0&end=0").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "[]");
+    }
+
+    #[tokio::test]
+    async fn blocks_range_past_the_tip_is_not_found() {
+        let rest = sample_rest().await;
+
+        // The test ledger holds only the genesis block, so height 1 does not exist. The whole
+        // request fails rather than returning a short array.
+        let (status, _) = get(&rest, "/blocks?start=0&end=2").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn an_empty_range_returns_an_empty_array() {
         let rest = sample_rest().await;
 

@@ -36,7 +36,7 @@ use snarkvm::{
     synthesizer::program::{FinalizeGlobalState, StackTrait},
 };
 
-use axum::{Json, extract::rejection::JsonRejection};
+use axum::{Json, body::Bytes, extract::rejection::JsonRejection, response::IntoResponse};
 
 use aleo_std::aleo_ledger_dir;
 use anyhow::{Context, anyhow};
@@ -356,32 +356,93 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
+    ///
+    /// `start` is inclusive and `end` is exclusive, as in `get_block_hashes`.
+    ///
+    /// The hashes for the range come from [`Self::load_block_hashes`]. A hash already in
+    /// `block_cache` contributes that cached JSON. Every other block is read from the ledger,
+    /// serialized, and inserted into the cache. The body is a JSON array of those blocks, in
+    /// height order.
     pub(crate) async fn get_blocks(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
-    ) -> Result<ErasedJson, RestError> {
+    ) -> Result<Response, RestError> {
         let (start_height, end_height) = check_block_range(block_range, MAX_BLOCK_RANGE, "blocks")?;
 
         // Prepare a closure for the blocking work.
-        let get_json_blocks = move || -> Result<ErasedJson, RestError> {
-            let blocks = cfg_into_iter!(start_height..end_height)
-                .map(|height| rest.ledger.get_block(height).map_err(map_missing_resource_error))
-                .collect::<Result<Vec<_>, _>>()?;
+        let get_json_blocks = move || -> Result<Vec<ErasedJson>, RestError> {
+            let hashes = Self::load_block_hashes(&rest, start_height, end_height)?;
 
-            Ok(ErasedJson::pretty(blocks))
+            // Hold the cache lock only while copying out hits. The misses below read the ledger.
+            let mut json_blocks: Vec<Option<ErasedJson>> = {
+                let mut cache = rest.block_cache.lock();
+                hashes.iter().map(|hash| cache.get(hash).cloned()).collect()
+            };
+
+            let missing: Vec<(usize, u32, N::BlockHash)> = json_blocks
+                .iter()
+                .enumerate()
+                .filter(|(_, json_block)| json_block.is_none())
+                .map(|(index, _)| {
+                    let height = start_height + u32::try_from(index).expect("block index fits in u32");
+                    (index, height, hashes[index])
+                })
+                .collect();
+
+            if !missing.is_empty() {
+                let loaded = cfg_into_iter!(missing)
+                    .map(|(index, height, hash)| {
+                        let block =
+                            rest.ledger.try_get_block_by_hash(&hash).map_err(map_missing_resource_error)?.ok_or_else(
+                                || RestError::not_found(anyhow!("Block {height} does not exist in storage")),
+                            )?;
+                        Ok((index, hash, ErasedJson::pretty(block)))
+                    })
+                    .collect::<Result<Vec<_>, RestError>>()?;
+
+                let mut cache = rest.block_cache.lock();
+                for (index, hash, json_block) in loaded {
+                    cache.put(hash, json_block.clone());
+                    json_blocks[index] = Some(json_block);
+                }
+            }
+
+            Ok(json_blocks
+                .into_iter()
+                .map(|json_block| json_block.expect("every height in the range was resolved"))
+                .collect())
         };
 
-        // Fetch the blocks from ledger and serialize to json.
-        match tokio::task::spawn_blocking(get_json_blocks).await {
-            Ok(json) => json,
+        // Fetch the blocks from the cache and the ledger.
+        let json_blocks = match tokio::task::spawn_blocking(get_json_blocks).await {
+            Ok(json_blocks) => json_blocks?,
             Err(err) => {
                 let err: anyhow::Error = err.into();
 
-                Err(RestError::internal_server_error(
+                return Err(RestError::internal_server_error(
                     err.context(format!("Failed to get blocks '{start_height}..{end_height}'")),
-                ))
+                ));
             }
+        };
+
+        let mut payloads = Vec::with_capacity(json_blocks.len());
+        for json_block in json_blocks {
+            payloads.push(erased_json_bytes(json_block).await?);
         }
+
+        Ok(blocks_response(pretty_json_array(&payloads)))
+    }
+
+    /// The block hash at every height in `start_height..end_height`.
+    ///
+    /// Each height is one point lookup in the block ID map. The lookups stay on this thread: a
+    /// hash is cheaper to read than the work of handing the height to another thread, and
+    /// `get_block_hashes` accepts a range large enough that saturating the rayon pool would
+    /// contend with consensus.
+    fn load_block_hashes(rest: &Self, start_height: u32, end_height: u32) -> Result<Vec<N::BlockHash>, RestError> {
+        (start_height..end_height)
+            .map(|height| rest.ledger.get_hash(height).map_err(map_missing_resource_error))
+            .collect()
     }
 
     /// GET /<network>/blocks/hashes?start={start_height}&end={end_height}
@@ -399,17 +460,10 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ) -> Result<ErasedJson, RestError> {
         let (start_height, end_height) = check_block_range(block_range, MAX_BLOCK_HASH_RANGE, "block hashes")?;
 
-        // Prepare a closure for the blocking work.
-        //
-        // Unlike `get_blocks`, this stays sequential: each height is a single point lookup in the
-        // block ID map, which is cheaper than the work of handing it to another thread, and this
-        // range is large enough that saturating the rayon pool would contend with consensus.
+        // Prepare a closure for the blocking work. See `load_block_hashes` for why this stays
+        // sequential.
         let get_json_hashes = move || -> Result<ErasedJson, RestError> {
-            let hashes = (start_height..end_height)
-                .map(|height| rest.ledger.get_hash(height).map_err(map_missing_resource_error))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            Ok(ErasedJson::pretty(hashes))
+            Ok(ErasedJson::pretty(Self::load_block_hashes(&rest, start_height, end_height)?))
         };
 
         // Fetch the block hashes from the ledger and serialize to json.
@@ -1685,6 +1739,63 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 }
 
+/// Bytes of an `ErasedJson` value.
+///
+/// The payload is private, so a cached block is read back from the response the value would have
+/// sent on its own.
+async fn erased_json_bytes(json: ErasedJson) -> Result<Bytes, RestError> {
+    let response = json.into_response();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .map_err(|err| RestError::internal_server_error(anyhow!("failed to read block json: {err}")))?;
+    if !status.is_success() {
+        return Err(RestError::internal_server_error(anyhow!(
+            "block json could not be serialized: {}",
+            String::from_utf8_lossy(&bytes)
+        )));
+    }
+    Ok(bytes)
+}
+
+/// A pretty-printed JSON array of `elements`.
+///
+/// Each element is the pretty JSON of one value, which is how `block_cache` stores a block.
+/// Indenting every line by two spaces is the formatting of an element in a pretty-printed array, so
+/// a cached block and a block serialized for this response encode the same way.
+fn pretty_json_array(elements: &[impl AsRef<[u8]>]) -> Vec<u8> {
+    if elements.is_empty() {
+        return b"[]".to_vec();
+    }
+
+    let mut body = Vec::new();
+    body.push(b'[');
+    body.push(b'\n');
+    for (index, element) in elements.iter().enumerate() {
+        let mut lines: Vec<&[u8]> = element.as_ref().split(|&byte| byte == b'\n').collect();
+        // A trailing newline splits off an empty final piece. The line before it is the last line.
+        if lines.last().is_some_and(|line| line.is_empty()) {
+            lines.pop();
+        }
+        for (line_index, line) in lines.iter().enumerate() {
+            body.extend_from_slice(b"  ");
+            body.extend_from_slice(line);
+            if line_index + 1 == lines.len() && index + 1 != elements.len() {
+                body.push(b',');
+            }
+            body.push(b'\n');
+        }
+    }
+    body.push(b']');
+    body
+}
+
+fn blocks_response(body: Vec<u8>) -> Response {
+    let mut response = Response::new(body.into());
+    response.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1892,5 +2003,38 @@ mod range_tests {
         ] {
             assert!(max > MAX_BLOCK_RANGE, "the {name} maximum is no better than fetching whole blocks");
         }
+    }
+}
+
+#[cfg(test)]
+mod json_array_tests {
+    use super::*;
+
+    #[test]
+    fn pretty_json_array_matches_a_pretty_printed_vec() {
+        let elements = [
+            serde_json::json!({"a": 1, "b": {"c": [1, 2]}}),
+            serde_json::json!({"a": 2}),
+            serde_json::json!({"note": "line"}),
+        ];
+        let encoded: Vec<Vec<u8>> =
+            elements.iter().map(|element| serde_json::to_vec_pretty(element).unwrap()).collect();
+
+        assert_eq!(pretty_json_array(&encoded), serde_json::to_vec_pretty(&elements).unwrap());
+    }
+
+    #[test]
+    fn pretty_json_array_of_nothing_is_an_empty_array() {
+        let empty: [&[u8]; 0] = [];
+        assert_eq!(pretty_json_array(&empty), b"[]");
+    }
+
+    #[test]
+    fn pretty_json_array_ignores_a_trailing_newline_on_an_element() {
+        let element = b"{\n  \"a\": 1\n}\n";
+        assert_eq!(
+            pretty_json_array(&[element.as_slice()]),
+            serde_json::to_vec_pretty(&vec![serde_json::json!({"a": 1})]).unwrap()
+        );
     }
 }
