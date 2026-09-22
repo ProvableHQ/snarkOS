@@ -966,7 +966,10 @@ impl<N: Network> Sync<N> {
             let height = pending_block.height();
             let storage = self.storage.clone();
 
-            let block = match ledger_update.check_block_content(pending_block) {
+            // The check leaves the block's speculate open for the advance below to finish. Nothing
+            // may return early between the two: a failed check closes its own batch, but an
+            // abandoned successful one stays open until some later block is added.
+            let block = match ledger_update.check_sync_block_content(pending_block) {
                 Ok(block) => block,
                 Err(CheckBlockError::InvalidHeight { .. })
                 | Err(CheckBlockError::BlockAlreadyExists { .. })

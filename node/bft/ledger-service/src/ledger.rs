@@ -108,6 +108,15 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
         self.check_block_content(pending)
     }
 
+    fn check_sync_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>> {
+        self.ledger.check_sync_block_content(block, &mut rand::rng())
+    }
+
+    fn check_sync_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>> {
+        self.ledger.check_sync_next_block(&block, &mut rand::rng())?;
+        Ok(block)
+    }
+
     /// Returns a candidate for the next block in the ledger, using a committed subdag and its transmissions.
     fn prepare_advance_to_next_quorum_block(
         &self,

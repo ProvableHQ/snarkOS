@@ -788,7 +788,13 @@ impl<N: Network> BlockSync<N> {
                 };
 
                 // Try to check the next block and advance to it.
-                let block = match ledger_update.check_next_block(block) {
+                //
+                // The check leaves the block's speculate open so that the advance below finishes it
+                // rather than speculating a second time. A successful check must therefore be
+                // followed by the advance below, with nothing in between that can return early: a
+                // failed check closes its own batch, but an abandoned successful one stays open
+                // until some later block is added.
+                let block = match ledger_update.check_sync_next_block(block) {
                     Ok(block) => block,
                     Err(CheckBlockError::InvalidHeight { .. })
                     | Err(CheckBlockError::BlockAlreadyExists { .. })

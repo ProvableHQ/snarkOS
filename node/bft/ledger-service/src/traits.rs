@@ -51,6 +51,18 @@ pub trait LedgerUpdateService<N: Network> {
     fn check_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>>;
     /// Checks the given block is a valid next block for the ledger.
     fn check_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>>;
+    /// Checks a pending block received from a peer, leaving its speculate open.
+    ///
+    /// A successful check must be followed by [`Self::advance_to_next_block`] for the same block,
+    /// which finishes the open finalize batch rather than speculating a second time. A failed check
+    /// closes the batch itself, but an abandoned successful one is only closed when some later block
+    /// is added, so callers must not return between the two.
+    fn check_sync_block_content(&self, block: PendingBlock<N>) -> Result<Block<N>, CheckBlockError<N>>;
+    /// Checks a block received from a peer, leaving its speculate open.
+    ///
+    /// Carries the same obligation as [`Self::check_sync_block_content`], and additionally verifies
+    /// the block's subdag.
+    fn check_sync_next_block(&self, block: Block<N>) -> Result<Block<N>, CheckBlockError<N>>;
     /// Prepares the next block in the ledger, using a committed subdag and its transmissions.
     fn prepare_advance_to_next_quorum_block(
         &self,
