@@ -245,9 +245,10 @@ pub struct Start {
     #[clap(long, value_name = "URL", num_args = 0..=1, group = "rest_flags")]
     pub history_compat_mode: Option<Option<String>>,
 
-    /// Serve historic mapping values and staking rewards from this node's history index.
+    /// Index historic mapping values and staking rewards, and serve them from the REST server.
     ///
-    /// Only a client may set this. It cannot be combined with `--history-compat-mode`.
+    /// Only a client may set this. Indexing resumes from the stored cursor and catches up to the
+    /// local tip before the node syncs further. It cannot be combined with `--history-compat-mode`.
     #[clap(long)]
     pub history: bool,
 
@@ -969,7 +970,11 @@ impl Start {
         if let (Some(url), Some(_)) = (&history_api_url, rest_ip) {
             println!("🕰️  History compatibility mode is enabled; historical routes are served from {url}");
         } else if self.history && rest_ip.is_some() {
-            println!("🕰️  Historical routes are served from this node's history index.");
+            println!(
+                "🕰️  History indexing is enabled. This node catches up to the local tip before syncing, and historical routes are served from this node."
+            );
+        } else if self.history {
+            println!("🕰️  History indexing is enabled. This node catches up to the local tip before syncing.");
         }
 
         // TODO(kaimast): start the display earlier and show sync progress.

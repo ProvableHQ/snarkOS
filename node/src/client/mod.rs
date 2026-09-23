@@ -158,6 +158,18 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         }
         .with_context(|| "Failed to initialize the ledger")?;
 
+        // Catch the history index up to the blocks already stored. CDN and peer sync run after
+        // this, and each new block is recorded as it is committed.
+        if serve_history {
+            info!("Backfilling history through block {} before syncing", ledger.latest_height());
+            {
+                let ledger = ledger.clone();
+                spawn_blocking!(ledger.backfill_history()).with_context(|| "Failed to backfill history")?;
+            }
+            ledger.set_record_history(true);
+            info!("History is indexed before block {}", ledger.history_synced_height());
+        }
+
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
         // Initialize the node router.
