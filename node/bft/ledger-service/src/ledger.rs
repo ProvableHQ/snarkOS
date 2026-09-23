@@ -15,6 +15,7 @@
 
 use crate::{
     BeginLedgerUpdateError,
+    BlockCache,
     LedgerService,
     LedgerUpdateService,
     deserialize_solution_strict,
@@ -76,12 +77,15 @@ pub struct CoreLedgerService<N: Network, C: ConsensusStorage<N>> {
     latest_leader: Arc<RwLock<Option<(u64, Address<N>)>>>,
     stoppable: Arc<dyn Stoppable>,
     update_lock: Arc<Mutex<()>>,
+    /// Pretty JSON of blocks committed by [`LedgerUpdate::advance_to_next_block`].
+    block_cache: Option<Arc<BlockCache<N>>>,
 }
 
 /// A transactional update to the ledger.
 #[cfg(feature = "ledger-write")]
 pub struct LedgerUpdate<'a, N: Network, C: ConsensusStorage<N>> {
     ledger: Ledger<N, C>,
+    block_cache: Option<Arc<BlockCache<N>>>,
     #[cfg(feature = "locktick")]
     _lock: LockGuard<MutexGuard<'a, ()>>,
     #[cfg(not(feature = "locktick"))]
@@ -121,6 +125,9 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
     fn advance_to_next_block(&self, block: &Block<N>) -> Result<()> {
         // Advance to the next block.
         self.ledger.advance_to_next_block(block)?;
+        if let Some(block_cache) = &self.block_cache {
+            block_cache.insert(block);
+        }
         // Update BFT metrics.
         #[cfg(feature = "metrics")]
         {
@@ -142,6 +149,15 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
+        Self::with_block_cache(ledger, stoppable, None)
+    }
+
+    /// Initializes a core ledger service that records each advanced block in `block_cache`.
+    pub fn with_block_cache(
+        ledger: Ledger<N, C>,
+        stoppable: Arc<dyn Stoppable>,
+        block_cache: Option<Arc<BlockCache<N>>>,
+    ) -> Self {
         // Initialize the block height and consensus version metrics.
         #[cfg(feature = "metrics")]
         {
@@ -153,7 +169,7 @@ impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
             );
         }
 
-        Self { ledger, latest_leader: Default::default(), stoppable, update_lock: Default::default() }
+        Self { ledger, latest_leader: Default::default(), stoppable, update_lock: Default::default(), block_cache }
     }
 
     /// Returns the deterministic dev committee for rounds at or after the hotswap start,
@@ -535,7 +551,11 @@ impl<N: Network, C: ConsensusStorage<N>> LedgerService<N> for CoreLedgerService<
             return Err(BeginLedgerUpdateError::ShuttingDown);
         }
 
-        Ok(Box::new(LedgerUpdate { ledger: self.ledger.clone(), _lock: self.update_lock.lock() }))
+        Ok(Box::new(LedgerUpdate {
+            ledger: self.ledger.clone(),
+            block_cache: self.block_cache.clone(),
+            _lock: self.update_lock.lock(),
+        }))
     }
 
     /// Returns the spend for a transaction in microcredits.

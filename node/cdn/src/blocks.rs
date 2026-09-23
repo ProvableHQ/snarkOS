@@ -17,6 +17,7 @@
 // https://github.com/rust-lang/rust-clippy/issues/6446
 #![allow(clippy::await_holding_lock)]
 
+use snarkos_node_bft_ledger_service::BlockCache;
 use snarkos_utilities::{SignalHandler, Stoppable};
 
 use snarkvm::{
@@ -92,10 +93,11 @@ impl CdnBlockSync {
         base_url: http::Uri,
         ledger: Ledger<N, C>,
         stoppable: Arc<SignalHandler>,
+        block_cache: Option<Arc<BlockCache<N>>>,
     ) -> Self {
         let task = {
             let base_url = base_url.clone();
-            tokio::spawn(async move { Self::worker(base_url, ledger, stoppable).await })
+            tokio::spawn(async move { Self::worker(base_url, ledger, stoppable, block_cache).await })
         };
 
         debug!("Started sync from CDN at {base_url}");
@@ -127,6 +129,7 @@ impl CdnBlockSync {
         base_url: http::Uri,
         ledger: Ledger<N, C>,
         stoppable: Arc<dyn Stoppable>,
+        block_cache: Option<Arc<BlockCache<N>>>,
     ) -> SyncResult {
         // Fetch the node height.
         let start_height = ledger.latest_height() + 1;
@@ -135,7 +138,11 @@ impl CdnBlockSync {
         let result = load_blocks(&base_url, start_height, None, stoppable, move |block: Block<N>| {
             ledger_clone
                 .advance_to_next_block(&block)
-                .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))
+                .with_context(|| format!("Failed to advance to block {} at height {}", block.hash(), block.height()))?;
+            if let Some(block_cache) = &block_cache {
+                block_cache.insert(&block);
+            }
+            Ok(())
         })
         .await;
 

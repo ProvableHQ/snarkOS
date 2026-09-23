@@ -20,7 +20,10 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 #[cfg(feature = "test_network")]
 use snarkos_node_bft::ledger_service::{persist_dev_committee_start_round_if_unwritten, prepare_dev_committee_options};
-use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_bft::{
+    ledger_service::{BlockCache, CoreLedgerService},
+    spawn_blocking,
+};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
@@ -129,8 +132,12 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             persist_dev_committee_start_round_if_unwritten(&node_data_dir, committee.starting_round())?;
         }
 
+        // Shared with the ledger and the CDN sync, and read by the REST API.
+        let block_cache = rest_ip.is_some().then(|| BlockCache::with_block(&ledger.latest_block()));
+
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::new(ledger.clone(), signal_handler.clone()));
+        let ledger_service =
+            Arc::new(CoreLedgerService::with_block_cache(ledger.clone(), signal_handler.clone(), block_cache.clone()));
 
         // Initialize the node router.
         let router = Router::new(
@@ -178,7 +185,8 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         };
 
         // Perform sync with CDN (if enabled).
-        let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler)));
+        let cdn_sync = cdn
+            .map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler, block_cache.clone())));
 
         // Initialize the transaction pool.
         node.initialize_transaction_pool(dev, dev_txs)?;
@@ -196,6 +204,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                     cdn_sync.clone(),
                     sync,
                     rest_verification_limits,
+                    block_cache.expect("the block cache exists when the REST server is enabled"),
                 )
                 .await?,
             );

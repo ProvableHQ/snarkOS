@@ -303,11 +303,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/block/latest
-    pub(crate) async fn get_block_latest(State(rest): State<Self>) -> ErasedJson {
+    pub(crate) async fn get_block_latest(State(rest): State<Self>) -> Response {
         let block = rest.ledger.latest_block();
         let hash = block.hash();
-        // When present, this is 3x faster than serializing the block from the ledger.
-        rest.block_cache.lock().get_or_insert(hash, || ErasedJson::pretty(block)).clone()
+        if let Some(json_block) = rest.block_cache.get(&hash) {
+            return json_response(json_block);
+        }
+        match serde_json::to_vec_pretty(&block) {
+            Ok(json_block) => json_response(json_block),
+            Err(err) => {
+                RestError::internal_server_error(anyhow!("failed to serialize block {hash}: {err}")).into_response()
+            }
+        }
     }
 
     /// GET /<network>/block/{height}
@@ -315,7 +322,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     pub(crate) async fn get_block(
         State(rest): State<Self>,
         Path(height_or_hash): Path<String>,
-    ) -> Result<ErasedJson, RestError> {
+    ) -> Result<Response, RestError> {
         // Manually parse the height or the height of the hash, axum doesn't support different types
         // for the same path param.
         let hash = if let Ok(height) = height_or_hash.parse::<u32>() {
@@ -329,30 +336,29 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             return Err(RestError::bad_request(anyhow!("invalid input: neither a block height nor a block hash")));
         };
 
-        // Attempt to find a serialized block in the cache.
-        if let Some(json_block) = rest.block_cache.lock().get(&hash) {
-            return Ok(json_block.clone());
+        if let Some(json_block) = rest.block_cache.get(&hash) {
+            return Ok(json_response(json_block));
         }
 
         // Retrieve the block from the database.
-        let json_block = match tokio::task::spawn_blocking(move || match rest.ledger.try_get_block_by_hash(&hash) {
-            Ok(Some(block)) => Some(ErasedJson::pretty(block)),
-            Ok(None) => None,
-            Err(e) => {
-                error!("Couldn't find a block: {e}");
-                None
-            }
+        let json_block = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, RestError> {
+            let block = match rest.ledger.try_get_block_by_hash(&hash) {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    return Err(RestError::not_found(anyhow!("Couldn't find block {height_or_hash}")));
+                }
+                Err(e) => {
+                    error!("Couldn't find a block: {e}");
+                    return Err(RestError::not_found(anyhow!("Couldn't find block {height_or_hash}")));
+                }
+            };
+            serde_json::to_vec_pretty(&block)
+                .map_err(|err| RestError::internal_server_error(anyhow!("failed to serialize block {hash}: {err}")))
         })
         .await
-        {
-            Ok(Some(block)) => Ok(block),
-            Ok(None) => Err(RestError::not_found(anyhow!("Couldn't find block {height_or_hash}"))),
-            Err(e) => Err(RestError::internal_server_error(anyhow!("tokio error: {e}"))),
-        }?;
+        .map_err(|err| RestError::internal_server_error(anyhow!("tokio error: {err}")))??;
 
-        rest.block_cache.lock().put(hash, json_block.clone());
-
-        Ok(json_block)
+        Ok(json_response(json_block))
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
@@ -360,9 +366,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// `start` is inclusive and `end` is exclusive, as in `get_block_hashes`.
     ///
     /// The hashes for the range come from [`Self::load_block_hashes`]. A hash already in
-    /// `block_cache` contributes that cached JSON. Every other block is read from the ledger,
-    /// serialized, and inserted into the cache. The body is a JSON array of those blocks, in
-    /// height order.
+    /// `block_cache` contributes that cached JSON. Every other block is read from the ledger and
+    /// serialized for this response. The body is a JSON array of those blocks, in height order.
     pub(crate) async fn get_blocks(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
@@ -370,14 +375,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let (start_height, end_height) = check_block_range(block_range, MAX_BLOCK_RANGE, "blocks")?;
 
         // Prepare a closure for the blocking work.
-        let get_json_blocks = move || -> Result<Vec<ErasedJson>, RestError> {
+        let get_json_blocks = move || -> Result<Vec<Vec<u8>>, RestError> {
             let hashes = Self::load_block_hashes(&rest, start_height, end_height)?;
 
-            // Hold the cache lock only while copying out hits. The misses below read the ledger.
-            let mut json_blocks: Vec<Option<ErasedJson>> = {
-                let mut cache = rest.block_cache.lock();
-                hashes.iter().map(|hash| cache.get(hash).cloned()).collect()
-            };
+            // Copy hits out under one lock. The misses below read the ledger.
+            let mut json_blocks = rest.block_cache.get_each(&hashes);
 
             let missing: Vec<(usize, u32, N::BlockHash)> = json_blocks
                 .iter()
@@ -396,20 +398,21 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                             rest.ledger.try_get_block_by_hash(&hash).map_err(map_missing_resource_error)?.ok_or_else(
                                 || RestError::not_found(anyhow!("Block {height} does not exist in storage")),
                             )?;
-                        Ok((index, hash, ErasedJson::pretty(block)))
+                        let json_block = serde_json::to_vec_pretty(&block).map_err(|err| {
+                            RestError::internal_server_error(anyhow!("failed to serialize block {hash}: {err}"))
+                        })?;
+                        Ok((index, json_block))
                     })
                     .collect::<Result<Vec<_>, RestError>>()?;
 
-                let mut cache = rest.block_cache.lock();
-                for (index, hash, json_block) in loaded {
-                    cache.put(hash, json_block.clone());
-                    json_blocks[index] = Some(json_block);
+                for (index, json_block) in loaded {
+                    json_blocks[index] = Some(Bytes::from(json_block));
                 }
             }
 
             Ok(json_blocks
                 .into_iter()
-                .map(|json_block| json_block.expect("every height in the range was resolved"))
+                .map(|json_block| json_block.expect("every height in the range was resolved").to_vec())
                 .collect())
         };
 
@@ -425,12 +428,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             }
         };
 
-        let mut payloads = Vec::with_capacity(json_blocks.len());
-        for json_block in json_blocks {
-            payloads.push(erased_json_bytes(json_block).await?);
-        }
-
-        Ok(blocks_response(pretty_json_array(&payloads)))
+        Ok(json_response(pretty_json_array(&json_blocks)))
     }
 
     /// The block hash at every height in `start_height..end_height`.
@@ -1739,23 +1737,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 }
 
-/// Bytes of an `ErasedJson` value.
-///
-/// The payload is private, so a cached block is read back from the response the value would have
-/// sent on its own.
-async fn erased_json_bytes(json: ErasedJson) -> Result<Bytes, RestError> {
-    let response = json.into_response();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .map_err(|err| RestError::internal_server_error(anyhow!("failed to read block json: {err}")))?;
-    if !status.is_success() {
-        return Err(RestError::internal_server_error(anyhow!(
-            "block json could not be serialized: {}",
-            String::from_utf8_lossy(&bytes)
-        )));
-    }
-    Ok(bytes)
+/// A JSON response whose body is already serialized.
+fn json_response(body: impl Into<Body>) -> Response {
+    let mut response = Response::new(body.into());
+    response.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
+    response
 }
 
 /// A pretty-printed JSON array of `elements`.
@@ -1788,12 +1774,6 @@ fn pretty_json_array(elements: &[impl AsRef<[u8]>]) -> Vec<u8> {
     }
     body.push(b']');
     body
-}
-
-fn blocks_response(body: Vec<u8>) -> Response {
-    let mut response = Response::new(body.into());
-    response.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
-    response
 }
 
 #[cfg(test)]
