@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790147555808,
+  "lastUpdate": 1790148561135,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -19044,6 +19044,72 @@ window.BENCHMARK_DATA = {
             "value": 2.8,
             "unit": "blocks/s",
             "extra": "total_wait=89s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e2f4235ea6511744bbf8cd022ad96f775c1022a9",
+          "message": "Merge pull request #4473 from ProvableHQ/bruno/devnet\n\nfeat(devnet): provision the incident-response Grafana dashboard for local devnets",
+          "timestamp": "2026-09-23T09:10:02+02:00",
+          "tree_id": "98a6955dcef000bcf6ee6abc9b38cab41dbff518",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/e2f4235ea6511744bbf8cd022ad96f775c1022a9"
+        },
+        "date": 1790148559548,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 10.829193605479112,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=44.32463002204895, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 10173.574950757911,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=7.863509178161621, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 3431.8218265721907,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.23311233520507812, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.29,
+            "unit": "blocks/s",
+            "extra": "total_wait=109s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.912379,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=107, mean_speed=1.373364, max_speed=3.833333, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2,
+            "unit": "blocks/s",
+            "extra": "total_wait=125s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.72,
+            "unit": "blocks/s",
+            "extra": "total_wait=145s, target_height=250"
           }
         ]
       }
