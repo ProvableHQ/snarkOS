@@ -17,10 +17,8 @@ use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkos_node_sync::BftSyncMode;
-#[cfg(feature = "history-staking-rewards")]
-use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
-    ledger::puzzle::Solution,
+    ledger::{puzzle::Solution, store::helpers::MapRead},
     prelude::{
         Address,
         ConsensusVersion,
@@ -239,6 +237,17 @@ fn history_compat_mapping<N: Network>(
             SnapshotMapping::ALL.map(SnapshotMapping::name),
         ))
     })
+}
+
+/// A height can be served when it is strictly below the history cursor.
+fn reject_unindexed_height(height: u32, synced: u32) -> Result<(), RestError> {
+    if height >= synced {
+        Err(RestError::not_found(anyhow!(
+            "Block {height} is not in the history index (history is indexed before height {synced})"
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 /// The query object for `get_history_batch_compat`.
@@ -1623,22 +1632,146 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok((StatusCode::OK, ErasedJson::pretty((validator, reward, new_stake))))
     }
 
+    /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
+    ///
+    /// The mapping value at `height`, as a plaintext string, or `null` when the key is absent.
+    /// A height at or above the history cursor is not indexed yet and is a 404.
+    pub(crate) async fn get_history(
+        State(rest): State<Self>,
+        Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        reject_unindexed_height(height, rest.ledger.history_synced_height())?;
+        let label = format!("{program_id}/{mapping_name}");
+        let value = match tokio::task::spawn_blocking(move || {
+            rest.ledger
+                .vm()
+                .finalize_store()
+                .get_historical_mapping_value(program_id, mapping_name, mapping_key, height)
+                .map(|value| value.map(|value| value.to_string()))
+        })
+        .await
+        {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => {
+                return Err(RestError::internal_server_error(
+                    err.context(format!("Could not load '{label}' at block {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+        Ok((StatusCode::OK, ErasedJson::pretty(value)))
+    }
+
+    /// GET /{network}/program/{id}/mapping/{name}/history/{height}?keys=key1,key2,...
+    ///
+    /// One `{key, value}` object per requested key, in order. `value` matches the single-key route.
+    /// A height at or above the history cursor is a 404.
+    pub(crate) async fn get_history_batch(
+        State(rest): State<Self>,
+        Path((program_id, mapping_name, height)): Path<HistoricalMappingRoute<N>>,
+        Query(historical_keys): Query<HistoricalKeys>,
+    ) -> Result<impl axum::response::IntoResponse, RestError> {
+        reject_unindexed_height(height, rest.ledger.history_synced_height())?;
+        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
+        let label = format!("{program_id}/{mapping_name}");
+        let requested_keys = historical_keys.keys;
+        let values = match tokio::task::spawn_blocking(move || {
+            requested_keys
+                .iter()
+                .zip(&mapping_keys)
+                .map(|(key, mapping_key)| {
+                    let value = rest.ledger.vm().finalize_store().get_historical_mapping_value(
+                        program_id,
+                        mapping_name,
+                        mapping_key.clone(),
+                        height,
+                    )?;
+                    Ok(json!({ "key": key, "value": value.as_ref().map(ToString::to_string) }))
+                })
+                .collect::<Result<Vec<_>, anyhow::Error>>()
+        })
+        .await
+        {
+            Ok(Ok(values)) => values,
+            Ok(Err(err)) => {
+                return Err(RestError::internal_server_error(
+                    err.context(format!("Could not load '{label}' at block {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+        Ok((StatusCode::OK, ErasedJson::pretty(values)))
+    }
+
+    /// POST /{network}/program/{id}/view/{functionName}/{height}
+    ///
+    /// Evaluates a view against the history index at `height`. The body matches the latest-height
+    /// route. A height at or above the history cursor is a 404.
+    pub(crate) async fn evaluate_view_at_height(
+        State(rest): State<Self>,
+        Path((program_id, view_name, height)): Path<ViewFunctionRoute<N>>,
+        metadata: Query<Metadata>,
+        json_result: Result<Json<Vec<String>>, JsonRejection>,
+    ) -> Result<ErasedJson, RestError> {
+        reject_unindexed_height(height, rest.ledger.history_synced_height())?;
+        let Json(raw_inputs) = match json_result {
+            Ok(json) => json,
+            Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),
+        };
+        let inputs = parse_view_inputs::<N>(&raw_inputs)?;
+        let label = format!("{program_id}/{view_name}");
+        let outputs = match tokio::task::spawn_blocking(move || {
+            rest.ledger.vm().evaluate_view_at_height(program_id, view_name, inputs, height)
+        })
+        .await
+        {
+            Ok(Ok(outputs)) => outputs,
+            Ok(Err(err)) => {
+                return Err(RestError::bad_request(
+                    err.context(format!("Failed to evaluate view '{label}' at height {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+        let output_strings: Vec<String> = outputs.iter().map(|value| value.to_string()).collect();
+        if metadata.metadata.unwrap_or(false) {
+            return Ok(ErasedJson::pretty(json!({
+                "data": output_strings,
+                "height": height,
+            })));
+        }
+        Ok(ErasedJson::pretty(output_strings))
+    }
+
     /// GET /{network}/staking/rewards/{address}/{height}
-    #[cfg(feature = "history-staking-rewards")]
+    ///
+    /// `[validator, reward, new_stake]` for the reward paid to `address` at `height`, or `null`
+    /// when that account received no reward. A height at or above the history cursor is a 404.
     pub(crate) async fn get_staking_reward(
         State(rest): State<Self>,
         Path((address, height)): Path<(Address<N>, u32)>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
-        // Retrieve the history for the given block height and variant.
-        let value = rest.ledger.vm().finalize_store().staking_rewards_map().get_confirmed(&(address, height)).map_err(
-            |err| {
-                RestError::not_found(
-                    err.context(format!("Could not load the staking reward for {address} from block '{height}'")),
-                )
-            },
-        )?;
-
-        Ok((StatusCode::OK, ErasedJson::pretty(value)))
+        reject_unindexed_height(height, rest.ledger.history_synced_height())?;
+        let staker = address.to_string();
+        let reward = match tokio::task::spawn_blocking(move || {
+            rest.ledger
+                .vm()
+                .finalize_store()
+                .staking_rewards_map()
+                .get_confirmed(&(address, height))
+                .map(|reward| reward.map(|reward| reward.into_owned()))
+        })
+        .await
+        {
+            Ok(Ok(reward)) => reward,
+            Ok(Err(err)) => {
+                return Err(RestError::internal_server_error(
+                    err.context(format!("Could not load the staking reward for {staker} at block {height}")),
+                ));
+            }
+            Err(err) => return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}"))),
+        };
+        Ok((StatusCode::OK, ErasedJson::pretty(reward)))
     }
 
     /// GET /{network}/validators/participation
