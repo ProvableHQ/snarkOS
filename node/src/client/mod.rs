@@ -16,7 +16,11 @@
 mod router;
 
 use crate::{
-    bft::{helpers::fmt_id, ledger_service::CoreLedgerService, spawn_blocking},
+    bft::{
+        helpers::fmt_id,
+        ledger_service::{BlockCache, CoreLedgerService},
+        spawn_blocking,
+    },
     cdn::CdnBlockSync,
     traits::NodeInterface,
 };
@@ -157,8 +161,15 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         }
         .with_context(|| "Failed to initialize the ledger")?;
 
+        // Shared with the ledger and the CDN sync, and read by the REST API.
+        let block_cache = rest_ip.is_some().then(|| BlockCache::with_block(&ledger.latest_block()));
+
         // Initialize the ledger service.
-        let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
+        let ledger_service = Arc::new(CoreLedgerService::<N, C>::with_block_cache(
+            ledger.clone(),
+            signal_handler.clone(),
+            block_cache.clone(),
+        ));
         // Initialize the node router.
         let router = Router::new(
             node_ip,
@@ -202,7 +213,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Perform sync with CDN (if enabled).
         let cdn_sync = cdn.map(|base_url| {
             trace!("CDN sync is enabled");
-            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler))
+            Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler, block_cache.clone()))
         });
 
         // Initialize the REST server.
@@ -218,6 +229,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     cdn_sync.clone(),
                     sync,
                     rest_verification_limits,
+                    block_cache.expect("the block cache exists when the REST server is enabled"),
                 )
                 .await?,
             );

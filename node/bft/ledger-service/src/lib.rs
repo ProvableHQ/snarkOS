@@ -26,6 +26,11 @@ mod helpers;
 pub use helpers::*;
 
 #[cfg(feature = "ledger")]
+mod block_cache;
+#[cfg(feature = "ledger")]
+pub use block_cache::BlockCache;
+
+#[cfg(feature = "ledger")]
 pub mod ledger;
 #[cfg(feature = "ledger")]
 pub use ledger::*;

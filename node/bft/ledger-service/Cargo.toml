@@ -18,7 +18,7 @@ edition = "2024"
 
 [features]
 default = [ ]
-ledger = [ "parking_lot", "rand", "rayon", "tokio", "tracing" ]
+ledger = [ "bytes", "lru", "parking_lot", "rand", "rayon", "serde_json", "tokio", "tracing" ]
 ledger-write = [ ]
 locktick = [
   "dep:locktick",
@@ -38,6 +38,19 @@ translucent = [ "ledger" ]
 
 [dependencies.anyhow]
 workspace = true
+
+[dependencies.bytes]
+workspace = true
+optional = true
+
+[dependencies.lru]
+workspace = true
+optional = true
+
+[dependencies.serde_json]
+workspace = true
+features = [ "preserve_order" ]
+optional = true
 
 [dependencies.async-trait]
 version = "0.1"

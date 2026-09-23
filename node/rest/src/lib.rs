@@ -29,6 +29,7 @@ mod routes;
 
 mod version;
 
+use snarkos_node_bft_ledger_service::BlockCache;
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_router::{
@@ -54,10 +55,9 @@ use axum::{
 use axum_extra::response::ErasedJson;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
-use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::TcpListener,
     sync::{Semaphore, SemaphorePermit},
@@ -122,9 +122,6 @@ impl RestVerificationLimits {
 /// The API version prefixes.
 pub const API_VERSION_V1: &str = "v1";
 pub const API_VERSION_V2: &str = "v2";
-
-/// The capacity of the LRU holding recently requested blocks.
-const BLOCK_CACHE_SIZE: usize = 128;
 
 /// Permits that keep a REST verification in a type's queue and in a concurrent slot.
 #[derive(Debug)]
@@ -200,8 +197,8 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     block_sync: Arc<BlockSync<N>>,
     /// Concurrent and queued REST verification slots for deploys, executions, and solutions.
     verification_slots: Arc<VerificationSlots>,
-    /// A cache containing recently requested blocks.
-    block_cache: Arc<Mutex<LruCache<N::BlockHash, ErasedJson>>>,
+    /// Pretty JSON of blocks inserted when the ledger advances.
+    block_cache: Arc<BlockCache<N>>,
     /// The upstream for the routes of the removed `history` feature, if `--history-compat-mode` is set.
     history_compat: Option<Arc<HistoryCompat>>,
 }
@@ -219,6 +216,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
         cdn_sync: Option<Arc<CdnBlockSync>>,
         block_sync: Arc<BlockSync<N>>,
         rest_verification_limits: RestVerificationLimits,
+        block_cache: Arc<BlockCache<N>>,
     ) -> Result<Self> {
         let rest_verification_limits = RestVerificationLimits::new::<N, C>(
             rest_verification_limits.num_verifying_deploys,
@@ -240,7 +238,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             block_sync,
             handles: Default::default(),
             verification_slots: Arc::new(VerificationSlots::new(rest_verification_limits)),
-            block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
+            block_cache,
             history_compat,
         };
         // Spawn the server.
@@ -722,7 +720,7 @@ mod route_tests {
                 num_verifying_executions: 1,
                 num_verifying_solutions: 1,
             })),
-            block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
+            block_cache: Arc::new(BlockCache::new()),
             history_compat: None,
         }
     }
@@ -823,6 +821,74 @@ mod route_tests {
             projection.len(),
             whole.len()
         );
+    }
+
+    #[tokio::test]
+    async fn blocks_returns_the_pretty_json_of_the_blocks() {
+        let rest = sample_rest().await;
+        let block = rest.ledger.get_block(0).unwrap();
+        let expected = serde_json::to_string_pretty(&vec![block]).unwrap();
+
+        let (status, body) = get(&rest, "/blocks?start=0&end=1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, expected);
+
+        let hash = rest.ledger.get_hash(0).unwrap();
+        assert!(!rest.block_cache.contains(&hash), "a block read was written into the cache");
+    }
+
+    #[tokio::test]
+    async fn single_block_reads_do_not_fill_the_cache() {
+        let rest = sample_rest().await;
+        let hash = rest.ledger.get_hash(0).unwrap();
+
+        let (status, _) = get(&rest, "/block/latest").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = get(&rest, "/block/0").await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert!(!rest.block_cache.contains(&hash), "a block read was written into the cache");
+    }
+
+    #[tokio::test]
+    async fn blocks_serves_a_serialization_already_in_the_cache() {
+        let rest = sample_rest().await;
+
+        // Distinct from anything the ledger would serialize for genesis, which carries `authority`.
+        let cached = serde_json::json!({"cached": true});
+        let hash = rest.ledger.get_hash(0).unwrap();
+        rest.block_cache.insert_json(hash, serde_json::to_vec_pretty(&cached).unwrap());
+
+        let (status, body) = get(&rest, "/blocks?start=0&end=1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::to_string_pretty(&vec![cached.clone()]).unwrap());
+
+        let (status, body) = get(&rest, "/block/latest").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::to_string_pretty(&cached).unwrap());
+
+        let (status, body) = get(&rest, "/block/0").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::to_string_pretty(&cached).unwrap());
+    }
+
+    #[tokio::test]
+    async fn blocks_empty_range_is_an_empty_array() {
+        let rest = sample_rest().await;
+
+        let (status, body) = get(&rest, "/blocks?start=0&end=0").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "[]");
+    }
+
+    #[tokio::test]
+    async fn blocks_range_past_the_tip_is_not_found() {
+        let rest = sample_rest().await;
+
+        // The test ledger holds only the genesis block, so height 1 does not exist. The whole
+        // request fails rather than returning a short array.
+        let (status, _) = get(&rest, "/blocks?start=0&end=2").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
