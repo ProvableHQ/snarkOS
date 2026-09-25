@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790342179960,
+  "lastUpdate": 1790342604360,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -19440,6 +19440,72 @@ window.BENCHMARK_DATA = {
             "value": 2.63,
             "unit": "blocks/s",
             "extra": "total_wait=95s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bruno@franca.xyz",
+            "name": "Bruno França",
+            "username": "brunoffranca"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f980d17790789199a9b2477ce253305e9f0df4a8",
+          "message": "Merge pull request #4481 from ProvableHQ/bruno/blocking_api\n\nperf(rest): audit REST handlers for blocking work with a Criterion bench suite",
+          "timestamp": "2026-09-25T14:00:40+01:00",
+          "tree_id": "b52959dbec94f67ccd5e7de7eb378e5b7e4673aa",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/f980d17790789199a9b2477ce253305e9f0df4a8"
+        },
+        "date": 1790342601843,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 10.381618898783195,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=46.23556351661682, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 6924.800266537608,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=11.552679777145386, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 2464.182785164862,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.32465124130249023, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.03,
+            "unit": "blocks/s",
+            "extra": "total_wait=123s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.513899,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=120, mean_speed=1.243750, max_speed=3.166667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.79,
+            "unit": "blocks/s",
+            "extra": "total_wait=139s, target_height=250, connect_time=9, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.63,
+            "unit": "blocks/s",
+            "extra": "total_wait=153s, target_height=250"
           }
         ]
       }
