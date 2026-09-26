@@ -1308,5 +1308,31 @@ mod route_tests {
             assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
             assert!(body.contains("not in the history index"), "{body}");
         }
+
+        #[tokio::test]
+        async fn unindexed_program_is_not_served() {
+            let mut rest = sample_rest().await;
+            enable(&mut rest);
+            let store = rest.ledger.vm().finalize_store();
+            store.set_history_synced_height(1).unwrap();
+            let other = <ProgramID<_> as std::str::FromStr>::from_str("other.aleo").unwrap();
+            store.set_history_programs(Some(indexmap::IndexSet::from([other])));
+
+            let expected = "Mapping history is not indexed for 'credits.aleo' on this node";
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/history/0?keys=0field").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+            let (status, body) = request(&rest, Method::POST, "/program/credits.aleo/view/account/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+
+            // Staking rewards are indexed whatever the program list.
+            let (status, body) = get(&rest, &format!("/staking/rewards/{STAKER}/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+        }
     }
 }
