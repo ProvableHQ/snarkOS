@@ -204,6 +204,8 @@ pub struct Rest<N: Network, C: ConsensusStorage<N>, R: Routing<N>> {
     block_cache: Arc<Mutex<LruCache<N::BlockHash, ErasedJson>>>,
     /// The upstream for the routes of the removed `history` feature, if `--history-compat-mode` is set.
     history_compat: Option<Arc<HistoryCompat>>,
+    /// When set, historical routes read this node's history index.
+    serve_history: bool,
 }
 
 impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
@@ -213,6 +215,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
         rest_ip: SocketAddr,
         rest_rps: u32,
         history_api_url: Option<String>,
+        serve_history: bool,
         consensus: Option<Consensus<N>>,
         ledger: Ledger<N, C>,
         routing: Arc<R>,
@@ -231,6 +234,10 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             Some(url) => Some(Arc::new(HistoryCompat::new(&url, N::SHORT_NAME)?)),
             None => None,
         };
+        ensure!(
+            history_compat.is_none() || !serve_history,
+            "History compatibility mode and `--history` cannot both be enabled"
+        );
         // Initialize the server.
         let mut server = Self {
             consensus,
@@ -242,6 +249,7 @@ impl<N: Network, C: 'static + ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> 
             verification_slots: Arc::new(VerificationSlots::new(rest_verification_limits)),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
             history_compat,
+            serve_history,
         };
         // Spawn the server.
         server.spawn_server(rest_ip, rest_rps).await?;
@@ -406,25 +414,22 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Register the view-at-latest-height endpoint (always available, no history required).
         let routes = routes.route("/program/{id}/view/{function}", post(Self::evaluate_view_latest));
 
-        // In history compatibility mode, serve the routes of the removed `history` feature from the
-        // upstream historical API (see `history_compat`).
+        // Historical routes come from the upstream API in compatibility mode, or from this node's
+        // history index when `--history` is set.
         let routes = if self.history_compat.is_some() {
             routes
                 .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history_compat))
                 .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch_compat))
                 .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view_at_height_compat))
                 .route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward_compat))
+        } else if self.serve_history {
+            routes
+                .route("/program/{id}/mapping/{name}/{key}/history/{height}", get(Self::get_history))
+                .route("/program/{id}/mapping/{name}/history/{height}", get(Self::get_history_batch))
+                .route("/program/{id}/view/{function}/{height}", post(Self::evaluate_view_at_height))
+                .route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward))
         } else {
             routes
-        };
-
-        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint (unless
-        // compatibility mode already serves it).
-        #[cfg(feature = "history-staking-rewards")]
-        let routes = if self.history_compat.is_some() {
-            routes
-        } else {
-            routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward))
         };
 
         let trace_layer = TraceLayer::new_for_http()
@@ -724,6 +729,7 @@ mod route_tests {
             })),
             block_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(BLOCK_CACHE_SIZE).unwrap()))),
             history_compat: None,
+            serve_history: false,
         }
     }
 
@@ -1240,6 +1246,93 @@ mod route_tests {
             let (status, _) =
                 get(&rest, &format!("/program/credits.aleo/mapping/unbonding/{UNBONDING_STAKER}/history/0")).await;
             assert_eq!(status, StatusCode::NOT_FOUND);
+        }
+    }
+
+    /// Historical routes backed by this node's history index.
+    mod history {
+        use super::*;
+
+        const STAKER: &str = "aleo1qy4qufq03wcph05fdf5aj09ez67vcmmlrzqf0zza352qwaq43gyqt3wdf6";
+
+        fn enable(rest: &mut CurrentRest) {
+            rest.serve_history = true;
+        }
+
+        #[tokio::test]
+        async fn history_routes_are_absent_when_history_is_disabled() {
+            let rest = sample_rest().await;
+            let (status, _) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            let (status, _) = get(&rest, &format!("/staking/rewards/{STAKER}/0")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            let (status, _) = request(&rest, Method::POST, "/program/credits.aleo/view/account/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+        }
+
+        #[tokio::test]
+        async fn unindexed_height_is_not_served() {
+            let mut rest = sample_rest().await;
+            enable(&mut rest);
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("not in the history index"), "{body}");
+            let (status, body) = get(&rest, &format!("/staking/rewards/{STAKER}/0")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("not in the history index"), "{body}");
+            let (status, body) = request(&rest, Method::POST, "/program/credits.aleo/view/account/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("not in the history index"), "{body}");
+        }
+
+        #[tokio::test]
+        async fn indexed_height_returns_null_for_an_absent_entry() {
+            let mut rest = sample_rest().await;
+            enable(&mut rest);
+            rest.ledger.vm().finalize_store().set_history_synced_height(1).unwrap();
+
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/0").await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/history/0?keys=0field").await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let values: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+            assert_eq!(values, vec![serde_json::json!({ "key": "0field", "value": null })]);
+
+            let (status, body) = get(&rest, &format!("/staking/rewards/{STAKER}/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
+
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/1").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("not in the history index"), "{body}");
+        }
+
+        #[tokio::test]
+        async fn unindexed_program_is_not_served() {
+            let mut rest = sample_rest().await;
+            enable(&mut rest);
+            let store = rest.ledger.vm().finalize_store();
+            store.set_history_synced_height(1).unwrap();
+            let other = <ProgramID<_> as std::str::FromStr>::from_str("other.aleo").unwrap();
+            store.set_history_programs(Some(indexmap::IndexSet::from([other])));
+
+            let expected = "Mapping history is not indexed for 'credits.aleo' on this node";
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/history/0?keys=0field").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+            let (status, body) = request(&rest, Method::POST, "/program/credits.aleo/view/account/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+
+            // Staking rewards are indexed whatever the program list.
+            let (status, body) = get(&rest, &format!("/staking/rewards/{STAKER}/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
         }
     }
 }

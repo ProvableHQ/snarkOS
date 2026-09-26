@@ -190,6 +190,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                     rest_ip,
                     rest_rps,
                     history_api_url,
+                    false,
                     Some(consensus),
                     ledger.clone(),
                     Arc::new(node.clone()),

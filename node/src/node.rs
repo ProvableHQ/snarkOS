@@ -16,6 +16,7 @@
 use crate::{
     BootstrapClient,
     Client,
+    HistoryOptions,
     Prover,
     Validator,
     network::{NodeType, Peer, PeerPoolHandling},
@@ -182,6 +183,7 @@ impl<N: Network> Node<N> {
         rest_rps: u32,
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
+        history: Option<HistoryOptions<N>>,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
@@ -200,6 +202,7 @@ impl<N: Network> Node<N> {
                 rest_rps,
                 rest_verification_limits,
                 history_api_url,
+                history,
                 account,
                 trusted_peers,
                 genesis,

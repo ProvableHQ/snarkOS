@@ -31,6 +31,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         10,
         RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
         None, // No history compatibility mode.
+        None, // Do not index or serve history.
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
