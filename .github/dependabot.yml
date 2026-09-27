@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    target-branch: "staging"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    ignore:
+      # snarkVM is a git dependency pinned by `rev = "<commit sha>"`. Dependabot
+      # never proposes updates for git dependencies pinned to a commit SHA, so
+      # snarkVM is bumped by .github/workflows/bump-snarkvm.yml instead.
+      - dependency-name: "snarkvm*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "staging"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
