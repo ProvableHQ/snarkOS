@@ -13,6 +13,8 @@
 #     which must run with `--history` and a `--rest-rps` high enough not to rate-limit the benchmark.
 #   - HISTORY_PROGRAMS: the `--history-programs` list the history was backfilled with (default: empty,
 #     so only staking rewards). The mapping benchmarks query `credits.aleo` and run only if it is listed.
+#   - HISTORY_JSON: the `--history-json` directory the history was imported from, instead of
+#     HISTORY_PROGRAMS. The mapping benchmarks then query only `credits.aleo/bonded` and `delegated`.
 #   - HISTORY_NETWORK_ID: the network of that ledger (default: 0, mainnet).
 #   - HISTORY_STARTUP_TIMEOUT: seconds to wait for a started client's REST server (default: 3600).
 #     A started client first indexes any blocks the ledger gained since its backfill.
@@ -64,7 +66,9 @@ function bench_history() {
       "--ledger-storage=$HISTORY_LEDGER"
       --rest-rps=1000000 # ensure benchmarks don't fail due to rate limiting
     )
-    if [[ -n "$history_programs" ]]; then
+    if [[ -n "${HISTORY_JSON:-}" ]]; then
+      history_flags+=("--history-json=$HISTORY_JSON")
+    elif [[ -n "$history_programs" ]]; then
       history_flags+=("--history-programs=$history_programs")
     fi
     # shellcheck disable=SC2086
@@ -83,7 +87,10 @@ function bench_history() {
 
   local requests_per_worker=${HISTORY_REQUESTS_PER_WORKER:-1000}
   export REST_API_BASE="http://$localhost:3030/v2/$history_network_name"
-  if [[ ",$history_programs," == *",credits.aleo,"* ]]; then
+  if [[ -n "${HISTORY_JSON:-}" ]]; then
+    export HISTORY_MAPPINGS="bonded,delegated"
+  fi
+  if [[ -n "${HISTORY_JSON:-}" || ",$history_programs," == *",credits.aleo,"* ]]; then
     python ./.ci/rest_api_helper.py "history-mapping" "$CORES_PER_NODE" "$requests_per_worker"
     python ./.ci/rest_api_helper.py "history-mapping-latest" "$CORES_PER_NODE" "$requests_per_worker"
     python ./.ci/rest_api_helper.py "history-mapping-batch" "$CORES_PER_NODE" "$requests_per_worker"

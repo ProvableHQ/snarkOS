@@ -265,6 +265,16 @@ pub struct Start {
     #[clap(long, requires = "history")]
     pub history_reset: bool,
 
+    /// With `--history`, index the `credits.aleo` mappings `bonded`, `delegated`, `metadata`,
+    /// `unbonding` and `withdraw`, and staking rewards, from the per-block JSON files data-snarkVM
+    /// writes (the directory holding `group-*`), instead of replaying blocks.
+    ///
+    /// The files must reach the local tip, or the node does not start. Later blocks are indexed as
+    /// they are committed. No other mapping history is indexed, so it cannot be combined with
+    /// `--history-programs`.
+    #[clap(long, value_name = "DIR", requires = "history", conflicts_with = "history_programs")]
+    pub history_json: Option<PathBuf>,
+
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
     #[clap(long, group = "jwt_flags")]
     pub jwt_secret: Option<String>,
@@ -494,7 +504,7 @@ impl Start {
                 ProgramID::from_str(program).with_context(|| format!("Invalid `--history-programs` entry '{program}'"))
             })
             .collect::<Result<IndexSet<_>>>()?;
-        Ok(Some(HistoryOptions { programs, reset: self.history_reset }))
+        Ok(Some(HistoryOptions { programs, reset: self.history_reset, json_dir: self.history_json.clone() }))
     }
 
     /// Rejects `--history` on any node type other than a client, and together with `--history-compat-mode`.
@@ -1007,9 +1017,15 @@ impl Start {
         let history = self.parse_history_options::<N>()?;
         if let Some(history) = &history {
             let programs = history.programs.iter().map(ToString::to_string).collect::<Vec<_>>();
-            match programs.is_empty() {
-                true => println!("🕰️  Indexing staking rewards, and no mapping history."),
-                false => println!("🕰️  Indexing staking rewards, and the mapping history of {}.", programs.join(", ")),
+            match (&history.json_dir, programs.is_empty()) {
+                (Some(dir), _) => println!(
+                    "🕰️  Indexing staking rewards, and the credits.aleo staking mappings from the JSON history in {}.",
+                    dir.display()
+                ),
+                (None, true) => println!("🕰️  Indexing staking rewards, and no mapping history."),
+                (None, false) => {
+                    println!("🕰️  Indexing staking rewards, and the mapping history of {}.", programs.join(", "))
+                }
             }
         }
 
@@ -1628,7 +1644,7 @@ mod tests {
     }
 
     #[test]
-    fn history_programs_and_reset_flags() {
+    fn history_programs_reset_and_json_flags() {
         type N = MainnetV0;
 
         let config = Start::try_parse_from(["snarkos", "--history"].iter()).unwrap();
@@ -1652,9 +1668,22 @@ mod tests {
         let config = Start::try_parse_from(["snarkos"].iter()).unwrap();
         assert!(config.parse_history_options::<N>().unwrap().is_none());
 
-        // Both flags need `--history`.
+        let config =
+            Start::try_parse_from(["snarkos", "--history", "--history-json", "/data/history-0"].iter()).unwrap();
+        let options = config.parse_history_options::<N>().unwrap().unwrap();
+        assert_eq!(options.json_dir, Some(PathBuf::from("/data/history-0")));
+        assert!(options.programs.is_empty());
+
+        // The flags need `--history`, and the JSON history cannot be combined with a program list.
         assert!(Start::try_parse_from(["snarkos", "--history-programs", "credits.aleo"].iter()).is_err());
         assert!(Start::try_parse_from(["snarkos", "--history-reset"].iter()).is_err());
+        assert!(Start::try_parse_from(["snarkos", "--history-json", "/data"].iter()).is_err());
+        assert!(
+            Start::try_parse_from(
+                ["snarkos", "--history", "--history-json", "/data", "--history-programs", "credits.aleo"].iter()
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -45,7 +45,7 @@ use snarkvm::{
         Ledger,
         block::{Block, Header},
         puzzle::{Puzzle, Solution, SolutionID},
-        store::ConsensusStorage,
+        store::{ConsensusStorage, HistoryScope},
     },
     prelude::{VM, block::Transaction},
 };
@@ -62,6 +62,7 @@ use parking_lot::Mutex;
 use std::{
     net::SocketAddr,
     num::NonZeroUsize,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{
@@ -103,6 +104,9 @@ pub struct HistoryOptions<N: Network> {
     pub programs: IndexSet<ProgramID<N>>,
     /// Whether to delete the recorded history first, so it is backfilled again from genesis.
     pub reset: bool,
+    /// A directory of data-snarkVM JSON history to index the `credits.aleo` staking mappings from,
+    /// instead of replaying blocks. `programs` is empty when it is set.
+    pub json_dir: Option<PathBuf>,
 }
 
 /// A client node is a full node, capable of querying with the network.
@@ -176,7 +180,17 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                 let ledger = ledger.clone();
                 spawn_blocking!(ledger.reset_history()).with_context(|| "Failed to reset the history")?;
             }
-            ledger.configure_history(history.programs.clone()).with_context(|| "Failed to configure history")?;
+            match &history.json_dir {
+                Some(dir) => {
+                    info!("Importing history through block {} from {}", ledger.latest_height(), dir.display());
+                    let (ledger, dir) = (ledger.clone(), dir.clone());
+                    spawn_blocking!(ledger.import_history_json(&dir))
+                        .with_context(|| "Failed to import the JSON history")?;
+                }
+                None => ledger
+                    .configure_history(HistoryScope::programs(history.programs.clone()))
+                    .with_context(|| "Failed to configure history")?,
+            }
             info!("Backfilling history through block {} before syncing", ledger.latest_height());
             {
                 let ledger = ledger.clone();
