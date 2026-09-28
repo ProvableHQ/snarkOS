@@ -851,8 +851,9 @@ mod route_tests {
     }
 
     #[tokio::test]
-    async fn blocks_serves_a_serialization_already_in_the_cache() {
+    async fn block_routes_serve_a_serialization_already_in_the_cache() {
         let rest = sample_rest().await;
+        let expected_blocks = serde_json::to_string_pretty(&vec![rest.ledger.get_block(0).unwrap()]).unwrap();
 
         // Distinct from anything the ledger would serialize for genesis, which carries `authority`.
         let cached = serde_json::json!({"cached": true});
@@ -861,7 +862,7 @@ mod route_tests {
 
         let (status, body) = get(&rest, "/blocks?start=0&end=1").await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, serde_json::to_string_pretty(&vec![cached.clone()]).unwrap());
+        assert_eq!(body, expected_blocks);
 
         let (status, body) = get(&rest, "/block/latest").await;
         assert_eq!(status, StatusCode::OK);

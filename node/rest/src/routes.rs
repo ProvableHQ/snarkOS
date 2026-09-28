@@ -36,7 +36,7 @@ use snarkvm::{
     synthesizer::program::{FinalizeGlobalState, StackTrait},
 };
 
-use axum::{Json, body::Bytes, extract::rejection::JsonRejection, response::IntoResponse};
+use axum::{Json, extract::rejection::JsonRejection, response::IntoResponse};
 
 use aleo_std::aleo_ledger_dir;
 use anyhow::{Context, anyhow};
@@ -365,9 +365,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     ///
     /// `start` is inclusive and `end` is exclusive, as in `get_block_hashes`.
     ///
-    /// The hashes for the range come from [`Self::load_block_hashes`]. A hash already in
-    /// `block_cache` contributes that cached JSON. Every other block is read from the ledger and
-    /// serialized for this response. The body is a JSON array of those blocks, in height order.
+    /// The hashes for the range come from [`Self::load_block_hashes`], and each block is read from
+    /// the ledger and serialized for the response. The body is a JSON array of those blocks, in
+    /// height order.
     pub(crate) async fn get_blocks(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
@@ -377,43 +377,20 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Prepare a closure for the blocking work.
         let get_json_blocks = move || -> Result<Vec<Vec<u8>>, RestError> {
             let hashes = Self::load_block_hashes(&rest, start_height, end_height)?;
-
-            // Copy hits out under one lock. The misses below read the ledger.
-            let mut json_blocks = rest.block_cache.get_each(&hashes);
-
-            let missing: Vec<(usize, u32, N::BlockHash)> = json_blocks
-                .iter()
+            cfg_into_iter!(hashes)
                 .enumerate()
-                .filter(|(_, json_block)| json_block.is_none())
-                .map(|(index, _)| {
+                .map(|(index, hash)| {
                     let height = start_height + u32::try_from(index).expect("block index fits in u32");
-                    (index, height, hashes[index])
-                })
-                .collect();
-
-            if !missing.is_empty() {
-                let loaded = cfg_into_iter!(missing)
-                    .map(|(index, height, hash)| {
-                        let block =
-                            rest.ledger.try_get_block_by_hash(&hash).map_err(map_missing_resource_error)?.ok_or_else(
-                                || RestError::not_found(anyhow!("Block {height} does not exist in storage")),
-                            )?;
-                        let json_block = serde_json::to_vec_pretty(&block).map_err(|err| {
-                            RestError::internal_server_error(anyhow!("failed to serialize block {hash}: {err}"))
-                        })?;
-                        Ok((index, json_block))
+                    let block = rest
+                        .ledger
+                        .try_get_block_by_hash(&hash)
+                        .map_err(map_missing_resource_error)?
+                        .ok_or_else(|| RestError::not_found(anyhow!("Block {height} does not exist in storage")))?;
+                    serde_json::to_vec_pretty(&block).map_err(|err| {
+                        RestError::internal_server_error(anyhow!("failed to serialize block {hash}: {err}"))
                     })
-                    .collect::<Result<Vec<_>, RestError>>()?;
-
-                for (index, json_block) in loaded {
-                    json_blocks[index] = Some(Bytes::from(json_block));
-                }
-            }
-
-            Ok(json_blocks
-                .into_iter()
-                .map(|json_block| json_block.expect("every height in the range was resolved").to_vec())
-                .collect())
+                })
+                .collect()
         };
 
         // Fetch the blocks from the cache and the ledger.
