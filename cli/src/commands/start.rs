@@ -249,29 +249,33 @@ pub struct Start {
 
     /// Index historic mapping values and staking rewards, and serve them from the REST server.
     ///
-    /// Only a client may set this. Indexing resumes from the stored cursor and catches up to the
-    /// local tip before the node syncs further. It cannot be combined with `--history-compat-mode`.
+    /// Only a client may set this. Historical heights are imported from `--history-json` before
+    /// the node syncs further. It cannot be combined with `--history-compat-mode`.
     #[clap(long)]
     pub history: bool,
 
-    /// With `--history`, the programs whose mapping history is indexed, as a comma-separated list.
+    /// With `--history`, the programs whose mapping history is recorded from now on, as a
+    /// comma-separated list.
     ///
-    /// Staking rewards are always indexed; without this flag no mapping history is. The list is stored
-    /// with the history, and a later start with a different list fails unless `--history-reset` is set.
+    /// Staking rewards are always recorded; without this flag no mapping history is. The list is
+    /// stored with the history, and a later start with a different list fails unless
+    /// `--history-reset` is set. Historical heights are not imported; use `--history-json` for
+    /// that.
     #[clap(long, value_name = "PROGRAMS", value_delimiter = ',', requires = "history")]
     pub history_programs: Vec<String>,
 
-    /// With `--history`, delete the indexed history first, so it is backfilled again from genesis.
+    /// With `--history`, delete the indexed history first, so it is imported again from genesis.
     #[clap(long, requires = "history")]
     pub history_reset: bool,
 
     /// With `--history`, index the `credits.aleo` mappings `bonded`, `delegated`, `metadata`,
     /// `unbonding` and `withdraw`, and staking rewards, from the per-block JSON files data-snarkVM
-    /// writes (the directory holding `group-*`), instead of replaying blocks.
+    /// writes (the directory holding `group-*`).
     ///
     /// The files must reach the local tip, or the node does not start. Later blocks are indexed as
     /// they are committed. No other mapping history is indexed, so it cannot be combined with
-    /// `--history-programs`.
+    /// `--history-programs`. Without this flag, only a ledger whose history is already indexed
+    /// through the tip (or a genesis-only ledger) will start.
     #[clap(long, value_name = "DIR", requires = "history", conflicts_with = "history_programs")]
     pub history_json: Option<PathBuf>,
 
@@ -1009,10 +1013,10 @@ impl Start {
             println!("🕰️  History compatibility mode is enabled; historical routes are served from {url}");
         } else if self.history && rest_ip.is_some() {
             println!(
-                "🕰️  History indexing is enabled. This node catches up to the local tip before syncing, and historical routes are served from this node."
+                "🕰️  History indexing is enabled. Historical routes are served from this node."
             );
         } else if self.history {
-            println!("🕰️  History indexing is enabled. This node catches up to the local tip before syncing.");
+            println!("🕰️  History indexing is enabled.");
         }
         let history = self.parse_history_options::<N>()?;
         if let Some(history) = &history {

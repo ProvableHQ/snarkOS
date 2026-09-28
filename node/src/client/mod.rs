@@ -51,7 +51,7 @@ use snarkvm::{
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use core::future::Future;
 use indexmap::IndexSet;
 #[cfg(feature = "locktick")]
@@ -102,10 +102,10 @@ type SolutionContents<N> = (SocketAddr, UnconfirmedSolution<N>, Solution<N>);
 pub struct HistoryOptions<N: Network> {
     /// The programs whose mapping history is recorded. Staking rewards are always recorded.
     pub programs: IndexSet<ProgramID<N>>,
-    /// Whether to delete the recorded history first, so it is backfilled again from genesis.
+    /// Whether to delete the recorded history first, so it is imported again from genesis.
     pub reset: bool,
-    /// A directory of data-snarkVM JSON history to index the `credits.aleo` staking mappings from,
-    /// instead of replaying blocks. `programs` is empty when it is set.
+    /// A directory of data-snarkVM JSON history to index the `credits.aleo` staking mappings from.
+    /// `programs` is empty when it is set.
     pub json_dir: Option<PathBuf>,
 }
 
@@ -176,7 +176,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // this, and each new block is recorded as it is committed.
         if let Some(history) = &history {
             if history.reset {
-                info!("Deleting the recorded history, so it is backfilled again from genesis");
+                info!("Deleting the recorded history, so it is imported again from genesis");
                 let ledger = ledger.clone();
                 spawn_blocking!(ledger.reset_history()).with_context(|| "Failed to reset the history")?;
             }
@@ -191,11 +191,16 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     .configure_history(HistoryScope::programs(history.programs.clone()))
                     .with_context(|| "Failed to configure history")?,
             }
-            info!("Backfilling history through block {} before syncing", ledger.latest_height());
-            {
+            if ledger.history_synced_height() == 0 {
                 let ledger = ledger.clone();
-                spawn_blocking!(ledger.backfill_history()).with_context(|| "Failed to backfill history")?;
+                spawn_blocking!(ledger.import_genesis_history()).with_context(|| "Failed to import genesis history")?;
             }
+            ensure!(
+                ledger.history_synced_height() > ledger.latest_height(),
+                "History is indexed before block {}, but the ledger tip is {}; pass --history-json <DIR> with files that reach the tip",
+                ledger.history_synced_height(),
+                ledger.latest_height()
+            );
             ledger.set_record_history(true);
             info!("History is indexed before block {}", ledger.history_synced_height());
         }

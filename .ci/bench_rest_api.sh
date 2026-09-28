@@ -8,16 +8,16 @@
 #   ./.ci/bench_rest_api.sh --history  Benchmarks the history routes of a node with an indexed history.
 #
 # With `--history`:
-#   - HISTORY_LEDGER: a ledger directory whose history is backfilled. The script starts a client with
+#   - HISTORY_LEDGER: a ledger directory whose history is imported. The script starts a client with
 #     `--history` on it. Unset, the script benchmarks the node already serving REST on port 3030,
 #     which must run with `--history` and a `--rest-rps` high enough not to rate-limit the benchmark.
-#   - HISTORY_PROGRAMS: the `--history-programs` list the history was backfilled with (default: empty,
+#   - HISTORY_PROGRAMS: the `--history-programs` list the history was imported with (default: empty,
 #     so only staking rewards). The mapping benchmarks query `credits.aleo` and run only if it is listed.
 #   - HISTORY_JSON: the `--history-json` directory the history was imported from, instead of
 #     HISTORY_PROGRAMS. The mapping benchmarks then query only `credits.aleo/bonded` and `delegated`.
 #   - HISTORY_NETWORK_ID: the network of that ledger (default: 0, mainnet).
 #   - HISTORY_STARTUP_TIMEOUT: seconds to wait for a started client's REST server (default: 3600).
-#     A started client first indexes any blocks the ledger gained since its backfill.
+#     A started client first indexes any blocks the ledger gained since its import.
 #   - HISTORY_REQUESTS_PER_WORKER: requests each worker sends per benchmark (default: 1000).
 ###########################################################
 
