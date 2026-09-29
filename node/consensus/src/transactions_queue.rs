@@ -21,6 +21,7 @@ use std::{
 
 use anyhow::{Result, bail};
 use lru::LruCache;
+use snarkos_node_bft::helpers::fmt_id;
 use snarkvm::{ledger::Transaction, prelude::*};
 
 use crate::{CAPACITY_FOR_DEPLOYMENTS, CAPACITY_FOR_EXECUTIONS};
@@ -117,14 +118,23 @@ impl<N: Network> TransactionsQueueInner<N> {
             }
             (true, _fee) => {
                 // Remove an entry from the low-priority queue to make room for the high-priority transaction.
-                self.queue.pop_lru();
+                if let Some((evicted_id, _)) = self.queue.pop_lru() {
+                    trace!(
+                        "Evicting zero-fee transaction '{}' from the mempool to make room for transaction '{}'",
+                        fmt_id(evicted_id),
+                        fmt_id(transaction_id)
+                    );
+                }
                 self.priority_queue.insert(transaction_id, transaction, priority_fee)
             }
 
             // Invariant: if the queue is at capacity but the priority queue is
             // equal to the capacity, the low-priority queue must be empty.
-            (false, 0) => bail!("The memory pool is full"),
-            (false, _fee) => self.priority_queue.compare_insert(transaction_id, transaction, priority_fee),
+            (false, 0) => {
+                trace!("Dropping unconfirmed transaction '{}': the memory pool is full", fmt_id(transaction_id));
+                bail!("The memory pool is full")
+            }
+            (false, _fee) => self.priority_queue.compare_insert(transaction_id, transaction, priority_fee)?,
         }
 
         Ok(())
@@ -167,18 +177,27 @@ impl<N: Network> PriorityQueue<N> {
         }
     }
 
-    fn compare_insert(&mut self, transaction_id: N::TransactionID, transaction: Transaction<N>, fee: U64<N>) {
+    fn compare_insert(
+        &mut self,
+        transaction_id: N::TransactionID,
+        transaction: Transaction<N>,
+        fee: U64<N>,
+    ) -> Result<()> {
         // Make sure the collection isn't empty.
         if self.transaction_ids.is_empty() {
-            return;
+            return Ok(());
         }
 
-        // If the lowest fee in the collection is higher than the new fee, no-op.
+        // If the lowest fee in the collection is higher than the new fee, reject the new transaction.
         //
         // SAFETY: the empty check guarantees an item will be returned
         let ((Reverse(lowest_fee), _), _) = self.transaction_ids.last_key_value().expect("item must be present");
         if lowest_fee > &fee {
-            return;
+            trace!(
+                "Dropping unconfirmed transaction '{}': fee too low for the full priority queue",
+                fmt_id(transaction_id)
+            );
+            bail!("The memory pool is full");
         }
 
         // Otherwise, remove the current value and insert the new.
@@ -186,7 +205,13 @@ impl<N: Network> PriorityQueue<N> {
         // SAFETY: the empty check guarantees an item will be returned
         let (_, id) = self.transaction_ids.pop_last().expect("item must be present");
         self.transactions.remove(&id);
+        trace!(
+            "Evicting transaction '{}' from the mempool to make room for higher-fee transaction '{}'",
+            fmt_id(id),
+            fmt_id(transaction_id)
+        );
         self.insert(transaction_id, transaction, fee);
+        Ok(())
     }
 
     fn pop(&mut self) -> Option<(N::TransactionID, Transaction<N>)> {
