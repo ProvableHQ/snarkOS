@@ -34,6 +34,7 @@ do or how language constructs work are unhelpful.
 ## Pull requests
 - Follow `.github/PULL_REQUEST_TEMPLATE.md`.
 - Write the PR README in Simplified Technical English. Use short sentences, the active voice, and one idea per sentence.
+- Keep the pull request description succinct and DRY.
 - Explain each commit in one line.
 
 ## Modifying BFT Code
