@@ -319,17 +319,17 @@ impl<N: Network> Consensus<N> {
             if self.ledger.contains_transmission(&TransmissionID::Solution(solution_id, checksum))? {
                 bail!("Solution '{}' exists in the ledger {}", fmt_id(solution_id), "(skipping)".dimmed());
             }
+            // Add the solution to the memory pool.
+            if self.solutions_queue.lock().put(solution_id, solution).is_some() {
+                bail!("Solution '{}' exists in the memory pool", fmt_id(solution_id));
+            }
             #[cfg(feature = "metrics")]
             {
                 metrics::increment_gauge(metrics::consensus::UNCONFIRMED_SOLUTIONS, 1f64);
                 let timestamp = snarkos_node_bft::helpers::now();
-                self.transmissions_tracker.lock().insert(TransmissionID::Solution(solution.id(), checksum), timestamp);
+                self.transmissions_tracker.lock().insert(TransmissionID::Solution(solution_id, checksum), timestamp);
             }
-            // Add the solution to the memory pool.
             trace!("Received unconfirmed solution '{}' in the queue", fmt_id(solution_id));
-            if self.solutions_queue.lock().put(solution_id, solution).is_some() {
-                bail!("Solution '{}' exists in the memory pool", fmt_id(solution_id));
-            }
         }
 
         // Try to process the unconfirmed solutions in the memory pool.
@@ -413,18 +413,18 @@ impl<N: Network> Consensus<N> {
             if self.contains_transaction(&transaction_id) {
                 bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
             }
+            // Add the transaction to the memory pool.
+            let priority_fee = transaction.priority_fee_amount()?;
+            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
             #[cfg(feature = "metrics")]
             {
                 metrics::increment_gauge(metrics::consensus::UNCONFIRMED_TRANSACTIONS, 1f64);
                 let timestamp = snarkos_node_bft::helpers::now();
                 self.transmissions_tracker
                     .lock()
-                    .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
+                    .insert(TransmissionID::Transaction(transaction_id, checksum), timestamp);
             }
-            // Add the transaction to the memory pool.
             trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
-            let priority_fee = transaction.priority_fee_amount()?;
-            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
         }
 
         // Try to process the unconfirmed transactions in the memory pool.
