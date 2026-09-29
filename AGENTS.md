@@ -31,6 +31,11 @@ Comments must help someone who has never heard of this change you are making.
 Comments must not state the obvious. Comments that explain what attributes
 do or how language constructs work are unhelpful.
 
+## Pull requests
+- Follow `.github/PULL_REQUEST_TEMPLATE.md`.
+- Write the PR README in Simplified Technical English. Use short sentences, the active voice, and one idea per sentence.
+- Explain each commit in one line.
+
 ## Modifying BFT Code
 
 When making changes to BFT-related code (anything under `node/bft/`), run the following checks in order:
