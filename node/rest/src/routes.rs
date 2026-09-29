@@ -350,8 +350,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Err(e) => Err(RestError::internal_server_error(anyhow!("tokio error: {e}"))),
         }?;
 
-        rest.block_cache.lock().put(hash, json_block.clone());
-
         Ok(json_block)
     }
 
