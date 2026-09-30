@@ -1447,6 +1447,11 @@ impl<N: Network> Transport<N> for Gateway<N> {
             let self_ = self.clone();
             let connected_peers = self.connected_peers();
             self.spawn(async move {
+                // Skip the work below if the broadcast is no longer needed.
+                if token.is_cancelled() {
+                    debug!("{CONTEXT} Not broadcasting '{}' (cancelled)", event.name());
+                    return;
+                }
                 // Serialize the event's payload once, rather than once per recipient; every
                 // recipient then shares the resulting buffer. `Transport::send` would otherwise do
                 // this separately for each peer below.

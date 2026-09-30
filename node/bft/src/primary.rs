@@ -516,6 +516,10 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                 // recheck supersedes them.
                 let token = self.storage.round_cancellation_token(proposal.round()).child_token();
                 std::mem::replace(&mut *self.resend_token.lock(), token.clone()).cancel();
+                if token.is_cancelled() {
+                    debug!("Not resending batch proposal for round {} (round is over)", proposal.round());
+                    return Ok(false);
+                }
                 // Iterate through the non-signers.
                 for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
                     // Resolve the address to the peer IP.

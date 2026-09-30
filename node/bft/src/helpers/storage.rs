@@ -300,11 +300,14 @@ impl<N: Network> Storage<N> {
     ///   This keeps the token in step with `current_round`, even if called between the
     ///   `fetch_max` in [`Storage::update_current_round`] and its own call to this function.
     /// - If `round` is older, this returns an already-cancelled token.
-    pub fn round_cancellation_token(&self, round: u64) -> CancellationToken {
+    ///
+    /// Callers must not pass a round ahead of `current_round`, as that would end the current round early.
+    pub(crate) fn round_cancellation_token(&self, round: u64) -> CancellationToken {
         let mut round_token = self.round_token.lock();
         let (token_round, token) = &mut *round_token;
         match round.cmp(token_round) {
             cmp::Ordering::Greater => {
+                debug_assert!(round <= self.current_round(), "Round {round} is ahead of the storage round");
                 token.cancel();
                 *token_round = round;
                 *token = CancellationToken::new();
