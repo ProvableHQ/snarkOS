@@ -506,18 +506,29 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                 // Construct the event.
                 // TODO(ljedrz): the BatchHeader should be serialized only once in advance before being sent to non-signers.
                 let event = Event::BatchPropose(proposal.batch_header().clone().into());
+                // Resends are only useful while the proposal's round is ongoing.
+                let token = self.storage.round_cancellation_token(proposal.round());
                 // Iterate through the non-signers.
                 for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
                     // Resolve the address to the peer IP.
                     match self.gateway.resolver().read().get_peer_ip_for_address(address) {
                         // Resend the batch proposal to the validator for signing.
                         Some(peer_ip) => {
-                            let (gateway, event_, round) = (self.gateway.clone(), event.clone(), proposal.round());
+                            let (gateway, event_, round, token) =
+                                (self.gateway.clone(), event.clone(), proposal.round(), token.clone());
                             self.spawn(async move {
                                 debug!("Resending batch proposal for round {round} to peer '{peer_ip}'");
-                                // Resend the batch proposal to the peer.
-                                if gateway.send(peer_ip, event_).await.is_none() {
-                                    warn!("Failed to resend batch proposal for round {round} to peer '{peer_ip}'");
+                                // Resend the batch proposal to the peer, unless the round ends first.
+                                tokio::select! {
+                                    biased;
+                                    _ = token.cancelled() => {
+                                        debug!("Stopped resending batch proposal for round {round} to peer '{peer_ip}' (round is over)");
+                                    }
+                                    result = gateway.send(peer_ip, event_) => {
+                                        if result.is_none() {
+                                            warn!("Failed to resend batch proposal for round {round} to peer '{peer_ip}'");
+                                        }
+                                    }
                                 }
                             });
                         }
@@ -801,8 +812,9 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
             }
         })?;
 
-        // Broadcast the batch to all validators for signing.
-        self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
+        // Broadcast the batch to all validators for signing, until the round is over.
+        self.gateway
+            .broadcast_until(Event::BatchPropose(batch_header.into()), self.storage.round_cancellation_token(round));
         // Store the proposal in memory.
         *self.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
         // Record the wall-clock time at which the batch was proposed.
