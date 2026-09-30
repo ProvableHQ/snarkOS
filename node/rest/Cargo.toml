@@ -53,7 +53,9 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.jsonwebtoken]
-version = "9.2"
+version = "10.4"
+default-features = false
+features = [ "aws_lc_rs" ]
 
 [dependencies.locktick]
 workspace = true
