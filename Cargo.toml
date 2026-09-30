@@ -371,7 +371,7 @@ workspace = true
 workspace = true
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 [dependencies.tracing]
 workspace = true
