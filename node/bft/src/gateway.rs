@@ -114,7 +114,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
+use tokio_util::{codec::Framed, sync::CancellationToken};
 
 /// The maximum interval of events to cache.
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
@@ -198,6 +198,7 @@ const LEGACY_HANDSHAKE_EXPIRY: Option<ConsensusVersion> = Some(ConsensusVersion:
 pub trait Transport<N: Network>: Send + Sync {
     async fn send(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>>;
     fn broadcast(&self, event: Event<N>);
+    fn broadcast_until(&self, event: Event<N>, token: CancellationToken);
 }
 
 /// The gateway maintains connections to other validators.
@@ -1433,7 +1434,14 @@ impl<N: Network> Transport<N> for Gateway<N> {
     }
 
     /// Broadcasts the given event to all connected peers.
-    fn broadcast(&self, mut event: Event<N>) {
+    fn broadcast(&self, event: Event<N>) {
+        self.broadcast_until(event, CancellationToken::new());
+    }
+
+    /// Broadcasts the given event to all connected peers, concurrently.
+    ///
+    /// Sends that have not been queued by the time `token` is cancelled are dropped.
+    fn broadcast_until(&self, mut event: Event<N>, token: CancellationToken) {
         // Ensure there are connected peers.
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
