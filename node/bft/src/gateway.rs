@@ -1464,10 +1464,16 @@ impl<N: Network> Transport<N> for Gateway<N> {
                         }
                     };
                 }
-                // Iterate through all connected peers.
-                for peer_ip in connected_peers {
-                    // Send the event to the peer.
-                    let _ = Transport::send(&self_, peer_ip, event.clone()).await;
+                // Send the event to all connected peers concurrently, so that a peer that is
+                // rate limited does not delay delivery to the others.
+                let name = event.name();
+                let sends = join_all(
+                    connected_peers.into_iter().map(|peer_ip| Transport::send(&self_, peer_ip, event.clone())),
+                );
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => debug!("{CONTEXT} Stopped broadcasting '{name}' (cancelled)"),
+                    _ = sends => {}
                 }
             });
         }
