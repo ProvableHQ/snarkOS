@@ -2858,6 +2858,43 @@ mod tests {
         }
     }
 
+    /// Each recheck of a pending proposal cancels the resends of the previous recheck, and the
+    /// latest resends are cancelled once the round is over.
+    #[test_log::test(tokio::test)]
+    async fn test_resend_supersedes_previous_resends() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Store a pending proposal for the current round.
+        let round = 3;
+        let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
+        let proposal = create_test_proposal(
+            &accounts[0].1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            previous_certificates,
+            now(),
+            1,
+            &mut rng,
+        );
+        *primary.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
+
+        // The first recheck resends the proposal.
+        assert!(!primary.propose_batch().await.unwrap());
+        let first = primary.resend_token.lock().clone();
+        assert!(!first.is_cancelled());
+
+        // The second recheck supersedes the first one's resends.
+        assert!(!primary.propose_batch().await.unwrap());
+        let second = primary.resend_token.lock().clone();
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+
+        // Advancing the round cancels the latest resends.
+        primary.storage.increment_to_next_round(round).unwrap();
+        assert!(second.is_cancelled());
+    }
+
     /// The signed-proposal cache advances, and only advances: an older round must never overwrite a
     /// newer one, and a round already cached must never be signed twice.
     #[test_log::test(tokio::test)]
