@@ -453,14 +453,34 @@ impl<N: Network> Consensus<N> {
             // Note: interleaving ensures we will never have consecutive invalid deployments blocking the queue.
             let selector_iter = (0..num_deployments).map(|_| true).interleave((0..num_executions).map(|_| false));
             // Drain the transactions from the queue, interleaving deployments and executions.
-            selector_iter
+            let transactions = selector_iter
                 .filter_map(
                     |select_deployment| {
                         if select_deployment { tx_queue.deployments.pop() } else { tx_queue.executions.pop() }
                     },
                 )
                 .map(|(_, tx)| tx)
-                .collect_vec()
+                .collect_vec();
+            #[cfg(feature = "metrics")]
+            {
+                metrics::gauge(
+                    metrics::consensus::DEPLOYMENTS_PRIORITY_QUEUE_SIZE,
+                    tx_queue.deployments.priority_len() as f64,
+                );
+                metrics::gauge(
+                    metrics::consensus::DEPLOYMENTS_ZERO_FEE_QUEUE_SIZE,
+                    tx_queue.deployments.zero_fee_len() as f64,
+                );
+                metrics::gauge(
+                    metrics::consensus::EXECUTIONS_PRIORITY_QUEUE_SIZE,
+                    tx_queue.executions.priority_len() as f64,
+                );
+                metrics::gauge(
+                    metrics::consensus::EXECUTIONS_ZERO_FEE_QUEUE_SIZE,
+                    tx_queue.executions.zero_fee_len() as f64,
+                );
+            }
+            transactions
         };
         // Iterate over the transactions.
         for transaction in transactions.into_iter() {

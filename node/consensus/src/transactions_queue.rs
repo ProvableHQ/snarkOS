@@ -21,7 +21,6 @@ use std::{
 
 use anyhow::{Result, bail};
 use lru::LruCache;
-use snarkos_node_bft::helpers::fmt_id;
 use snarkvm::{ledger::Transaction, prelude::*};
 
 use crate::{CAPACITY_FOR_DEPLOYMENTS, CAPACITY_FOR_EXECUTIONS};
@@ -51,11 +50,21 @@ impl<N: Network> TransactionsQueue<N> {
         transaction: Transaction<N>,
         priority_fee: U64<N>,
     ) -> Result<()> {
-        if transaction.is_execute() {
+        let result = if transaction.is_execute() {
             self.executions.insert(transaction_id, transaction, priority_fee)
         } else {
             self.deployments.insert(transaction_id, transaction, priority_fee)
+        };
+
+        #[cfg(feature = "metrics")]
+        {
+            metrics::gauge(metrics::consensus::DEPLOYMENTS_PRIORITY_QUEUE_SIZE, self.deployments.priority_len() as f64);
+            metrics::gauge(metrics::consensus::DEPLOYMENTS_ZERO_FEE_QUEUE_SIZE, self.deployments.zero_fee_len() as f64);
+            metrics::gauge(metrics::consensus::EXECUTIONS_PRIORITY_QUEUE_SIZE, self.executions.priority_len() as f64);
+            metrics::gauge(metrics::consensus::EXECUTIONS_ZERO_FEE_QUEUE_SIZE, self.executions.zero_fee_len() as f64);
         }
+
+        result
     }
 
     pub fn transactions(&self) -> impl Iterator<Item = (N::TransactionID, Transaction<N>)> + use<N> {
@@ -87,6 +96,18 @@ impl<N: Network> TransactionsQueueInner<N> {
 
     pub fn len(&self) -> usize {
         self.fifo_queue.len().saturating_add(self.priority_queue.len())
+    }
+
+    /// The number of transactions in the priority queue.
+    #[cfg(feature = "metrics")]
+    pub fn priority_len(&self) -> usize {
+        self.priority_queue.len()
+    }
+
+    /// The number of transactions in the zero-fee queue.
+    #[cfg(feature = "metrics")]
+    pub fn zero_fee_len(&self) -> usize {
+        self.fifo_queue.len()
     }
 
     fn contains(&self, transaction_id: &N::TransactionID) -> bool {
@@ -121,13 +142,9 @@ impl<N: Network> TransactionsQueueInner<N> {
 
         match (self.priority_queue.len() < self.capacity, *priority_fee) {
             (_, 0) => {
-                debug!(
-                    "Dropping unconfirmed transaction '{}': the memory pool is full (low-priority queue: {}, priority queue: {}, capacity: {})",
-                    fmt_id(transaction_id),
-                    self.fifo_queue.len(),
-                    self.priority_queue.len(),
-                    self.capacity
-                );
+                #[cfg(feature = "metrics")]
+                metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+
                 bail!("The memory pool is full")
             }
             // Invariant: if the queue is at capacity but the priority queue
@@ -141,7 +158,7 @@ impl<N: Network> TransactionsQueueInner<N> {
                 // Remove an entry from the low-priority queue to make room for the high-priority transaction.
                 if self.fifo_queue.pop_lru().is_some() {
                     #[cfg(feature = "metrics")]
-                    metrics::increment_counter(metrics::consensus::EVICTED_ZERO_FEE_TRANSACTIONS);
+                    metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
                 }
 
                 self.priority_queue.insert(transaction_id, transaction, priority_fee)
@@ -215,10 +232,9 @@ impl<N: Network> PriorityQueue<N> {
         // SAFETY: the empty check guarantees an item will be returned
         let ((Reverse(lowest_fee), _), _) = self.transaction_ids.last_key_value().expect("item must be present");
         if lowest_fee > &fee {
-            trace!(
-                "Dropping unconfirmed transaction '{}': fee too low for the full priority queue",
-                fmt_id(transaction_id)
-            );
+            #[cfg(feature = "metrics")]
+            metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+
             bail!("The memory pool is full");
         }
 
@@ -227,11 +243,10 @@ impl<N: Network> PriorityQueue<N> {
         // SAFETY: the empty check guarantees an item will be returned
         let (_, id) = self.transaction_ids.pop_last().expect("item must be present");
         self.transactions.remove(&id);
-        trace!(
-            "Evicting transaction '{}' from the mempool to make room for higher-fee transaction '{}'",
-            fmt_id(id),
-            fmt_id(transaction_id)
-        );
+
+        #[cfg(feature = "metrics")]
+        metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+
         self.insert(transaction_id, transaction, fee);
         Ok(())
     }
