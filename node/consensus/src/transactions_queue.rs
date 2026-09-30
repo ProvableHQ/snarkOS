@@ -64,15 +64,15 @@ impl<N: Network> TransactionsQueue<N> {
             .transactions
             .clone()
             .into_iter()
-            .chain(self.deployments.queue.clone())
+            .chain(self.deployments.fifo_queue.clone())
             .chain(self.executions.priority_queue.transactions.clone())
-            .chain(self.executions.queue.clone())
+            .chain(self.executions.fifo_queue.clone())
     }
 }
 
 pub struct TransactionsQueueInner<N: Network> {
     capacity: usize,
-    queue: LruCache<N::TransactionID, Transaction<N>>,
+    fifo_queue: LruCache<N::TransactionID, Transaction<N>>,
     priority_queue: PriorityQueue<N>,
 }
 
@@ -80,17 +80,17 @@ impl<N: Network> TransactionsQueueInner<N> {
     fn new(capacity: usize) -> Self {
         Self {
             capacity,
-            queue: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
+            fifo_queue: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
             priority_queue: Default::default(),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.queue.len().saturating_add(self.priority_queue.len())
+        self.fifo_queue.len().saturating_add(self.priority_queue.len())
     }
 
     fn contains(&self, transaction_id: &N::TransactionID) -> bool {
-        self.queue.contains(transaction_id) || self.priority_queue.transactions.contains_key(transaction_id)
+        self.fifo_queue.contains(transaction_id) || self.priority_queue.transactions.contains_key(transaction_id)
     }
 
     fn insert(
@@ -99,55 +99,74 @@ impl<N: Network> TransactionsQueueInner<N> {
         transaction: Transaction<N>,
         priority_fee: U64<N>,
     ) -> Result<()> {
+        // Duplicates are a no-op: they must not evict anything or refresh recency.
+        // Note: the transaction ID is the root of the transaction tree, which includes a leaf for the fee
+        // transition. A transaction with the same ID therefore always has the same priority fee, and a
+        // resubmission with a higher fee has a different ID, so there is nothing to replace here.
+        if self.contains(&transaction_id) {
+            return Ok(());
+        }
+
         // If the queue is not full, insert in the appropriate queue.
         if self.len() < self.capacity {
             if priority_fee.is_zero() {
-                // Leave duplicates untouched so they keep their recency.
-                if !self.queue.contains(&transaction_id) {
-                    self.queue.put(transaction_id, transaction);
-                }
+                self.fifo_queue.put(transaction_id, transaction);
             } else {
                 self.priority_queue.insert(transaction_id, transaction, priority_fee);
             }
 
+            debug_assert!(self.len() <= self.capacity, "The mempool exceeded its capacity");
             return Ok(());
         }
 
         match (self.priority_queue.len() < self.capacity, *priority_fee) {
+            (_, 0) => {
+                debug!(
+                    "Dropping unconfirmed transaction '{}': the memory pool is full (low-priority queue: {}, priority queue: {}, capacity: {})",
+                    fmt_id(transaction_id),
+                    self.fifo_queue.len(),
+                    self.priority_queue.len(),
+                    self.capacity
+                );
+                bail!("The memory pool is full")
+            }
             // Invariant: if the queue is at capacity but the priority queue
             // isn't equal to the capacity, the low-priority queue must be non-empty.
-            (true, 0) => {
-                // Leave duplicates untouched so they keep their recency.
-                if !self.queue.contains(&transaction_id) {
-                    self.queue.put(transaction_id, transaction);
-                }
-            }
             (true, _fee) => {
+                debug_assert!(
+                    !self.fifo_queue.is_empty(),
+                    "The low-priority queue must be non-empty when the mempool is full"
+                );
+
                 // Remove an entry from the low-priority queue to make room for the high-priority transaction.
-                if let Some((evicted_id, _)) = self.queue.pop_lru() {
+                if let Some((evicted_id, _)) = self.fifo_queue.pop_lru() {
                     trace!(
                         "Evicting zero-fee transaction '{}' from the mempool to make room for transaction '{}'",
                         fmt_id(evicted_id),
                         fmt_id(transaction_id)
                     );
                 }
+
                 self.priority_queue.insert(transaction_id, transaction, priority_fee)
             }
-
             // Invariant: if the queue is at capacity but the priority queue is
             // equal to the capacity, the low-priority queue must be empty.
-            (false, 0) => {
-                trace!("Dropping unconfirmed transaction '{}': the memory pool is full", fmt_id(transaction_id));
-                bail!("The memory pool is full")
+            (false, _fee) => {
+                debug_assert!(
+                    self.fifo_queue.is_empty(),
+                    "The low-priority queue must be empty when the priority queue is full"
+                );
+
+                self.priority_queue.compare_insert(transaction_id, transaction, priority_fee)?
             }
-            (false, _fee) => self.priority_queue.compare_insert(transaction_id, transaction, priority_fee)?,
         }
 
+        debug_assert!(self.len() <= self.capacity, "The mempool exceeded its capacity");
         Ok(())
     }
 
     pub fn pop(&mut self) -> Option<(N::TransactionID, Transaction<N>)> {
-        self.priority_queue.pop().or_else(|| self.queue.pop_lru())
+        self.priority_queue.pop().or_else(|| self.fifo_queue.pop_lru())
     }
 }
 
@@ -351,14 +370,14 @@ mod tests {
 
         // Insert a high-priority transaction and evict the remaining low-priority transactions.
         executions_queue.insert(executions[4].0, executions[4].1.clone(), U64::new(50)).unwrap();
-        assert_eq!(executions_queue.queue.len(), 0);
+        assert_eq!(executions_queue.fifo_queue.len(), 0);
         assert_eq!(executions_queue.priority_queue.len(), 4);
         assert!(executions_queue.priority_queue.transactions.contains_key(&executions[4].0));
         assert!(!executions_queue.priority_queue.transactions.contains_key(&executions[1].0));
 
         // Insert a high-priority transaction and evict the lowest high-priority transaction.
         executions_queue.insert(executions[5].0, executions[5].1.clone(), U64::new(150)).unwrap();
-        assert_eq!(executions_queue.queue.len(), 0);
+        assert_eq!(executions_queue.fifo_queue.len(), 0);
         assert_eq!(executions_queue.priority_queue.len(), 4);
         assert!(!executions_queue.priority_queue.transactions.contains_key(&executions[4].0));
         assert!(executions_queue.priority_queue.transactions.contains_key(&executions[5].0));
@@ -374,14 +393,14 @@ mod tests {
 
         // Check the queue is empty.
         assert_eq!(executions_queue.len(), 0);
-        assert_eq!(executions_queue.queue.len(), 0);
+        assert_eq!(executions_queue.fifo_queue.len(), 0);
         assert_eq!(executions_queue.priority_queue.len(), 0);
         assert!(executions_queue.pop().is_none());
 
         // Insert a low-priority transaction and expect it to be inserted into the queue.
         executions_queue.insert(executions[6].0, executions[6].1.clone(), U64::new(0)).unwrap();
         assert_eq!(executions_queue.len(), 1);
-        assert_eq!(executions_queue.queue.len(), 1);
+        assert_eq!(executions_queue.fifo_queue.len(), 1);
         assert_eq!(executions_queue.priority_queue.len(), 0);
     }
 
@@ -406,5 +425,77 @@ mod tests {
 
         assert_eq!(executions_queue.pop().unwrap(), executions[0]);
         assert_eq!(executions_queue.pop().unwrap(), executions[1]);
+    }
+
+    #[test]
+    fn zero_fee_insert_when_full_is_rejected() {
+        let mut rng = TestRng::default();
+
+        let executions: Vec<_> = (0..5)
+            .map(|_| {
+                let execution_transaction = sample_execution_transaction_with_fee(false, &mut rng, 0);
+                (execution_transaction.id(), execution_transaction)
+            })
+            .collect();
+
+        // Fill the queue: 2 priority and 2 zero-fee transactions.
+        let mut executions_queue = TransactionsQueueInner::new(4);
+        executions_queue.insert(executions[0].0, executions[0].1.clone(), U64::new(100)).unwrap();
+        executions_queue.insert(executions[1].0, executions[1].1.clone(), U64::new(200)).unwrap();
+        executions_queue.insert(executions[2].0, executions[2].1.clone(), U64::new(0)).unwrap();
+        executions_queue.insert(executions[3].0, executions[3].1.clone(), U64::new(0)).unwrap();
+        assert_eq!(executions_queue.len(), 4);
+
+        // A new zero-fee transaction is rejected and nothing is evicted.
+        assert!(executions_queue.insert(executions[4].0, executions[4].1.clone(), U64::new(0)).is_err());
+        assert_eq!(executions_queue.len(), 4);
+        assert_eq!(executions_queue.fifo_queue.len(), 2);
+        assert!(executions_queue.contains(&executions[2].0));
+        assert!(executions_queue.contains(&executions[3].0));
+        assert!(!executions_queue.contains(&executions[4].0));
+
+        // Pop the transactions in the correct order.
+        assert_eq!(executions_queue.pop().unwrap(), executions[1]);
+        assert_eq!(executions_queue.pop().unwrap(), executions[0]);
+        assert_eq!(executions_queue.pop().unwrap(), executions[2]);
+        assert_eq!(executions_queue.pop().unwrap(), executions[3]);
+        assert!(executions_queue.pop().is_none());
+    }
+
+    #[test]
+    fn duplicate_insert_when_full_is_noop() {
+        let mut rng = TestRng::default();
+
+        let executions: Vec<_> = (0..4)
+            .map(|_| {
+                let execution_transaction = sample_execution_transaction_with_fee(false, &mut rng, 0);
+                (execution_transaction.id(), execution_transaction)
+            })
+            .collect();
+
+        // A full queue with both priority and zero-fee transactions.
+        let mut executions_queue = TransactionsQueueInner::new(4);
+        executions_queue.insert(executions[0].0, executions[0].1.clone(), U64::new(100)).unwrap();
+        executions_queue.insert(executions[1].0, executions[1].1.clone(), U64::new(200)).unwrap();
+        executions_queue.insert(executions[2].0, executions[2].1.clone(), U64::new(0)).unwrap();
+        executions_queue.insert(executions[3].0, executions[3].1.clone(), U64::new(0)).unwrap();
+
+        // Re-inserting any of them must not evict anything.
+        for (fee, execution) in [(100, &executions[0]), (200, &executions[1]), (0, &executions[2]), (0, &executions[3])]
+        {
+            executions_queue.insert(execution.0, execution.1.clone(), U64::new(fee)).unwrap();
+            assert_eq!(executions_queue.len(), 4);
+            assert_eq!(executions_queue.fifo_queue.len(), 2);
+            assert!(executions.iter().all(|(id, _)| executions_queue.contains(id)));
+        }
+
+        // A full priority queue: re-inserting a duplicate must not evict the lowest-fee transaction.
+        let mut executions_queue = TransactionsQueueInner::new(4);
+        for (i, fee) in [100, 200, 300, 400].into_iter().enumerate() {
+            executions_queue.insert(executions[i].0, executions[i].1.clone(), U64::new(fee)).unwrap();
+        }
+        executions_queue.insert(executions[1].0, executions[1].1.clone(), U64::new(200)).unwrap();
+        assert_eq!(executions_queue.len(), 4);
+        assert!(executions.iter().all(|(id, _)| executions_queue.contains(id)));
     }
 }
