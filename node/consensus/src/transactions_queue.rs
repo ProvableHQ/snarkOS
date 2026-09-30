@@ -139,12 +139,9 @@ impl<N: Network> TransactionsQueueInner<N> {
                 );
 
                 // Remove an entry from the low-priority queue to make room for the high-priority transaction.
-                if let Some((evicted_id, _)) = self.fifo_queue.pop_lru() {
-                    trace!(
-                        "Evicting zero-fee transaction '{}' from the mempool to make room for transaction '{}'",
-                        fmt_id(evicted_id),
-                        fmt_id(transaction_id)
-                    );
+                if self.fifo_queue.pop_lru().is_some() {
+                    #[cfg(feature = "metrics")]
+                    metrics::increment_counter(metrics::consensus::EVICTED_ZERO_FEE_TRANSACTIONS);
                 }
 
                 self.priority_queue.insert(transaction_id, transaction, priority_fee)

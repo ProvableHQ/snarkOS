@@ -13,8 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub(super) const COUNTER_NAMES: [&str; 3] =
-    [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSACTIONS, consensus::STALE_UNCONFIRMED_SOLUTIONS];
+pub(super) const COUNTER_NAMES: [&str; 4] = [
+    bft::LEADERS_ELECTED,
+    consensus::STALE_UNCONFIRMED_TRANSACTIONS,
+    consensus::STALE_UNCONFIRMED_SOLUTIONS,
+    consensus::EVICTED_ZERO_FEE_TRANSACTIONS,
+];
 
 pub(super) const GAUGE_NAMES: [&str; 29] = [
     bft::CONNECTED,
@@ -122,6 +126,7 @@ pub mod consensus {
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";
     pub const STALE_UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_stale_unconfirmed_transactions";
     pub const STALE_UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_stale_unconfirmed_solutions";
+    pub const EVICTED_ZERO_FEE_TRANSACTIONS: &str = "snarkos_consensus_evicted_zero_fee_transactions";
     pub const VALIDATOR_CERTIFICATE_PARTICIPATION: &str = "snarkos_consensus_validator_certificate_participation";
     pub const VALIDATOR_SIGNATURE_PARTICIPATION: &str = "snarkos_consensus_validator_signature_participation";
     /// The garbage collection round the published participation scores were computed at.
