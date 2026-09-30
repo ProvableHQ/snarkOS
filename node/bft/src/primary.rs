@@ -93,6 +93,7 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::RwLock as TRwLock;
 use tokio::{sync::Notify, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 
 /// The state of the primary's batch proposal.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -181,6 +182,10 @@ pub struct Primary<N: Network> {
     /// The recently-signed batch proposals.
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
 
+    /// Cancels the resends launched by the latest recheck of the pending proposal.
+    /// Replaced (and the old one cancelled) on every recheck, so at most one set of resends is in flight.
+    resend_token: Arc<Mutex<CancellationToken>>,
+
     /// The handles for all background tasks spawned by this primary.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
 
@@ -240,6 +245,7 @@ impl<N: Network> Primary<N> {
             batch_propose_start: Default::default(),
             latest_proposal_timestamp: Default::default(),
             signed_proposals: Default::default(),
+            resend_token: Default::default(),
             handles: Default::default(),
             proposal_task: Default::default(),
             round_increment_notify: Default::default(),
@@ -506,8 +512,10 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                 // Construct the event.
                 // TODO(ljedrz): the BatchHeader should be serialized only once in advance before being sent to non-signers.
                 let event = Event::BatchPropose(proposal.batch_header().clone().into());
-                // Resends are only useful while the proposal's round is ongoing.
-                let token = self.storage.round_cancellation_token(proposal.round());
+                // Resends are only useful while the proposal's round is ongoing, and only until the next
+                // recheck supersedes them.
+                let token = self.storage.round_cancellation_token(proposal.round()).child_token();
+                std::mem::replace(&mut *self.resend_token.lock(), token.clone()).cancel();
                 // Iterate through the non-signers.
                 for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
                     // Resolve the address to the peer IP.
@@ -522,7 +530,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                                 tokio::select! {
                                     biased;
                                     _ = token.cancelled() => {
-                                        debug!("Stopped resending batch proposal for round {round} to peer '{peer_ip}' (round is over)");
+                                        debug!("Stopped resending batch proposal for round {round} to peer '{peer_ip}' (superseded or round is over)");
                                     }
                                     result = gateway.send(peer_ip, event_) => {
                                         if result.is_none() {
