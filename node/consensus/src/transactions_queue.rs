@@ -102,7 +102,10 @@ impl<N: Network> TransactionsQueueInner<N> {
         // If the queue is not full, insert in the appropriate queue.
         if self.len() < self.capacity {
             if priority_fee.is_zero() {
-                self.queue.get_or_insert(transaction_id, || transaction);
+                // Leave duplicates untouched so they keep their recency.
+                if !self.queue.contains(&transaction_id) {
+                    self.queue.put(transaction_id, transaction);
+                }
             } else {
                 self.priority_queue.insert(transaction_id, transaction, priority_fee);
             }
@@ -114,7 +117,10 @@ impl<N: Network> TransactionsQueueInner<N> {
             // Invariant: if the queue is at capacity but the priority queue
             // isn't equal to the capacity, the low-priority queue must be non-empty.
             (true, 0) => {
-                let _ = self.queue.get_or_insert(transaction_id, || transaction);
+                // Leave duplicates untouched so they keep their recency.
+                if !self.queue.contains(&transaction_id) {
+                    self.queue.put(transaction_id, transaction);
+                }
             }
             (true, _fee) => {
                 // Remove an entry from the low-priority queue to make room for the high-priority transaction.
@@ -377,5 +383,28 @@ mod tests {
         assert_eq!(executions_queue.len(), 1);
         assert_eq!(executions_queue.queue.len(), 1);
         assert_eq!(executions_queue.priority_queue.len(), 0);
+    }
+
+    #[test]
+    fn duplicate_low_priority_insert_keeps_recency() {
+        let mut rng = TestRng::default();
+
+        let executions: Vec<_> = (0..2)
+            .map(|_| {
+                let execution_transaction = sample_execution_transaction_with_fee(false, &mut rng, 0);
+                (execution_transaction.id(), execution_transaction)
+            })
+            .collect();
+
+        let mut executions_queue = TransactionsQueueInner::new(4);
+        executions_queue.insert(executions[0].0, executions[0].1.clone(), U64::new(0)).unwrap();
+        executions_queue.insert(executions[1].0, executions[1].1.clone(), U64::new(0)).unwrap();
+
+        // Re-inserting the oldest transaction must not refresh its position.
+        executions_queue.insert(executions[0].0, executions[0].1.clone(), U64::new(0)).unwrap();
+        assert_eq!(executions_queue.len(), 2);
+
+        assert_eq!(executions_queue.pop().unwrap(), executions[0]);
+        assert_eq!(executions_queue.pop().unwrap(), executions[1]);
     }
 }
