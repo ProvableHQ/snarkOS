@@ -118,7 +118,7 @@ workspace = true
 version = "0.7"
 
 [dependencies.tower-http]
-version = "0.6"
+version = "0.7"
 features = [ "cors", "trace" ]
 
 [dependencies.tracing]

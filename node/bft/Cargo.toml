@@ -222,7 +222,7 @@ workspace = true
 workspace = true
 
 [dev-dependencies.tower-http]
-version = "0.6"
+version = "0.7"
 features = [ "fs", "trace" ]
 
 [dev-dependencies.tracing-subscriber]
