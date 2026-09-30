@@ -509,15 +509,21 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     );
                     return Ok(false);
                 }
-                // Construct the event.
-                // TODO(ljedrz): the BatchHeader should be serialized only once in advance before being sent to non-signers.
-                let event = Event::BatchPropose(proposal.batch_header().clone().into());
                 // Resends are only useful while the proposal's round is ongoing, and only until the next
                 // recheck supersedes them.
                 let token = self.storage.round_cancellation_token(proposal.round()).child_token();
                 std::mem::replace(&mut *self.resend_token.lock(), token.clone()).cancel();
                 if token.is_cancelled() {
                     debug!("Not resending batch proposal for round {} (round is over)", proposal.round());
+                    return Ok(false);
+                }
+                // Construct the event, and serialize the batch header once for all non-signers, rather than
+                // once per peer in `Transport::send`.
+                // Note: this is done inline, as the proposed batch lock is held (so it can't be awaited on),
+                // and serializing a batch header is cheap.
+                let mut event = Event::BatchPropose(proposal.batch_header().clone().into());
+                if let Err(err) = event.serialize_payload() {
+                    error!("Unable to serialize the batch proposal for round {} - {err}", proposal.round());
                     return Ok(false);
                 }
                 // Iterate through the non-signers.
