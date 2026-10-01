@@ -17,7 +17,7 @@ parameters:
   #
   # `.rustfmt.toml` uses options that only exist on nightly -- imports_layout,
   # imports_granularity, overflow_delimited_expr, reorder_impl_items and
-  # style_edition -- so the formatter cannot be the 1.88.0 this project builds
+  # style_edition -- so the formatter cannot be the 1.96.0 this project builds
   # with, and `cargo fmt` without a toolchain silently drops all five rather
   # than refusing. The formatter is therefore a second toolchain, and pinning
   # it is the same act as pinning the first.
@@ -45,7 +45,7 @@ executors:
   # The default docker image used in the main-workflow
   rust-docker:
      docker:
-      - image: cimg/rust:1.96.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+      - image: cimg/rust:1.96.0 # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
   # The default VM used for devnet tests
   ubuntu-vm:
       machine:
@@ -75,7 +75,7 @@ commands:
 
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.96.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
 
             # Add cargo to PATH
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
@@ -118,7 +118,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
+        default: v4.2.0-rust-1.96.0-snarkos-stable-cache
     steps:
       - run: set -e
       - run:
@@ -158,7 +158,7 @@ commands:
     parameters:
       cache_key:
         type: string
-        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
+        default: v4.2.0-rust-1.96.0-snarkos-stable-cache
     steps:
       - run: set +e
       - run:
@@ -193,7 +193,7 @@ commands:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: v4.2.0-rust-1.96.0-<< parameters.cache_key >>-cache
 
       - run:
           name: Install cargo-nextest
@@ -376,7 +376,7 @@ commands:
       - store_test_results:
           path: target/nextest/ci
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: v4.2.0-rust-1.96.0-<< parameters.cache_key >>-cache
 
   run_serial_long:
     description: "Build and run long running tests"
@@ -448,7 +448,7 @@ commands:
       - run:
           timeout: 5m
           command: |
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0 # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
             source $HOME/.cargo/env
 
 jobs:
@@ -611,7 +611,7 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-         cache_key: v4.2.0-rust-1.88.0-devnet-test-cache 
+         cache_key: v4.2.0-rust-1.96.0-devnet-test-cache 
      - install_snarkos
      - run:
           name: "Run DB backup test"
@@ -630,7 +630,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-dev-on-prod-restart-test-cache
+          cache_key: v4.2.0-rust-1.96.0-dev-on-prod-restart-test-cache
       - install_snarkos
       - run:
           name: "Run dev-on-prod restart test"
@@ -639,7 +639,7 @@ jobs:
           command: |
             ./.ci/test_dev_on_prod_restart.sh
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-dev-on-prod-restart-test-cache
+          cache_key: v4.2.0-rust-1.96.0-dev-on-prod-restart-test-cache
 
   chaotic-minority-reset-test:
     executor: ubuntu-vm
@@ -647,7 +647,7 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-        cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+        cache_key: v4.2.0-rust-1.96.0-chaotic-minority-reset-test-cache
      - install_rust
      - install_snarkos
      - run:
@@ -661,7 +661,7 @@ jobs:
         command: |
           ./.ci/test_reset_minority.sh
      - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+          cache_key: v4.2.0-rust-1.96.0-chaotic-minority-reset-test-cache
 
   chaotic-majority-reset-test:
     executor: ubuntu-vm
@@ -669,7 +669,7 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache
+        cache_key: v4.2.0-rust-1.96.0-chaotic-majority-restart-test-cache
      - install_rust
      - install_snarkos
      - run:
@@ -683,7 +683,7 @@ jobs:
           command: |
             ./.ci/test_restart_majority.sh
      - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache 
+          cache_key: v4.2.0-rust-1.96.0-chaotic-majority-restart-test-cache 
 
   upgrade-test:
     executor: rust-docker
@@ -691,7 +691,7 @@ jobs:
     steps:
       - run_upgrade_test:
           workspace_member: .
-          cache_key: v4.2.0-rust-1.88.0-upgrade-test-cache
+          cache_key: v4.2.0-rust-1.96.0-upgrade-test-cache
 
   # Check crates that do not have any tests individually
   check-other-crates:
@@ -700,7 +700,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+          cache_key: v4.2.0-rust-1.96.0-check-other-crates-cache
       - run:
           name: Check snarkos-node-metrics crate
           no_output_timeout: 10m
@@ -711,7 +711,7 @@ jobs:
           command: cargo check --package=snarkos-display --all-features
 
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+          cache_key: v4.2.0-rust-1.96.0-check-other-crates-cache
 
   check-fmt:
     executor: rust-docker
@@ -720,13 +720,13 @@ jobs:
       - checkout
       - install_fmt_nightly
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-fmt-cache
+          cache_key: v4.2.0-rust-1.96.0-fmt-cache
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +<< pipeline.parameters.fmt_nightly >> fmt --all -- --check
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-fmt-cache
+          cache_key: v4.2.0-rust-1.96.0-fmt-cache
 
   check-unused-dependencies:
     executor: rust-docker
@@ -734,7 +734,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-machete-cache
+          cache_key: v4.2.0-rust-1.96.0-machete-cache
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
@@ -742,7 +742,7 @@ jobs:
             cargo install cargo-machete@0.7.0
             cargo machete
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-machete-cache
+          cache_key: v4.2.0-rust-1.96.0-machete-cache
 
   check-cargo-deny:
     executor: rust-docker
@@ -750,7 +750,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-cargo-deny-cache
+          cache_key: v4.2.0-rust-1.96.0-cargo-deny-cache
       - run:
           name: Check advisories, licenses, bans, and sources
           no_output_timeout: 10m
@@ -758,7 +758,7 @@ jobs:
             cargo install cargo-deny@0.20.2 --locked
             cargo deny check
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-cargo-deny-cache
+          cache_key: v4.2.0-rust-1.96.0-cargo-deny-cache
 
   check-clippy:
     executor: rust-docker
@@ -766,7 +766,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-clippy-cache
+          cache_key: v4.2.0-rust-1.96.0-clippy-cache
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -774,7 +774,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-clippy-cache
+          cache_key: v4.2.0-rust-1.96.0-clippy-cache
 
   lint-scripts:
     executor: rust-docker
@@ -782,7 +782,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+          cache_key: v4.2.0-rust-1.96.0-lint-scripts-cache
       - run:
            name: Install shellcheck
            command: |
@@ -795,7 +795,7 @@ jobs:
           command: |
             shellcheck -x .ci/*.sh scripts/*.sh
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+          cache_key: v4.2.0-rust-1.96.0-lint-scripts-cache
 
   verify-windows:
     executor:
