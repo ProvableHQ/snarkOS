@@ -32,11 +32,8 @@ use snarkos_node_bft_events::{
     BlockResponse,
     CertificateRequest,
     CertificateResponse,
-    ChallengeRequest,
-    ChallengeResponse,
     DataBlocks,
     Event,
-    EventTrait,
     HANDSHAKE_DOMAIN,
     HandshakeHint,
     InitiatorInfo,
@@ -65,7 +62,6 @@ use snarkos_node_network::{
         Role,
         binding_message,
         detect_handshake_protocol,
-        prepare_framed,
         write_noise_magic,
     },
     shorten_snarkos_sha,
@@ -93,7 +89,7 @@ use snarkvm::{
 };
 
 use colored::Colorize;
-use futures::{SinkExt, future::join_all};
+use futures::future::join_all;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -113,9 +109,6 @@ use tokio::{
     sync::{OnceCell, oneshot},
     task::{self, JoinHandle},
 };
-use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
-
 /// The maximum interval of events to cache.
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
 /// The maximum interval of requests to cache.
@@ -163,34 +156,6 @@ const CONNECTION_ATTEMPTS_SINCE_SECS: i64 = 10;
 
 /// The amount of time an IP address is prohibited from connecting.
 const IP_BAN_TIME_IN_SECS: u64 = 300;
-
-/// The consensus version at which this node starts *initiating* Noise handshakes, if one is
-/// scheduled.
-///
-/// Only the initiator's choice is gated: a responder accepts either protocol as soon as this code
-/// ships, which is what allows validators to be upgraded one at a time. `None` means no switchover
-/// has been scheduled yet - except in development, where the Noise path is always taken so that
-/// devnets exercise it, and in tests, which pin the choice explicitly.
-///
-/// Setting this is not the end of the migration, only the middle of it; see
-/// [`LEGACY_HANDSHAKE_EXPIRY`].
-const NOISE_HANDSHAKE_ACTIVATION: Option<ConsensusVersion> = Some(ConsensusVersion::V20);
-
-/// The consensus version at which this node stops *accepting* the legacy handshake, if one is
-/// scheduled.
-///
-/// This is the step that actually collects what the conversion is for. For as long as the responder
-/// still accepts the legacy handshake, two things remain reachable through it: the relay that the
-/// handshake binding exists to prevent, and the legacy handshake codec's 1 MiB frame limit - sixteen
-/// times what a Noise message may be, on a buffer an unauthenticated peer gets to size. Preferring
-/// the new path does not close either; refusing the old one does.
-///
-/// It must trail [`NOISE_HANDSHAKE_ACTIVATION`] by enough for every peer to have switched, as a
-/// validator that has not yet reached the activation still dials with the legacy handshake and would
-/// be shut out. Note also that the same relay is reachable through the router's handshake, which
-/// signs a byte-identical message with the same account key, so the gateway cannot be the last part
-/// of this to be converted.
-const LEGACY_HANDSHAKE_EXPIRY: Option<ConsensusVersion> = Some(ConsensusVersion::V21);
 
 /// Part of the Gateway API that deals with networking.
 /// This is a separate trait to allow for easier testing/mocking.
@@ -251,14 +216,6 @@ pub struct InnerGateway<N: Network> {
     trusted_peers_only: bool,
     /// The development mode.
     dev: Option<u16>,
-    /// Pins which handshake this node offers when it dials, bypassing
-    /// [`NOISE_HANDSHAKE_ACTIVATION`].
-    ///
-    /// Tests default to the Noise handshake, since that is the one under test, and set this to
-    /// `false` to cover the other half of the transition: a converted node has to keep talking to
-    /// unconverted ones, which means the legacy path must stay exercised for as long as it exists.
-    #[cfg(any(test, feature = "test"))]
-    initiates_noise_handshake: std::sync::atomic::AtomicBool,
 }
 
 impl<N: Network> PeerPoolHandling<N> for Gateway<N> {
@@ -354,9 +311,6 @@ impl<N: Network> Gateway<N> {
             node_data_dir,
             trusted_peers_only,
             dev,
-            // See the field's documentation for why the tests start out on the Noise handshake.
-            #[cfg(any(test, feature = "test"))]
-            initiates_noise_handshake: std::sync::atomic::AtomicBool::new(true),
         })))
     }
 
@@ -1630,26 +1584,18 @@ impl<N: Network> Handshake for Gateway<N> {
 
         // Perform the handshake; we pass on a mutable reference to peer_ip in case the process is broken at any point in time.
         //
-        // The initiator picks the handshake protocol, gated on the block height so that validators
-        // can be upgraded one at a time; the responder goes along with whichever one it is offered.
+        // Validators speak only the Noise handshake. A peer that opens with anything else is turned
+        // away before any key is derived.
         let handshake_result = if peer_side == ConnectionSide::Responder {
-            if self.initiates_noise_handshake() {
-                write_noise_magic(stream).await?;
-                self.handshake_inner_initiator_noise(peer_addr, restrictions_id, stream).await
-            } else {
-                self.handshake_inner_initiator(peer_addr, restrictions_id, stream).await
-            }
+            write_noise_magic(stream).await?;
+            self.handshake_inner_initiator_noise(peer_addr, restrictions_id, stream).await
         } else {
             match detect_handshake_protocol(stream).await? {
                 (HandshakeProtocol::Noise, _) => {
                     self.handshake_inner_responder_noise(peer_addr, &mut listener_addr, restrictions_id, stream).await
                 }
-                (HandshakeProtocol::Legacy, _) if !self.accepts_legacy_handshake() => {
-                    Err(ConnectError::other(format!("'{peer_addr}' offered the legacy handshake, which has expired")))
-                }
-                (HandshakeProtocol::Legacy, prefix) => {
-                    self.handshake_inner_responder(peer_addr, &mut listener_addr, restrictions_id, stream, &prefix)
-                        .await
+                (HandshakeProtocol::Legacy, _) => {
+                    Err(ConnectError::other(format!("'{peer_addr}' did not offer the Noise handshake")))
                 }
             }
         };
@@ -1703,7 +1649,7 @@ impl<N: Network> Handshake for Gateway<N> {
                     }
                 }
             }
-            // Neither handshake can succeed before it has learned the peer's listening address, so
+            // The handshake cannot succeed before it has learned the peer's listening address, so
             // this is unreachable; if it ever happened, the connection would go live with neither a
             // peer pool nor a resolver entry, and every event on it would be discarded as coming
             // from an unknown peer. Refuse it instead of leaving it in that state.
@@ -1722,44 +1668,6 @@ impl<N: Network> Handshake for Gateway<N> {
 
         Ok(connection)
     }
-}
-
-/// A macro unwrapping the expected handshake event or returning an error for unexpected events.
-macro_rules! expect_event {
-    ($event_ty:path, $framed:expr, $peer_addr:expr) => {
-        match $framed.try_next().await? {
-            // Received the expected event, proceed.
-            Some($event_ty(data)) => {
-                trace!("{CONTEXT} Received '{}' from '{}'", data.name(), $peer_addr);
-                data
-            }
-            // Received a disconnect event, abort.
-            Some(Event::Disconnect($crate::events::Disconnect { reason })) => {
-                return Err(ConnectError::other(format!("'{}' disconnected with reason \"{reason}\"", $peer_addr)));
-            }
-            // Received an unexpected event, abort.
-            Some(ty) => {
-                return Err(ConnectError::other(format!(
-                    "'{}' did not follow the handshake protocol: received {:?} instead of {}",
-                    $peer_addr,
-                    ty.name(),
-                    stringify!($msg_ty),
-                )));
-            }
-            // Received nothing.
-            None => return Err(ConnectError::IoError(io::ErrorKind::BrokenPipe.into())),
-        }
-    };
-}
-
-/// Send the given message to the peer.
-async fn send_event<N: Network>(
-    framed: &mut Framed<&mut TcpStream, EventCodec<N>>,
-    peer_addr: SocketAddr,
-    event: Event<N>,
-) -> io::Result<()> {
-    trace!("{CONTEXT} Sending '{}' to '{peer_addr}'", event.name());
-    framed.send(event).await
 }
 
 /// Serializes a handshake payload for transmission inside a Noise message.
@@ -1810,83 +1718,7 @@ fn finish_noise_handshake(noise: NoiseSession<&mut TcpStream>) {
     let _stream = noise.into_inner();
 }
 
-/// Concludes a legacy handshake, dropping its codec along with anything the peer had pipelined behind
-/// the last handshake message.
-///
-/// Unlike the Noise handshake, this one reads through a buffering codec, so it can pull bytes off the
-/// socket that belong to the events which follow - and those are lost here, leaving the event codec to
-/// start in the middle of a frame. That has always been the case, and carrying them across would mean
-/// wrapping the stream for a protocol that is being retired, so it is logged rather than fixed.
-fn note_legacy_handshake_end<N: Network>(framed: Framed<&mut TcpStream, EventCodec<N>>, peer_addr: SocketAddr) {
-    let leftover = framed.into_parts().read_buf;
-
-    if !leftover.is_empty() {
-        debug!("{CONTEXT} Discarding {} bytes '{peer_addr}' sent before the handshake was over", leftover.len());
-    }
-}
-
-/// Distills a legacy challenge request into the protocol-agnostic peer information.
-///
-/// The peer's restrictions ID is not part of its challenge request, but by the time this is called
-/// `verify_challenge_response` has established that it matches the one passed in.
-fn peer_info_from_challenge_request<N: Network>(
-    request: ChallengeRequest<N>,
-    restrictions_id: Field<N>,
-) -> PeerInfo<N> {
-    let ChallengeRequest { version, listener_port, address, nonce: _, snarkos_sha } = request;
-    PeerInfo { version, listener_port, address, restrictions_id, snarkos_sha }
-}
-
 impl<N: Network> Gateway<N> {
-    /// Returns `true` if this node should offer the Noise handshake when it dials the given peer.
-    fn initiates_noise_handshake(&self) -> bool {
-        // Tests pin the choice, so that both sides of the transition can be covered.
-        if let Some(initiates) = self.pinned_handshake_protocol() {
-            return initiates;
-        }
-
-        // Development nodes always take the new path, so that devnets exercise it.
-        self.is_dev() || self.consensus_version_reached(NOISE_HANDSHAKE_ACTIVATION)
-    }
-
-    /// Returns `true` if this node still accepts the legacy handshake from a peer that dials it.
-    ///
-    /// Unlike the choice of what to offer, this is not pinned in tests and not forced in development:
-    /// a converted node has to keep answering unconverted ones for the whole of the transition, and
-    /// the tests covering that rely on it.
-    fn accepts_legacy_handshake(&self) -> bool {
-        !self.consensus_version_reached(LEGACY_HANDSHAKE_EXPIRY)
-    }
-
-    /// Returns `true` if the given consensus version is scheduled and the ledger has reached it.
-    fn consensus_version_reached(&self, version: Option<ConsensusVersion>) -> bool {
-        version.is_some_and(|version| {
-            N::CONSENSUS_HEIGHT(version).is_ok_and(|height| self.ledger.latest_block_height() >= height)
-        })
-    }
-
-    /// The pinned choice of handshake protocol; always `None` outside tests.
-    #[cfg(not(any(test, feature = "test")))]
-    fn pinned_handshake_protocol(&self) -> Option<bool> {
-        None
-    }
-
-    /// The pinned choice of handshake protocol; see `InnerGateway::initiates_noise_handshake`.
-    #[cfg(any(test, feature = "test"))]
-    fn pinned_handshake_protocol(&self) -> Option<bool> {
-        Some(self.initiates_noise_handshake.load(std::sync::atomic::Ordering::Relaxed))
-    }
-
-    /// Pins whether this node offers the Noise handshake when it dials, regardless of the activation
-    /// height.
-    ///
-    /// This exists so that tests can cover the transition, during which a converted node still has
-    /// to be able to shake hands with unconverted ones.
-    #[cfg(any(test, feature = "test"))]
-    pub fn set_initiates_noise_handshake(&self, initiates: bool) {
-        self.initiates_noise_handshake.store(initiates, std::sync::atomic::Ordering::Relaxed);
-    }
-
     /// Returns the snarkOS commit hash to disclose to a peer, if any.
     fn snarkos_sha(&self) -> Option<[u8; 40]> {
         let current_block_height = self.ledger.latest_block_height();
@@ -2001,14 +1833,10 @@ impl<N: Network> Gateway<N> {
     /// verifies a signature only once the initiator's authenticated metadata has passed all of the
     /// cheap checks, and produces one only once that verification has succeeded.
     ///
-    /// The legacy handshake also runs its cheap checks first, so a peer that fails one of those was
-    /// never expensive under either protocol. What changes is the price of *claiming* an identity
-    /// that passes them - committee membership is public, so anyone can claim it. Under the legacy
-    /// handshake that claim alone bought a signature from this node, for the cost of one packet.
-    /// Here it buys a handful of Diffie-Hellman operations and a signature verification; extracting
-    /// a signature requires actually holding the committee key, and even reaching the verification
-    /// requires completing the pattern, which a peer that cannot receive our reply - a spoofed
-    /// source address - cannot do.
+    /// Committee membership is public, so anyone can claim a validator's identity. That claim buys
+    /// a handful of Diffie-Hellman operations and a signature verification. Extracting a signature
+    /// requires holding the committee key, and reaching the verification requires completing the
+    /// pattern, which a peer that cannot receive our reply - a spoofed source address - cannot do.
     async fn handshake_inner_responder_noise<'a>(
         &'a self,
         peer_addr: SocketAddr,
@@ -2110,162 +1938,6 @@ impl<N: Network> Gateway<N> {
         Err(reason.into_connect_error(peer_addr))
     }
 
-    /// The connection initiator side of the legacy handshake.
-    async fn handshake_inner_initiator<'a>(
-        &'a self,
-        peer_addr: SocketAddr,
-        restrictions_id: Field<N>,
-        stream: &'a mut TcpStream,
-    ) -> Result<PeerInfo<N>, ConnectError> {
-        // Introduce the peer into the peer pool.
-        self.add_connecting_peer(peer_addr)?;
-
-        // Construct the stream.
-        let mut framed = Framed::new(stream, EventCodec::<N>::handshake());
-
-        /* Step 1: Send the challenge request. */
-
-        // Sample a random nonce.
-        let our_nonce: u64 = rand::random();
-        // Determine the snarkOS SHA to send to the peer.
-        let snarkos_sha = self.snarkos_sha();
-        // Send a challenge request to the peer.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha);
-        send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
-
-        /* Step 2: Receive the peer's challenge response followed by the challenge request. */
-
-        // Listen for the challenge response message.
-        let peer_response = expect_event!(Event::ChallengeResponse, framed, peer_addr);
-        // Listen for the challenge request message.
-        let peer_request = expect_event!(Event::ChallengeRequest, framed, peer_addr);
-
-        // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) = self
-            .verify_challenge_response(peer_addr, peer_request.address, peer_response, restrictions_id, our_nonce)
-            .await
-        {
-            send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(ConnectError::application(reason));
-        }
-
-        // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
-            send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(reason.into_connect_error(peer_addr));
-        }
-
-        /* Step 3: Send the challenge response. */
-
-        // Sign the counterparty nonce.
-        let response_nonce: u64 = rand::random();
-        let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
-            return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
-        };
-        // Send the challenge response.
-        let our_response =
-            ChallengeResponse { restrictions_id, signature: Data::Object(our_signature), nonce: response_nonce };
-        send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
-
-        note_legacy_handshake_end(framed, peer_addr);
-
-        Ok(peer_info_from_challenge_request(peer_request, restrictions_id))
-    }
-
-    /// The connection responder side of the legacy handshake.
-    ///
-    /// `prefix` holds the bytes that were consumed from the stream while determining which
-    /// handshake protocol the peer speaks; they are the beginning of its first frame.
-    async fn handshake_inner_responder<'a>(
-        &'a self,
-        peer_addr: SocketAddr,
-        peer_ip: &mut Option<SocketAddr>,
-        restrictions_id: Field<N>,
-        stream: &'a mut TcpStream,
-        prefix: &[u8],
-    ) -> Result<PeerInfo<N>, ConnectError> {
-        // Construct the stream.
-        let mut framed = prepare_framed(stream, EventCodec::<N>::handshake(), prefix);
-
-        /* Step 1: Receive the challenge request. */
-
-        // Listen for the challenge request message.
-        let peer_request = expect_event!(Event::ChallengeRequest, framed, peer_addr);
-
-        // Ensure the address is not the same as this node.
-        if self.account.address() == peer_request.address {
-            return Err(ConnectError::SelfConnect { address: peer_addr });
-        }
-
-        // Obtain the peer's listening address.
-        *peer_ip = Some(SocketAddr::new(peer_addr.ip(), peer_request.listener_port));
-        let peer_ip = peer_ip.unwrap();
-
-        // Knowing the peer's listening address, ensure it is allowed to connect.
-        if let Err(reason) = self.ensure_peer_is_allowed(peer_ip) {
-            send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(reason.into_connect_error(peer_addr));
-        }
-
-        // Introduce the peer into the peer pool.
-        self.add_connecting_peer(peer_ip)?;
-
-        // Verify the challenge request. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) = self.verify_challenge_request(peer_addr, &peer_request) {
-            send_event(&mut framed, peer_addr, reason.into()).await?;
-            return Err(reason.into_connect_error(peer_addr));
-        }
-
-        /* Step 2: Send the challenge response followed by own challenge request. */
-
-        // Sign the counterparty nonce.
-        let response_nonce: u64 = rand::random();
-        let data = [peer_request.nonce.to_le_bytes(), response_nonce.to_le_bytes()].concat();
-        let Ok(our_signature) = self.account.sign_bytes(&data, &mut rand::rng()) else {
-            return Err(ConnectError::other(anyhow!("Failed to sign the challenge request nonce")));
-        };
-        // Send the challenge response.
-        let our_response =
-            ChallengeResponse { restrictions_id, signature: Data::Object(our_signature), nonce: response_nonce };
-        send_event(&mut framed, peer_addr, Event::ChallengeResponse(our_response)).await?;
-
-        // Sample a random nonce.
-        let our_nonce: u64 = rand::random();
-        // Determine the snarkOS SHA to send to the peer.
-        let snarkos_sha = self.snarkos_sha();
-        // Send the challenge request.
-        let our_request = ChallengeRequest::new(self.local_ip().port(), self.account.address(), our_nonce, snarkos_sha);
-        send_event(&mut framed, peer_addr, Event::ChallengeRequest(our_request)).await?;
-
-        /* Step 3: Receive the challenge response. */
-
-        // Listen for the challenge response message.
-        let peer_response = expect_event!(Event::ChallengeResponse, framed, peer_addr);
-        // Verify the challenge response. If a disconnect reason was returned, send the disconnect message and abort.
-        if let Some(reason) = self
-            .verify_challenge_response(peer_addr, peer_request.address, peer_response, restrictions_id, our_nonce)
-            .await
-        {
-            send_event(&mut framed, peer_addr, reason.into()).await?;
-            Err(reason.into_connect_error(peer_addr))
-        } else {
-            note_legacy_handshake_end(framed, peer_addr);
-
-            Ok(peer_info_from_challenge_request(peer_request, restrictions_id))
-        }
-    }
-
-    /// Verifies the given challenge request. Returns a disconnect reason if the request is invalid.
-    #[must_use]
-    fn verify_challenge_request(&self, peer_addr: SocketAddr, event: &ChallengeRequest<N>) -> Option<DisconnectReason> {
-        // Retrieve the components of the challenge request.
-        let &ChallengeRequest { version, listener_port, address, nonce: _, ref snarkos_sha } = event;
-        log_repo_sha_comparison(peer_addr, snarkos_sha, CONTEXT);
-
-        self.verify_peer_claims(peer_addr, version, listener_port, address)
-    }
-
     /// Verifies the metadata a peer disclosed during the Noise handshake. Returns a disconnect
     /// reason if the peer is not acceptable.
     ///
@@ -2312,7 +1984,7 @@ impl<N: Network> Gateway<N> {
         self.verify_peer_claims(peer_addr, version, listener_port, address)
     }
 
-    /// The peer checks shared by both handshakes.
+    /// The checks a peer's claimed identity can be held to without any cryptography.
     #[must_use]
     fn verify_peer_claims(
         &self,
@@ -2344,37 +2016,6 @@ impl<N: Network> Gateway<N> {
             return Some(DisconnectReason::AlreadyConnectedToAleoAddress);
         }
 
-        None
-    }
-
-    /// Verifies the given challenge response. Returns a disconnect reason if the response is invalid.
-    #[must_use]
-    async fn verify_challenge_response(
-        &self,
-        peer_addr: SocketAddr,
-        peer_address: Address<N>,
-        response: ChallengeResponse<N>,
-        expected_restrictions_id: Field<N>,
-        expected_nonce: u64,
-    ) -> Option<DisconnectReason> {
-        // Retrieve the components of the challenge response.
-        let ChallengeResponse { restrictions_id, signature, nonce } = response;
-
-        // Verify the restrictions ID.
-        if restrictions_id != expected_restrictions_id {
-            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (incorrect restrictions ID)");
-            return Some(DisconnectReason::InvalidChallengeResponse);
-        }
-        // Perform the deferred non-blocking deserialization of the signature.
-        let Ok(signature) = spawn_blocking!(signature.deserialize_blocking()) else {
-            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (cannot deserialize the signature)");
-            return Some(DisconnectReason::InvalidChallengeResponse);
-        };
-        // Verify the signature.
-        if !signature.verify_bytes(&peer_address, &[expected_nonce.to_le_bytes(), nonce.to_le_bytes()].concat()) {
-            warn!("{CONTEXT} Handshake with '{peer_addr}' failed (invalid signature)");
-            return Some(DisconnectReason::InvalidChallengeResponse);
-        }
         None
     }
 }
