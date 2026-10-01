@@ -509,14 +509,15 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     );
                     return Ok(false);
                 }
-                // Resends are only useful while the proposal's round is ongoing, and only until the next
-                // recheck supersedes them.
-                let token = self.storage.round_cancellation_token(proposal.round()).child_token();
-                std::mem::replace(&mut *self.resend_token.lock(), token.clone()).cancel();
-                if token.is_cancelled() {
+                // Resends are only useful while the proposal's round is ongoing.
+                // Note: if the round is over, the previous resends are already cancelled, as they are scoped to it.
+                let round_token = self.storage.round_cancellation_token(proposal.round());
+                if round_token.is_cancelled() {
                     debug!("Not resending batch proposal for round {} (round is over)", proposal.round());
                     return Ok(false);
                 }
+                // Retrieve the committee lookback for the proposal's round.
+                let committee_lookback = self.ledger.get_committee_lookback_for_round(proposal.round())?;
                 // Construct the event, and serialize the batch header once for all non-signers, rather than
                 // once per peer in `Transport::send`.
                 // Note: this is done inline, as the proposed batch lock is held (so it can't be awaited on),
@@ -526,8 +527,12 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     error!("Unable to serialize the batch proposal for round {} - {err}", proposal.round());
                     return Ok(false);
                 }
+                // Supersede the previous recheck's resends, now that their replacements are about to be spawned.
+                // Note: this is done after the fallible steps above, so a failure keeps the previous resends alive.
+                let token = round_token.child_token();
+                std::mem::replace(&mut *self.resend_token.lock(), token.clone()).cancel();
                 // Iterate through the non-signers.
-                for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
+                for address in proposal.nonsigners(&committee_lookback) {
                     // Resolve the address to the peer IP.
                     match self.gateway.resolver().read().get_peer_ip_for_address(address) {
                         // Resend the batch proposal to the validator for signing.
