@@ -379,6 +379,19 @@ function check_heights() {
   fi
 }
 
+# Gateway logs this at ERROR after 60s without a quorum. That is expected while a
+# validator is stopped for an upgrade or restart, so tests that take nodes down
+# should pass this to check_logs as an extra ignored pattern.
+# shellcheck disable=SC2034 # sourced by upgrade tests as an extra check_logs ignore pattern
+EXPECTED_ERROR_NO_QUORUM='Not connected to a quorum of validators'
+
+# Prints ERROR lines that are not on the ignore list. Empty output means none.
+function unexpected_error_lines() {
+  local log_content=$1
+  local ignored_regex=$2
+  echo "$log_content" | grep "ERROR" | grep -vE "$ignored_regex" || true
+}
+
 # Function checking that nodes created logs on disk and they contain no errors.
 function check_logs() {
   log "Checking logs exist for all nodes..."
@@ -393,9 +406,17 @@ function check_logs() {
   local max_client_log_size_bytes=${6:-}
   # Optional Unix epoch timestamp; only log lines at or after this time are checked.
   local since_epoch=${7:-}
+  # Optional extra `|`-separated ERROR substrings that should not fail the job.
+  local extra_ignored_errors=${8:-}
 
   if [ -n "$since_epoch" ]; then
     log "Only checking log lines at or after $(epoch_to_iso "$since_epoch")"
+  fi
+
+  # TODO(kaimast): remove "already exists in the ledger" once spurious sync errors are gone.
+  local ignored_error_regex='already exists in the ledger'
+  if [ -n "$extra_ignored_errors" ]; then
+    ignored_error_regex="${ignored_error_regex}|${extra_ignored_errors}"
   fi
 
   local all_reached=true
@@ -419,11 +440,10 @@ function check_logs() {
 
     validator_log_content=$(log_lines_since "$validator_log" "$since_epoch")
 
-    #TODO(kaimast): remove the grep -v "already exists in the ledger" once spurious sync errors are gone.
-    if echo "$validator_log_content" | grep "ERROR" | grep -qv "already exists in the ledger"; then
+    unexpected_errors=$(unexpected_error_lines "$validator_log_content" "$ignored_error_regex")
+    if [ -n "$unexpected_errors" ]; then
       log "❌ Test failed! Validator #${validator_index} logs contain errors."
-      # Print the errors to the console.
-      echo "$validator_log_content" | grep "ERROR" | grep -v "already exists in the ledger"
+      echo "$unexpected_errors"
       return 1
     fi
 
@@ -452,10 +472,10 @@ function check_logs() {
 
     client_log_content=$(log_lines_since "$client_log" "$since_epoch")
 
-    if echo "$client_log_content" | grep "ERROR" | grep -qv "already exists in the ledger"; then
+    unexpected_errors=$(unexpected_error_lines "$client_log_content" "$ignored_error_regex")
+    if [ -n "$unexpected_errors" ]; then
       log "❌ Test failed! Client #${client_index} logs contain errors."
-      # Print the errors to the console.
-      echo "$client_log_content" | grep "ERROR" | grep -v "already exists in the ledger"
+      echo "$unexpected_errors"
       return 1
     fi
 

@@ -441,7 +441,9 @@ done
 
 log "Upgrade test passed: all nodes upgraded to PR snarkos, the network kept advancing, and every node's consensus version matches the configured schedule."
 
-if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "$MAX_CLIENT_LOG_SIZE_BYTES"; then
+# Remaining validators log this at ERROR after 60s without a quorum, which is
+# expected while another node is stopped for upgrade.
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "$MAX_CLIENT_LOG_SIZE_BYTES" "" "$EXPECTED_ERROR_NO_QUORUM"; then
   exit 0
 else
   exit 1

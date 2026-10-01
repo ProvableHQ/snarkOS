@@ -296,7 +296,9 @@ fi
 
 log "🎉 Test passed! Node synced to new consensus height ($new_consensus_height) after another node was upgraded."
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES"; then
+# Remaining validators log this at ERROR after 60s without a quorum, which is
+# expected while another node is stopped for upgrade.
+if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "" "" "$EXPECTED_ERROR_NO_QUORUM"; then
   exit 0
 else
   exit 1
