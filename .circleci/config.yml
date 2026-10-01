@@ -854,6 +854,7 @@ workflows:
                 - mainnet
                 - staging
                 - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
       - chaotic-minority-reset-test:
           filters:
@@ -864,6 +865,7 @@ workflows:
                 - mainnet
                 - staging
                 - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
       - chaotic-majority-reset-test:
           filters:
@@ -874,6 +876,7 @@ workflows:
                 - mainnet
                 - staging
                 - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
       - upgrade-test:
           filters:
@@ -884,6 +887,7 @@ workflows:
                 - mainnet
                 - staging
                 - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
   snarkos-workflow:
     jobs:
