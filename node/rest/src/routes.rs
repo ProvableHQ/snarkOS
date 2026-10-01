@@ -126,6 +126,8 @@ pub(crate) struct BlockRange {
     start: u32,
     /// The ending block height (exclusive).
     end: u32,
+    /// Whether to clamp a range that reaches past the tip, rather than fail the request.
+    allow_partial: Option<bool>,
 }
 
 /// The maximum number of blocks that `get_blocks` serves in one request.
@@ -159,6 +161,12 @@ const MAX_BLOCK_TRANSACTIONS_RANGE: u32 = 160;
 
 /// Validates a block range against the given maximum, and returns `(start, end)`.
 ///
+/// With `allow_partial`, the range is then clamped to the heights up to `latest_height`, so a
+/// caller following the tip can ask for the next `N` heights and receive as many as exist: element
+/// `i` of the response is height `start + i`, and a `start` past the tip yields an empty range. The
+/// maximum applies to the range as requested. A height missing at or below the tip is left in the
+/// range for the lookup to report.
+///
 /// Each route serving a range picks its own maximum, sized so that the largest response it can
 /// produce stays on the order of a single block. A block hash and a header are several orders of
 /// magnitude smaller than the block they belong to, so applying the `get_blocks` maximum to them
@@ -167,7 +175,12 @@ const MAX_BLOCK_TRANSACTIONS_RANGE: u32 = 160;
 /// `item` names what the route serves, so that a caller who exceeds the maximum is told the limit
 /// in the unit it applies to. On the default and `/v1` prefixes this text is the only diagnostic
 /// the caller receives, since `v1_error_middleware` replaces the status code.
-fn check_block_range(block_range: BlockRange, max_block_range: u32, item: &str) -> Result<(u32, u32), RestError> {
+fn check_block_range(
+    block_range: BlockRange,
+    max_block_range: u32,
+    item: &str,
+    latest_height: u32,
+) -> Result<(u32, u32), RestError> {
     let (start_height, end_height) = (block_range.start, block_range.end);
 
     // Ensure the end height is greater than the start height.
@@ -182,6 +195,14 @@ fn check_block_range(block_range: BlockRange, max_block_range: u32, item: &str) 
             end_height - start_height
         )));
     }
+
+    if !block_range.allow_partial.unwrap_or(false) {
+        return Ok((start_height, end_height));
+    }
+
+    // Clamp the range to the tip.
+    let end_height = end_height.min(latest_height.saturating_add(1));
+    let start_height = start_height.min(end_height);
 
     Ok((start_height, end_height))
 }
@@ -354,11 +375,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
+    /// GET /<network>/blocks?start={start_height}&end={end_height}&allow_partial=true
+    ///
+    /// `start` is inclusive and `end` is exclusive. A height the node does not have is a 404. With
+    /// `allow_partial=true`, a range that reaches past the tip is clamped to it instead, so the
+    /// array is shorter than the range, and empty when `start` is past the tip.
     pub(crate) async fn get_blocks(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
     ) -> Result<ErasedJson, RestError> {
-        let (start_height, end_height) = check_block_range(block_range, MAX_BLOCK_RANGE, "blocks")?;
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_BLOCK_RANGE, "blocks", rest.ledger.latest_height())?;
 
         // Prepare a closure for the blocking work.
         let get_json_blocks = move || -> Result<ErasedJson, RestError> {
@@ -390,12 +417,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// A height the node does not have is a 404, and the whole request fails rather than returning
     /// a short array. Note that this is only visible on `/v2`: on the default and `/v1` prefixes
     /// the v1 error middleware replaces the status with a 500, so a caller that needs to tell a
-    /// not-yet-synced height apart from a fault has to use `/v2`.
+    /// not-yet-synced height apart from a fault has to use `/v2`, or pass `allow_partial=true` to
+    /// clamp the range to the tip as in `get_blocks`.
     pub(crate) async fn get_block_hashes(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
     ) -> Result<ErasedJson, RestError> {
-        let (start_height, end_height) = check_block_range(block_range, MAX_BLOCK_HASH_RANGE, "block hashes")?;
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_BLOCK_HASH_RANGE, "block hashes", rest.ledger.latest_height())?;
 
         // Prepare a closure for the blocking work.
         //
@@ -430,12 +459,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// A height the node does not have is a 404, and the whole request fails rather than returning
     /// a short array. Note that this is only visible on `/v2`: on the default and `/v1` prefixes
     /// the v1 error middleware replaces the status with a 500, so a caller that needs to tell a
-    /// not-yet-synced height apart from a fault has to use `/v2`.
+    /// not-yet-synced height apart from a fault has to use `/v2`, or pass `allow_partial=true` to
+    /// clamp the range to the tip as in `get_blocks`.
     pub(crate) async fn get_block_headers(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
     ) -> Result<ErasedJson, RestError> {
-        let (start_height, end_height) = check_block_range(block_range, MAX_BLOCK_HEADER_RANGE, "block headers")?;
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_BLOCK_HEADER_RANGE, "block headers", rest.ledger.latest_height())?;
 
         // Prepare a closure for the blocking work. Each height is two point lookups: the block ID
         // map, then the header map. See `get_block_hashes` for why this is sequential.
@@ -474,13 +505,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// A height the node does not have is a 404, and the whole request fails rather than returning
     /// a short array. Note that this is only visible on `/v2`: on the default and `/v1` prefixes
     /// the v1 error middleware replaces the status with a 500, so a caller that needs to tell a
-    /// not-yet-synced height apart from a fault has to use `/v2`.
+    /// not-yet-synced height apart from a fault has to use `/v2`, or pass `allow_partial=true` to
+    /// clamp the range to the tip as in `get_blocks`.
     pub(crate) async fn get_block_transactions_range(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
     ) -> Result<ErasedJson, RestError> {
-        let (start_height, end_height) =
-            check_block_range(block_range, MAX_BLOCK_TRANSACTIONS_RANGE, "blocks' transactions")?;
+        let (start_height, end_height) = check_block_range(
+            block_range,
+            MAX_BLOCK_TRANSACTIONS_RANGE,
+            "blocks' transactions",
+            rest.ledger.latest_height(),
+        )?;
 
         // Prepare a closure for the blocking work. Each height is two point lookups, the block ID
         // map then the transactions map, and deserializing the transactions themselves. That last
@@ -520,12 +556,14 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// `null` for it. Returning `null` inside an array would make a gap indistinguishable from a
     /// root that is genuinely absent, so this matches the other range routes and fails the whole
     /// request instead. As above, that 404 is only visible on `/v2`; the default and `/v1`
-    /// prefixes replace it with a 500.
+    /// prefixes replace it with a 500. `allow_partial=true` clamps the range to the tip as in
+    /// `get_blocks`.
     pub(crate) async fn get_block_state_roots(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
     ) -> Result<ErasedJson, RestError> {
-        let (start_height, end_height) = check_block_range(block_range, MAX_STATE_ROOT_RANGE, "state roots")?;
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_STATE_ROOT_RANGE, "state roots", rest.ledger.latest_height())?;
 
         // Prepare a closure for the blocking work. The state root map is keyed by height directly,
         // so each height is a single point lookup. See `get_block_hashes` for why this is
@@ -1767,41 +1805,84 @@ mod range_tests {
 
     const MAX: u32 = 50;
 
+    /// A tip above every height the validation tests ask for, so that a clamp would leave them
+    /// alone.
+    const TIP: u32 = 1_000;
+
     fn range(start: u32, end: u32) -> BlockRange {
-        BlockRange { start, end }
+        BlockRange { start, end, allow_partial: None }
+    }
+
+    fn partial_range(start: u32, end: u32) -> BlockRange {
+        BlockRange { start, end, allow_partial: Some(true) }
     }
 
     #[test]
     fn accepts_a_range_within_the_maximum() {
-        assert_eq!(check_block_range(range(10, 20), MAX, "blocks").unwrap(), (10, 20));
+        assert_eq!(check_block_range(range(10, 20), MAX, "blocks", TIP).unwrap(), (10, 20));
     }
 
     #[test]
     fn accepts_a_range_of_exactly_the_maximum() {
-        assert_eq!(check_block_range(range(10, 10 + MAX), MAX, "blocks").unwrap(), (10, 10 + MAX));
+        assert_eq!(check_block_range(range(10, 10 + MAX), MAX, "blocks", TIP).unwrap(), (10, 10 + MAX));
     }
 
     #[test]
     fn accepts_an_empty_range() {
-        assert_eq!(check_block_range(range(10, 10), MAX, "blocks").unwrap(), (10, 10));
+        assert_eq!(check_block_range(range(10, 10), MAX, "blocks", TIP).unwrap(), (10, 10));
     }
 
     #[test]
     fn rejects_an_inverted_range() {
         // This must be rejected before the width check, which would otherwise underflow.
-        let err = check_block_range(range(20, 10), MAX, "blocks").unwrap_err();
+        let err = check_block_range(range(20, 10), MAX, "blocks", TIP).unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn rejects_a_range_over_the_maximum() {
-        let err = check_block_range(range(10, 11 + MAX), MAX, "blocks").unwrap_err();
+        let err = check_block_range(range(10, 11 + MAX), MAX, "blocks", TIP).unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn leaves_a_range_past_the_tip_alone_by_default() {
+        assert_eq!(check_block_range(range(10, 30), MAX, "blocks", 19).unwrap(), (10, 30));
+    }
+
+    #[test]
+    fn clamps_a_partial_range_that_reaches_past_the_tip() {
+        // The tip itself is served, so the exclusive end lands one past it.
+        assert_eq!(check_block_range(partial_range(10, 30), MAX, "blocks", 19).unwrap(), (10, 20));
+        assert_eq!(check_block_range(partial_range(10, 30), MAX, "blocks", 10).unwrap(), (10, 11));
+    }
+
+    #[test]
+    fn clamps_a_partial_range_that_starts_past_the_tip_to_an_empty_range() {
+        let (start, end) = check_block_range(partial_range(10, 30), MAX, "blocks", 9).unwrap();
+        assert_eq!(start, end);
+
+        let (start, end) = check_block_range(partial_range(500, 530), MAX, "blocks", 9).unwrap();
+        assert_eq!(start, end);
+    }
+
+    #[test]
+    fn clamps_at_the_top_of_the_height_space_without_overflowing() {
+        assert_eq!(
+            check_block_range(partial_range(u32::MAX - 5, u32::MAX), MAX, "blocks", u32::MAX).unwrap(),
+            (u32::MAX - 5, u32::MAX)
+        );
+    }
+
+    #[test]
+    fn applies_the_maximum_to_the_requested_range_rather_than_the_clamped_one() {
+        let err = check_block_range(partial_range(0, 1 + MAX), MAX, "blocks", 0).unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn rejects_a_range_spanning_the_whole_height_space() {
-        let err = check_block_range(range(0, u32::MAX), MAX, "blocks").unwrap_err();
+        let err = check_block_range(range(0, u32::MAX), MAX, "blocks", TIP).unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 
