@@ -31,7 +31,7 @@ features = [ "parking_lot" ]
 optional = true
 
 [dependencies.metrics]
-version = "0.22"
+version = "0.24"
 
 [dependencies.metrics-exporter-prometheus]
 version = "0.13"

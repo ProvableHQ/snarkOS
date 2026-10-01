@@ -3085,6 +3085,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrics"
+version = "0.24.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89550ee9f79e88fef3119de263694973a8adb26c21d75322164fb8c493039fe2"
+dependencies = [
+ "portable-atomic",
+ "rapidhash",
+]
+
+[[package]]
 name = "metrics-exporter-prometheus"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3095,7 +3105,7 @@ dependencies = [
  "hyper-tls 0.5.0",
  "indexmap 2.14.2",
  "ipnet",
- "metrics",
+ "metrics 0.22.4",
  "metrics-util",
  "quanta",
  "thiserror 1.0.69",
@@ -3112,7 +3122,7 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
  "hashbrown 0.14.5",
- "metrics",
+ "metrics 0.22.4",
  "num_cpus",
  "quanta",
  "sketches-ddsketch",
@@ -4085,6 +4095,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60aa6af80be32871323012e02e6e65f8a7cc7890931ae421d217ad8fe0df2ccf"
 dependencies = [
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rapidhash"
+version = "4.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5da7e78a036ce858e8d55b7e7dc8ba3a88b78350fd2155d3591bbd966b58589e"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -5295,7 +5314,7 @@ version = "4.10.1"
 dependencies = [
  "built",
  "locktick",
- "metrics",
+ "metrics 0.24.6",
  "metrics-exporter-prometheus",
  "parking_lot",
  "rayon",
@@ -6261,7 +6280,7 @@ name = "snarkvm-metrics"
 version = "4.10.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2#638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2"
 dependencies = [
- "metrics",
+ "metrics 0.22.4",
 ]
 
 [[package]]
@@ -6719,7 +6738,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
