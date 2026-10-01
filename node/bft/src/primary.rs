@@ -831,8 +831,12 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         })?;
 
         // Broadcast the batch to all validators for signing, until the round is over.
-        self.gateway
-            .broadcast_until(Event::BatchPropose(batch_header.into()), self.storage.round_cancellation_token(round));
+        // Note: `round` may be stale by now, as proposing awaits; peers still sign for the previous round,
+        // so the broadcast is scoped to the current round instead.
+        self.gateway.broadcast_until(
+            Event::BatchPropose(batch_header.into()),
+            self.storage.round_cancellation_token(self.current_round()),
+        );
         // Store the proposal in memory.
         *self.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
         // Record the wall-clock time at which the batch was proposed.
