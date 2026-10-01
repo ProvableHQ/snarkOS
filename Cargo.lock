@@ -4983,12 +4983,12 @@ dependencies = [
 
 [[package]]
 name = "smol_str"
-version = "0.3.2"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9676b89cd56310a87b93dec47b11af744f34d5fc9f367b829474eec0a891350d"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "borsh",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -5158,7 +5158,7 @@ dependencies = [
  "rand_distr",
  "rayon",
  "sha2 0.11.0",
- "smol_str 0.3.2",
+ "smol_str 0.3.6",
  "snarkos-account",
  "snarkos-node-bft",
  "snarkos-node-bft-events",
@@ -5316,7 +5316,7 @@ dependencies = [
  "parking_lot",
  "rand 0.10.3",
  "serde",
- "smol_str 0.3.2",
+ "smol_str 0.3.6",
  "snarkos-node-network",
  "snarkos-node-tcp",
  "snarkvm",
