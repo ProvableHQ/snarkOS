@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790841214618,
+  "lastUpdate": 1790863647980,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -20088,6 +20088,72 @@ window.BENCHMARK_DATA = {
             "value": 1.226369,
             "unit": "blocks^2/s^2",
             "extra": "samples=128, mean_speed=1.189583, max_speed=2.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.6,
+            "unit": "blocks/s",
+            "extra": "total_wait=156s, target_height=250, connect_time=8, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.64,
+            "unit": "blocks/s",
+            "extra": "total_wait=152s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b9ef7f10be476e61fc7499c2dfcdc0452c811b12",
+          "message": "Merge pull request #4496 from ProvableHQ/deps/tikv-jemallocator-0.7",
+          "timestamp": "2026-10-01T07:46:11-06:00",
+          "tree_id": "585319ebc8c596460824c8515a3fe7ff311d0385",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/b9ef7f10be476e61fc7499c2dfcdc0452c811b12"
+        },
+        "date": 1790863646910,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 5.677131778413191,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=84.54973721504211, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 7287.641419124468,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=10.97748851776123, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1252.098788927013,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.6389272212982178, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 1.92,
+            "unit": "blocks/s",
+            "extra": "total_wait=130s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.303327,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=127, mean_speed=1.201969, max_speed=2.916667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
           },
           {
             "name": "bft-sync",
