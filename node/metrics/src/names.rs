@@ -17,7 +17,7 @@ pub(super) const COUNTER_NAMES: [&str; 4] = [
     bft::LEADERS_ELECTED,
     consensus::STALE_UNCONFIRMED_TRANSACTIONS,
     consensus::STALE_UNCONFIRMED_SOLUTIONS,
-    consensus::REJECTED_TRANSACTIONS,
+    consensus::DROPPED_TRANSACTIONS,
 ];
 
 pub(super) const GAUGE_NAMES: [&str; 33] = [
@@ -130,8 +130,8 @@ pub mod consensus {
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";
     pub const STALE_UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_stale_unconfirmed_transactions";
     pub const STALE_UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_stale_unconfirmed_solutions";
-    /// The number of transactions rejected by the mempool, either on insertion or by eviction.
-    pub const REJECTED_TRANSACTIONS: &str = "snarkos_consensus_rejected_transactions";
+    /// The number of transactions dropped by the mempool, either on insertion or by eviction.
+    pub const DROPPED_TRANSACTIONS: &str = "snarkos_consensus_dropped_transactions";
     /// The number of deployment transactions in the priority queue.
     pub const DEPLOYMENTS_PRIORITY_QUEUE_SIZE: &str = "snarkos_consensus_deployments_priority_queue_size";
     /// The number of zero-fee deployment transactions in the fifo queue.

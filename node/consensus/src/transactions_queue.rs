@@ -143,7 +143,7 @@ impl<N: Network> TransactionsQueueInner<N> {
         match (self.priority_queue.len() < self.capacity, *priority_fee) {
             (_, 0) => {
                 #[cfg(feature = "metrics")]
-                metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+                metrics::increment_counter(metrics::consensus::DROPPED_TRANSACTIONS);
 
                 bail!("The memory pool is full")
             }
@@ -158,7 +158,7 @@ impl<N: Network> TransactionsQueueInner<N> {
                 // Remove an entry from the low-priority queue to make room for the high-priority transaction.
                 if self.fifo_queue.pop_lru().is_some() {
                     #[cfg(feature = "metrics")]
-                    metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+                    metrics::increment_counter(metrics::consensus::DROPPED_TRANSACTIONS);
                 }
 
                 self.priority_queue.insert(transaction_id, transaction, priority_fee)
@@ -233,7 +233,7 @@ impl<N: Network> PriorityQueue<N> {
         let ((Reverse(lowest_fee), _), _) = self.transaction_ids.last_key_value().expect("item must be present");
         if lowest_fee > &fee {
             #[cfg(feature = "metrics")]
-            metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+            metrics::increment_counter(metrics::consensus::DROPPED_TRANSACTIONS);
 
             bail!("The memory pool is full");
         }
@@ -245,7 +245,7 @@ impl<N: Network> PriorityQueue<N> {
         self.transactions.remove(&id);
 
         #[cfg(feature = "metrics")]
-        metrics::increment_counter(metrics::consensus::REJECTED_TRANSACTIONS);
+        metrics::increment_counter(metrics::consensus::DROPPED_TRANSACTIONS);
 
         self.insert(transaction_id, transaction, fee);
         Ok(())
