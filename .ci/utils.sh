@@ -388,10 +388,15 @@ function check_heights() {
 EXPECTED_UPGRADE_ERRORS='Not connected to a quorum of validators|BFT failed to receive the callback for round'
 
 # Prints ERROR lines that are not on the ignore list. Empty output means none.
+# If ignored_regex is empty, every ERROR line is unexpected.
 function unexpected_error_lines() {
   local log_content=$1
   local ignored_regex=$2
-  echo "$log_content" | grep "ERROR" | grep -vE "$ignored_regex" || true
+  if [ -n "$ignored_regex" ]; then
+    echo "$log_content" | grep "ERROR" | grep -vE "$ignored_regex" || true
+  else
+    echo "$log_content" | grep "ERROR" || true
+  fi
 }
 
 # Function checking that nodes created logs on disk and they contain no errors.
@@ -415,11 +420,7 @@ function check_logs() {
     log "Only checking log lines at or after $(epoch_to_iso "$since_epoch")"
   fi
 
-  # TODO(kaimast): remove "already exists in the ledger" once spurious sync errors are gone.
-  local ignored_error_regex='already exists in the ledger'
-  if [ -n "$extra_ignored_errors" ]; then
-    ignored_error_regex="${ignored_error_regex}|${extra_ignored_errors}"
-  fi
+  local ignored_error_regex="$extra_ignored_errors"
 
   local all_reached=true
   local highest_height=0
