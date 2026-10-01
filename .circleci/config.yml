@@ -851,7 +851,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
+                - main_net_v4110
                 - canary
                 - testnet
                 - mainnet
@@ -861,7 +861,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
+                - main_net_v4110
                 - canary
                 - testnet
                 - mainnet
@@ -871,7 +871,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
+                - main_net_v4110
                 - canary
                 - testnet
                 - mainnet
@@ -880,7 +880,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
+                - main_net_v4110
                 - canary
                 - testnet
                 - mainnet
@@ -899,7 +899,7 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
+                - main_net_v4110
                 - canary
                 - testnet
                 - mainnet
