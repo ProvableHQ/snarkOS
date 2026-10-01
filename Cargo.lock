@@ -289,6 +289,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
 dependencies = [
  "aws-lc-sys",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -774,9 +775,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.6"
+version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
+checksum = "aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -784,9 +785,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.6"
+version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889"
+checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
 dependencies = [
  "anstream",
  "anstyle",
@@ -796,9 +797,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.4"
+version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
+checksum = "f9c751b79415d4e559e3d1fcf128e09e720eb673a06d26cf6f392d37d75b66e0"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2826,17 +2827,18 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "9.3.1"
+version = "10.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
 dependencies = [
+ "aws-lc-rs",
  "base64 0.22.1",
+ "getrandom 0.2.17",
  "js-sys",
- "pem",
- "ring",
  "serde",
  "serde_json",
- "simple_asn1",
+ "signature 2.2.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -3533,16 +3535,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29c4e8e2dd832fd76346468f822e4e600d30ba4e5aa545a128abf12cfae7ea3e"
 
 [[package]]
-name = "pem"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
-dependencies = [
- "base64 0.22.1",
- "serde_core",
-]
-
-[[package]]
 name = "pem-rfc7468"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3918,7 +3910,7 @@ dependencies = [
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_pcg",
  "ring",
  "rustc-hash",
@@ -3995,9 +3987,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
+checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
 dependencies = [
  "chacha20 0.10.2",
  "getrandom 0.4.3",
@@ -4065,7 +4057,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d431c2703ccf129de4d45253c03f49ebb22b97d6ad79ee3ecfc7e3f4862c1d8"
 dependencies = [
  "num-traits",
- "rand 0.10.2",
+ "rand 0.10.3",
 ]
 
 [[package]]
@@ -4374,7 +4366,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -4539,7 +4531,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -4948,18 +4940,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
-name = "simple_asn1"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
-dependencies = [
- "num-bigint",
- "num-traits",
- "thiserror 2.0.20",
- "time",
-]
-
-[[package]]
 name = "simple_moving_average"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5003,12 +4983,12 @@ dependencies = [
 
 [[package]]
 name = "smol_str"
-version = "0.3.2"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9676b89cd56310a87b93dec47b11af744f34d5fc9f367b829474eec0a891350d"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "borsh",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -5054,7 +5034,7 @@ dependencies = [
  "aleo-std",
  "anstyle",
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "colored 3.1.1",
  "console-subscriber",
@@ -5064,7 +5044,7 @@ dependencies = [
  "nix 0.30.1",
  "num_cpus",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "rlimit",
@@ -5124,7 +5104,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "pea2pea",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "reqwest",
  "serde_json",
@@ -5173,12 +5153,12 @@ dependencies = [
  "paste",
  "pea2pea",
  "proptest",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rand_distr",
  "rayon",
  "sha2 0.11.0",
- "smol_str 0.3.2",
+ "smol_str 0.3.6",
  "snarkos-account",
  "snarkos-node-bft",
  "snarkos-node-bft-events",
@@ -5212,7 +5192,7 @@ dependencies = [
  "criterion",
  "indexmap 2.14.2",
  "proptest",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "serde",
  "snarkos-node-bft-events",
@@ -5235,7 +5215,7 @@ dependencies = [
  "indexmap 2.14.2",
  "locktick",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "snarkos-node-metrics",
  "snarkos-utilities",
@@ -5334,9 +5314,9 @@ dependencies = [
  "bytes",
  "locktick",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde",
- "smol_str 0.3.2",
+ "smol_str 0.3.6",
  "snarkos-node-network",
  "snarkos-node-tcp",
  "snarkvm",
@@ -5355,7 +5335,7 @@ dependencies = [
  "anyhow",
  "axum",
  "axum-extra",
- "base64 0.22.1",
+ "base64 0.23.1",
  "built",
  "criterion",
  "http 1.3.1",
@@ -5365,7 +5345,7 @@ dependencies = [
  "lru",
  "once_cell",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "reqwest",
  "serde",
@@ -5400,7 +5380,7 @@ dependencies = [
  "locktick",
  "parking_lot",
  "peak_alloc",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "snarkos-account",
@@ -5449,7 +5429,7 @@ dependencies = [
  "itertools 0.14.0",
  "locktick",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde",
  "snarkos-node-bft-ledger-service",
  "snarkos-node-metrics",
@@ -5520,7 +5500,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d
 dependencies = [
  "anyhow",
  "dotenvy",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde_json",
  "snarkvm-algorithms",
  "snarkvm-circuit",
@@ -5550,7 +5530,7 @@ dependencies = [
  "indexmap 2.14.2",
  "itertools 0.14.0",
  "num-traits",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "serde",
  "sha2 0.11.0",
@@ -5847,7 +5827,7 @@ dependencies = [
  "itertools 0.14.0",
  "nom 7.1.3",
  "num-traits",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde",
  "snarkvm-curves",
  "snarkvm-fields",
@@ -5970,7 +5950,7 @@ name = "snarkvm-curves"
 version = "4.10.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2#638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2"
 dependencies = [
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde",
  "snarkvm-fields",
  "snarkvm-utilities",
@@ -5986,7 +5966,7 @@ dependencies = [
  "anyhow",
  "itertools 0.14.0",
  "num-traits",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "serde",
  "snarkvm-utilities",
@@ -6006,7 +5986,7 @@ dependencies = [
  "locktick",
  "lru",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "snarkvm-circuit",
@@ -6033,7 +6013,7 @@ version = "4.10.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2#638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2"
 dependencies = [
  "anyhow",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde_json",
  "snarkvm-console",
  "snarkvm-ledger-narwhal-subdag",
@@ -6071,7 +6051,7 @@ dependencies = [
  "anyhow",
  "indexmap 2.14.2",
  "proptest",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rand_distr",
  "rayon",
@@ -6180,7 +6160,7 @@ dependencies = [
  "locktick",
  "lru",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "serde_json",
@@ -6201,7 +6181,7 @@ dependencies = [
  "locktick",
  "lru",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "snarkvm-circuit",
@@ -6298,7 +6278,7 @@ dependencies = [
  "locktick",
  "parking_lot",
  "paste",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde_json",
  "sha2 0.11.0",
  "snarkvm-curves",
@@ -6319,7 +6299,7 @@ dependencies = [
  "locktick",
  "lru",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "serde_json",
  "snarkvm-algorithms",
@@ -6366,7 +6346,7 @@ dependencies = [
  "itertools 0.14.0",
  "locktick",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "serde_json",
@@ -6390,7 +6370,7 @@ dependencies = [
  "enum-iterator",
  "indexmap 2.14.2",
  "paste",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rayon",
  "serde_json",
@@ -6427,7 +6407,7 @@ dependencies = [
  "colored 3.1.1",
  "num-bigint",
  "num_cpus",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_xorshift 0.5.0",
  "rayon",
  "serde",
@@ -6944,9 +6924,9 @@ dependencies = [
 
 [[package]]
 name = "tikv-jemalloc-sys"
-version = "0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+version = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd8aa5b2ab86a2cefa406d889139c162cbb230092f7d1d7cbc1716405d852a3b"
+checksum = "1a2825c78386b4ae0314074867860ba9577875de945f05992c38815cbec327f0"
 dependencies = [
  "cc",
  "libc",
@@ -6954,9 +6934,9 @@ dependencies = [
 
 [[package]]
 name = "tikv-jemallocator"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0359b4327f954e0567e69fb191cf1436617748813819c94b8cd4a431422d053a"
+checksum = "249f09e49ab1609436f34c776e84231bead18d6a955f119f939bdc1d847561bd"
 dependencies = [
  "libc",
  "tikv-jemalloc-sys",
@@ -7482,6 +7462,12 @@ dependencies = [
  "crypto-common 0.1.7",
  "subtle",
 ]
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

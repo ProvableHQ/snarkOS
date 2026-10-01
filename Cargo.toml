@@ -65,7 +65,7 @@ version = "0.8"
 version = "0.10"
 
 [workspace.dependencies.base64]
-version = "0.22"
+version = "0.23"
 
 [workspace.dependencies.bincode]
 version = "1"
@@ -172,7 +172,7 @@ version = "0.6"
 version = "0.13"
 
 [workspace.dependencies.smol_str]
-version = "=0.3.2" # Update after Rust >1.88
+version = "=0.3.6" # Update after Rust >1.88
 
 [workspace.dependencies.snow]
 version = "0.10"
@@ -371,7 +371,7 @@ workspace = true
 workspace = true
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 [dependencies.tracing]
 workspace = true
