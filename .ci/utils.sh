@@ -379,11 +379,13 @@ function check_heights() {
   fi
 }
 
-# Gateway logs this at ERROR after 60s without a quorum. That is expected while a
-# validator is stopped for an upgrade or restart, so tests that take nodes down
-# should pass this to check_logs as an extra ignored pattern.
+# Extra `|`-separated ERROR patterns expected while a node is stopped for upgrade.
+# - Gateway logs "Not connected to a quorum of validators" at ERROR after 60s
+#   without a quorum.
+# - BFT logs "BFT failed to receive the callback for round … — channel closed"
+#   when a node is shut down mid-commit.
 # shellcheck disable=SC2034 # sourced by upgrade tests as an extra check_logs ignore pattern
-EXPECTED_ERROR_NO_QUORUM='Not connected to a quorum of validators'
+EXPECTED_UPGRADE_ERRORS='Not connected to a quorum of validators|BFT failed to receive the callback for round'
 
 # Prints ERROR lines that are not on the ignore list. Empty output means none.
 function unexpected_error_lines() {
