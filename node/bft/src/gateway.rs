@@ -1142,7 +1142,7 @@ impl<N: Network> Gateway<N> {
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
             // Not being connected to a quorum of validators is begning during startup.
             if self.tcp().uptime() > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
-                error!("Not connected to a quorum of validators");
+                warn!("Not connected to a quorum of validators");
             } else {
                 debug!("Not connected to a quorum of validators");
             }

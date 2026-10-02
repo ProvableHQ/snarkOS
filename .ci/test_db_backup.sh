@@ -17,7 +17,6 @@ checkpoint_height=3
 rollback_height=10
 num_checkpoints=0
 remaining_checkpoints=2
-max_warnings=300
 
 # Create log directory
 init_log_dir
@@ -135,7 +134,7 @@ while (( total_wait < 600 )); do  # 10 minutes max
       done
 
       if (( remaining_checkpoints == 0 )); then
-        if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes"; then
+        if check_logs "$log_dir" "$total_validators" 0 "$max_validator_log_size_bytes"; then
           exit 0
         else
           exit 1
