@@ -28,10 +28,10 @@ use snarkvm::{
 use anyhow::Context;
 use indexmap::{IndexMap, IndexSet, map::Entry};
 #[cfg(feature = "locktick")]
-use locktick::parking_lot::RwLock;
+use locktick::parking_lot::{Mutex, RwLock};
 use lru::LruCache;
 #[cfg(not(feature = "locktick"))]
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
@@ -43,6 +43,7 @@ use std::{
         atomic::{AtomicU32, AtomicU64, Ordering},
     },
 };
+use tokio_util::sync::CancellationToken;
 
 /// Errors returned by [`Storage::check_certificate`] (and therefore [`Storage::insert_certificate`]).
 ///
@@ -115,6 +116,12 @@ pub struct StorageInner<N: Network> {
     /// [`Storage::increment_to_next_round`] and [`Storage::sync_round_with_block`],
     /// both of which set it to at least 1.
     current_round: AtomicU64,
+    /// The cancellation token for the current round, along with the round it belongs to.
+    ///
+    /// The token is cancelled as soon as the round advances, so tasks spawned on behalf of a
+    /// round (e.g., sending its batch proposal) can stop once that round is over.
+    /// See [`Storage::round_cancellation_token`].
+    round_token: Mutex<(u64, CancellationToken)>,
     /// The `round` for which garbage collection has occurred **up to** (inclusive).
     gc_round: AtomicU64,
     /// The maximum number of rounds to keep in storage.
@@ -152,6 +159,7 @@ impl<N: Network> Storage<N> {
             ledger,
             current_height: Default::default(),
             current_round: AtomicU64::new(current_round),
+            round_token: Mutex::new((current_round, CancellationToken::new())),
             gc_round: Default::default(),
             max_gc_rounds,
             rounds: Default::default(),
@@ -276,7 +284,42 @@ impl<N: Network> Storage<N> {
     /// plain store letting a stale writer regress it.
     fn update_current_round(&self, next_round: u64) -> u64 {
         let previous_value = self.current_round.fetch_max(next_round, Ordering::SeqCst);
-        cmp::max(previous_value, next_round)
+        let current_round = cmp::max(previous_value, next_round);
+        // Cancel the token of any round that is now over.
+        self.round_cancellation_token(current_round);
+        current_round
+    }
+
+    /// Returns the cancellation token for the given round.
+    ///
+    /// The token is cancelled once the round is over, i.e., when storage advances past it.
+    /// Tasks doing work that is only useful during `round` should stop when it fires.
+    ///
+    /// - If `round` is the latest round seen, this returns that round's (live) token.
+    /// - If `round` is newer, the previous round's token is cancelled and a new one is created.
+    ///   This keeps the token in step with `current_round`, even if called between the
+    ///   `fetch_max` in [`Storage::update_current_round`] and its own call to this function.
+    /// - If `round` is older, this returns an already-cancelled token.
+    ///
+    /// Callers must not pass a round ahead of `current_round`, as that would end the current round early.
+    pub(crate) fn round_cancellation_token(&self, round: u64) -> CancellationToken {
+        let mut round_token = self.round_token.lock();
+        let (token_round, token) = &mut *round_token;
+        match round.cmp(token_round) {
+            cmp::Ordering::Greater => {
+                debug_assert!(round <= self.current_round(), "Round {round} is ahead of the storage round");
+                token.cancel();
+                *token_round = round;
+                *token = CancellationToken::new();
+                token.clone()
+            }
+            cmp::Ordering::Equal => token.clone(),
+            cmp::Ordering::Less => {
+                let token = CancellationToken::new();
+                token.cancel();
+                token
+            }
+        }
     }
 
     /// Update the storage by performing garbage collection based on the next round.
@@ -1127,6 +1170,42 @@ pub(crate) mod tests {
     }
 
     // TODO (howardwu): Testing with 'max_gc_rounds' set to '0' should ensure everything is cleared after insertion.
+
+    #[test]
+    fn test_round_cancellation_token() {
+        let rng = &mut TestRng::default();
+
+        // Initialize the storage.
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+        let round = storage.current_round();
+
+        // The token for the current round is live, and shared across calls.
+        let token = storage.round_cancellation_token(round);
+        assert!(!token.is_cancelled());
+        let same_token = storage.round_cancellation_token(round);
+
+        // Advancing the round cancels the previous round's tokens.
+        assert_eq!(storage.increment_to_next_round(round).unwrap(), round + 1);
+        assert!(token.is_cancelled());
+        assert!(same_token.is_cancelled());
+
+        // A token for a round that is over is already cancelled.
+        assert!(storage.round_cancellation_token(round).is_cancelled());
+
+        // The token for the new round is live, until a sync moves storage past it.
+        let token = storage.round_cancellation_token(round + 1);
+        assert!(!token.is_cancelled());
+        storage.sync_round_with_block(round + 5);
+        assert!(token.is_cancelled());
+        assert!(!storage.round_cancellation_token(round + 5).is_cancelled());
+
+        // A sync that does not advance the round leaves the current token live.
+        let token = storage.round_cancellation_token(round + 5);
+        storage.sync_round_with_block(round + 2);
+        assert!(!token.is_cancelled());
+    }
 
     #[test]
     fn test_certificate_insert_remove() {

@@ -853,7 +853,7 @@ workflows:
                 - testnet
                 - mainnet
                 - staging
-                - bruno/decouple
+                - bruno/round_cancellation
 
       - chaotic-minority-reset-test:
           filters:
@@ -863,7 +863,7 @@ workflows:
                 - testnet
                 - mainnet
                 - staging
-                - bruno/decouple
+                - bruno/round_cancellation
 
       - chaotic-majority-reset-test:
           filters:
@@ -873,7 +873,7 @@ workflows:
                 - testnet
                 - mainnet
                 - staging
-                - bruno/decouple
+                - bruno/round_cancellation
 
       - upgrade-test:
           filters:
@@ -883,7 +883,7 @@ workflows:
                 - testnet
                 - mainnet
                 - staging
-                - bruno/decouple
+                - bruno/round_cancellation
 
   snarkos-workflow:
     jobs:

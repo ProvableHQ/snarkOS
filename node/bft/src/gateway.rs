@@ -114,7 +114,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
+use tokio_util::{codec::Framed, sync::CancellationToken};
 
 /// The maximum interval of events to cache.
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
@@ -198,6 +198,7 @@ const LEGACY_HANDSHAKE_EXPIRY: Option<ConsensusVersion> = Some(ConsensusVersion:
 pub trait Transport<N: Network>: Send + Sync {
     async fn send(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>>;
     fn broadcast(&self, event: Event<N>);
+    fn broadcast_until(&self, event: Event<N>, token: CancellationToken);
 }
 
 /// The gateway maintains connections to other validators.
@@ -1433,12 +1434,24 @@ impl<N: Network> Transport<N> for Gateway<N> {
     }
 
     /// Broadcasts the given event to all connected peers.
-    fn broadcast(&self, mut event: Event<N>) {
+    fn broadcast(&self, event: Event<N>) {
+        self.broadcast_until(event, CancellationToken::new());
+    }
+
+    /// Broadcasts the given event to all connected peers, concurrently.
+    ///
+    /// Sends that have not been queued by the time `token` is cancelled are dropped.
+    fn broadcast_until(&self, mut event: Event<N>, token: CancellationToken) {
         // Ensure there are connected peers.
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
             let connected_peers = self.connected_peers();
             self.spawn(async move {
+                // Skip the work below if the broadcast is no longer needed.
+                if token.is_cancelled() {
+                    debug!("{CONTEXT} Not broadcasting '{}' (cancelled)", event.name());
+                    return;
+                }
                 // Serialize the event's payload once, rather than once per recipient; every
                 // recipient then shares the resulting buffer. `Transport::send` would otherwise do
                 // this separately for each peer below.
@@ -1456,10 +1469,16 @@ impl<N: Network> Transport<N> for Gateway<N> {
                         }
                     };
                 }
-                // Iterate through all connected peers.
-                for peer_ip in connected_peers {
-                    // Send the event to the peer.
-                    let _ = Transport::send(&self_, peer_ip, event.clone()).await;
+                // Send the event to all connected peers concurrently, so that a peer that is
+                // rate limited does not delay delivery to the others.
+                let name = event.name();
+                let sends = join_all(
+                    connected_peers.into_iter().map(|peer_ip| Transport::send(&self_, peer_ip, event.clone())),
+                );
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => debug!("{CONTEXT} Stopped broadcasting '{name}' (cancelled)"),
+                    _ = sends => {}
                 }
             });
         }
