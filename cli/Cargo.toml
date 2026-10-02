@@ -42,7 +42,8 @@ test_network = [
   "test_targets", 
   "test_consensus_heights",
   "snarkvm/dev-committee",
-  "snarkvm/dev-print"
+  "snarkvm/dev-print",
+  "snarkvm/dev_genesis_state_root"
 ]
 serial = [
   "snarkvm/serial",
