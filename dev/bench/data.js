@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790888679619,
+  "lastUpdate": 1790968577780,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -20562,6 +20562,72 @@ window.BENCHMARK_DATA = {
             "value": 2,
             "unit": "blocks/s",
             "extra": "total_wait=125s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "93c4e4ce3856f49afef00f23490e7d33618a872e",
+          "message": "Merge pull request #4510 from ProvableHQ/rest/clamp-block-ranges-to-tip\n\nrest: add allow_partial to clamp block range routes to the tip",
+          "timestamp": "2026-10-02T12:59:27-06:00",
+          "tree_id": "dd8b696e0ea97fe5fc02e82cd448ff112cd57abb",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/93c4e4ce3856f49afef00f23490e7d33618a872e"
+        },
+        "date": 1790968576571,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 6.6650982635620455,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=72.0169427394867, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12852.422315645437,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.224507570266724, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1581.6885866191265,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.5057885646820068, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.5,
+            "unit": "blocks/s",
+            "extra": "total_wait=100s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 2.050596,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=98, mean_speed=1.364286, max_speed=4.166667, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.21,
+            "unit": "blocks/s",
+            "extra": "total_wait=113s, target_height=250, connect_time=7, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.98,
+            "unit": "blocks/s",
+            "extra": "total_wait=126s, target_height=250"
           }
         ]
       }
