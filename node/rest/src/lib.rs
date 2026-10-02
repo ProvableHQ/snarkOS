@@ -848,6 +848,57 @@ mod route_tests {
         }
     }
 
+    /// Every route that serves a range of block heights.
+    const RANGE_ROUTES: [&str; 5] =
+        ["/blocks", "/blocks/hashes", "/blocks/headers", "/blocks/stateRoots", "/blocks/transactions"];
+
+    #[tokio::test]
+    async fn a_partial_range_past_the_tip_is_clamped_to_the_tip() {
+        let rest = sample_rest().await;
+
+        // The test ledger holds only the genesis block, so height 1 does not exist. Each route
+        // serves the one height it has rather than failing the request.
+        for route in RANGE_ROUTES {
+            let (status, body) = get(&rest, &format!("{route}?start=0&end=2&allow_partial=true")).await;
+            assert_eq!(status, StatusCode::OK, "{route} did not clamp a range past the tip");
+            assert_eq!(serde_json::from_str::<Vec<serde_json::Value>>(&body).unwrap().len(), 1, "{route}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_partial_range_starting_past_the_tip_returns_an_empty_array() {
+        let rest = sample_rest().await;
+
+        for route in RANGE_ROUTES {
+            let (status, body) = get(&rest, &format!("{route}?start=1&end=3&allow_partial=true")).await;
+            assert_eq!(status, StatusCode::OK, "{route} did not clamp a range past the tip");
+            assert_eq!(serde_json::from_str::<Vec<serde_json::Value>>(&body).unwrap(), Vec::<serde_json::Value>::new());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_clamped_range_matches_the_same_range_asked_for_exactly() {
+        let rest = sample_rest().await;
+
+        for route in RANGE_ROUTES {
+            let (_, exact) = get(&rest, &format!("{route}?start=0&end=1")).await;
+            let (_, clamped) = get(&rest, &format!("{route}?start=0&end=2&allow_partial=true")).await;
+            assert_eq!(exact, clamped, "{route} served a different prefix for a clamped range");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_range_past_the_tip_is_not_found_unless_partial_is_allowed() {
+        let rest = sample_rest().await;
+
+        for route in RANGE_ROUTES {
+            for query in ["", "&allow_partial=false"] {
+                let (status, _) = get(&rest, &format!("{route}?start=0&end=2{query}")).await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{route}{query} did not report a missing height");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn an_inverted_range_is_rejected() {
         let rest = sample_rest().await;
