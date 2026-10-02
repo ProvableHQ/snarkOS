@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "71b6a952defa17764d3d04cbe801d071d9e4672c" #staging + mainnet_4_10_0 + rocksdb reads by query
+rev = "4c37a49c9bccaf1123a20be74e415d3d2e83b100" #staging + mainnet_4_10_0 + rocksdb reads and compaction counters
 #version = "=4.10.0"
 default-features = false
 
