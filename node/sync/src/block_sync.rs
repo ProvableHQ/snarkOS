@@ -56,8 +56,8 @@ mod helpers;
 use helpers::rangify_heights;
 
 mod sync_state;
-pub use sync_state::BftSyncMode;
 use sync_state::SyncState;
+pub use sync_state::{BftSyncMode, OUTDATED_BINARY_PEER_THRESHOLD, OutdatedBinary};
 
 mod metrics;
 use metrics::BlockSyncMetrics;
@@ -543,6 +543,36 @@ impl<N: Network> BlockSync<N> {
     /// Callers typically call this in a loop after waiting for peer updates, e.g.
     /// `timeout(MAX_SYNC_INTERVAL, self.wait_for_peer_update())`.
     pub async fn try_issuing_block_requests<C: CommunicationService>(&self, communication: &C) {
+        // If this node's release is too old to follow the chain, stop requesting blocks entirely.
+        //
+        // Retrying cannot make progress here: every response for a height at or above an
+        // activation this binary does not implement is rejected on arrival and its request is
+        // refiled as failed, and failed requests are re-issued ahead of everything else with no
+        // backoff. Without this guard that is a hot loop, paced only by how often a peer pings us.
+        {
+            let mut sync_state = self.sync_state.write();
+            if let Some(report) = sync_state.outdated_binary() {
+                let should_log = sync_state.should_log_outdated_binary();
+                drop(sync_state);
+
+                if should_log {
+                    error!(
+                        "This node is running a release that is too old to follow the chain, and has stopped syncing. \
+                         At block {height} the network is on consensus version {peer:?}, but this binary only \
+                         implements up to {ours:?}. Upgrade snarkOS and restart the node.",
+                        height = report.height,
+                        peer = report.peer_version,
+                        ours = report.expected_version,
+                    );
+                }
+
+                // Drop any requests left over from before the node latched, so they are not
+                // retried and do not sit in memory for the life of the process.
+                self.failed_requests.lock().clear();
+                return;
+            }
+        }
+
         self.handle_block_request_timeouts();
 
         if self.is_block_synced() {
@@ -611,6 +641,13 @@ impl<N: Network> BlockSync<N> {
                 if let Some(peer_version) = latest_consensus_version {
                     if peer_version != expected_consensus_version {
                         break 'outer Err(if peer_version > expected_consensus_version {
+                            // implement. Record it: once enough distinct peers agree, the node
+                            // stops requesting blocks instead of refiling and retrying forever.
+                            self.sync_state.write().report_outdated_binary(peer_ip, OutdatedBinary {
+                                peer_version,
+                                expected_version: expected_consensus_version,
+                                height: last_height,
+                            });
                             InsertBlockResponseError::ConsensusVersionAhead {
                                 peer_version,
                                 expected_version: expected_consensus_version,
@@ -2316,5 +2353,69 @@ mod tests {
         let mut iter = new_sync_ips.iter();
         assert_ne!(iter.next().unwrap().0, &peer_ip1);
         assert_ne!(iter.next().unwrap().0, &peer_ip1);*/
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Outdated-binary detection
+    // ---------------------------------------------------------------------------------------
+
+    fn outdated_report(height: u32) -> OutdatedBinary {
+        OutdatedBinary { peer_version: ConsensusVersion::V21, expected_version: ConsensusVersion::V20, height }
+    }
+
+    #[test]
+    fn a_single_peer_cannot_latch_the_outdated_binary_state() {
+        let sync = sample_sync_at_height(0);
+
+        // One peer reporting repeatedly is not enough. Otherwise a single malicious peer could halt
+        // our block sync just by advertising a consensus version it does not actually follow.
+        for _ in 0..OUTDATED_BINARY_PEER_THRESHOLD * 2 {
+            sync.sync_state.write().report_outdated_binary(sample_peer_ip(1), outdated_report(100));
+        }
+
+        assert!(sync.sync_state.read().outdated_binary().is_none());
+    }
+
+    #[test]
+    fn the_threshold_number_of_distinct_peers_latches_the_outdated_binary_state() {
+        let sync = sample_sync_at_height(0);
+
+        for id in 1..OUTDATED_BINARY_PEER_THRESHOLD {
+            sync.sync_state.write().report_outdated_binary(sample_peer_ip(id as u16), outdated_report(100));
+            assert!(sync.sync_state.read().outdated_binary().is_none(), "latched before reaching the threshold");
+        }
+
+        // The report that reaches the threshold latches, and is handed back exactly once so the
+        // caller can act on it.
+        let latched = sync
+            .sync_state
+            .write()
+            .report_outdated_binary(sample_peer_ip(OUTDATED_BINARY_PEER_THRESHOLD as u16), outdated_report(200));
+        assert_eq!(latched, Some(outdated_report(200)), "must latch the most advanced height seen");
+
+        // Latching is sticky: later reports neither re-fire nor overwrite it.
+        assert!(sync.sync_state.write().report_outdated_binary(sample_peer_ip(99), outdated_report(300)).is_none());
+        assert_eq!(sync.sync_state.read().outdated_binary(), Some(outdated_report(200)));
+    }
+
+    #[test]
+    fn an_outdated_node_stops_issuing_block_requests() {
+        let sync = sample_sync_at_height(0);
+        let locators = sample_block_locators(10);
+
+        for id in 1..=OUTDATED_BINARY_PEER_THRESHOLD {
+            sync.update_peer_locators(sample_peer_ip(id as u16), &locators).unwrap();
+        }
+
+        // The node is behind its peers, so it wants to request blocks.
+        assert!(sync.sync_state.read().can_issue_new_block_requests());
+
+        for id in 1..=OUTDATED_BINARY_PEER_THRESHOLD {
+            sync.sync_state.write().report_outdated_binary(sample_peer_ip(id as u16), outdated_report(10));
+        }
+
+        // Once it knows it cannot follow the chain it stops, even though it is still behind.
+        assert!(sync.sync_state.read().outdated_binary().is_some());
+        assert!(!sync.sync_state.read().can_issue_new_block_requests());
     }
 }

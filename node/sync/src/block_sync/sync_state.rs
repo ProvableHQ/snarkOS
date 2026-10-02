@@ -15,7 +15,37 @@
 
 use super::MAX_BLOCKS_BEHIND;
 
-use std::{cmp::Ordering, time::Instant};
+use snarkvm::prelude::ConsensusVersion;
+
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+
+/// The number of distinct peers that must independently report a consensus version newer than
+/// this binary implements before the node concludes that it is the outdated party.
+///
+/// Requiring more than one peer is what keeps a single malicious peer from halting our block sync
+/// by advertising a bogus consensus version in a block response. Honest peers all report the same
+/// version, so the threshold is reached within seconds of a real activation.
+pub const OUTDATED_BINARY_PEER_THRESHOLD: usize = 3;
+
+/// How often to repeat the operator-facing error once the node knows it is outdated.
+pub const OUTDATED_BINARY_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Evidence that a peer served a block response for a consensus version this binary does not
+/// implement, i.e. that this node's release is older than the chain it is following.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutdatedBinary {
+    /// The consensus version the peer reported for the requested range.
+    pub peer_version: ConsensusVersion,
+    /// The consensus version this binary computes for that same range.
+    pub expected_version: ConsensusVersion,
+    /// The greatest height at which the mismatch was observed.
+    pub height: u32,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncStatus {
@@ -54,6 +84,16 @@ pub(super) struct SyncState {
     /// The BFT sync mode (fast or DAG), set by the BFT layer.
     /// `None` for nodes without a BFT layer (clients, provers).
     bft_sync_mode: Option<BftSyncMode>,
+    /// Peers that have served a block response for a consensus version this binary does not
+    /// implement, and the most recent such report from each. Empty on an up-to-date release.
+    outdated_reports: HashMap<SocketAddr, OutdatedBinary>,
+    /// Latched once `OUTDATED_BINARY_PEER_THRESHOLD` distinct peers have reported.
+    ///
+    /// This is deliberately never cleared: the only remedy is to restart on a newer release, and
+    /// un-latching would let the node resume a request loop that cannot make progress.
+    outdated_binary: Option<OutdatedBinary>,
+    /// When the outdated-binary error was last emitted, for throttling.
+    last_outdated_log: Option<Instant>,
 }
 
 impl Default for SyncState {
@@ -65,6 +105,9 @@ impl Default for SyncState {
             status: SyncStatus::Synced,
             last_change: Instant::now(),
             bft_sync_mode: None,
+            outdated_reports: HashMap::new(),
+            outdated_binary: None,
+            last_outdated_log: None,
         }
     }
 }
@@ -85,6 +128,11 @@ impl SyncState {
     /// Returns `true` if there a blocks to sync from other nodes.
     /// Returns `false` if the node has fully caught up with the rest of the network.
     pub fn can_issue_new_block_requests(&self) -> bool {
+        // A node that knows its release is too old to follow the chain cannot make progress by
+        // requesting more blocks, no matter how many times it retries.
+        if self.outdated_binary.is_some() {
+            return false;
+        }
         // Return true if sync state is false even if we there are no known blocks to fetch,
         // because otherwise nodes will never  switch to synced at startup.
         if let Some(num_behind) = self.num_blocks_behind() {
@@ -124,6 +172,53 @@ impl SyncState {
         let prev = self.bft_sync_mode;
         self.bft_sync_mode = Some(mode);
         prev
+    }
+
+    /// Records that `peer_ip` served a block response for a consensus version this binary does not
+    /// implement.
+    ///
+    /// The node only concludes that *it* is outdated once `OUTDATED_BINARY_PEER_THRESHOLD` distinct
+    /// peers agree, so that one peer advertising a bogus version cannot stop our sync.
+    ///
+    /// # Returns
+    /// `Some(..)` on the single call that reaches the threshold, so the caller can act and log
+    /// exactly once; `None` on every other call, including once already latched.
+    pub fn report_outdated_binary(&mut self, peer_ip: SocketAddr, report: OutdatedBinary) -> Option<OutdatedBinary> {
+        // Already latched - there is nothing further to learn.
+        if self.outdated_binary.is_some() {
+            return None;
+        }
+
+        self.outdated_reports.insert(peer_ip, report);
+
+        if self.outdated_reports.len() < OUTDATED_BINARY_PEER_THRESHOLD {
+            return None;
+        }
+
+        // Latch the report with the greatest height, which names the most advanced activation we
+        // have seen and is therefore the most useful one to show an operator.
+        let latched = self.outdated_reports.values().copied().max_by_key(|report| report.height).unwrap_or(report);
+        self.outdated_binary = Some(latched);
+        Some(latched)
+    }
+
+    /// Returns the latched record if this node has concluded its release is too old to follow the
+    /// chain, or `None` otherwise.
+    pub fn outdated_binary(&self) -> Option<OutdatedBinary> {
+        self.outdated_binary
+    }
+
+    /// Returns `true` if the outdated-binary error is due to be emitted again, and records the
+    /// emission. Throttled to `OUTDATED_BINARY_LOG_INTERVAL`.
+    pub fn should_log_outdated_binary(&mut self) -> bool {
+        let now = Instant::now();
+        match self.last_outdated_log {
+            Some(last) if now.duration_since(last) < OUTDATED_BINARY_LOG_INTERVAL => false,
+            _ => {
+                self.last_outdated_log = Some(now);
+                true
+            }
+        }
     }
 
     /// Update the height we are synced to.
