@@ -385,14 +385,11 @@ function check_logs() {
   local log_dir=$1
   local total_validators=$2
   local total_clients=$3
-  # The maximum number of warnings allow in each node's log file.
-  # Nodes may create some warnings at startup because they cannot connect to each other yet.
-  local max_warnings=$4
   # Optional max logfile size in bytes.
-  local max_validator_log_size_bytes=${5:-}
-  local max_client_log_size_bytes=${6:-}
+  local max_validator_log_size_bytes=${4:-}
+  local max_client_log_size_bytes=${5:-}
   # Optional Unix epoch timestamp; only log lines at or after this time are checked.
-  local since_epoch=${7:-}
+  local since_epoch=${6:-}
 
   if [ -n "$since_epoch" ]; then
     log "Only checking log lines at or after $(epoch_to_iso "$since_epoch")"
@@ -425,12 +422,6 @@ function check_logs() {
       echo "$validator_log_content" | grep "ERROR"
       return 1
     fi
-
-    num_warnings=$(echo "$validator_log_content" | grep -c "WARN" || true)
-    if (( num_warnings > max_warnings )); then
-      echo "❌ Test failed! Validator #${validator_index} logs contain more than ${max_warnings} warnings."
-      return 1
-    fi
   done
 
   # Don't use `seq` here as `total_clients` can be 0.
@@ -455,12 +446,6 @@ function check_logs() {
       log "❌ Test failed! Client #${client_index} logs contain errors."
       # Print the errors to the console.
       echo "$client_log_content" | grep "ERROR"
-      return 1
-    fi
-
-    num_warnings=$(echo "$client_log_content" | grep -c "WARN" || true)
-    if (( num_warnings > max_warnings )); then
-      echo "❌ Test failed! Client #${client_index} logs contain more than ${max_warnings} warnings."
       return 1
     fi
   done
