@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "34d0a61c9f21b274530848d0e7855da4f3ddaa03" #snarkVM#3448 (dev_genesis_state_root)
+rev = "f091ced9aebc5958143115946e15bb2ac512576d"
 #version = "=4.10.0"
 default-features = false
 
