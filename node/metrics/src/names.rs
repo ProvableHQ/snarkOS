@@ -152,6 +152,20 @@ pub mod router {
     pub const CONNECTED: &str = "snarkos_router_connected_total";
     pub const CANDIDATE: &str = "snarkos_router_candidate_total";
     pub const RESTRICTED: &str = "snarkos_router_restricted_total";
+    /// Router messages, labeled by `direction` (`inbound` or `outbound`) and `type`.
+    pub const EVENTS: &str = "snarkos_router_events_total";
+}
+
+pub mod gateway {
+    /// Gateway events, labeled by `direction` (`inbound` or `outbound`) and `type`.
+    pub const EVENTS: &str = "snarkos_gateway_events_total";
+}
+
+pub mod rest {
+    /// REST requests, labeled by `method`, `endpoint` (the matched route), and `status`.
+    pub const REQUESTS: &str = "snarkos_rest_requests_total";
+    /// REST request latency in seconds, labeled by `method` and `endpoint`.
+    pub const REQUEST_DURATION: &str = "snarkos_rest_request_duration_secs";
 }
 
 pub mod tcp {
