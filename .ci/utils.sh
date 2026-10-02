@@ -379,26 +379,6 @@ function check_heights() {
   fi
 }
 
-# Extra `|`-separated ERROR patterns expected while a node is stopped for upgrade.
-# - Gateway logs "Not connected to a quorum of validators" at ERROR after 60s
-#   without a quorum.
-# - BFT logs "BFT failed to receive the callback for round … — channel closed"
-#   when a node is shut down mid-commit.
-# shellcheck disable=SC2034 # sourced by upgrade tests as an extra check_logs ignore pattern
-EXPECTED_UPGRADE_ERRORS='Not connected to a quorum of validators|BFT failed to receive the callback for round'
-
-# Prints ERROR lines that are not on the ignore list. Empty output means none.
-# If ignored_regex is empty, every ERROR line is unexpected.
-function unexpected_error_lines() {
-  local log_content=$1
-  local ignored_regex=$2
-  if [ -n "$ignored_regex" ]; then
-    echo "$log_content" | grep "ERROR" | grep -vE "$ignored_regex" || true
-  else
-    echo "$log_content" | grep "ERROR" || true
-  fi
-}
-
 # Function checking that nodes created logs on disk and they contain no errors.
 function check_logs() {
   log "Checking logs exist for all nodes..."
@@ -413,14 +393,10 @@ function check_logs() {
   local max_client_log_size_bytes=${6:-}
   # Optional Unix epoch timestamp; only log lines at or after this time are checked.
   local since_epoch=${7:-}
-  # Optional extra `|`-separated ERROR substrings that should not fail the job.
-  local extra_ignored_errors=${8:-}
 
   if [ -n "$since_epoch" ]; then
     log "Only checking log lines at or after $(epoch_to_iso "$since_epoch")"
   fi
-
-  local ignored_error_regex="$extra_ignored_errors"
 
   local all_reached=true
   local highest_height=0
@@ -443,10 +419,10 @@ function check_logs() {
 
     validator_log_content=$(log_lines_since "$validator_log" "$since_epoch")
 
-    unexpected_errors=$(unexpected_error_lines "$validator_log_content" "$ignored_error_regex")
-    if [ -n "$unexpected_errors" ]; then
+    if echo "$validator_log_content" | grep -q "ERROR"; then
       log "❌ Test failed! Validator #${validator_index} logs contain errors."
-      echo "$unexpected_errors"
+      # Print the errors to the console.
+      echo "$validator_log_content" | grep "ERROR"
       return 1
     fi
 
@@ -475,10 +451,10 @@ function check_logs() {
 
     client_log_content=$(log_lines_since "$client_log" "$since_epoch")
 
-    unexpected_errors=$(unexpected_error_lines "$client_log_content" "$ignored_error_regex")
-    if [ -n "$unexpected_errors" ]; then
+    if echo "$client_log_content" | grep -q "ERROR"; then
       log "❌ Test failed! Client #${client_index} logs contain errors."
-      echo "$unexpected_errors"
+      # Print the errors to the console.
+      echo "$client_log_content" | grep "ERROR"
       return 1
     fi
 
