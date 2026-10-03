@@ -628,6 +628,8 @@ impl<N: Network> Gateway<N> {
         };
         // Retrieve the event name.
         let name = event.name();
+        #[cfg(feature = "metrics")]
+        metrics::increment_counter_2(metrics::gateway::EVENTS, "direction", "outbound", "type", event.variant_name());
         // Send the event to the peer.
         trace!("{CONTEXT} Sending '{name}' to '{peer_ip}'");
         let result = self.unicast(peer_addr, event);
@@ -650,6 +652,8 @@ impl<N: Network> Gateway<N> {
             trace!("Dropping a {} from {peer_addr} - no longer connected.", event.name());
             return Ok(false);
         };
+        #[cfg(feature = "metrics")]
+        metrics::increment_counter_2(metrics::gateway::EVENTS, "direction", "inbound", "type", event.variant_name());
         // Ensure that the peer is an authorized committee member or a bootstrapper.
         if !(self.is_authorized_validator_ip(peer_ip)
             || self

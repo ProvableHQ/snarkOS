@@ -19,7 +19,7 @@ edition = "2024"
 [features]
 default = [ ]
 history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
-metrics = [ "snarkos-node-consensus/metrics" ]
+metrics = [ "dep:snarkos-node-metrics", "snarkos-node-consensus/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
   "dep:locktick",
@@ -81,6 +81,10 @@ features = [ "preserve_order" ]
 
 [dependencies.serde_with]
 version = "3"
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-cdn]
 workspace = true

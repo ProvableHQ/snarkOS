@@ -9876,7 +9876,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "description": "Estimated number of keys in the database.",
+          "description": "Bytes per second read or written by compaction, and bytes per second written by memtable flushes.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -9926,7 +9926,7 @@
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "Bps"
             }
           },
           "gridPos": {
@@ -9969,15 +9969,41 @@
                 "uid": "prometheus"
               },
               "editorMode": "code",
-              "expr": "snarkvm_rocksdb_estimate_num_keys{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}",
+              "expr": "rate(snarkvm_rocksdb_compact_read_bytes_total{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}[1m])",
               "format": "time_series",
-              "legendFormat": "{{instance_name}}",
+              "legendFormat": "{{instance_name}} compact read",
               "range": true,
-              "refId": "num_keys",
+              "refId": "compact_read",
+              "step": 240
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(snarkvm_rocksdb_compact_write_bytes_total{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}[1m])",
+              "format": "time_series",
+              "legendFormat": "{{instance_name}} compact write",
+              "range": true,
+              "refId": "compact_write",
+              "step": 240
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(snarkvm_rocksdb_flush_write_bytes_total{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}[1m])",
+              "format": "time_series",
+              "legendFormat": "{{instance_name}} flush write",
+              "range": true,
+              "refId": "flush_write",
               "step": 240
             }
           ],
-          "title": "RocksDB - Estimated Key Count",
+          "title": "RocksDB - Compaction and Flush Bytes",
           "type": "timeseries"
         },
         {
