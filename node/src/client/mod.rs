@@ -40,19 +40,20 @@ use snarkos_node_tcp::{
 use snarkos_utilities::{NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::{
-    console::network::Network,
+    console::{network::Network, program::ProgramID},
     ledger::{
         Ledger,
         block::{Block, Header},
         puzzle::{Puzzle, Solution, SolutionID},
-        store::ConsensusStorage,
+        store::{ConsensusStorage, HistoryScope},
     },
     prelude::{VM, block::Transaction},
 };
 
 use aleo_std::StorageMode;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use core::future::Future;
+use indexmap::IndexSet;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::Mutex;
 use lru::LruCache;
@@ -61,6 +62,7 @@ use parking_lot::Mutex;
 use std::{
     net::SocketAddr,
     num::NonZeroUsize,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{
@@ -94,6 +96,18 @@ type TransactionContents<N> = (SocketAddr, UnconfirmedTransaction<N>, Transactio
 /// Solution details needed for propagation.
 /// We preserve the serialized solution for faster propagation.
 type SolutionContents<N> = (SocketAddr, UnconfirmedSolution<N>, Solution<N>);
+
+/// How a client indexes and serves history, as set by `--history`.
+#[derive(Clone, Debug)]
+pub struct HistoryOptions<N: Network> {
+    /// The programs whose mapping history is recorded. Staking rewards are always recorded.
+    pub programs: IndexSet<ProgramID<N>>,
+    /// Whether to delete the recorded history first, so it is imported again from genesis.
+    pub reset: bool,
+    /// A directory of data-snarkVM JSON history to index the `credits.aleo` staking mappings from.
+    /// `programs` is empty when it is set.
+    pub json_dir: Option<PathBuf>,
+}
 
 /// A client node is a full node, capable of querying with the network.
 #[derive(Clone)]
@@ -138,6 +152,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         rest_rps: u32,
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
+        history: Option<HistoryOptions<N>>,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
@@ -156,6 +171,39 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
         }
         .with_context(|| "Failed to initialize the ledger")?;
+
+        // Catch the history index up to the blocks already stored. CDN and peer sync run after
+        // this, and each new block is recorded as it is committed.
+        if let Some(history) = &history {
+            if history.reset {
+                info!("Deleting the recorded history, so it is imported again from genesis");
+                let ledger = ledger.clone();
+                spawn_blocking!(ledger.reset_history()).with_context(|| "Failed to reset the history")?;
+            }
+            match &history.json_dir {
+                Some(dir) => {
+                    info!("Importing history through block {} from {}", ledger.latest_height(), dir.display());
+                    let (ledger, dir) = (ledger.clone(), dir.clone());
+                    spawn_blocking!(ledger.import_history_json(&dir))
+                        .with_context(|| "Failed to import the JSON history")?;
+                }
+                None => ledger
+                    .configure_history(HistoryScope::programs(history.programs.clone()))
+                    .with_context(|| "Failed to configure history")?,
+            }
+            if ledger.history_synced_height() == 0 {
+                let ledger = ledger.clone();
+                spawn_blocking!(ledger.import_genesis_history()).with_context(|| "Failed to import genesis history")?;
+            }
+            ensure!(
+                ledger.history_synced_height() > ledger.latest_height(),
+                "History is indexed before block {}, but the ledger tip is {}; pass --history-json <DIR> with files that reach the tip",
+                ledger.history_synced_height(),
+                ledger.latest_height()
+            );
+            ledger.set_record_history(true);
+            info!("History is indexed before block {}", ledger.history_synced_height());
+        }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
@@ -212,6 +260,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
                     rest_ip,
                     rest_rps,
                     history_api_url,
+                    history.is_some(),
                     None,
                     ledger.clone(),
                     Arc::new(node.clone()),

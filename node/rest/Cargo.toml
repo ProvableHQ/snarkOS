@@ -18,7 +18,6 @@ edition = "2024"
 
 [features]
 default = [ ]
-history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
 metrics = [ "snarkos-node-consensus/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
