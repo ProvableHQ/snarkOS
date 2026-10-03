@@ -444,6 +444,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd6a120d2e16b3e1b4a24bd70f23b12d3e16b81f113364a26935f8db7245452d"
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5245,7 +5251,7 @@ name = "snarkos-node-cdn"
 version = "4.10.1"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 3.0.0",
  "colored 3.1.1",
  "http 1.3.1",
  "locktick",
@@ -6155,7 +6161,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d
 dependencies = [
  "aleo-std",
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "indexmap 2.14.2",
  "locktick",
  "lru",
@@ -6216,7 +6222,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d
 dependencies = [
  "aleo-std-storage",
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "indexmap 2.14.2",
  "locktick",
  "parking_lot",
@@ -6388,7 +6394,7 @@ name = "snarkvm-synthesizer-snark"
 version = "4.10.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2#638c8145d0ae9d4e842d999fdfdcdd0f16b73bc2"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "serde_json",
  "snarkvm-algorithms",
  "snarkvm-circuit",
@@ -6403,7 +6409,7 @@ source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=638c8145d0ae9d4e842d
 dependencies = [
  "aleo-std",
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "colored 3.1.1",
  "num-bigint",
  "num_cpus",
