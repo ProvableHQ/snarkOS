@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790969164994,
+  "lastUpdate": 1791024415129,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -20694,6 +20694,72 @@ window.BENCHMARK_DATA = {
             "value": 1.96,
             "unit": "blocks/s",
             "extra": "total_wait=127s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "victor.s.nicolaas@protonmail.com",
+            "name": "vicsn",
+            "username": "vicsn"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "18aba8c62c0adc2e820e7cb173578c9a593c75cc",
+          "message": "Merge pull request #4507 from ProvableHQ/ci/benchmarks-toolchain-msrv\n\nci: align every Rust pin with the 1.96 MSRV and derive CircleCI cache keys from the toolchain",
+          "timestamp": "2026-10-03T12:27:47+02:00",
+          "tree_id": "4b441620cf9bbc9f468a65803b400fc8929e8de6",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/18aba8c62c0adc2e820e7cb173578c9a593c75cc"
+        },
+        "date": 1791024414280,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 6.856456210334122,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=70.00701022148132, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12851.095241689896,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.2251503467559814, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1564.7884690089224,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.5112512111663818, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.38,
+            "unit": "blocks/s",
+            "extra": "total_wait=105s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.818144,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=103, mean_speed=1.321197, max_speed=3.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 2.11,
+            "unit": "blocks/s",
+            "extra": "total_wait=118s, target_height=250, connect_time=7, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.98,
+            "unit": "blocks/s",
+            "extra": "total_wait=126s, target_height=250"
           }
         ]
       }
