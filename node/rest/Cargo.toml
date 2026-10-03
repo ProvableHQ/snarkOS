@@ -117,7 +117,7 @@ workspace = true
 workspace = true
 
 [dependencies.tower_governor]
-version = "0.7"
+version = "0.8"
 
 [dependencies.tower-http]
 version = "0.7"
