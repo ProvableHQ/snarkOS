@@ -444,6 +444,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd6a120d2e16b3e1b4a24bd70f23b12d3e16b81f113364a26935f8db7245452d"
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5209,7 +5215,7 @@ name = "snarkos-node-cdn"
 version = "4.11.0"
 dependencies = [
  "anyhow",
- "bincode",
+ "bincode 3.0.0",
  "colored 3.1.1",
  "http 1.5.0",
  "locktick",
@@ -6169,7 +6175,7 @@ checksum = "2b430ac8eea1255f588f198973ebfe75f637049b71e7c9b9b5dfd315f3d39e17"
 dependencies = [
  "aleo-std",
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "indexmap 2.14.2",
  "locktick",
  "lru",
@@ -6233,7 +6239,7 @@ checksum = "0660353ec7b10ca3b7aa2bb10abdf49044ae049e4df045da11026ca4c4956d53"
 dependencies = [
  "aleo-std-storage",
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "indexmap 2.14.2",
  "locktick",
  "parking_lot",
@@ -6413,7 +6419,7 @@ version = "4.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea353b8ec0cfa129f998dc4f7d553b0b27608ab715ca7bb8e569eebad8335e58"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "serde_json",
  "snarkvm-algorithms",
  "snarkvm-circuit",
@@ -6429,7 +6435,7 @@ checksum = "b2269d32fbd350808a0dc97f54ecbd82a12c7a81088997471e1fcafc84214e80"
 dependencies = [
  "aleo-std",
  "anyhow",
- "bincode",
+ "bincode 1.3.3",
  "colored 3.1.1",
  "num-bigint",
  "num_cpus",
