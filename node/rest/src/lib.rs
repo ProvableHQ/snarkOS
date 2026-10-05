@@ -406,6 +406,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Register the view-at-latest-height endpoint (always available, no history required).
         let routes = routes.route("/program/{id}/view/{function}", post(Self::evaluate_view_latest));
 
+        // JSON files written by `snarkos start --history`.
+        let routes = routes.route("/block/{height}/history/{mapping}", get(Self::get_block_history));
+
         // In history compatibility mode, serve the routes of the removed `history` feature from the
         // upstream historical API (see `history_compat`).
         let routes = if self.history_compat.is_some() {

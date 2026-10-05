@@ -33,7 +33,10 @@ use snarkvm::{
         Value,
         block::Transaction,
     },
-    synthesizer::program::{FinalizeGlobalState, StackTrait},
+    synthesizer::{
+        program::{FinalizeGlobalState, StackTrait},
+        vm::{History, MappingName},
+    },
 };
 
 use axum::{Json, extract::rejection::JsonRejection};
@@ -1129,6 +1132,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Path(tx_id): Path<N::TransactionID>,
     ) -> Result<ErasedJson, RestError> {
         Ok(ErasedJson::pretty(rest.ledger.find_block_hash(&tx_id)?))
+    }
+
+    /// GET /<network>/block/{height}/history/{mapping}
+    ///
+    /// The JSON file written by `snarkos start --history`.
+    pub(crate) async fn get_block_history(
+        State(rest): State<Self>,
+        Path((height, mapping)): Path<(u32, String)>,
+    ) -> Result<Response, RestError> {
+        let mapping = mapping.parse::<MappingName>().map_err(RestError::bad_request)?;
+        let storage_mode = rest.ledger.vm().finalize_store().storage_mode().clone();
+        let json =
+            tokio::task::spawn_blocking(move || History::new(N::ID, &storage_mode).load_mapping(height, mapping))
+                .await
+                .map_err(|err| RestError::internal_server_error(anyhow!("Tokio error: {err}")))?
+                .map_err(|err| RestError::not_found(err.context(format!("No JSON history for block {height}"))))?;
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json))
+            .map_err(|err| RestError::internal_server_error(anyhow!("Failed to build the history response: {err}")))
     }
 
     /// GET /<network>/find/blockHeight/{stateRoot}
