@@ -118,6 +118,8 @@ workspace = true
 
 [dependencies.tower_governor]
 version = "0.8"
+default-features = false
+features = [ "axum" ]
 
 [dependencies.tower-http]
 version = "0.7"
