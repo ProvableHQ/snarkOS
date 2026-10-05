@@ -396,7 +396,7 @@ version = "0.11.2"
 workspace = true
 
 [build-dependencies.toml]
-version = "0.9"
+version = "1"
 
 [build-dependencies.walkdir]
 version = "2"
