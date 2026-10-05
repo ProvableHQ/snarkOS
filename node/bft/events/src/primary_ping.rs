@@ -125,10 +125,8 @@ impl<N: Network> FromBytes for PrimaryPing<N> {
         // Read the primary certificate.
         let primary_certificate = Data::read_le(&mut reader)?;
         // Read the upgrade signal.
-        let upgrade_signal = match version >= Self::UPGRADE_SIGNAL_VERSION {
-            true => Some(UpgradeSignal::read_le(&mut reader)?),
-            false => None,
-        };
+        let upgrade_signal =
+            if version >= Self::UPGRADE_SIGNAL_VERSION { Some(UpgradeSignal::read_le(&mut reader)?) } else { None };
 
         // Return the ping event.
         Ok(Self::new(version, block_locators, primary_certificate, upgrade_signal))
@@ -149,6 +147,7 @@ pub mod prop_tests {
     use test_strategy::proptest;
 
     type CurrentNetwork = snarkvm::prelude::MainnetV0;
+    type Ping = PrimaryPing<CurrentNetwork>;
 
     pub fn any_block_locators() -> BoxedStrategy<BlockLocators<CurrentNetwork>> {
         // `sample_block_locators` inserts a checkpoint every 10_000 heights. An unconstrained
@@ -165,8 +164,7 @@ pub mod prop_tests {
     pub fn any_primary_ping() -> BoxedStrategy<PrimaryPing<CurrentNetwork>> {
         (any::<u32>(), any_block_locators(), any_batch_certificate(), any_upgrade_signal())
             .prop_map(|(version, block_locators, batch_certificate, upgrade_signal)| {
-                let upgrade_signal =
-                    (version >= PrimaryPing::<CurrentNetwork>::UPGRADE_SIGNAL_VERSION).then_some(upgrade_signal);
+                let upgrade_signal = (version >= Ping::UPGRADE_SIGNAL_VERSION).then_some(upgrade_signal);
                 PrimaryPing::from((version, block_locators, batch_certificate, upgrade_signal))
             })
             .boxed()
@@ -190,9 +188,9 @@ pub mod prop_tests {
         #[strategy(any_batch_certificate())] certificate: BatchCertificate<CurrentNetwork>,
         #[strategy(any_upgrade_signal())] upgrade_signal: UpgradeSignal,
     ) {
-        let legacy_version = PrimaryPing::<CurrentNetwork>::UPGRADE_SIGNAL_VERSION - 1;
-        let ping = PrimaryPing::<CurrentNetwork>::from((
-            PrimaryPing::<CurrentNetwork>::UPGRADE_SIGNAL_VERSION,
+        let legacy_version = Ping::UPGRADE_SIGNAL_VERSION - 1;
+        let ping = Ping::from((
+            Ping::UPGRADE_SIGNAL_VERSION,
             block_locators.clone(),
             certificate.clone(),
             Some(upgrade_signal),
@@ -208,9 +206,9 @@ pub mod prop_tests {
         #[strategy(any_block_locators())] block_locators: BlockLocators<CurrentNetwork>,
         #[strategy(any_batch_certificate())] certificate: BatchCertificate<CurrentNetwork>,
     ) {
-        let legacy_version = PrimaryPing::<CurrentNetwork>::UPGRADE_SIGNAL_VERSION - 1;
+        let legacy_version = Ping::UPGRADE_SIGNAL_VERSION - 1;
         let bytes = legacy_encoding(legacy_version, &block_locators, &certificate);
-        let decoded = PrimaryPing::<CurrentNetwork>::read_le(&bytes[..]).unwrap();
+        let decoded = Ping::read_le(&bytes[..]).unwrap();
         assert_eq!(decoded.version, legacy_version);
         assert_eq!(decoded.upgrade_signal, None);
     }
@@ -221,9 +219,8 @@ pub mod prop_tests {
         #[strategy(any_batch_certificate())] certificate: BatchCertificate<CurrentNetwork>,
         #[strategy(any_upgrade_signal())] upgrade_signal: UpgradeSignal,
     ) {
-        let version = PrimaryPing::<CurrentNetwork>::UPGRADE_SIGNAL_VERSION;
-        let ping = PrimaryPing::<CurrentNetwork>::from((version, block_locators, certificate, Some(upgrade_signal)))
-            .for_peer_version(version);
+        let version = Ping::UPGRADE_SIGNAL_VERSION;
+        let ping = Ping::from((version, block_locators, certificate, Some(upgrade_signal))).for_peer_version(version);
         assert_eq!(ping.version, version);
         assert_eq!(ping.upgrade_signal, Some(upgrade_signal));
     }
@@ -234,11 +231,10 @@ pub mod prop_tests {
         #[strategy(any_batch_certificate())] certificate: BatchCertificate<CurrentNetwork>,
         #[strategy(any_upgrade_signal())] upgrade_signal: UpgradeSignal,
     ) {
-        let version = PrimaryPing::<CurrentNetwork>::UPGRADE_SIGNAL_VERSION;
-        let missing = PrimaryPing::<CurrentNetwork>::from((version, block_locators.clone(), certificate.clone(), None));
+        let version = Ping::UPGRADE_SIGNAL_VERSION;
+        let missing = Ping::from((version, block_locators.clone(), certificate.clone(), None));
         assert!(missing.to_bytes_le().is_err());
-        let unexpected =
-            PrimaryPing::<CurrentNetwork>::from((version - 1, block_locators, certificate, Some(upgrade_signal)));
+        let unexpected = Ping::from((version - 1, block_locators, certificate, Some(upgrade_signal)));
         assert!(unexpected.to_bytes_le().is_err());
     }
 
@@ -246,7 +242,7 @@ pub mod prop_tests {
     fn primary_ping_roundtrip(#[strategy(any_primary_ping())] primary_ping: PrimaryPing<CurrentNetwork>) {
         let mut bytes = BytesMut::default().writer();
         primary_ping.write_le(&mut bytes).unwrap();
-        let decoded = PrimaryPing::<CurrentNetwork>::read_le(&mut bytes.into_inner().reader()).unwrap();
+        let decoded = Ping::read_le(&mut bytes.into_inner().reader()).unwrap();
         assert_eq!(primary_ping.version, decoded.version);
         assert_eq!(primary_ping.block_locators, decoded.block_locators);
         assert_eq!(primary_ping.upgrade_signal, decoded.upgrade_signal);

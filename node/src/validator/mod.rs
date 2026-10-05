@@ -20,7 +20,7 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 #[cfg(feature = "test_network")]
 use snarkos_node_bft::ledger_service::{persist_dev_committee_start_round_if_unwritten, prepare_dev_committee_options};
-use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_bft::{helpers::UpgradeMonitor, ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
@@ -253,9 +253,14 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         self.consensus.start_consensus_handlers().await
     }
 
+    /// Returns the upgrade monitor.
+    fn upgrade_monitor(&self) -> &UpgradeMonitor<N> {
+        self.consensus.bft().primary().gateway().upgrade_monitor()
+    }
+
     /// Returns the consensus version that the committee will run before this build does, if any.
     pub fn required_consensus_version(&self) -> Option<u16> {
-        self.consensus.bft().primary().gateway().upgrade_monitor().required_version()
+        self.upgrade_monitor().required_version()
     }
 
     /// Waits for the committee to schedule a consensus version that this build does not, then stops
@@ -263,14 +268,10 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     ///
     /// The process stays alive so that a supervisor does not restart it with the same build.
     fn initialize_upgrade_watch(&self) {
-        let mut receiver = self.consensus.bft().primary().gateway().upgrade_monitor().subscribe();
+        let mut receiver = self.upgrade_monitor().subscribe();
         let node = self.clone();
         self.spawn(async move {
-            let version = match receiver.wait_for(Option::is_some).await {
-                Ok(version) => *version,
-                Err(_) => return,
-            };
-            let Some(version) = version else {
+            let Some(version) = receiver.wait_for(Option::is_some).await.ok().and_then(|version| *version) else {
                 return;
             };
 

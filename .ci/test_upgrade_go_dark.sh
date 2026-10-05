@@ -11,7 +11,8 @@ network_id=0
 total_validators=4
 activation_height=150
 target_height=180
-outdated_validator=3
+# The outdated validator is the last one, so that the upgraded ones form a contiguous range.
+outdated_validator=$((total_validators-1))
 NODE_VERBOSITY=2
 
 # shellcheck source=SCRIPTDIR/utils.sh
@@ -46,33 +47,20 @@ for validator_index in $(seq 0 $((total_validators-1))); do
   sleep 1
 done
 
+wait_for_nodes "$total_validators" 0 "$network_name" 180
+
 # Wait for the upgraded validators to pass the activation height.
-deadline=$(( $(date +%s) + 1800 ))
-while true; do
-  done_count=0
-  for validator_index in 0 1 2; do
-    height=$(get_block_height_by_port $((3030+validator_index)) "$network_name" 5)
-    if [[ -n "$height" ]] && (( height >= target_height )); then
-      done_count=$((done_count+1))
-    fi
-  done
-  if (( done_count == 3 )); then
-    break
-  fi
-  if (( $(date +%s) > deadline )); then
-    log "⛔️ Upgraded validators did not reach height $target_height"
-    exit 1
-  fi
-  sleep 5
-done
+if ! wait_for_heights 0 "$outdated_validator" "$target_height" "$network_name" 1800 5; then
+  log "⛔️ Upgraded validators did not reach height $target_height"
+  exit 1
+fi
 log "Upgraded validators reached height $target_height"
 
 port=$((3030+outdated_validator))
 log_file="$log_dir/validator-$outdated_validator.log"
 
-# The outdated validator is still running.
-if ! kill -0 "${PIDS[$outdated_validator]}" 2>/dev/null; then
-  log "⛔️ The outdated validator exited"
+# Every validator, including the outdated one, is still running.
+if check_node_stopped; then
   exit 1
 fi
 

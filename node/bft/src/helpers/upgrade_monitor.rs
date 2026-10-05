@@ -33,6 +33,11 @@ pub fn local_upgrade_signal<N: Network>(latest_height: u32) -> anyhow::Result<Up
     Ok(UpgradeSignal { height, consensus_version })
 }
 
+/// Returns `true` if `signal` announces a newer consensus version than this build schedules at its height.
+fn is_ahead<N: Network>(signal: &UpgradeSignal) -> bool {
+    N::CONSENSUS_VERSION(signal.height).is_ok_and(|version| signal.consensus_version > version as u16)
+}
+
 /// Returns the highest consensus version that validators holding at least the availability
 /// threshold of stake announce for a height where this build schedules an older version.
 ///
@@ -44,20 +49,16 @@ pub fn required_upgrade<N: Network>(
 ) -> Option<u16> {
     let mut ahead: Vec<_> = signals
         .into_iter()
-        .filter(|(_, signal)| {
-            N::CONSENSUS_VERSION(signal.height).is_ok_and(|version| signal.consensus_version > version as u16)
-        })
+        .filter(|(_, signal)| is_ahead::<N>(signal))
         .map(|(address, signal)| (signal.consensus_version, address))
         .collect();
     ahead.sort_unstable_by_key(|(version, _)| std::cmp::Reverse(*version));
 
     // Validators announcing a higher version also vouch for every lower version that is ahead of this build.
     let mut supporters = HashSet::with_capacity(ahead.len());
-    let mut iter = ahead.into_iter().peekable();
-    while let Some((version, address)) = iter.next() {
+    for (version, address) in ahead {
         supporters.insert(address);
-        let is_last_of_version = iter.peek().is_none_or(|(next, _)| *next != version);
-        if is_last_of_version && committee.is_availability_threshold_reached(&supporters) {
+        if committee.is_availability_threshold_reached(&supporters) {
             return Some(version);
         }
     }
@@ -67,7 +68,7 @@ pub fn required_upgrade<N: Network>(
 /// Tracks the upgrade signals of connected validators, and latches the consensus version returned by
 /// [`required_upgrade`] the first time there is one.
 pub struct UpgradeMonitor<N: Network> {
-    /// The latest upgrade signal of each validator.
+    /// The latest upgrade signal of each validator, if it is ahead of this build.
     signals: Mutex<HashMap<Address<N>, UpgradeSignal>>,
     /// The latched consensus version; once set, it never changes.
     required_version: watch::Sender<Option<u16>>,
@@ -80,24 +81,32 @@ impl<N: Network> Default for UpgradeMonitor<N> {
 }
 
 impl<N: Network> UpgradeMonitor<N> {
-    /// Records the upgrade signal of the validator at `address`, discards the signals of validators
-    /// no longer in `connected`, and returns the consensus version if this call latched it.
+    /// Records the upgrade signal of the validator at `address`, and returns the consensus version if
+    /// this call latched it.
+    ///
+    /// `lookup` returns the committee and the connected validators. It is only called for a signal
+    /// that is ahead of this build, which keeps the common case cheap. Signals of validators that are
+    /// no longer connected are then discarded.
     pub fn record(
         &self,
         address: Address<N>,
         signal: UpgradeSignal,
-        committee: &Committee<N>,
-        connected: &HashSet<Address<N>>,
+        lookup: impl FnOnce() -> Option<(Committee<N>, HashSet<Address<N>>)>,
     ) -> Option<u16> {
         if self.required_version().is_some() {
             return None;
         }
+        if !is_ahead::<N>(&signal) {
+            self.signals.lock().remove(&address);
+            return None;
+        }
 
+        let (committee, connected) = lookup()?;
         let required = {
             let mut signals = self.signals.lock();
             signals.insert(address, signal);
             signals.retain(|address, _| connected.contains(address));
-            required_upgrade(committee, signals.iter().map(|(address, signal)| (*address, *signal)))?
+            required_upgrade(&committee, signals.iter().map(|(address, signal)| (*address, *signal)))?
         };
 
         self.required_version
@@ -126,11 +135,10 @@ impl<N: Network> UpgradeMonitor<N> {
 mod tests {
     use super::*;
     use snarkvm::{
-        ledger::committee::MIN_VALIDATOR_STAKE,
+        ledger::committee::test_helpers::sample_committee_for_round_and_members,
         prelude::{MainnetV0, TestRng},
     };
 
-    use indexmap::IndexMap;
     use rand::RngExt;
 
     type CurrentNetwork = MainnetV0;
@@ -139,11 +147,18 @@ mod tests {
 
     /// Returns a committee of four validators with equal stake, so that one validator is below the
     /// availability threshold and two reach it.
-    fn sample_committee(rng: &mut TestRng) -> (Committee<CurrentNetwork>, Vec<Address<CurrentNetwork>>) {
+    fn sample_committee() -> (Committee<CurrentNetwork>, Vec<Address<CurrentNetwork>>) {
+        let rng = &mut TestRng::default();
         let addresses: Vec<_> = (0..4).map(|_| Address::new(rng.random())).collect();
-        let members: IndexMap<_, _> =
-            addresses.iter().map(|address| (*address, (MIN_VALIDATOR_STAKE, false, 0u8))).collect();
-        (Committee::new(1, members).unwrap(), addresses)
+        (sample_committee_for_round_and_members(1, addresses.clone(), rng), addresses)
+    }
+
+    /// Returns a lookup that reports `committee` and every address in `connected`.
+    fn lookup<'a>(
+        committee: &'a Committee<CurrentNetwork>,
+        connected: &'a [Address<CurrentNetwork>],
+    ) -> impl FnOnce() -> Option<(Committee<CurrentNetwork>, HashSet<Address<CurrentNetwork>>)> + 'a {
+        move || Some((committee.clone(), connected.iter().copied().collect()))
     }
 
     fn scheduled_version() -> u16 {
@@ -156,15 +171,13 @@ mod tests {
 
     #[test]
     fn a_faulty_minority_cannot_require_an_upgrade() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
+        let (committee, addresses) = sample_committee();
         assert_eq!(required_upgrade(&committee, [(addresses[0], signal(u16::MAX))]), None);
     }
 
     #[test]
     fn the_availability_threshold_requires_an_upgrade() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
+        let (committee, addresses) = sample_committee();
         let next = scheduled_version() + 1;
         let signals = [(addresses[0], signal(next)), (addresses[1], signal(next))];
         assert_eq!(required_upgrade(&committee, signals), Some(next));
@@ -172,8 +185,7 @@ mod tests {
 
     #[test]
     fn signals_matching_this_build_do_not_require_an_upgrade() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
+        let (committee, addresses) = sample_committee();
         let signals = addresses.iter().map(|address| (*address, signal(scheduled_version())));
         assert_eq!(required_upgrade(&committee, signals), None);
         let signals = addresses.iter().map(|address| (*address, signal(scheduled_version() - 1)));
@@ -182,8 +194,7 @@ mod tests {
 
     #[test]
     fn an_unscheduled_version_defined_by_this_build_requires_an_upgrade() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
+        let (committee, addresses) = sample_committee();
         // This build defines the latest version, but does not schedule it at any reachable height.
         let latest = snarkvm::prelude::ConsensusVersion::latest();
         let height = u32::MAX - 1;
@@ -195,8 +206,7 @@ mod tests {
 
     #[test]
     fn the_reported_version_has_the_backing_of_the_availability_threshold() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
+        let (committee, addresses) = sample_committee();
         let next = scheduled_version() + 1;
         let signals = [(addresses[0], signal(u16::MAX)), (addresses[1], signal(next))];
         assert_eq!(required_upgrade(&committee, signals), Some(next));
@@ -204,8 +214,8 @@ mod tests {
 
     #[test]
     fn non_members_carry_no_stake() {
+        let (committee, addresses) = sample_committee();
         let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
         let outsiders: Vec<Address<CurrentNetwork>> = (0..4).map(|_| Address::new(rng.random())).collect();
         let next = scheduled_version() + 1;
         let signals = outsiders.iter().chain(&addresses[..1]).map(|address| (*address, signal(next)));
@@ -214,44 +224,48 @@ mod tests {
 
     #[test]
     fn the_monitor_counts_each_address_once() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
-        let connected = addresses.iter().copied().collect();
+        let (committee, addresses) = sample_committee();
         let monitor = UpgradeMonitor::default();
         let next = scheduled_version() + 1;
-        assert_eq!(monitor.record(addresses[0], signal(next), &committee, &connected), None);
-        assert_eq!(monitor.record(addresses[0], signal(next), &committee, &connected), None);
+        assert_eq!(monitor.record(addresses[0], signal(next), lookup(&committee, &addresses)), None);
+        assert_eq!(monitor.record(addresses[0], signal(next), lookup(&committee, &addresses)), None);
         assert_eq!(monitor.required_version(), None);
     }
 
     #[test]
     fn the_monitor_ignores_disconnected_validators() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
+        let (committee, addresses) = sample_committee();
         let monitor = UpgradeMonitor::default();
         let next = scheduled_version() + 1;
-        let connected = addresses.iter().copied().collect();
-        monitor.record(addresses[0], signal(next), &committee, &connected);
-        let connected = addresses[1..].iter().copied().collect();
-        assert_eq!(monitor.record(addresses[1], signal(next), &committee, &connected), None);
+        monitor.record(addresses[0], signal(next), lookup(&committee, &addresses));
+        assert_eq!(monitor.record(addresses[1], signal(next), lookup(&committee, &addresses[1..])), None);
+        assert_eq!(monitor.required_version(), None);
+    }
+
+    #[test]
+    fn the_monitor_forgets_a_validator_that_is_no_longer_ahead() {
+        let (committee, addresses) = sample_committee();
+        let monitor = UpgradeMonitor::default();
+        let next = scheduled_version() + 1;
+        monitor.record(addresses[0], signal(next), lookup(&committee, &addresses));
+        monitor.record(addresses[0], signal(scheduled_version()), || unreachable!("the signal is not ahead"));
+        assert_eq!(monitor.record(addresses[1], signal(next), lookup(&committee, &addresses)), None);
         assert_eq!(monitor.required_version(), None);
     }
 
     #[test]
     fn the_monitor_latches() {
-        let rng = &mut TestRng::default();
-        let (committee, addresses) = sample_committee(rng);
-        let connected = addresses.iter().copied().collect();
+        let (committee, addresses) = sample_committee();
         let monitor = UpgradeMonitor::default();
         let receiver = monitor.subscribe();
         let next = scheduled_version() + 1;
-        monitor.record(addresses[0], signal(next), &committee, &connected);
-        assert_eq!(monitor.record(addresses[1], signal(next), &committee, &connected), Some(next));
+        monitor.record(addresses[0], signal(next), lookup(&committee, &addresses));
+        assert_eq!(monitor.record(addresses[1], signal(next), lookup(&committee, &addresses)), Some(next));
         assert_eq!(*receiver.borrow(), Some(next));
 
         // Later signals neither clear nor change the latched version.
         for address in &addresses {
-            assert_eq!(monitor.record(*address, signal(scheduled_version()), &committee, &connected), None);
+            assert_eq!(monitor.record(*address, signal(scheduled_version()), lookup(&committee, &addresses)), None);
         }
         assert_eq!(monitor.required_version(), Some(next));
     }

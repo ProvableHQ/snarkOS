@@ -456,14 +456,14 @@ impl<N: Network> Gateway<N> {
         let Some(address) = self.resolve_to_aleo_addr(peer_ip) else {
             return;
         };
-        let committee = match self.ledger.current_committee() {
-            Ok(committee) => committee,
+        let lookup = || match self.ledger.current_committee() {
+            Ok(committee) => Some((committee, self.connected_addresses())),
             Err(error) => {
                 warn!("{CONTEXT} Unable to retrieve the committee to tally upgrade signals - {error}");
-                return;
+                None
             }
         };
-        if let Some(version) = self.upgrade_monitor.record(address, signal, &committee, &self.connected_addresses()) {
+        if let Some(version) = self.upgrade_monitor.record(address, signal, lookup) {
             error!(
                 "{CONTEXT} Validators holding at least a third of the stake will run ConsensusVersion::V{version} \
                  before this build does"

@@ -55,6 +55,7 @@ use deadline::deadline;
 use futures::{SinkExt, TryStreamExt};
 use rand::RngExt;
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
     task,
     time::timeout,
@@ -134,21 +135,28 @@ async fn a_noise_handshake_leaves_the_connection_usable() {
     let mut framed = Framed::new(&mut stream, EventCodec::<CurrentNetwork>::default());
     framed.send(Event::ValidatorsRequest(ValidatorsRequest)).await.unwrap();
 
-    // The gateway solicits validators of its own accord too, so anything arriving ahead of the answer
-    // is skipped.
-    let answered = timeout(Duration::from_secs(5), async {
+    let answer = next_event_matching(&mut framed, |event| matches!(event, Event::ValidatorsResponse(_))).await;
+    assert!(answer.is_some(), "the gateway closed the connection instead of answering");
+    assert!(gateway.connected_addresses().contains(&peer.address()));
+}
+
+/// Returns the next event on `framed` that satisfies `predicate`, or `None` if the connection closes.
+///
+/// The gateway solicits validators of its own accord, so other events arriving first are skipped.
+async fn next_event_matching<S: AsyncRead + AsyncWrite + Unpin>(
+    framed: &mut Framed<S, EventCodec<CurrentNetwork>>,
+    predicate: impl Fn(&Event<CurrentNetwork>) -> bool,
+) -> Option<Event<CurrentNetwork>> {
+    timeout(Duration::from_secs(5), async {
         while let Some(event) = framed.try_next().await.unwrap() {
-            if matches!(event, Event::ValidatorsResponse(_)) {
-                return true;
+            if predicate(&event) {
+                return Some(event);
             }
         }
-        false
+        None
     })
     .await
-    .expect("the gateway did not answer in time");
-
-    assert!(answered, "the gateway closed the connection instead of answering");
-    assert!(gateway.connected_addresses().contains(&peer.address()));
+    .expect("the gateway did not send the event in time")
 }
 
 /// Relays a Noise handshake between a victim that dials `listener` and a `target` it believes it is
@@ -392,64 +400,46 @@ async fn connect_at_version(
     Framed::new(stream, EventCodec::<CurrentNetwork>::default())
 }
 
-/// Returns a ping at the current event version, carrying an upgrade signal.
+const UPGRADE_SIGNAL: UpgradeSignal = UpgradeSignal { height: 100, consensus_version: u16::MAX };
+
+/// Returns a ping at the current event version, carrying [`UPGRADE_SIGNAL`].
 fn sample_ping(rng: &mut TestRng) -> PrimaryPing<CurrentNetwork> {
-    let upgrade_signal = UpgradeSignal { height: 100, consensus_version: u16::MAX };
-    PrimaryPing::from((
-        Event::<CurrentNetwork>::VERSION,
-        sample_block_locators(0),
-        sample_batch_certificate(rng),
-        Some(upgrade_signal),
-    ))
+    let version = Event::<CurrentNetwork>::VERSION;
+    PrimaryPing::from((version, sample_block_locators(0), sample_batch_certificate(rng), Some(UPGRADE_SIGNAL)))
 }
 
-/// Has `gateway` send a ping to the peer listening on `listener_port`, and returns the ping as the
-/// peer decodes it.
-async fn ping_through(
-    gateway: &Gateway<CurrentNetwork>,
-    framed: &mut Framed<TcpStream, EventCodec<CurrentNetwork>>,
-    listener_port: u16,
-    rng: &mut TestRng,
-) -> PrimaryPing<CurrentNetwork> {
-    let peer_ip = SocketAddr::from(([127, 0, 0, 1], listener_port));
-    Transport::send(gateway, peer_ip, Event::PrimaryPing(sample_ping(rng))).await.unwrap().await.unwrap().unwrap();
+/// Connects a peer to a gateway at the event `version`, has the gateway send it a ping, and returns
+/// the ping as the peer decodes it.
+async fn ping_peer_at_version(version: u32, listener_port: u16) -> PrimaryPing<CurrentNetwork> {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let mut framed = connect_at_version(&gateways[0], &accounts[1], listener_port, version).await;
 
-    // The gateway solicits validators of its own accord too, so anything else is skipped.
-    timeout(Duration::from_secs(5), async {
-        while let Some(event) = framed.try_next().await.unwrap() {
-            if let Event::PrimaryPing(ping) = event {
-                return ping;
-            }
-        }
-        panic!("the gateway closed the connection instead of sending the ping");
-    })
-    .await
-    .expect("the gateway did not send the ping in time")
+    let peer_ip = SocketAddr::from(([127, 0, 0, 1], listener_port));
+    let ping = Event::PrimaryPing(sample_ping(&mut rng));
+    Transport::send(&gateways[0], peer_ip, ping).await.unwrap().await.unwrap().unwrap();
+
+    match next_event_matching(&mut framed, |event| matches!(event, Event::PrimaryPing(_))).await {
+        Some(Event::PrimaryPing(ping)) => ping,
+        _ => panic!("the gateway closed the connection instead of sending the ping"),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_legacy_peer_is_sent_pings_without_an_upgrade_signal() {
-    let mut rng = TestRng::default();
-    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
     let legacy_version = Event::<CurrentNetwork>::MINIMUM_VERSION;
-    let mut framed = connect_at_version(&gateways[0], &accounts[1], 4150, legacy_version).await;
-
     // The codec rejects leftover bytes, so decoding proves the ping carries no upgrade signal.
-    let ping = ping_through(&gateways[0], &mut framed, 4150, &mut rng).await;
+    let ping = ping_peer_at_version(legacy_version, 4150).await;
     assert_eq!(ping.version, legacy_version);
     assert_eq!(ping.upgrade_signal, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_current_peer_is_sent_pings_with_an_upgrade_signal() {
-    let mut rng = TestRng::default();
-    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
     let version = Event::<CurrentNetwork>::VERSION;
-    let mut framed = connect_at_version(&gateways[0], &accounts[1], 4151, version).await;
-
-    let ping = ping_through(&gateways[0], &mut framed, 4151, &mut rng).await;
+    let ping = ping_peer_at_version(version, 4151).await;
     assert_eq!(ping.version, version);
-    assert_eq!(ping.upgrade_signal, sample_ping(&mut rng).upgrade_signal);
+    assert_eq!(ping.upgrade_signal, Some(UPGRADE_SIGNAL));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -464,16 +454,7 @@ async fn a_legacy_peer_may_send_pings_without_an_upgrade_signal() {
     framed.send(Event::ValidatorsRequest(ValidatorsRequest)).await.unwrap();
 
     // An answer to the request shows that the gateway accepted the ping and kept the connection.
-    let answered = timeout(Duration::from_secs(5), async {
-        while let Some(event) = framed.try_next().await.unwrap() {
-            if matches!(event, Event::ValidatorsResponse(_)) {
-                return true;
-            }
-        }
-        false
-    })
-    .await
-    .expect("the gateway did not answer in time");
-    assert!(answered, "the gateway closed the connection instead of answering");
+    let answer = next_event_matching(&mut framed, |event| matches!(event, Event::ValidatorsResponse(_))).await;
+    assert!(answer.is_some(), "the gateway closed the connection instead of answering");
     assert!(gateways[0].connected_addresses().contains(&accounts[1].address()));
 }
