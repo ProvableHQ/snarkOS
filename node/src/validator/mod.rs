@@ -24,7 +24,7 @@ use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
-use snarkos_node_rest::Rest;
+use snarkos_node_rest::{Rest, RestVerificationLimits};
 use snarkos_node_router::{
     Heartbeat,
     Inbound,
@@ -85,6 +85,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         bft_ip: Option<SocketAddr>,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
+        rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
@@ -194,6 +195,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
                     Arc::new(node.clone()),
                     cdn_sync.clone(),
                     sync,
+                    rest_verification_limits,
                 )
                 .await?,
             );
@@ -569,6 +571,7 @@ mod tests {
             None,
             Some(rest),
             10,
+            RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
             None,
             account,
             &[],

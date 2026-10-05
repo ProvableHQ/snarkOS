@@ -758,6 +758,8 @@ impl<N: Network> BFT<N> {
                 "BFT failed to commit - the subdag anchor round {anchor_round} does not match the leader round {leader_round}",
             );
 
+            let mut ledger_already_advanced = false;
+
             // Trigger consensus (skipped if the round was already committed by a prior call).
             if !skip_consensus && let Some(consensus_sender) = self.consensus_sender.get() {
                 // Initialize a callback sender and receiver.
@@ -768,7 +770,8 @@ impl<N: Network> BFT<N> {
 
                 // Await the callback to continue.
                 match callback_receiver.await {
-                    Ok(Ok(_)) => (),
+                    Ok(Ok(true)) => (),
+                    Ok(Ok(false)) => ledger_already_advanced = true,
                     Ok(Err(err)) => {
                         let err = err.context(format!("BFT failed to advance the subdag for round {anchor_round}"));
                         error!("{}", &flatten_error(err));
@@ -777,7 +780,7 @@ impl<N: Network> BFT<N> {
                     Err(err) => {
                         let err: anyhow::Error = err.into();
                         let err = err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
-                        error!("{}", flatten_error(err));
+                        warn!("{}", flatten_error(err));
                         return Ok(());
                     }
                 }
@@ -802,11 +805,17 @@ impl<N: Network> BFT<N> {
                 }
             }
 
-            info!(
-                "Committing a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?}",
-            );
+            if ledger_already_advanced {
+                debug!(
+                    "Committing a subDAG with anchor round {anchor_round} to the DAG only, as the ledger already contains it",
+                );
+            } else {
+                info!(
+                    "Committing a subDAG with anchor round {anchor_round} and {num_transmissions} transmissions: {subdag_metadata:?}",
+                );
+            }
 
-            // Update the DAG, as the subdag was successfully included into a block.
+            // Update the DAG, as the ledger contains a block for this subdag.
             {
                 let mut dag_write = self.dag.write();
                 let mut count = 0;

@@ -746,7 +746,7 @@ impl<N: Network> Gateway<N> {
                 };
 
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                self.spawn(async move {
                     // Send the `BlockResponse` message to the peer.
                     let event =
                         Event::BlockResponse(BlockResponse::new(block_request, blocks, latest_consensus_version));
@@ -901,7 +901,7 @@ impl<N: Network> Gateway<N> {
                 connected_peers.shuffle(&mut rand::rng());
 
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                self.spawn(async move {
                     // Initialize the validators.
                     let mut validators = IndexMap::with_capacity(MAX_VALIDATORS_TO_SEND);
                     // Iterate over the validators.
@@ -989,9 +989,10 @@ impl<N: Network> Gateway<N> {
     }
 
     /// Spawns a task with the given future; it should only be used for long-running tasks.
-    #[allow(dead_code)]
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        let mut handles = self.handles.lock();
+        handles.retain(|handle| !handle.is_finished());
+        handles.push(tokio::spawn(future));
     }
 
     /// Shuts down the gateway.
@@ -1141,7 +1142,7 @@ impl<N: Network> Gateway<N> {
         if !committee.is_quorum_threshold_reached(&connected_validator_addresses) {
             // Not being connected to a quorum of validators is begning during startup.
             if self.tcp().uptime() > Self::MISSING_VALIDATOR_CONNECTIONS_GRACE_PERIOD {
-                error!("Not connected to a quorum of validators");
+                warn!("Not connected to a quorum of validators");
             } else {
                 debug!("Not connected to a quorum of validators");
             }
@@ -1249,7 +1250,7 @@ impl<N: Network> Gateway<N> {
     /// This function attempts to disconnect any validators that are not in the current committee.
     fn handle_unauthorized_validators(&self) {
         let self_ = self.clone();
-        tokio::spawn(async move {
+        self.spawn(async move {
             // Retrieve the connected validators.
             let validators = self_.get_connected_peers();
             // Iterate over the validator IPs.
@@ -1325,7 +1326,7 @@ impl<N: Network> Gateway<N> {
             // Select a random validator IP.
             if let Some(validator_ip) = validators.into_iter().choose(&mut rand::rng()) {
                 let self_ = self.clone();
-                tokio::spawn(async move {
+                self.spawn(async move {
                     // Increment the number of outbound validators requests for this validator.
                     self_.cache.increment_outbound_validators_requests(validator_ip);
                     // Send a `ValidatorsRequest` to the validator.
@@ -1343,7 +1344,7 @@ impl<N: Network> Gateway<N> {
         {
             warn!("{CONTEXT} Disconnecting from '{peer_ip}' - {error}");
             let self_ = self.clone();
-            tokio::spawn(async move {
+            self.spawn(async move {
                 Transport::send(&self_, peer_ip, DisconnectReason::ProtocolViolation.into()).await;
                 // Disconnect from this peer.
                 self_.disconnect(peer_ip);
@@ -1437,7 +1438,7 @@ impl<N: Network> Transport<N> for Gateway<N> {
         if self.number_of_connected_peers() > 0 {
             let self_ = self.clone();
             let connected_peers = self.connected_peers();
-            tokio::spawn(async move {
+            self.spawn(async move {
                 // Serialize the event's payload once, rather than once per recipient; every
                 // recipient then shares the resulting buffer. `Transport::send` would otherwise do
                 // this separately for each peer below.
@@ -1489,7 +1490,7 @@ impl<N: Network> Reading for Gateway<N> {
             let self_ = self.clone();
             // Handle BlockRequest and BlockResponse messages in a separate task to not block the
             // inbound queue.
-            tokio::spawn(async move {
+            self.spawn(async move {
                 self_.process_message_inner(peer_addr, message).await;
             });
         } else {

@@ -13,11 +13,17 @@ parameters:
   twoxlarge:
     type: string
     default: 2xlarge
+  # First component of every build-cache key. Bumping it discards every
+  # build cache at once. A Rust toolchain change does not need a bump: every
+  # build-cache key also contains the checksum of `rust-toolchain.toml`.
+  cache_version:
+    type: string
+    default: v1
   # The toolchain `check-fmt` formats with.
   #
   # `.rustfmt.toml` uses options that only exist on nightly -- imports_layout,
   # imports_granularity, overflow_delimited_expr, reorder_impl_items and
-  # style_edition -- so the formatter cannot be the 1.88.0 this project builds
+  # style_edition -- so the formatter cannot be the 1.96.0 this project builds
   # with, and `cargo fmt` without a toolchain silently drops all five rather
   # than refusing. The formatter is therefore a second toolchain, and pinning
   # it is the same act as pinning the first.
@@ -45,7 +51,7 @@ executors:
   # The default docker image used in the main-workflow
   rust-docker:
      docker:
-      - image: cimg/rust:1.96.0 # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+      - image: cimg/rust:1.96.0 # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
   # The default VM used for devnet tests
   ubuntu-vm:
       machine:
@@ -60,7 +66,9 @@ commands:
     steps:
       - checkout
       - restore_cache:
-          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+          keys:
+            - << pipeline.parameters.cache_version >>-rust-{{ checksum "rust-toolchain.toml" }}-windows-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - << pipeline.parameters.cache_version >>-rust-{{ checksum "rust-toolchain.toml" }}-windows-{{ arch }}-
       - run:
           name: "Install Rust"
           timeout: 10m
@@ -75,13 +83,12 @@ commands:
 
             # Install rust with rustup.
             Invoke-WebRequest -Uri "https://win.rustup.rs/" -OutFile "C:\rustup-init.exe"
-            & C:\rustup-init.exe -y --default-toolchain "1.88.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - Change the MSRV in Cargo.toml and rust-toolchain as well
+            & C:\rustup-init.exe -y --default-toolchain "1.96.0-x86_64-pc-windows-msvc" --no-modify-path --profile minimal # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
 
             # Add cargo to PATH
             $Env:Path += ";$Env:USERPROFILE\.cargo\bin"
             # Verify the installation.
             cargo --version --verbose
-            rustc --version | Out-File -FilePath "rust-version"
             if (!(Test-Path "Cargo.lock" -PathType Leaf)) {
                 cargo generate-lockfile
             }
@@ -98,7 +105,7 @@ commands:
             - C:\Users\circleci\.cargo\registry
             - C:\Users\circleci\.cargo\git
             - target
-          key: cargo-cache-{{ arch }}-{{ checksum "rust-version" }}-{{ checksum "Cargo.lock" }}
+          key: << pipeline.parameters.cache_version >>-rust-{{ checksum "rust-toolchain.toml" }}-windows-{{ arch }}-{{ checksum "Cargo.lock" }}
 
   install_snarkos:
     description: "Install snarkOS"
@@ -117,8 +124,9 @@ commands:
     description: "Setup testing environment"
     parameters:
       cache_key:
+        description: "Name of the cache; the toolchain checksum is prepended to it"
         type: string
-        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
+        default: snarkos-stable
     steps:
       - run: set -e
       - run:
@@ -151,14 +159,14 @@ commands:
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends clang libclang-dev llvm-dev llvm lld pkg-config xz-utils make libssl-dev libssl-dev jq iproute2
       - restore_cache:
           keys:
-            - << parameters.cache_key >>
+            - << pipeline.parameters.cache_version >>-rust-{{ checksum "rust-toolchain.toml" }}-<< parameters.cache_key >>
       - restore_dev_genesis_cache:
           cache_key: << parameters.cache_key >>
 
   # Dev genesis blocks are written to ~/.aleo/dev-genesis by load_or_compute_genesis.
   # The cache key includes Cargo.lock and cli/src/commands/start.rs. CircleCI cache
   # entries are immutable, so a change to the dev committee that touches neither
-  # file keeps recomputing until the v1 prefix below is bumped.
+  # file keeps recomputing until cache_version is bumped.
   restore_dev_genesis_cache:
     description: "Restore cached dev genesis blocks"
     parameters:
@@ -167,7 +175,7 @@ commands:
     steps:
       - restore_cache:
           keys:
-            - v1-dev-genesis-{{ checksum "Cargo.lock" }}-{{ checksum "cli/src/commands/start.rs" }}-<< parameters.cache_key >>
+            - << pipeline.parameters.cache_version >>-dev-genesis-{{ checksum "Cargo.lock" }}-{{ checksum "cli/src/commands/start.rs" }}-<< parameters.cache_key >>
 
   save_dev_genesis_cache:
     description: "Save cached dev genesis blocks"
@@ -176,7 +184,7 @@ commands:
         type: string
     steps:
       - save_cache:
-          key: v1-dev-genesis-{{ checksum "Cargo.lock" }}-{{ checksum "cli/src/commands/start.rs" }}-<< parameters.cache_key >>
+          key: << pipeline.parameters.cache_version >>-dev-genesis-{{ checksum "Cargo.lock" }}-{{ checksum "cli/src/commands/start.rs" }}-<< parameters.cache_key >>
           paths:
             - ~/.aleo/dev-genesis
 
@@ -184,8 +192,9 @@ commands:
     description: "Clear environment"
     parameters:
       cache_key:
+        description: "Name of the cache; the toolchain checksum is prepended to it"
         type: string
-        default: v4.2.0-rust-1.88.0-snarkos-stable-cache
+        default: snarkos-stable
       save_dev_genesis:
         type: boolean
         default: false
@@ -195,7 +204,7 @@ commands:
           name: "Show sccache statistics"
           command: $HOME/.bin/sccache -s
       - save_cache:
-          key: << parameters.cache_key >>
+          key: << pipeline.parameters.cache_version >>-rust-{{ checksum "rust-toolchain.toml" }}-<< parameters.cache_key >>
           paths:
             # Store the sccache files
             - ~/.cache/sccache
@@ -231,7 +240,7 @@ commands:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: << parameters.cache_key >>
 
       - run:
           name: Install cargo-nextest
@@ -414,7 +423,7 @@ commands:
       - store_test_results:
           path: target/nextest/ci
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-<< parameters.cache_key >>-cache
+          cache_key: << parameters.cache_key >>
           save_dev_genesis: << parameters.save_dev_genesis >>
 
   run_serial_long:
@@ -488,7 +497,7 @@ commands:
       - run:
           timeout: 5m
           command: |
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.96.0 # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
             source $HOME/.cargo/env
 
 jobs:
@@ -612,7 +621,7 @@ jobs:
     steps:
       - run_serial:
           workspace_member: node/router/messages
-          cache_key: node-router-messages-
+          cache_key: node-router-messages
 
   node-sync:
     executor: rust-docker
@@ -652,7 +661,7 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-         cache_key: v4.2.0-rust-1.88.0-devnet-test-cache 
+         cache_key: devnet-test
      - install_snarkos
      - run:
           name: "Run DB backup test"
@@ -665,7 +674,7 @@ jobs:
           command: |
             ./.ci/test_devnet.sh
      - save_dev_genesis_cache:
-          cache_key: v4.2.0-rust-1.88.0-devnet-test-cache 
+          cache_key: devnet-test 
 
   dev-on-prod-restart-test:
     executor: rust-docker
@@ -673,7 +682,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-dev-on-prod-restart-test-cache
+          cache_key: dev-on-prod-restart-test
       - install_snarkos
       - run:
           name: "Run dev-on-prod restart test"
@@ -682,7 +691,7 @@ jobs:
           command: |
             ./.ci/test_dev_on_prod_restart.sh
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-dev-on-prod-restart-test-cache
+          cache_key: dev-on-prod-restart-test
 
   chaotic-minority-reset-test:
     executor: ubuntu-vm
@@ -690,7 +699,7 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-        cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+        cache_key: chaotic-minority-reset-test
      - install_rust
      - install_snarkos
      - run:
@@ -704,7 +713,7 @@ jobs:
         command: |
           ./.ci/test_reset_minority.sh
      - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-chaotic-minority-reset-test-cache
+          cache_key: chaotic-minority-reset-test
           save_dev_genesis: true
 
   chaotic-majority-reset-test:
@@ -713,7 +722,7 @@ jobs:
     steps:
      - checkout
      - setup_environment:
-        cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache
+        cache_key: chaotic-majority-restart-test
      - install_rust
      - install_snarkos
      - run:
@@ -727,7 +736,7 @@ jobs:
           command: |
             ./.ci/test_restart_majority.sh
      - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-chaotic-majority-restart-test-cache
+          cache_key: chaotic-majority-restart-test
           save_dev_genesis: true
 
   upgrade-test:
@@ -736,7 +745,7 @@ jobs:
     steps:
       - run_upgrade_test:
           workspace_member: .
-          cache_key: v4.2.0-rust-1.88.0-upgrade-test-cache
+          cache_key: upgrade-test
 
   # Check crates that do not have any tests individually
   check-other-crates:
@@ -745,7 +754,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+          cache_key: check-other-crates
       - run:
           name: Check snarkos-node-metrics crate
           no_output_timeout: 10m
@@ -756,7 +765,7 @@ jobs:
           command: cargo check --package=snarkos-display --all-features
 
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-check-other-crates-cache
+          cache_key: check-other-crates
 
   check-fmt:
     executor: rust-docker
@@ -765,13 +774,13 @@ jobs:
       - checkout
       - install_fmt_nightly
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-fmt-cache
+          cache_key: fmt
       - run:
           name: Check style
           no_output_timeout: 35m
           command: cargo +<< pipeline.parameters.fmt_nightly >> fmt --all -- --check
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-fmt-cache
+          cache_key: fmt
 
   check-unused-dependencies:
     executor: rust-docker
@@ -779,7 +788,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-machete-cache
+          cache_key: machete
       - run:
           name: Check for unused dependencies
           no_output_timeout: 10m
@@ -787,25 +796,23 @@ jobs:
             cargo install cargo-machete@0.7.0
             cargo machete
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-machete-cache
+          cache_key: machete
 
-  check-cargo-audit:
+  check-cargo-deny:
     executor: rust-docker
     resource_class: << pipeline.parameters.medium >>
     steps:
       - checkout
-      # Use nightly until we bump the MSRV to 1.89.0 or greater
-      - install_rust_nightly
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
+          cache_key: cargo-deny
       - run:
-          name: Check for security vulnerabilities
+          name: Check advisories, licenses, bans, and sources
           no_output_timeout: 10m
           command: |
-            cargo install cargo-audit@0.22.0 --locked
-            cargo audit -D warnings
+            cargo install cargo-deny@0.20.2 --locked
+            cargo deny check
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-cargo-audit-cache
+          cache_key: cargo-deny
 
   check-clippy:
     executor: rust-docker
@@ -813,7 +820,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-clippy-cache
+          cache_key: clippy
       - run:
           name: Check lint
           no_output_timeout: 35m
@@ -821,7 +828,7 @@ jobs:
             cargo clippy --workspace --all-targets -- -D warnings
             cargo clippy --workspace --all-targets --all-features -- -D warnings
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-clippy-cache
+          cache_key: clippy
 
   lint-scripts:
     executor: rust-docker
@@ -829,7 +836,7 @@ jobs:
     steps:
       - checkout
       - setup_environment:
-          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+          cache_key: lint-scripts
       - run:
            name: Install shellcheck
            command: |
@@ -842,7 +849,7 @@ jobs:
           command: |
             shellcheck -x .ci/*.sh scripts/*.sh
       - clear_environment:
-          cache_key: v4.2.0-rust-1.88.0-lint-scripts-cache
+          cache_key: lint-scripts
 
   verify-windows:
     executor:
@@ -865,7 +872,7 @@ workflows:
       - check-fmt
       - check-clippy
       - check-unused-dependencies
-      - check-cargo-audit
+      - check-cargo-deny
       - check-other-crates
       - lint-scripts
 
@@ -896,40 +903,45 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
       - chaotic-minority-reset-test:
           filters:
             branches:
               only:
-                - main_net_v4101
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
       - chaotic-majority-reset-test:
           filters:
             branches:
               only:
-                - main_net_v4101
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
+
       - upgrade-test:
           filters:
             branches:
               only:
-                - main_net_v4101
                 - canary
                 - testnet
                 - mainnet
                 - staging
+                - bruno/decouple
+                - ci/ignore-upgrade-quorum-errors
 
   snarkos-workflow:
     jobs:
@@ -944,7 +956,6 @@ workflows:
           filters:
             branches:
               only:
-                - main_net_v4101
                 - canary
                 - testnet
                 - mainnet

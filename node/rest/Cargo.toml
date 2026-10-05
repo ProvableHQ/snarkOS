@@ -53,7 +53,9 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.jsonwebtoken]
-version = "9.2"
+version = "10.4"
+default-features = false
+features = [ "aws_lc_rs" ]
 
 [dependencies.locktick]
 workspace = true
@@ -118,7 +120,7 @@ workspace = true
 version = "0.7"
 
 [dependencies.tower-http]
-version = "0.6"
+version = "0.7"
 features = [ "cors", "trace" ]
 
 [dependencies.tracing]
@@ -142,6 +144,13 @@ features = [ "test-helpers" ]
 [dev-dependencies.snarkvm]
 workspace = true
 features = [ "test-helpers" ]
+
+[[bench]]
+name = "handlers"
+harness = false
+
+[dev-dependencies.criterion]
+workspace = true
 
 [build-dependencies.built]
 workspace = true

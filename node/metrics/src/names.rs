@@ -13,10 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub(super) const COUNTER_NAMES: [&str; 3] =
-    [bft::LEADERS_ELECTED, consensus::STALE_UNCONFIRMED_TRANSACTIONS, consensus::STALE_UNCONFIRMED_SOLUTIONS];
+pub(super) const COUNTER_NAMES: [&str; 4] = [
+    bft::LEADERS_ELECTED,
+    consensus::STALE_UNCONFIRMED_TRANSACTIONS,
+    consensus::STALE_UNCONFIRMED_SOLUTIONS,
+    consensus::DROPPED_TRANSACTIONS,
+];
 
-pub(super) const GAUGE_NAMES: [&str; 29] = [
+pub(super) const GAUGE_NAMES: [&str; 33] = [
     bft::CONNECTED,
     bft::CONNECTED_STAKE,
     bft::CONNECTED_STAKE_WITH_MATCHING_SHA,
@@ -41,6 +45,10 @@ pub(super) const GAUGE_NAMES: [&str; 29] = [
     consensus::COMMITTED_CERTIFICATES,
     consensus::UNCONFIRMED_SOLUTIONS,
     consensus::UNCONFIRMED_TRANSACTIONS,
+    consensus::DEPLOYMENTS_PRIORITY_QUEUE_SIZE,
+    consensus::DEPLOYMENTS_ZERO_FEE_QUEUE_SIZE,
+    consensus::EXECUTIONS_PRIORITY_QUEUE_SIZE,
+    consensus::EXECUTIONS_ZERO_FEE_QUEUE_SIZE,
     consensus::VERSION,
     router::CONNECTED,
     router::CANDIDATE,
@@ -122,6 +130,16 @@ pub mod consensus {
     pub const TRANSMISSION_LATENCY: &str = "snarkos_consensus_transmission_latency";
     pub const STALE_UNCONFIRMED_TRANSACTIONS: &str = "snarkos_consensus_stale_unconfirmed_transactions";
     pub const STALE_UNCONFIRMED_SOLUTIONS: &str = "snarkos_consensus_stale_unconfirmed_solutions";
+    /// The number of transactions dropped by the mempool, either on insertion or by eviction.
+    pub const DROPPED_TRANSACTIONS: &str = "snarkos_consensus_dropped_transactions";
+    /// The number of deployment transactions in the priority queue.
+    pub const DEPLOYMENTS_PRIORITY_QUEUE_SIZE: &str = "snarkos_consensus_deployments_priority_queue_size";
+    /// The number of zero-fee deployment transactions in the fifo queue.
+    pub const DEPLOYMENTS_ZERO_FEE_QUEUE_SIZE: &str = "snarkos_consensus_deployments_zero_fee_queue_size";
+    /// The number of execution transactions in the priority queue.
+    pub const EXECUTIONS_PRIORITY_QUEUE_SIZE: &str = "snarkos_consensus_executions_priority_queue_size";
+    /// The number of zero-fee execution transactions in the fifo queue.
+    pub const EXECUTIONS_ZERO_FEE_QUEUE_SIZE: &str = "snarkos_consensus_executions_zero_fee_queue_size";
     pub const VALIDATOR_CERTIFICATE_PARTICIPATION: &str = "snarkos_consensus_validator_certificate_participation";
     pub const VALIDATOR_SIGNATURE_PARTICIPATION: &str = "snarkos_consensus_validator_signature_participation";
     /// The garbage collection round the published participation scores were computed at.

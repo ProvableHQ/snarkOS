@@ -35,6 +35,7 @@ use parking_lot::RwLock;
 #[cfg(not(feature = "serial"))]
 use rayon::prelude::*;
 use std::{
+    cmp,
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
     sync::{
@@ -42,6 +43,31 @@ use std::{
         atomic::{AtomicU32, AtomicU64, Ordering},
     },
 };
+
+/// Errors returned by [`Storage::check_certificate`] (and therefore [`Storage::insert_certificate`]).
+///
+/// The `SameCertificate` and `SameAuthorAndRound` variants describe benign races: concurrent sync
+/// paths regularly try to insert the same certificate, and the loser of that race should treat its
+/// failure as a no-op (the certificate is in fact present in storage) rather than a hard error.
+#[derive(Debug, thiserror::Error)]
+pub enum CheckCertificateError {
+    #[error("Certificate round {round} already exists in storage (gc_round = {gc_round})")]
+    SameCertificate { round: u64, gc_round: u64 },
+    #[error("Certificate with this author in round {round} is already in storage (gc_round = {gc_round})")]
+    SameAuthorAndRound { round: u64, gc_round: u64 },
+    #[error("Certificate round {round} is at or below the GC round {gc_round}")]
+    RoundTooLow { round: u64, gc_round: u64 },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl CheckCertificateError {
+    /// Whether the error indicates the certificate is already in storage (a benign sync race
+    /// rather than a hard failure). Callers should not log benign errors at ERROR.
+    pub fn is_benign(&self) -> bool {
+        matches!(self, Self::SameCertificate { .. } | Self::SameAuthorAndRound { .. } | Self::RoundTooLow { .. })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Storage<N: Network>(Arc<StorageInner<N>>);
@@ -210,19 +236,32 @@ impl<N: Network> Storage<N> {
         }
 
         // Update the storage to the next round.
-        self.update_current_round(next_round);
+        let storage_round = self.update_current_round(next_round);
 
-        #[cfg(feature = "metrics")]
-        metrics::gauge(metrics::bft::LAST_STORED_ROUND, next_round as f64);
-
-        // Retrieve the storage round.
-        let storage_round = self.current_round();
         // Retrieve the GC round.
         let gc_round = self.gc_round();
-        // Ensure the next round matches in storage.
-        ensure!(next_round == storage_round, "The next round {next_round} does not match in storage ({storage_round})");
-        // Ensure the next round is greater than or equal to the GC round.
-        ensure!(next_round >= gc_round, "The next round {next_round} is behind the GC round {gc_round}");
+        // Storage is guaranteed to have advanced to at least the next round, since
+        // `update_current_round` only ever moves it forward via `fetch_max`.
+        debug_assert!(
+            storage_round >= next_round,
+            "Storage round {storage_round} is behind the expected round {next_round}"
+        );
+        // Ensure the next round is greater than or equal to the GC round. This can legitimately
+        // fail under normal operation: a concurrent sync may have advanced the GC round past this
+        // (now stale) round update.
+        ensure!(
+            next_round >= gc_round,
+            "The next round {next_round} is behind the current GC round {gc_round}, likely because a concurrent sync advanced past it"
+        );
+
+        #[cfg(feature = "metrics")]
+        metrics::gauge(metrics::bft::LAST_STORED_ROUND, storage_round as f64);
+
+        // Storage may already be ahead of `next_round` if a concurrent sync-applied round update
+        // landed in between; return the true storage round rather than the stale `next_round`.
+        if storage_round > next_round {
+            return Ok(storage_round);
+        }
 
         // Log the updated round.
         info!("Starting round {next_round}...");
@@ -230,29 +269,31 @@ impl<N: Network> Storage<N> {
     }
 
     /// Updates the storage to the next round.
-    fn update_current_round(&self, next_round: u64) {
-        // Update the current round.
-        self.current_round.store(next_round, Ordering::SeqCst);
+    ///
+    /// This is called concurrently from two independent paths: the BFT round-certification path
+    /// (`increment_to_next_round`) and the sync-applied-block path (`sync_round_with_block`).
+    /// `fetch_max` ensures the round only ever advances, regardless of interleaving, instead of a
+    /// plain store letting a stale writer regress it.
+    fn update_current_round(&self, next_round: u64) -> u64 {
+        let previous_value = self.current_round.fetch_max(next_round, Ordering::SeqCst);
+        cmp::max(previous_value, next_round)
     }
 
     /// Update the storage by performing garbage collection based on the next round.
+    ///
+    /// This is called concurrently from two independent paths: the BFT commit path
+    /// (`commit_leader_certificate`) and the sync-bootup path (`sync_storage_with_ledger_at_bootup`).
+    /// `fetch_max` ensures `gc_round` only ever advances, regardless of interleaving, instead of a
+    /// compare-exchange erroring out when a stale/losing caller observes a smaller target round.
     pub(crate) fn garbage_collect_certificates(&self, next_round: u64) -> Result<()> {
-        // Fetch the current GC round.
-        let current_gc_round = self.gc_round();
         // Compute the next GC round.
         let next_gc_round = next_round.saturating_sub(self.max_gc_rounds);
-        // Check if storage needs to be garbage collected.
-        if next_gc_round > current_gc_round {
-            if self
-                .gc_round
-                .compare_exchange(current_gc_round, next_gc_round, Ordering::SeqCst, Ordering::SeqCst)
-                .is_err()
-            {
-                bail!("Concurrent updates to GC round detected.");
-            }
-
+        // Advance the GC round, recording the previous value.
+        let previous_gc_round = self.gc_round.fetch_max(next_gc_round, Ordering::SeqCst);
+        // Only the call that actually advanced the GC round performs the removal sweep.
+        if next_gc_round > previous_gc_round {
             // Remove the GC round(s) from storage.
-            for gc_round in current_gc_round..=next_gc_round {
+            for gc_round in previous_gc_round..=next_gc_round {
                 // Iterate over the certificates for the GC round.
                 for id in self.get_certificate_ids_for_round(gc_round).into_iter() {
                     trace!(
@@ -261,10 +302,6 @@ impl<N: Network> Storage<N> {
                     self.remove_certificate(id);
                 }
             }
-            // Update the GC round.
-            self.gc_round.store(next_gc_round, Ordering::SeqCst);
-        } else if next_gc_round < current_gc_round {
-            bail!("Attempted to decrease GC round from {current_gc_round} to {next_gc_round}");
         }
 
         Ok(())
@@ -328,27 +365,6 @@ impl<N: Network> Storage<N> {
     /// If the transmission ID does not exist in storage or was aborted, `None` is returned.
     pub fn get_transmission(&self, transmission_id: impl Into<TransmissionID<N>>) -> Option<Transmission<N>> {
         self.transmissions.get_transmission(transmission_id.into())
-    }
-
-    /// Returns the round for the given `certificate ID`.
-    /// If the certificate ID does not exist in storage, `None` is returned.
-    pub fn get_round_for_certificate(&self, certificate_id: Field<N>) -> Option<u64> {
-        // Get the round.
-        self.certificates.read().get(&certificate_id).map(|certificate| certificate.round())
-    }
-
-    /// Returns the round for the given `batch ID`.
-    /// If the batch ID does not exist in storage, `None` is returned.
-    pub fn get_round_for_batch(&self, batch_id: Field<N>) -> Option<u64> {
-        // Get the round.
-        self.batch_ids.read().get(&batch_id).copied()
-    }
-
-    /// Returns the certificate round for the given `certificate ID`.
-    /// If the certificate ID does not exist in storage, `None` is returned.
-    pub fn get_certificate_round(&self, certificate_id: Field<N>) -> Option<u64> {
-        // Get the batch certificate and return the round.
-        self.certificates.read().get(&certificate_id).map(|certificate| certificate.round())
     }
 
     /// Returns the certificate for the given `certificate ID`.
@@ -625,12 +641,17 @@ impl<N: Network> Storage<N> {
     /// - The previous certificates reached the quorum threshold (N - f).
     /// - The timestamps from the signers are all within the allowed time range.
     /// - The signers have reached the quorum threshold (N - f).
+    ///
+    /// # Errors
+    /// Returns [`CheckCertificateError::SameCertificate`] or [`CheckCertificateError::SameAuthorAndRound`]
+    /// if the certificate (or one from the same author for the same round) is already in storage.
+    /// These are benign during concurrent sync; callers should not log them at ERROR.
     pub fn check_certificate(
         &self,
         certificate: &BatchCertificate<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>> {
+    ) -> Result<HashMap<TransmissionID<N>, Transmission<N>>, CheckCertificateError> {
         // Retrieve the round.
         let round = certificate.round();
         // Retrieve the GC round.
@@ -640,19 +661,19 @@ impl<N: Network> Storage<N> {
 
         // Ensure the certificate ID does not already exist in storage.
         if self.contains_certificate(certificate.id()) {
-            bail!("Certificate for round {round} already exists in storage {gc_log}")
+            return Err(CheckCertificateError::SameCertificate { round, gc_round });
         }
 
         // Ensure the storage does not already contain a certificate for this author in this round.
         if self.contains_certificate_in_round_from(round, certificate.author()) {
-            bail!("Certificate with this author for round {round} already exists in storage {gc_log}")
+            return Err(CheckCertificateError::SameAuthorAndRound { round, gc_round });
         }
 
         // Ensure the batch header is well-formed.
         let Some(missing_transmissions) =
             self.check_batch_header(certificate.batch_header(), transmissions, aborted_transmissions)?
         else {
-            bail!("Certificate for round {round} already exists in storage {gc_log}")
+            return Err(CheckCertificateError::SameCertificate { round, gc_round });
         };
 
         // Check the timestamp for liveness.
@@ -660,7 +681,7 @@ impl<N: Network> Storage<N> {
 
         // Retrieve the committee lookback for the batch round.
         let Ok(committee_lookback) = self.ledger.get_committee_lookback_for_round(round) else {
-            bail!("Storage failed to retrieve the committee for round {round} {gc_log}")
+            return Err(anyhow!("Storage failed to retrieve the committee for round {round} {gc_log}").into());
         };
 
         // Initialize a set of the signers.
@@ -672,7 +693,7 @@ impl<N: Network> Storage<N> {
         for signer in certificate.signers().iter().copied() {
             // Ensure the signer is in the committee.
             if !committee_lookback.is_committee_member(signer) {
-                bail!("Signer {signer} is not in the committee for round {round} {gc_log}")
+                return Err(anyhow!("Signer {signer} is not in the committee for round {round} {gc_log}").into());
             }
             // Append the signer.
             signers.insert(signer);
@@ -680,7 +701,9 @@ impl<N: Network> Storage<N> {
 
         // Ensure the signatures have reached the quorum threshold.
         if !committee_lookback.is_quorum_threshold_reached(&signers) {
-            bail!("Signatures for a batch in round {round} did not reach quorum threshold {gc_log}")
+            return Err(
+                anyhow!("Signatures for a batch in round {round} did not reach quorum threshold {gc_log}").into()
+            );
         }
 
         Ok(missing_transmissions)
@@ -708,9 +731,11 @@ impl<N: Network> Storage<N> {
         certificate: BatchCertificate<N>,
         transmissions: HashMap<TransmissionID<N>, Transmission<N>>,
         aborted_transmissions: HashSet<TransmissionID<N>>,
-    ) -> Result<()> {
+    ) -> Result<(), CheckCertificateError> {
         // Ensure the certificate round is above the GC round.
-        ensure!(certificate.round() > self.gc_round(), "Certificate round is at or below the GC round");
+        if certificate.round() <= self.gc_round() {
+            return Err(CheckCertificateError::RoundTooLow { round: certificate.round(), gc_round: self.gc_round() });
+        }
         // Ensure the certificate and its transmissions are valid.
         let missing_transmissions =
             self.check_certificate(&certificate, transmissions, aborted_transmissions.clone())?;
@@ -820,11 +845,9 @@ impl<N: Network> Storage<N> {
 impl<N: Network> Storage<N> {
     /// Syncs the current height with the block.
     pub(crate) fn sync_height_with_block(&self, next_height: u32) {
-        // If the block height is greater than the current height in storage, sync the height.
-        if next_height > self.current_height() {
-            // Update the current height in storage.
-            self.current_height.store(next_height, Ordering::SeqCst);
-        }
+        // Update the current height in storage. `fetch_max` ensures the height only ever
+        // advances, even if a concurrent writer already stored a higher value in between.
+        self.current_height.fetch_max(next_height, Ordering::SeqCst);
     }
 
     /// Syncs the current round with the block.
@@ -1563,7 +1586,11 @@ pub(crate) mod tests {
                         .insert_certificate(certificate, transmissions, Default::default())
                         .expect("Valid certificate rejected");
                 } else {
-                    assert!(storage.insert_certificate(certificate, transmissions, Default::default()).is_err());
+                    let err = storage
+                        .insert_certificate(certificate, transmissions, Default::default())
+                        .expect_err("Certificate with insufficient previous certs was accepted");
+                    assert!(matches!(&err, CheckCertificateError::Other(_)));
+                    assert!(!err.is_benign());
                 }
             }
 
@@ -1574,6 +1601,133 @@ pub(crate) mod tests {
                 previous_certs = new_certs.into_iter().skip(6).collect();
             }
         }
+    }
+
+    /// Verify that inserting the exact same certificate twice returns `CheckCertificateError::SameCertificate`.
+    #[test]
+    fn test_check_certificate_error_same_certificate() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 10, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        // Construct a certificate with a full quorum of signers.
+        let author = &private_keys[0];
+        let other_keys: Vec<_> = private_keys.iter().cloned().filter(|k| k != author).collect();
+        let certificate =
+            sample_batch_certificate_for_round_with_committee(1, Default::default(), author, &other_keys, rng);
+
+        // Construct the sample 'transmissions'.
+        let (_missing_transmissions, transmissions) = sample_transmissions(&certificate, rng);
+        let transmissions: HashMap<_, _> = transmissions.into_iter().map(|(k, (t, _))| (k, t)).collect();
+
+        // Insert the certificate.
+        storage
+            .insert_certificate(certificate.clone(), transmissions.clone(), Default::default())
+            .expect("Valid certificate rejected");
+
+        // Inserting the exact same certificate again must fail with `SameCertificate`.
+        let result = storage.insert_certificate(certificate, transmissions, Default::default());
+        assert!(matches!(result, Err(CheckCertificateError::SameCertificate { .. })));
+    }
+
+    /// Verify that inserting two distinct certificates from the same author in the same round
+    /// returns `CheckCertificateError::SameAuthorAndRound`.
+    #[test]
+    fn test_check_certificate_error_same_author_and_round() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 10, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        // Sample two distinct certificates from the same author for the same round.
+        let author = &private_keys[0];
+        let other_keys: Vec<_> = private_keys.iter().cloned().filter(|k| k != author).collect();
+        let certificate_1 =
+            sample_batch_certificate_for_round_with_committee(1, Default::default(), author, &other_keys, rng);
+        let certificate_2 =
+            sample_batch_certificate_for_round_with_committee(1, Default::default(), author, &other_keys, rng);
+        assert_ne!(certificate_1.id(), certificate_2.id());
+
+        // Insert the first certificate.
+        let (_missing_transmissions, transmissions_1) = sample_transmissions(&certificate_1, rng);
+        let transmissions_1: HashMap<_, _> = transmissions_1.into_iter().map(|(k, (t, _))| (k, t)).collect();
+        storage
+            .insert_certificate(certificate_1, transmissions_1, Default::default())
+            .expect("Valid certificate rejected");
+
+        // Inserting a different certificate from the same author and round must fail with `SameAuthorAndRound`.
+        let (_missing_transmissions, transmissions_2) = sample_transmissions(&certificate_2, rng);
+        let transmissions_2: HashMap<_, _> = transmissions_2.into_iter().map(|(k, (t, _))| (k, t)).collect();
+        let result = storage.insert_certificate(certificate_2, transmissions_2, Default::default());
+        assert!(matches!(result, Err(CheckCertificateError::SameAuthorAndRound { .. })));
+    }
+
+    /// Verify that `insert_certificate` rejects a certificate at or below the GC round with
+    /// `CheckCertificateError::RoundTooLow`.
+    #[test]
+    fn test_check_certificate_error_round_too_low() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        // Advance the GC round past round 2.
+        storage.garbage_collect_certificates(3).unwrap();
+        assert_eq!(storage.gc_round(), 2);
+
+        // A certificate at or below the GC round must be rejected as `RoundTooLow`, regardless of its content.
+        // Note: round 1 is reserved for the genesis committee and cannot have previous certificates, so round 2
+        // is used here to keep certificate sampling generic (its round is otherwise irrelevant to this check).
+        let certificate =
+            snarkvm::ledger::narwhal::batch_certificate::test_helpers::sample_batch_certificate_for_round(2, rng);
+        let result = storage.insert_certificate(certificate, Default::default(), Default::default());
+        assert!(matches!(result, Err(CheckCertificateError::RoundTooLow { .. })));
+    }
+
+    /// Verify that a genuine validity failure (insufficient signatures to reach quorum) is
+    /// reported as `CheckCertificateError::Other` and is not misclassified as benign.
+    #[test]
+    fn test_check_certificate_error_other() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let (committee, private_keys) =
+            snarkvm::ledger::committee::test_helpers::sample_committee_and_keys_for_round(0, 10, rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 1).unwrap();
+
+        // Sign with too few endorsers to reach the committee's quorum threshold.
+        let author = &private_keys[0];
+        let other_keys: Vec<_> = private_keys[0..=3].iter().cloned().filter(|k| k != author).collect();
+        let certificate =
+            sample_batch_certificate_for_round_with_committee(1, Default::default(), author, &other_keys, rng);
+
+        // Construct the sample 'transmissions'.
+        let (_missing_transmissions, transmissions) = sample_transmissions(&certificate, rng);
+        let transmissions: HashMap<_, _> = transmissions.into_iter().map(|(k, (t, _))| (k, t)).collect();
+
+        let err = storage
+            .insert_certificate(certificate, transmissions, Default::default())
+            .expect_err("Certificate without quorum was accepted");
+        assert!(matches!(&err, CheckCertificateError::Other(_)));
+        assert!(!err.is_benign());
     }
 
     /// Verify that `insert_certificate` rejects certs that do not increment the round number.
@@ -1629,6 +1783,144 @@ pub(crate) mod tests {
                 previous_certs = new_certs.into_iter().skip(6).collect();
             }
         }
+    }
+
+    /// `current_round`/`current_height` are written concurrently by two independent paths: the
+    /// BFT round-certification path (`increment_to_next_round`) and the sync-applied-block path
+    /// (`sync_round_with_block`/`sync_height_with_block`). A third, observing thread continuously
+    /// samples both values while the writers race; neither value may ever be seen to regress, and
+    /// the final values must converge to the max of what each writer proposed.
+    ///
+    /// The sync writer deliberately syncs in descending order, so a "stale" (lower) write can
+    /// land after a fresher (higher) one — exactly the interleaving the old check-then-act code
+    /// (load, compare, then a separate `store`) could get wrong. A shared barrier keeps all three
+    /// threads in lockstep, one round per iteration, so the observer is reading concurrently with
+    /// the writers on every iteration instead of racing ahead and finishing before they do.
+    #[test]
+    fn test_concurrent_round_and_height_updates_never_regress() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 10_000).unwrap();
+
+        let start_round = storage.current_round();
+        let start_height = storage.current_height();
+        const ITERATIONS: u64 = 2_000;
+
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+
+        // Thread A mimics the normal BFT path, incrementing one round at a time, from a fixed,
+        // known sequence of rounds (rather than re-reading live storage) so its maximum proposed
+        // round is known ahead of time.
+        let storage_a = storage.clone();
+        let barrier_a = barrier.clone();
+        let increment_handle = std::thread::spawn(move || {
+            for round in start_round..start_round + ITERATIONS {
+                barrier_a.wait();
+                storage_a.increment_to_next_round(round).expect("increment_to_next_round should not fail");
+            }
+        });
+
+        // Thread B mimics a sync-applied block, syncing rounds/heights in descending order.
+        let storage_b = storage.clone();
+        let barrier_b = barrier.clone();
+        let sync_handle = std::thread::spawn(move || {
+            for i in (0..ITERATIONS).rev() {
+                barrier_b.wait();
+                storage_b.sync_round_with_block(start_round + i);
+                storage_b.sync_height_with_block(i as u32);
+            }
+        });
+
+        // Thread C repeatedly samples both values and asserts they never go backwards.
+        let storage_c = storage.clone();
+        let barrier_c = barrier.clone();
+        let observer_handle = std::thread::spawn(move || {
+            let mut last_round = storage_c.current_round();
+            let mut last_height = storage_c.current_height();
+            for _ in 0..ITERATIONS {
+                barrier_c.wait();
+                let round = storage_c.current_round();
+                let height = storage_c.current_height();
+                assert!(round >= last_round, "current_round regressed: {round} < {last_round}");
+                assert!(height >= last_height, "current_height regressed: {height} < {last_height}");
+                last_round = round;
+                last_height = height;
+            }
+        });
+
+        increment_handle.join().unwrap();
+        sync_handle.join().unwrap();
+        observer_handle.join().unwrap();
+
+        // The final values must converge to the max of what each writer ever proposed.
+        assert_eq!(storage.current_round(), start_round + ITERATIONS);
+        assert_eq!(storage.current_height(), start_height.max(ITERATIONS as u32 - 1));
+    }
+
+    #[test]
+    fn test_concurrent_gc_round_updates_never_regress() {
+        let rng = &mut TestRng::default();
+
+        // Sample a committee.
+        let committee = snarkvm::ledger::committee::test_helpers::sample_committee(rng);
+        // Initialize the ledger.
+        let ledger = Arc::new(MockLedgerService::new(committee));
+        // Initialize the storage with a small GC window so the GC round actually advances
+        // as rounds are garbage collected.
+        let storage = Storage::<CurrentNetwork>::new(ledger, Arc::new(BFTMemoryService::new()), 10).unwrap();
+
+        let start_round = storage.current_round();
+        const ITERATIONS: u64 = 2_000;
+
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+
+        // Thread A mimics the BFT commit path, garbage collecting an increasing sequence of rounds.
+        let storage_a = storage.clone();
+        let barrier_a = barrier.clone();
+        let commit_handle = std::thread::spawn(move || {
+            for round in start_round..start_round + ITERATIONS {
+                barrier_a.wait();
+                storage_a.garbage_collect_certificates(round).expect("garbage_collect_certificates should not fail");
+            }
+        });
+
+        // Thread B mimics the sync-bootup path racing against it with an out-of-order sequence.
+        let storage_b = storage.clone();
+        let barrier_b = barrier.clone();
+        let sync_handle = std::thread::spawn(move || {
+            for i in (0..ITERATIONS).rev() {
+                barrier_b.wait();
+                storage_b
+                    .garbage_collect_certificates(start_round + i)
+                    .expect("garbage_collect_certificates should not fail");
+            }
+        });
+
+        // Thread C repeatedly samples the GC round and asserts it never goes backwards.
+        let storage_c = storage.clone();
+        let barrier_c = barrier.clone();
+        let observer_handle = std::thread::spawn(move || {
+            let mut last_gc_round = storage_c.gc_round();
+            for _ in 0..ITERATIONS {
+                barrier_c.wait();
+                let gc_round = storage_c.gc_round();
+                assert!(gc_round >= last_gc_round, "gc_round regressed: {gc_round} < {last_gc_round}");
+                last_gc_round = gc_round;
+            }
+        });
+
+        commit_handle.join().unwrap();
+        sync_handle.join().unwrap();
+        observer_handle.join().unwrap();
+
+        // The final value must converge to the max of what each writer ever proposed.
+        let max_round_proposed = start_round + ITERATIONS - 1;
+        assert_eq!(storage.gc_round(), max_round_proposed.saturating_sub(storage.max_gc_rounds()));
     }
 }
 

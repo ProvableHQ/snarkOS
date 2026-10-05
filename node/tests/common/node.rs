@@ -16,7 +16,7 @@
 use crate::common::test_peer::sample_genesis_block;
 
 use snarkos_account::Account;
-use snarkos_node::{Client, Prover, Validator};
+use snarkos_node::{Client, Prover, Validator, rest::RestVerificationLimits};
 use snarkos_utilities::{NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{MainnetV0 as CurrentNetwork, store::helpers::memory::ConsensusMemory};
@@ -29,6 +29,7 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         "127.0.0.1:0".parse().unwrap(),
         None,
         10,
+        RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
         None, // No history compatibility mode.
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
@@ -65,6 +66,7 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         None,
         None,
         10,
+        RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
         None, // No history compatibility mode.
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
