@@ -24,7 +24,7 @@ use crate::common::{
     utils::{sample_gateway, sample_ledger, sample_storage},
 };
 use snarkos_account::Account;
-use snarkos_node_bft::{Gateway, helpers::init_primary_channels};
+use snarkos_node_bft::{Gateway, Transport, helpers::init_primary_channels};
 use snarkos_node_bft_events::{
     DisconnectReason,
     Event,
@@ -33,16 +33,19 @@ use snarkos_node_bft_events::{
     HandshakeHint,
     InitiatorInfo,
     PeerInfo,
+    PrimaryPing,
     ResponderProof,
+    UpgradeSignal,
     ValidatorsRequest,
 };
 use snarkos_node_network::{
     PeerPoolHandling,
     noise::{HandshakeProtocol, NoiseSession, Role, binding_message, detect_handshake_protocol, write_noise_magic},
 };
+use snarkos_node_sync::locators::test_helpers::sample_block_locators;
 use snarkos_node_tcp::P2P;
 use snarkvm::{
-    ledger::narwhal::Data,
+    ledger::narwhal::{Data, batch_certificate::test_helpers::sample_batch_certificate},
     prelude::{FromBytes, TestRng, ToBytes},
 };
 
@@ -219,11 +222,21 @@ async fn handshake_with_gateway(
     listener_port: u16,
     sign: impl Fn(&[u8]) -> Vec<u8>,
 ) -> io::Result<(ResponderProof<CurrentNetwork>, TcpStream)> {
+    let version = snarkos_node_bft_events::Event::<CurrentNetwork>::VERSION;
+    handshake_with_gateway_at_version(gateway_addr, account, listener_port, version, sign).await
+}
+
+/// Drives a Noise handshake like [`handshake_with_gateway`], announcing the given event `version`.
+async fn handshake_with_gateway_at_version(
+    gateway_addr: SocketAddr,
+    account: &Account<CurrentNetwork>,
+    listener_port: u16,
+    version: u32,
+    sign: impl Fn(&[u8]) -> Vec<u8>,
+) -> io::Result<(ResponderProof<CurrentNetwork>, TcpStream)> {
     let mut stream = TcpStream::connect(gateway_addr).await?;
     write_noise_magic(&mut stream).await?;
     let mut noise = NoiseSession::new(stream, Role::Initiator)?;
-
-    let version = snarkos_node_bft_events::Event::<CurrentNetwork>::VERSION;
 
     // Message 1: the cleartext hint.
     let hint = HandshakeHint { version, listener_port, address: account.address() };
@@ -234,7 +247,8 @@ async fn handshake_with_gateway(
 
     // Message 3: our metadata, and whatever `sign` decides to offer as proof.
     let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);
-    let our_info = PeerInfo::new(listener_port, account.address(), peer_info.restrictions_id, None);
+    let mut our_info = PeerInfo::new(listener_port, account.address(), peer_info.restrictions_id, None);
+    our_info.version = version;
     let our_message = InitiatorInfo { info: our_info, signature: Data::Buffer(sign(&binding).into()) };
     noise.send(&our_message.to_bytes_le().unwrap()).await?;
 
@@ -356,4 +370,110 @@ async fn an_initiator_cannot_be_checked_as_one_validator_and_admitted_as_another
 
     assert_eq!(verdict, ResponderProof::Rejected { reason: DisconnectReason::ProtocolViolation });
     assert!(!gateway.connected_addresses().contains(&actual.address()));
+}
+
+/// Authenticates to `gateway` as the committee member `peer`, announcing the event `version`, and
+/// returns the stream framed for events once the gateway lists the peer as connected.
+async fn connect_at_version(
+    gateway: &Gateway<CurrentNetwork>,
+    peer: &Account<CurrentNetwork>,
+    listener_port: u16,
+    version: u32,
+) -> Framed<TcpStream, EventCodec<CurrentNetwork>> {
+    let signer = peer.clone();
+    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let (verdict, stream) =
+        handshake_with_gateway_at_version(dial_addr(gateway), peer, listener_port, version, sign).await.unwrap();
+    assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
+
+    let (gateway_, address) = (gateway.clone(), peer.address());
+    deadline!(Duration::from_secs(5), move || gateway_.connected_addresses().contains(&address));
+
+    Framed::new(stream, EventCodec::<CurrentNetwork>::default())
+}
+
+/// Returns a ping at the current event version, carrying an upgrade signal.
+fn sample_ping(rng: &mut TestRng) -> PrimaryPing<CurrentNetwork> {
+    let upgrade_signal = UpgradeSignal { height: 100, consensus_version: u16::MAX };
+    PrimaryPing::from((
+        Event::<CurrentNetwork>::VERSION,
+        sample_block_locators(0),
+        sample_batch_certificate(rng),
+        Some(upgrade_signal),
+    ))
+}
+
+/// Has `gateway` send a ping to the peer listening on `listener_port`, and returns the ping as the
+/// peer decodes it.
+async fn ping_through(
+    gateway: &Gateway<CurrentNetwork>,
+    framed: &mut Framed<TcpStream, EventCodec<CurrentNetwork>>,
+    listener_port: u16,
+    rng: &mut TestRng,
+) -> PrimaryPing<CurrentNetwork> {
+    let peer_ip = SocketAddr::from(([127, 0, 0, 1], listener_port));
+    Transport::send(gateway, peer_ip, Event::PrimaryPing(sample_ping(rng))).await.unwrap().await.unwrap().unwrap();
+
+    // The gateway solicits validators of its own accord too, so anything else is skipped.
+    timeout(Duration::from_secs(5), async {
+        while let Some(event) = framed.try_next().await.unwrap() {
+            if let Event::PrimaryPing(ping) = event {
+                return ping;
+            }
+        }
+        panic!("the gateway closed the connection instead of sending the ping");
+    })
+    .await
+    .expect("the gateway did not send the ping in time")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_legacy_peer_is_sent_pings_without_an_upgrade_signal() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let legacy_version = Event::<CurrentNetwork>::MINIMUM_VERSION;
+    let mut framed = connect_at_version(&gateways[0], &accounts[1], 4150, legacy_version).await;
+
+    // The codec rejects leftover bytes, so decoding proves the ping carries no upgrade signal.
+    let ping = ping_through(&gateways[0], &mut framed, 4150, &mut rng).await;
+    assert_eq!(ping.version, legacy_version);
+    assert_eq!(ping.upgrade_signal, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_current_peer_is_sent_pings_with_an_upgrade_signal() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let version = Event::<CurrentNetwork>::VERSION;
+    let mut framed = connect_at_version(&gateways[0], &accounts[1], 4151, version).await;
+
+    let ping = ping_through(&gateways[0], &mut framed, 4151, &mut rng).await;
+    assert_eq!(ping.version, version);
+    assert_eq!(ping.upgrade_signal, sample_ping(&mut rng).upgrade_signal);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_legacy_peer_may_send_pings_without_an_upgrade_signal() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let legacy_version = Event::<CurrentNetwork>::MINIMUM_VERSION;
+    let mut framed = connect_at_version(&gateways[0], &accounts[1], 4152, legacy_version).await;
+
+    let ping = sample_ping(&mut rng).for_peer_version(legacy_version);
+    framed.send(Event::PrimaryPing(ping)).await.unwrap();
+    framed.send(Event::ValidatorsRequest(ValidatorsRequest)).await.unwrap();
+
+    // An answer to the request shows that the gateway accepted the ping and kept the connection.
+    let answered = timeout(Duration::from_secs(5), async {
+        while let Some(event) = framed.try_next().await.unwrap() {
+            if matches!(event, Event::ValidatorsResponse(_)) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .expect("the gateway did not answer in time");
+    assert!(answered, "the gateway closed the connection instead of answering");
+    assert!(gateways[0].connected_addresses().contains(&accounts[1].address()));
 }
