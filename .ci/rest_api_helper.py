@@ -2,17 +2,28 @@
 
 import asyncio
 import aiohttp
+import os
 import random
 import time
 import sys
 
 from sys import argv
 
-BLOCK_HEIGHT_URL = "http://localhost:3030/v2/testnet/block/height/latest"
-GET_BLOCK_BASE_URL = "http://localhost:3030/v2/testnet/block"
+# The REST API prefix, including the version and network.
+REST_API_BASE = os.environ.get("REST_API_BASE", "http://localhost:3030/v2/testnet")
+BLOCK_HEIGHT_URL = f"{REST_API_BASE}/block/height/latest"
+GET_BLOCK_BASE_URL = f"{REST_API_BASE}/block"
+COMMITTEE_URL = f"{REST_API_BASE}/committee/latest"
 MIN_BLOCK = 1
 MAX_BLOCK = 250
 NUM_WORKERS = 8
+
+# The benchmarks of the history routes. They need a node that serves its history index.
+HISTORY_MODES = ["history-mapping", "history-mapping-latest", "history-mapping-batch", "history-staking-reward"]
+# The `credits.aleo` mappings whose history is keyed by a validator address.
+HISTORY_MAPPINGS = ["account", "bonded", "committee", "delegated"]
+# The most keys a history batch request may hold.
+MAX_HISTORY_BATCH_KEYS = 128
 
 # Statistics
 stats = {
@@ -28,8 +39,12 @@ def write_results(mode, total_wait, endpoint):
     print(f'🎉 REST benchmark "{mode}" done! It took {total_wait} seconds'
           f' for {num_ops} ops. Throughput was {throughput} ops/s.')
 
-    with open('info.txt', 'r') as f:
-        snapshot_info = f.read().replace('\n', '')
+    # The history benchmarks run against a production ledger, which has no snapshot info.
+    try:
+        with open('info.txt', 'r') as f:
+            snapshot_info = f.read().replace('\n', '')
+    except FileNotFoundError:
+        snapshot_info = "snapshot=none"
 
     with open("results.json", "a") as f:
         f.write(f'{{ "name": "rest-{mode}", "unit": "ops/s", '
@@ -38,8 +53,43 @@ def write_results(mode, total_wait, endpoint):
                 f'{snapshot_info}" }},\n')
 
 
-async def make_request(session, worker_id, mode):
-    """Make a single async request to the block endpoint"""
+async def fetch_history_context(session):
+    """Returns the latest height and the current validators, which the history requests query."""
+
+    async with session.get(BLOCK_HEIGHT_URL) as response:
+        latest_height = int(await response.text())
+    async with session.get(COMMITTEE_URL) as response:
+        validators = list((await response.json())["members"].keys())
+
+    if latest_height < 1 or not validators:
+        raise RuntimeError(f"Nothing to query (latest height {latest_height}, {len(validators)} validators)")
+    return {"latest_height": latest_height, "validators": validators}
+
+
+def history_url(mode, context):
+    """Returns the URL of one history request, at a random indexed height unless the mode is `-latest`."""
+
+    validators = context["validators"]
+    latest_height = context["latest_height"]
+    height = latest_height if mode == "history-mapping-latest" else random.randint(0, latest_height)
+
+    if mode in ["history-mapping", "history-mapping-latest"]:
+        # A single key of a mapping, at a height where the key may have changed long before.
+        mapping = random.choice(HISTORY_MAPPINGS)
+        validator = random.choice(validators)
+        return f"{REST_API_BASE}/program/credits.aleo/mapping/{mapping}/{validator}/history/{height}"
+    if mode == "history-mapping-batch":
+        # Every validator's bond in one request.
+        keys = ",".join(validators[:MAX_HISTORY_BATCH_KEYS])
+        return f"{REST_API_BASE}/program/credits.aleo/mapping/bonded/history/{height}?keys={keys}"
+    if mode == "history-staking-reward":
+        validator = random.choice(validators)
+        return f"{REST_API_BASE}/staking/rewards/{validator}/{height}"
+    raise RuntimeError(f'Unknown REST mode "{mode}"')
+
+
+async def make_request(session, worker_id, mode, context):
+    """Make a single async request to the endpoint of the given mode"""
 
     if mode == "get-block":
         # Checks that any block can be retrieved in a reasonable time.
@@ -51,6 +101,8 @@ async def make_request(session, worker_id, mode):
     elif mode == "block-height":
         # Fetches the current block height as a basline for the REST API speed.
         url = BLOCK_HEIGHT_URL
+    elif mode in HISTORY_MODES:
+        url = history_url(mode, context)
     else:
         raise RuntimeError(f'Unknown REST mode "{mode}"')
 
@@ -77,14 +129,14 @@ async def make_request(session, worker_id, mode):
         return False
 
 
-async def worker(session, worker_id, mode, reqs_per_worker):
+async def worker(session, worker_id, mode, reqs_per_worker, context):
     """Worker coroutine that makes multiple requests"""
     print(f"Worker {worker_id} starting...")
     worker_successful = 0
     worker_failed = 0
 
     for i in range(reqs_per_worker):
-        success = await make_request(session, worker_id, mode)
+        success = await make_request(session, worker_id, mode, context)
 
         if success:
             worker_successful += 1
@@ -105,6 +157,8 @@ async def main(mode, num_workers, reqs_per_worker):
         base_url = GET_BLOCK_BASE_URL
     elif mode == "block-height":
         base_url = BLOCK_HEIGHT_URL
+    elif mode in HISTORY_MODES:
+        base_url = f"{REST_API_BASE} ({mode})"
     else:
         raise RuntimeError(f'Unknown REST mode "{mode}"')
 
@@ -112,8 +166,6 @@ async def main(mode, num_workers, reqs_per_worker):
           f' each making {reqs_per_worker} requests...')
     print(f"Target endpoint: {base_url}")
     print("")
-
-    start_time = time.time()
 
     # Create HTTP session with connection pooling
     connector = aiohttp.TCPConnector(
@@ -124,8 +176,15 @@ async def main(mode, num_workers, reqs_per_worker):
     )
 
     async with aiohttp.ClientSession(connector=connector) as session:
+        context = await fetch_history_context(session) if mode in HISTORY_MODES else None
+        if context is not None:
+            print(f'Querying heights up to {context["latest_height"]} for '
+                  f'{len(context["validators"])} validators')
+
+        start_time = time.time()
+
         # Create and run all workers concurrently
-        tasks = [worker(session, i+1, mode, reqs_per_worker) for i in range(num_workers)]
+        tasks = [worker(session, i+1, mode, reqs_per_worker, context) for i in range(num_workers)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Process results
