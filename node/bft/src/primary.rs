@@ -40,6 +40,7 @@ use crate::{
         fmt_id,
         init_sync_channels,
         init_worker_channels,
+        local_upgrade_signal,
         now,
     },
     spawn_blocking,
@@ -1382,8 +1383,17 @@ impl<N: Network> Primary<N> {
                     }
                 };
 
+                let upgrade_signal = match local_upgrade_signal::<N>(self_.ledger.latest_block_height()) {
+                    Ok(upgrade_signal) => upgrade_signal,
+                    Err(e) => {
+                        warn!("Failed to determine the upgrade signal - {e}");
+                        continue;
+                    }
+                };
+
                 // Construct the primary ping.
-                let primary_ping = PrimaryPing::from((<Event<N>>::VERSION, block_locators, primary_certificate));
+                let primary_ping =
+                    PrimaryPing::from((<Event<N>>::VERSION, block_locators, primary_certificate, Some(upgrade_signal)));
                 // Broadcast the event.
                 self_.gateway.broadcast(Event::PrimaryPing(primary_ping));
             }

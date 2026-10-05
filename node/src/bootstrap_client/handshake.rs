@@ -299,7 +299,7 @@ impl<N: Network> BootstrapClient<N> {
         version: u32,
         address: Address<N>,
     ) -> Result<Option<DisconnectReason>, ConnectError> {
-        if version < Event::<N>::VERSION {
+        if version < Event::<N>::MINIMUM_VERSION {
             warn!("{} Dropping '{peer_addr}' on version {version} (outdated)", Self::OWNER);
             return Ok(Some(DisconnectReason::OutdatedClientVersion));
         }

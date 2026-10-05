@@ -21,8 +21,8 @@ use crate::{
     MAX_FETCH_TIMEOUT,
     MEMORY_POOL_PORT,
     Worker,
-    events::{DisconnectReason, EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
+    events::{DisconnectReason, EventCodec, PrimaryPing, UpgradeSignal},
+    helpers::{Cache, PrimarySender, Storage, SyncSender, UpgradeMonitor, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use smol_str::SmolStr;
@@ -208,6 +208,8 @@ pub struct InnerGateway<N: Network> {
     worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
     /// The sync sender.
     sync_sender: OnceCell<SyncSender<N>>,
+    /// Tracks whether the committee has scheduled a consensus version this build lacks.
+    upgrade_monitor: UpgradeMonitor<N>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
@@ -307,6 +309,7 @@ impl<N: Network> Gateway<N> {
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
+            upgrade_monitor: Default::default(),
             handles: Default::default(),
             node_data_dir,
             trusted_peers_only,
@@ -441,6 +444,31 @@ impl<N: Network> Gateway<N> {
     /// Returns the resolver.
     pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
+    }
+
+    /// Returns the upgrade monitor.
+    pub fn upgrade_monitor(&self) -> &UpgradeMonitor<N> {
+        &self.upgrade_monitor
+    }
+
+    /// Records the upgrade signal of the validator at `peer_ip`.
+    fn record_upgrade_signal(&self, peer_ip: SocketAddr, signal: UpgradeSignal) {
+        let Some(address) = self.resolve_to_aleo_addr(peer_ip) else {
+            return;
+        };
+        let committee = match self.ledger.current_committee() {
+            Ok(committee) => committee,
+            Err(error) => {
+                warn!("{CONTEXT} Unable to retrieve the committee to tally upgrade signals - {error}");
+                return;
+            }
+        };
+        if let Some(version) = self.upgrade_monitor.record(address, signal, &committee, &self.connected_addresses()) {
+            error!(
+                "{CONTEXT} Validators holding at least a third of the stake will run ConsensusVersion::V{version} \
+                 before this build does"
+            );
+        }
     }
 
     /// Returns the listener IP address from the (ambiguous) peer address.
@@ -801,11 +829,15 @@ impl<N: Network> Gateway<N> {
                 Ok(false)
             }
             Event::PrimaryPing(ping) => {
-                let PrimaryPing { version, block_locators, primary_certificate } = ping;
+                let PrimaryPing { version, block_locators, primary_certificate, upgrade_signal } = ping;
 
                 // Ensure the event version is not outdated.
-                if version < Event::<N>::VERSION {
+                if version < Event::<N>::MINIMUM_VERSION {
                     bail!("Dropping '{peer_ip}' on event version {version} (outdated)");
+                }
+
+                if let Some(upgrade_signal) = upgrade_signal {
+                    self.record_upgrade_signal(peer_ip, upgrade_signal);
                 }
 
                 // Log the validator's height.
@@ -1322,6 +1354,12 @@ impl<N: Network> Transport<N> for Gateway<N> {
     /// without waiting for the actual delivery; instead, the caller is provided with a [`oneshot::Receiver`]
     /// which can be used to determine when and whether the event has been delivered.
     async fn send(&self, peer_ip: SocketAddr, mut event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>> {
+        if let Event::PrimaryPing(ping) = event {
+            let peer_version =
+                self.get_connected_peer(peer_ip).map_or(Event::<N>::MINIMUM_VERSION, |peer| peer.version);
+            event = Event::PrimaryPing(ping.for_peer_version(peer_version));
+        }
+
         // Serialize the payload here, rather than leaving it for the connection's writer task.
         //
         // `Data` defers serialization until the event is written to the stream, which puts it on
@@ -1996,7 +2034,7 @@ impl<N: Network> Gateway<N> {
         let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 
         // Ensure the event protocol version is not outdated.
-        if version < Event::<N>::VERSION {
+        if version < Event::<N>::MINIMUM_VERSION {
             return Some(DisconnectReason::OutdatedClientVersion);
         }
         // If the node is in trusted peers only mode, ensure the peer is trusted.
