@@ -42,7 +42,6 @@ metrics = [
   "snarkvm/metrics",
   "snarkvm/rocks"
 ]
-history-staking-rewards = [ "snarkos-node-rest/history-staking-rewards", "snarkvm/history-staking-rewards" ]
 cuda = [
   "snarkvm/cuda",
   "snarkos-account/cuda",
