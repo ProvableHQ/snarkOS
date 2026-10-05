@@ -518,7 +518,12 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 /// Counts a REST request by method, matched route, and status, and records its latency.
 #[cfg(feature = "metrics")]
 async fn record_rest_request(request: Request<Body>, next: middleware::Next) -> Response {
-    let method = request.method().as_str().to_owned();
+    let method = match request.method().as_str() {
+        method @ ("GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS" | "TRACE" | "PATCH") => {
+            method.to_owned()
+        }
+        _ => "OTHER".to_owned(),
+    };
     let endpoint = request
         .extensions()
         .get::<axum::extract::MatchedPath>()
