@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791222669616,
+  "lastUpdate": 1791224348828,
   "repoUrl": "https://github.com/ProvableHQ/snarkOS",
   "entries": {
     "snarkOS Benchmarks": [
@@ -21090,6 +21090,72 @@ window.BENCHMARK_DATA = {
             "value": 1.63,
             "unit": "blocks/s",
             "extra": "total_wait=153s, target_height=250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "5683852+cbeck88@users.noreply.github.com",
+            "name": "Chris Beck",
+            "username": "cbeck88"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "947b77739cbeafac5ac8683f3baf704cd2d680f3",
+          "message": "Merge pull request #4519 from ProvableHQ/dependabot/cargo/staging/toml-1.1.6spec-1.1.0\n\nBump toml from 0.9.12+spec-1.1.0 to 1.1.6+spec-1.1.0",
+          "timestamp": "2026-10-05T12:01:57-06:00",
+          "tree_id": "73d16c182113f54033bd0e0ec813b3571b062a85",
+          "url": "https://github.com/ProvableHQ/snarkOS/commit/947b77739cbeafac5ac8683f3baf704cd2d680f3"
+        },
+        "date": 1791224347999,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "rest-get-block",
+            "value": 6.5653082398850255,
+            "unit": "ops/s",
+            "extra": "num_ops=480, total_wait=73.1115710735321, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-block-height",
+            "value": 12863.88760586482,
+            "unit": "ops/s",
+            "extra": "num_ops=80000, total_wait=6.218959808349609, endpoint=http://localhost:3030/v2/testnet/block/height/latest, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "rest-get-latest-block",
+            "value": 1562.2080325529532,
+            "unit": "ops/s",
+            "extra": "num_ops=800, total_wait=0.5120956897735596, endpoint=http://localhost:3030/v2/testnet/block, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync",
+            "value": 2.29,
+            "unit": "blocks/s",
+            "extra": "total_wait=109s, target_height=250, connect_time=0s, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "p2p-sync-speed-variance",
+            "value": 1.809109,
+            "unit": "blocks^2/s^2",
+            "extra": "samples=107, mean_speed=1.343146, max_speed=3.750000, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "bft-sync",
+            "value": 1.61,
+            "unit": "blocks/s",
+            "extra": "total_wait=155s, target_height=250, connect_time=7, branch=staging, num_validators=40, git_commit=9ec2291c57, snapshot_height=250"
+          },
+          {
+            "name": "cdn-sync",
+            "value": 1.81,
+            "unit": "blocks/s",
+            "extra": "total_wait=138s, target_height=250"
           }
         ]
       }
