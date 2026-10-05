@@ -95,21 +95,16 @@ use tokio::sync::RwLock as TRwLock;
 use tokio::{sync::Notify, task::JoinHandle};
 
 /// The state of the primary's batch proposal.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum ProposedBatchState<N: Network> {
     /// No batch is currently being proposed.
+    #[default]
     None,
     /// A batch is being proposed and awaiting signatures.
     Certifying(Box<Proposal<N>>),
     /// A batch has reached quorum and is being inserted into storage.
     /// Carries the batch ID so late-arriving signatures can be recognized and silently dropped.
     Certified(Field<N>),
-}
-
-impl<N: Network> Default for ProposedBatchState<N> {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl<N: Network> ProposedBatchState<N> {
@@ -275,8 +270,7 @@ impl<N: Network> Primary<N> {
                         // We use a dummy IP because the node should not need to request from any peers.
                         // The storage should have stored all the transmissions. If not, we simply
                         // skip the certificate.
-                        if let Err(err) = self.sync_with_certificate_from_peer::<true>(DUMMY_SELF_IP, certificate).await
-                        {
+                        if let Err(err) = self.sync_with_certificate_from_peer(DUMMY_SELF_IP, certificate).await {
                             let err = err.context(format!(
                                 "Failed to load stored certificate {} from proposal cache",
                                 fmt_id(batch_id)
@@ -348,7 +342,6 @@ impl<N: Network> Primary<N> {
         // Next, initialize the gateway.
         self.gateway.run(primary_sender, worker_senders, Some(sync_sender)).await;
         // Lastly, start the primary handlers.
-        // Note: This ensures the primary does not start communicating before syncing is complete.
         self.start_handlers(primary_receiver);
 
         Ok(())
@@ -447,14 +440,6 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         Primary::current_round(self)
     }
 
-    fn wait_for_synced_if_syncing(&self) -> Option<futures::future::BoxFuture<'_, ()>> {
-        self.sync.wait_for_synced_if_syncing()
-    }
-
-    fn is_synced(&self) -> bool {
-        self.sync.is_synced()
-    }
-
     /// Proposes the batch for the current round.
     ///
     /// This method performs the following steps:
@@ -528,7 +513,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                         // Resend the batch proposal to the validator for signing.
                         Some(peer_ip) => {
                             let (gateway, event_, round) = (self.gateway.clone(), event.clone(), proposal.round());
-                            tokio::spawn(async move {
+                            self.spawn(async move {
                                 debug!("Resending batch proposal for round {round} to peer '{peer_ip}'");
                                 // Resend the batch proposal to the peer.
                                 if gateway.send(peer_ip, event_).await.is_none() {
@@ -627,10 +612,10 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
             #[cfg(feature = "test_network")]
             {
                 // If we are using a hotswapped dev committee, use simplified checks to more easily advance.
-                if let Some(dev_committee) = self.ledger.dev_committee_for_round(previous_round)? {
-                    if round <= dev_committee.starting_round() {
-                        is_ready = true;
-                    }
+                if let Some(dev_committee) = self.ledger.dev_committee_for_round(previous_round)?
+                    && round <= dev_committee.starting_round()
+                {
+                    is_ready = true;
                 }
             }
         }
@@ -676,10 +661,17 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     continue;
                 }
 
-                // Check if the storage already contain the transmission.
-                // Note: We do not skip if this is the first transmission in the proposal, to ensure that
-                // the primary does not propose a batch with no transmissions.
-                if !transmissions.is_empty() && self.storage.contains_transmission(id) {
+                // Check if storage already knows the transmission, either way.
+                //
+                // This is the one place that wants both states: a transmission already in storage is
+                // already in the DAG, and an ID storage knows only as aborted was already decided by
+                // a block, so re-proposing it yields a certificate that storage cannot serve at
+                // commit time - the aborted marker answers the containment check, but
+                // `get_transmission` still has nothing to hand back. Both are skipped
+                // unconditionally - proposing an empty batch is valid, so there is no need to make
+                // an exception for the first transmission.
+                if self.storage.contains_retrievable_transmission(id) || self.storage.contains_aborted_transmission(id)
+                {
                     trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
                     continue;
                 }
@@ -907,7 +899,7 @@ impl<N: Network> Primary<N> {
             // Instead, rebroadcast the cached signature to the peer.
             if signed_round == batch_header.round() && signed_batch_id == batch_header.batch_id() {
                 let gateway = self.gateway.clone();
-                tokio::spawn(async move {
+                self.spawn(async move {
                     debug!("Resending a signature for a batch in round {batch_round} from '{peer_ip}'");
                     let event = Event::BatchSignature(BatchSignature::new(batch_header.batch_id(), signature));
                     // Resend the batch signature to the peer.
@@ -949,8 +941,7 @@ impl<N: Network> Primary<N> {
         }
 
         // If the peer is ahead, use the batch header to sync up to the peer.
-        let mut missing_transmissions =
-            self.sync_with_batch_header_from_peer::<false, true>(peer_ip, &batch_header).await?;
+        let mut missing_transmissions = self.sync_with_batch_header_from_peer::<true>(peer_ip, &batch_header).await?;
 
         // Check that the transmission ids match and are not fee transactions.
         if let Err(err) = cfg_iter_mut!(&mut missing_transmissions).try_for_each(|(transmission_id, transmission)| {
@@ -1005,7 +996,7 @@ impl<N: Network> Primary<N> {
 
         // Broadcast the signature back to the validator.
         let self_ = self.clone();
-        tokio::spawn(async move {
+        self.spawn(async move {
             let event = Event::BatchSignature(BatchSignature::new(batch_id, signature));
             // Send the batch signature to the peer.
             if self_.gateway.send(peer_ip, event).await.is_some() {
@@ -1280,7 +1271,7 @@ impl<N: Network> Primary<N> {
         // (i.e. that all the referenced previous certificates are in the DAG before storing this one),
         // then all the validity checks in [`Storage::check_certificate`] should be redundant.
         // TODO: eliminate those redundant checks
-        self.sync_with_certificate_from_peer::<false>(peer_ip, certificate).await?;
+        self.sync_with_certificate_from_peer(peer_ip, certificate).await?;
 
         // If there are enough certificates to reach quorum threshold for the certificate round,
         // then proceed to advance to the next round.
@@ -1402,18 +1393,12 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, primary_certificate)) = rx_primary_ping.recv().await {
-                // If the primary is not synced, then do not process the primary ping.
-                if self_.sync.is_synced() {
-                    trace!("Processing new primary ping from '{peer_ip}'");
-                } else {
-                    trace!("Skipping a primary ping from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
+                trace!("Processing new primary ping from '{peer_ip}'");
 
                 // Spawn a task to process the primary certificate.
                 {
-                    let self_ = self_.clone();
-                    tokio::spawn(async move {
+                    let self__ = self_.clone();
+                    self_.spawn(async move {
                         // Deserialize the primary certificate in the primary ping.
                         let Ok(primary_certificate) = spawn_blocking!(primary_certificate.deserialize_blocking())
                         else {
@@ -1423,8 +1408,8 @@ impl<N: Network> Primary<N> {
                         // Process the primary certificate.
                         let id = fmt_id(primary_certificate.id());
                         let round = primary_certificate.round();
-                        if let Err(e) = self_.process_batch_certificate_from_peer(peer_ip, primary_certificate).await {
-                            warn!("Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}");
+                        if let Err(e) = self__.process_batch_certificate_from_peer(peer_ip, primary_certificate).await {
+                            debug!("Cannot process a primary certificate '{id}' at round {round} in a 'PrimaryPing' from '{peer_ip}' - {e}");
                         }
                     });
                 }
@@ -1436,11 +1421,7 @@ impl<N: Network> Primary<N> {
         self.spawn(async move {
             loop {
                 tokio::time::sleep(WORKER_PING_INTERVAL).await;
-                // If the primary is not synced, then do not broadcast the worker ping(s).
-                if !self_.sync.is_synced() {
-                    trace!("Skipping worker ping(s) {}", "(node is syncing)".dimmed());
-                    continue;
-                }
+
                 // Broadcast the worker ping(s).
                 for worker in self_.workers() {
                     worker.broadcast_ping();
@@ -1457,18 +1438,12 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, batch_propose)) = rx_batch_propose.recv().await {
-                // If the primary is not synced, then do not sign the batch.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a batch proposal from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
-
                 // Spawn a task to process the proposed batch.
-                let self_ = self_.clone();
-                tokio::spawn(async move {
+                let self__ = self_.clone();
+                self_.spawn(async move {
                     // Process the batch proposal.
                     let round = batch_propose.round;
-                    if let Err(err) = self_.process_batch_propose_from_peer(peer_ip, batch_propose).await {
+                    if let Err(err) = self__.process_batch_propose_from_peer(peer_ip, batch_propose).await {
                         let err = err.context(format!("Cannot sign a batch at round {round} from '{peer_ip}'"));
                         warn!("{}", flatten_error(err));
                     }
@@ -1480,11 +1455,6 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, batch_signature)) = rx_batch_signature.recv().await {
-                // If the primary is not synced, then do not store the signature.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a batch signature from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
                 // Process the batch signature.
                 // Note: Do NOT spawn a task around this function call. Processing signatures from peers
                 // is a critical path, and we should only store the minimum required number of signatures.
@@ -1502,14 +1472,9 @@ impl<N: Network> Primary<N> {
         let self_ = self.clone();
         self.spawn(async move {
             while let Some((peer_ip, batch_certificate)) = rx_batch_certified.recv().await {
-                // If the primary is not synced, then do not store the certificate.
-                if !self_.sync.is_synced() {
-                    trace!("Skipping a certified batch from '{peer_ip}' {}", "(node is syncing)".dimmed());
-                    continue;
-                }
                 // Spawn a task to process the batch certificate.
-                let self_ = self_.clone();
-                tokio::spawn(async move {
+                let self__ = self_.clone();
+                self_.spawn(async move {
                     // Deserialize the batch certificate.
                     let Ok(batch_certificate) = spawn_blocking!(batch_certificate.deserialize_blocking()) else {
                         warn!("Failed to deserialize the batch certificate from '{peer_ip}'");
@@ -1518,7 +1483,7 @@ impl<N: Network> Primary<N> {
                     // Process the batch certificate.
                     let id = fmt_id(batch_certificate.id());
                     let round = batch_certificate.round();
-                    if let Err(err) = self_.process_batch_certificate_from_peer(peer_ip, batch_certificate).await {
+                    if let Err(err) = self__.process_batch_certificate_from_peer(peer_ip, batch_certificate).await {
                         warn!(
                             "{}",
                             flatten_error(err.context(format!(
@@ -1553,15 +1518,7 @@ impl<N: Network> Primary<N> {
                     // expires, even when no further certificates arrive (e.g. an even round where
                     // the elected leader was absent and quorum was reached without their cert).
                     futures.push(Box::pin(tokio::time::sleep(MAX_LEADER_CERTIFICATE_DELAY)));
-                    if !self_.sync.is_synced() {
-                        futures.push(Box::pin(self_.sync.wait_for_synced()));
-                    }
                     let _ = futures::future::select_all(futures).await;
-
-                    if !self_.sync.is_synced() {
-                        trace!("Skipping round increment {}", "(node is syncing)".dimmed());
-                        continue;
-                    }
 
                     let next_round = current_round.saturating_add(1);
                     let is_quorum_threshold_reached = {
@@ -1601,10 +1558,10 @@ impl<N: Network> Primary<N> {
                     error!("Unable to determine the worker ID for the unconfirmed solution");
                     continue;
                 };
-                let self_ = self_.clone();
-                tokio::spawn(async move {
+                let self__ = self_.clone();
+                self_.spawn(async move {
                     // Retrieve the worker.
-                    let worker = &self_.workers()[worker_id as usize];
+                    let worker = &self__.workers()[worker_id as usize];
                     // Process the unconfirmed solution.
                     let result = worker.process_unconfirmed_solution(solution_id, solution).await;
                     // Send the result to the callback.
@@ -1628,10 +1585,10 @@ impl<N: Network> Primary<N> {
                     error!("Unable to determine the worker ID for the unconfirmed transaction");
                     continue;
                 };
-                let self_ = self_.clone();
-                tokio::spawn(async move {
+                let self__ = self_.clone();
+                self_.spawn(async move {
                     // Retrieve the worker.
-                    let worker = &self_.workers().get(worker_id as usize).expect("Invalid worker ID");
+                    let worker = &self__.workers().get(worker_id as usize).expect("Invalid worker ID");
                     // Process the unconfirmed transaction.
                     let result = worker.process_unconfirmed_transaction(transaction_id, transaction).await;
                     // Send the result to the callback.
@@ -1702,7 +1659,7 @@ impl<N: Network> Primary<N> {
             };
 
             // Notify the proposal task if the new round is ready.
-            if is_ready && self.is_synced() {
+            if is_ready {
                 debug!("Primary is ready to propose the next round");
                 self.proposal_task.signal();
             } else {
@@ -1797,7 +1754,10 @@ impl<N: Network> Primary<N> {
 
         // Store the certified batch.
         let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-        spawn_blocking!(storage.insert_certificate(certificate_, transmissions, Default::default()))?;
+        tokio::task::spawn_blocking(move || {
+            storage.insert_certificate(certificate_, transmissions, Default::default())
+        })
+        .await??;
         debug!("Stored a batch certificate for round {}", certificate.round());
         // The batch is now in storage, so late-arriving signatures can find it via contains_batch.
         // Transition from Certified back to None.
@@ -1861,7 +1821,7 @@ impl<N: Network> Primary<N> {
     ///   - Ensure the previous certificates have reached the quorum threshold.
     ///   - Ensure we have not already signed the batch ID.
     #[async_recursion::async_recursion]
-    async fn sync_with_certificate_from_peer<const IS_SYNCING: bool>(
+    async fn sync_with_certificate_from_peer(
         &self,
         peer_ip: SocketAddr,
         certificate: BatchCertificate<N>,
@@ -1880,36 +1840,41 @@ impl<N: Network> Primary<N> {
             return Ok(());
         }
 
-        // If node is not in sync mode and the node is not synced. Then return an error.
-        if !IS_SYNCING && !self.is_synced() {
-            bail!(
-                "Failed to process certificate `{}` at round {batch_round} from '{peer_ip}' (node is syncing)",
-                fmt_id(certificate.id())
-            );
-        }
-
         // If the peer is ahead, use the batch header to sync up to the peer.
-        let missing_transmissions =
-            self.sync_with_batch_header_from_peer::<IS_SYNCING, false>(peer_ip, batch_header).await?;
+        let missing_transmissions = self.sync_with_batch_header_from_peer::<false>(peer_ip, batch_header).await?;
 
-        // Check if the certificate needs to be stored.
-        if !self.storage.contains_certificate(certificate.id()) {
-            // Store the batch certificate.
-            let (storage, certificate_) = (self.storage.clone(), certificate.clone());
-            spawn_blocking!(storage.insert_certificate(certificate_, missing_transmissions, Default::default()))?;
-            debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
-            // If a BFT sender was provided, send the round and certificate to the BFT.
-            if let Some(cb) = self.primary_callback.get() {
-                cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
+        // Store the batch certificate. The same certificate can reach this point from several
+        // tasks at once (e.g. a primary ping, a certified batch, and previous-certificate
+        // fetches of other batches); the loser of that race gets a benign error here and has
+        // nothing left to do, since the winning task already forwards it to the BFT.
+        let (storage, certificate_) = (self.storage.clone(), certificate.clone());
+        match tokio::task::spawn_blocking(move || {
+            storage.insert_certificate(certificate_, missing_transmissions, Default::default())
+        })
+        .await
+        {
+            Ok(Ok(_)) => {} // continue
+            Ok(Err(err)) if err.is_benign() => {
+                trace!("Skipping insertion for certificate '{}' - {err}", fmt_id(certificate.id()));
+                return Ok(());
             }
-            // Wake the round-increment task to re-check quorum.
-            self.round_increment_notify.notify_one();
+            Ok(Err(err)) => return Err(anyhow!("{err}")),
+            Err(err) => return Err(anyhow!("[tokio::spawn_blocking] {err}")),
         }
+
+        debug!("Stored a batch certificate for round {batch_round} from '{peer_ip}'");
+        // If a BFT sender was provided, send the round and certificate to the BFT.
+        if let Some(cb) = self.primary_callback.get() {
+            cb.add_new_certificate(certificate).await.with_context(|| "Failed to update the DAG from sync")?;
+        }
+        // Wake the round-increment task to re-check quorum.
+        self.round_increment_notify.notify_one();
+
         Ok(())
     }
 
     /// Recursively syncs using the given batch header.
-    async fn sync_with_batch_header_from_peer<const IS_SYNCING: bool, const CHECK_PREVIOUS_CERTIFICATES: bool>(
+    async fn sync_with_batch_header_from_peer<const CHECK_PREVIOUS_CERTIFICATES: bool>(
         &self,
         peer_ip: SocketAddr,
         batch_header: &BatchHeader<N>,
@@ -1920,14 +1885,6 @@ impl<N: Network> Primary<N> {
         // If the certificate round is outdated, do not store it.
         if batch_round <= self.storage.gc_round() {
             bail!("Round {batch_round} is too far in the past")
-        }
-
-        // If node is not in sync mode and the node is not synced, then return an error.
-        if !IS_SYNCING && !self.is_synced() {
-            bail!(
-                "Failed to process batch header `{}` at round {batch_round} from '{peer_ip}' (node is syncing)",
-                fmt_id(batch_header.batch_id())
-            );
         }
 
         // Determine if quorum threshold is reached on the batch round.
@@ -1976,7 +1933,7 @@ impl<N: Network> Primary<N> {
                 self.storage.check_incoming_certificate(&batch_certificate)?;
             }
             // Store the batch certificate (recursively fetching any missing previous certificates).
-            self.sync_with_certificate_from_peer::<IS_SYNCING>(peer_ip, batch_certificate).await?;
+            self.sync_with_certificate_from_peer(peer_ip, batch_certificate).await?;
         }
         Ok(missing_transmissions)
     }
@@ -2009,8 +1966,15 @@ impl<N: Network> Primary<N> {
         let num_workers = self.num_workers();
         // Iterate through the transmission IDs.
         for transmission_id in batch_header.transmission_ids() {
-            // If the transmission does not exist in storage, proceed to fetch the transmission.
-            if !self.storage.contains_transmission(*transmission_id) {
+            // If the transmission cannot be retrieved from storage, proceed to fetch it.
+            //
+            // Note that an ID storage knows only as aborted is deliberately fetched too: storage
+            // holds no payload for it, so treating the aborted marker as "already have it" would
+            // accept a certificate committing to a transmission this node can never materialize.
+            // A batch is an availability claim by its author, so ask for the bytes rather than
+            // excuse them; the request goes to that author, which is the peer claiming to hold
+            // them. If it cannot serve them, the fetch fails and the batch is not signed.
+            if !self.storage.contains_retrievable_transmission(*transmission_id) {
                 // Determine the worker ID.
                 let Ok(worker_id) = assign_to_worker(*transmission_id, num_workers) else {
                     bail!("Unable to assign transmission ID '{transmission_id}' to a worker")
@@ -2053,6 +2017,7 @@ impl<N: Network> Primary<N> {
         }
 
         // Fetch the missing previous certificates.
+        #[allow(clippy::mutable_key_type)]
         let missing_previous_certificates =
             self.fetch_missing_certificates(peer_ip, round, batch_header.previous_certificate_ids()).await?;
         if !missing_previous_certificates.is_empty() {
@@ -2077,6 +2042,7 @@ impl<N: Network> Primary<N> {
         // Initialize a list for the missing certificates.
         let mut fetch_certificates = FuturesUnordered::new();
         // Initialize a set for the missing certificates.
+        #[allow(clippy::mutable_key_type)]
         let mut missing_certificates = HashSet::default();
         // Iterate through the certificate IDs.
         for certificate_id in certificate_ids {
@@ -2122,7 +2088,9 @@ impl<N: Network> Primary<N> {
 impl<N: Network> Primary<N> {
     /// Spawns a task with the given future; it should only be used for long-running tasks.
     fn spawn<T: Future<Output = ()> + Send + 'static>(&self, future: T) {
-        self.handles.lock().push(tokio::spawn(future));
+        let mut handles = self.handles.lock();
+        handles.retain(|handle| !handle.is_finished());
+        handles.push(tokio::spawn(future));
     }
 
     /// Shuts down the primary.
@@ -2167,7 +2135,7 @@ mod tests {
 
     use snarkos_node_bft_ledger_service::MockLedgerService;
     use snarkos_node_bft_storage_service::BFTMemoryService;
-    use snarkos_node_sync::{BlockSync, locators::test_helpers::sample_block_locators};
+    use snarkos_node_sync::BlockSync;
     use snarkvm::{
         ledger::{
             committee::{Committee, MIN_VALIDATOR_STAKE},
@@ -2460,6 +2428,38 @@ mod tests {
         assert!(primary.proposed_batch.read().is_proposed());
     }
 
+    /// A transmission that storage only knows as aborted was already decided by a block, and storage
+    /// has nothing to hand back for it at commit time, so it must be skipped when proposing -
+    /// including when it is the first item drained from the worker, which used to bypass the storage
+    /// check entirely.
+    #[test_log::test(tokio::test)]
+    async fn test_propose_batch_skips_an_aborted_first_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Queue a certificate's transmissions on the worker before recording them as aborted.
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        for (transmission_id, transmission) in &transmissions {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        }
+        assert_eq!(primary.workers()[0].num_transmissions(), transmissions.len());
+
+        // Record the queued transmission IDs as aborted in storage.
+        let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
+        primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions.clone()).unwrap();
+        for transmission_id in &aborted_transmissions {
+            assert!(primary.storage.contains_aborted_transmission(*transmission_id));
+            assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
+        }
+
+        // Every aborted ID is skipped, leaving an empty proposal rather than an uncommittable one.
+        assert!(primary.propose_batch().await.unwrap());
+        assert!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().is_empty());
+        assert_eq!(primary.workers()[0].num_transmissions(), 0);
+    }
+
     #[test_log::test(tokio::test)]
     async fn test_propose_batch_with_no_transmissions() {
         let mut rng = TestRng::default();
@@ -2496,6 +2496,31 @@ mod tests {
         // Propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
         assert!(primary.proposed_batch.read().is_proposed());
+    }
+
+    /// The previous round must reach quorum before the primary is allowed to propose the next
+    /// round. This is now the sole local safeguard against proposing without adequate DAG state -
+    /// `is_synced()` (peer-height-based) no longer gates this decision.
+    #[test_log::test(tokio::test)]
+    async fn test_propose_batch_without_previous_round_quorum() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Insert a single round-1 certificate, authored by only one other committee member - well
+        // below the quorum threshold (3 of the 4 validators).
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        primary.storage.insert_certificate(certificate, transmissions, Default::default()).unwrap();
+
+        // Advance storage's round pointer to 2, as `store_certificate_chain` does internally.
+        // This simulates the round pointer moving ahead (e.g. via a sync-applied block) without
+        // the local certificate set actually supporting it.
+        primary.storage.increment_to_next_round(1).unwrap();
+        assert_eq!(primary.current_round(), 2);
+
+        // The primary must refuse to propose: it does not have quorum for the previous round.
+        assert!(!primary.propose_batch().await.unwrap());
+        assert!(primary.proposed_batch.read().is_none());
     }
 
     #[test_log::test(tokio::test)]
@@ -2634,15 +2659,136 @@ mod tests {
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
 
-        // The primary will only consider itself synced if we received
-        // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
-
         // Try to process the batch proposal from the peer, should succeed.
         assert!(
             primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_ok()
         );
+        // The primary signed the proposal.
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_some());
+    }
+
+    /// A transmission that storage knows only as aborted still has to be fetched from the peer:
+    /// storage holds no payload for it, so skipping the fetch is what leaves a certificate stored
+    /// with a transmission this node can never materialize.
+    #[test_log::test(tokio::test)]
+    async fn test_fetch_missing_transmissions_fetches_an_aborted_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // A proposal from a peer, whose transmissions the worker holds - as the peer's would.
+        let round = 1;
+        let proposal = create_test_proposal(
+            &accounts[1].1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            Default::default(),
+            now() + MIN_BATCH_DELAY.as_secs() as i64,
+            1,
+            &mut rng,
+        );
+        for (transmission_id, transmission) in proposal.transmissions() {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        }
+
+        // Record one of the referenced IDs as aborted, as an earlier certificate would have.
+        let aborted_transmission_id = *proposal.transmissions().keys().next().unwrap();
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[2].1.address(), &accounts, round, Default::default(), &mut rng);
+        primary
+            .storage
+            .insert_certificate(certificate, transmissions, [aborted_transmission_id].into_iter().collect())
+            .unwrap();
+        assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(aborted_transmission_id));
+
+        // The aborted ID is fetched like any other, rather than excused by its marker.
+        let fetched = primary.fetch_missing_transmissions(peer_ip, proposal.batch_header()).await.unwrap();
+        assert_eq!(
+            fetched.get(&aborted_transmission_id),
+            proposal.transmissions().get(&aborted_transmission_id),
+            "the aborted transmission ID was skipped, so its payload will never reach storage"
+        );
+    }
+
+    /// The worker must accept a transmission whose ID storage knows only as aborted: the aborted
+    /// marker holds no payload, so discarding the bytes throws away what a fetch just produced and
+    /// leaves this node unable to serve them to anyone else.
+    #[test_log::test(tokio::test)]
+    async fn test_worker_retains_a_transmission_for_an_aborted_id() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Record a certificate's transmission IDs as aborted, keeping the transmissions in hand.
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[1].1.address(), &accounts, 1, Default::default(), &mut rng);
+        let aborted_transmissions = transmissions.keys().copied().collect::<HashSet<_>>();
+        primary.storage.insert_certificate(certificate, Default::default(), aborted_transmissions).unwrap();
+
+        let (transmission_id, transmission) = transmissions.iter().next().unwrap();
+        assert!(primary.storage.contains_aborted_transmission(*transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(*transmission_id));
+
+        // The worker takes the bytes rather than treating the aborted marker as already holding them.
+        primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone());
+        assert_eq!(
+            primary.workers()[0].get_transmission(*transmission_id),
+            Some(transmission.clone()),
+            "the worker discarded the payload, so it cannot be served or reused"
+        );
+    }
+
+    /// A proposal referencing a transmission that storage knows only as aborted is signed like any
+    /// other, once the bytes have been obtained from its author.
+    ///
+    /// The aborted marker is not a reason to withhold a signature: it only means this node holds no
+    /// payload, and the author of a batch is claiming it can serve one. Refusing here would be a
+    /// unilateral judgment made from local sync state, which an honest peer that has not yet seen
+    /// the aborting block would trip. A proposal whose author cannot serve the bytes fails earlier,
+    /// at the fetch, like any other proposal with a missing transmission.
+    #[test_log::test(tokio::test)]
+    async fn test_batch_propose_from_peer_with_an_aborted_transmission() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Create a valid proposal with an author that isn't the primary.
+        let round = 1;
+        let peer_account = &accounts[1];
+        let peer_ip = peer_account.0;
+        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
+        let proposal = create_test_proposal(
+            &peer_account.1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            Default::default(),
+            timestamp,
+            1,
+            &mut rng,
+        );
+
+        // Make sure the primary is aware of the transmissions in the proposal.
+        for (transmission_id, transmission) in proposal.transmissions() {
+            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
+        }
+
+        // The author must be known to resolver to pass propose checks.
+        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
+
+        // Record one of the proposed transmission IDs as aborted, as an earlier certificate would have.
+        let aborted_transmission_id = *proposal.transmissions().keys().next().unwrap();
+        let (certificate, transmissions) =
+            create_batch_certificate(accounts[2].1.address(), &accounts, round, Default::default(), &mut rng);
+        primary
+            .storage
+            .insert_certificate(certificate, transmissions, [aborted_transmission_id].into_iter().collect())
+            .unwrap();
+        assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
+        assert!(!primary.storage.contains_retrievable_transmission(aborted_transmission_id));
+
+        // The payload is available from the author, so the proposal is signed like any other.
+        primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
+        assert!(primary.signed_proposals.read().get(&peer_account.1.address()).is_some());
     }
 
     /// A proposal for the current round is left in place; once the round advances past it, the same
@@ -2734,43 +2880,6 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn test_batch_propose_from_peer_when_not_synced() {
-        let mut rng = TestRng::default();
-        let (primary, accounts) = primary_without_handlers(&mut rng);
-
-        // Create a valid proposal with an author that isn't the primary.
-        let round = 1;
-        let peer_account = &accounts[1];
-        let peer_ip = peer_account.0;
-        let timestamp = now() + MIN_BATCH_DELAY.as_secs() as i64;
-        let proposal = create_test_proposal(
-            &peer_account.1,
-            primary.ledger.current_committee().unwrap(),
-            round,
-            Default::default(),
-            timestamp,
-            1,
-            &mut rng,
-        );
-
-        // Make sure the primary is aware of the transmissions in the proposal.
-        for (transmission_id, transmission) in proposal.transmissions() {
-            primary.workers()[0].process_transmission_from_peer(peer_ip, *transmission_id, transmission.clone())
-        }
-
-        // The author must be known to resolver to pass propose checks.
-        primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-
-        // Add a high block locator to indicate we are not synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-
-        // Try to process the batch proposal from the peer, should fail
-        assert!(
-            primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.is_err()
-        );
-    }
-
-    #[test_log::test(tokio::test)]
     async fn test_batch_propose_from_peer_in_round() {
         let round = 2;
         let mut rng = TestRng::default();
@@ -2800,11 +2909,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-
-        // The primary will only consider itself synced if we received
-        // block locators from a peer.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should succeed.
         primary.process_batch_propose_from_peer(peer_ip, (*proposal.batch_header()).clone().into()).await.unwrap();
@@ -2837,9 +2941,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-        // The primary must be considered synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(20)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(20);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2883,9 +2984,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-        // The primary must be considered synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -2940,9 +3038,6 @@ mod tests {
 
         // The author must be known to resolver to pass propose checks.
         primary.gateway.resolver().write().insert_peer(peer_ip, peer_ip, Some(peer_account.1.address()));
-        // The primary must be considered synced.
-        primary.sync.testing_only_update_peer_locators_testing_only(peer_ip, sample_block_locators(0)).unwrap();
-        primary.sync.testing_only_set_sync_height_testing_only(0);
 
         // Try to process the batch proposal from the peer, should error.
         assert!(
@@ -3385,8 +3480,45 @@ mod tests {
         assert!(primary.storage.contains_certificate(certificate_id));
         // Ensure that the aborted transmission IDs exist in storage.
         for aborted_transmission_id in aborted_transmissions {
-            assert!(primary.storage.contains_transmission(aborted_transmission_id));
+            assert!(primary.storage.contains_aborted_transmission(aborted_transmission_id));
             assert!(primary.storage.get_transmission(aborted_transmission_id).is_none());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_with_same_certificate_concurrently() {
+        let round = 3;
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+        let peer_ip = accounts[1].0;
+
+        // Fill primary storage.
+        let previous_certificate_ids = store_certificate_chain(&primary, &accounts, round, &mut rng);
+
+        for (_, account) in accounts.iter() {
+            let (certificate, transmissions) = create_batch_certificate(
+                account.address(),
+                &accounts,
+                round,
+                previous_certificate_ids.clone(),
+                &mut rng,
+            );
+            let certificate_id = certificate.id();
+            for (transmission_id, transmission) in transmissions {
+                primary.workers()[0].process_transmission_from_peer(peer_ip, transmission_id, transmission);
+            }
+
+            // Every concurrent attempt to store the same certificate must succeed.
+            let tasks: Vec<_> = (0..8)
+                .map(|_| {
+                    let (primary, certificate) = (primary.clone(), certificate.clone());
+                    tokio::spawn(async move { primary.sync_with_certificate_from_peer(peer_ip, certificate).await })
+                })
+                .collect();
+            for task in tasks {
+                task.await.unwrap().unwrap();
+            }
+            assert!(primary.storage.contains_certificate(certificate_id));
         }
     }
 

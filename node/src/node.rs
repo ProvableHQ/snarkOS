@@ -19,6 +19,7 @@ use crate::{
     Prover,
     Validator,
     network::{NodeType, Peer, PeerPoolHandling},
+    rest::RestVerificationLimits,
     router::Outbound,
     traits::NodeInterface,
 };
@@ -91,6 +92,7 @@ impl<N: Network> Node<N> {
         bft_ip: Option<SocketAddr>,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
+        rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
@@ -103,7 +105,6 @@ impl<N: Network> Node<N> {
         auto_db_checkpoints: Option<PathBuf>,
         dev_txs: bool,
         dev: Option<u16>,
-        slipstream_configs: &[PathBuf],
         dev_hotswap_config: Option<DevHotswapConfig>,
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
@@ -113,6 +114,7 @@ impl<N: Network> Node<N> {
                 bft_ip,
                 rest_ip,
                 rest_rps,
+                rest_verification_limits,
                 history_api_url,
                 account,
                 trusted_peers,
@@ -124,7 +126,6 @@ impl<N: Network> Node<N> {
                 trusted_peers_only,
                 dev_txs,
                 dev,
-                slipstream_configs,
                 dev_hotswap_config,
                 signal_handler,
             )
@@ -134,10 +135,10 @@ impl<N: Network> Node<N> {
         let node = Self::Validator(validator.clone());
 
         // Perform automatic ledger checkpoints.
-        if let Some(path) = auto_db_checkpoints {
-            if let Some(handle) = node.perform_auto_checkpoints(path)? {
-                validator.handles.lock().push(handle);
-            }
+        if let Some(path) = auto_db_checkpoints
+            && let Some(handle) = node.perform_auto_checkpoints(path)?
+        {
+            validator.handles.lock().push(handle);
         }
 
         #[cfg(feature = "metrics")]
@@ -179,6 +180,7 @@ impl<N: Network> Node<N> {
         node_ip: SocketAddr,
         rest_ip: Option<SocketAddr>,
         rest_rps: u32,
+        rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
@@ -189,7 +191,6 @@ impl<N: Network> Node<N> {
         trusted_peers_only: bool,
         auto_db_checkpoints: Option<PathBuf>,
         dev: Option<u16>,
-        slipstream_configs: &[PathBuf],
         signal_handler: Arc<SignalHandler>,
     ) -> Result<Self> {
         let client = Arc::new(
@@ -197,6 +198,7 @@ impl<N: Network> Node<N> {
                 node_ip,
                 rest_ip,
                 rest_rps,
+                rest_verification_limits,
                 history_api_url,
                 account,
                 trusted_peers,
@@ -206,7 +208,6 @@ impl<N: Network> Node<N> {
                 node_data_dir,
                 trusted_peers_only,
                 dev,
-                slipstream_configs,
                 signal_handler,
             )
             .await?,
@@ -215,10 +216,10 @@ impl<N: Network> Node<N> {
         let node = Self::Client(client.clone());
 
         // Perform automatic ledger checkpoints.
-        if let Some(path) = auto_db_checkpoints {
-            if let Some(handle) = node.perform_auto_checkpoints(path)? {
-                client.handles.lock().push(handle);
-            }
+        if let Some(path) = auto_db_checkpoints
+            && let Some(handle) = node.perform_auto_checkpoints(path)?
+        {
+            client.handles.lock().push(handle);
         }
 
         #[cfg(feature = "metrics")]
@@ -486,10 +487,10 @@ impl<N: Network> Node<N> {
                 // If we have a sufficient number of checkpoints, delete the oldest one(s).
                 let surplus_checkpoints = existing_checkpoints.len().saturating_sub(MAX_AUTO_CHECKPOINTS);
                 for _ in 0..surplus_checkpoints {
-                    if let Some((checkpoint_path, _)) = existing_checkpoints.pop() {
-                        if let Err(e) = fs::remove_dir_all(checkpoint_path) {
-                            warn!("Couldn't remove an automatic ledger checkpoint: {e}");
-                        }
+                    if let Some((checkpoint_path, _)) = existing_checkpoints.pop()
+                        && let Err(e) = fs::remove_dir_all(checkpoint_path)
+                    {
+                        warn!("Couldn't remove an automatic ledger checkpoint: {e}");
                     }
                 }
             }

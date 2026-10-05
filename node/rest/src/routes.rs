@@ -94,15 +94,20 @@ fn parse_view_inputs<N: Network>(inputs: &[String]) -> Result<Vec<Value<N>>, Res
 }
 
 fn map_missing_resource_error(err: anyhow::Error) -> RestError {
-    let error_message = err.to_string();
-    if error_message.contains("Missing")
-        || error_message.contains("does not exist in storage")
-        || error_message.contains("Failed to find")
-    {
-        RestError::not_found(err)
-    } else {
-        RestError::from(err)
-    }
+    /// The markers that identify an absent resource rather than a fault.
+    const MISSING_RESOURCE_MARKERS: [&str; 3] = ["Missing", "does not exist in storage", "Failed to find"];
+
+    // Inspect the whole chain rather than just the outermost message. Callers attach context with
+    // `with_context`, which is what `to_string` then reports, so a marker added by the ledger ends
+    // up buried one level down. `/block/{height}` was the visible case: `get_block` wraps the
+    // ledger's "Missing block hash for block {h}" in "Failed to get a block's hash", so a height
+    // the node did not have was reported as a 500 instead of a 404.
+    let is_missing_resource = err.chain().any(|cause| {
+        let message = cause.to_string();
+        MISSING_RESOURCE_MARKERS.iter().any(|marker| message.contains(marker))
+    });
+
+    if is_missing_resource { RestError::not_found(err) } else { RestError::from(err) }
 }
 
 /// Deserialize a CSV string into a vector of strings.
@@ -114,13 +119,92 @@ where
     Ok(if s.trim().is_empty() { Vec::new() } else { s.split(',').map(|x| x.trim().to_string()).collect() })
 }
 
-/// The `get_blocks` query object.
-#[derive(Deserialize, Serialize)]
+/// The query object for the routes serving a range of block heights.
+#[derive(Copy, Clone, Deserialize, Serialize)]
 pub(crate) struct BlockRange {
     /// The starting block height (inclusive).
     start: u32,
     /// The ending block height (exclusive).
     end: u32,
+    /// Whether to clamp a range that reaches past the tip, rather than fail the request.
+    allow_partial: Option<bool>,
+}
+
+/// The maximum number of blocks that `get_blocks` serves in one request.
+const MAX_BLOCK_RANGE: u32 = 50;
+
+/// The maximum number of block hashes that `get_block_hashes` serves in one request.
+const MAX_BLOCK_HASH_RANGE: u32 = 5_000;
+
+/// The maximum number of block headers that `get_block_headers` serves in one request.
+const MAX_BLOCK_HEADER_RANGE: u32 = 320;
+
+/// The maximum number of state roots that `get_block_state_roots` serves in one request.
+const MAX_STATE_ROOT_RANGE: u32 = 5_000;
+
+/// The maximum number of blocks whose transactions `get_block_transactions_range` serves in one
+/// request.
+///
+/// Unlike a hash, a state root or a header, a block's transactions have no fixed size, so this
+/// cannot be sized to fit a response inside one block the way the others are. What bounds it is
+/// the largest response the node already produces over the same data: a block's bytes are
+/// dominated by its authority, so this many blocks' transactions weigh less than the
+/// `MAX_BLOCK_RANGE` whole blocks `get_blocks` serves, and the route asks nothing of the node it
+/// could not already be asked for.
+///
+/// That is a bound on bytes rather than on blocks, and it does not survive an arbitrary raise:
+/// mainnet has stretches where transactions are most of a block, so setting this to
+/// `MAX_BLOCK_HEADER_RANGE` would let the route return more in one response than `get_blocks`
+/// can. `the_transactions_maximum_stays_within_a_get_blocks_response` holds this against measured
+/// figures and rejects a maximum nobody has measured.
+const MAX_BLOCK_TRANSACTIONS_RANGE: u32 = 160;
+
+/// Validates a block range against the given maximum, and returns `(start, end)`.
+///
+/// With `allow_partial`, the range is then clamped to the heights up to `latest_height`, so a
+/// caller following the tip can ask for the next `N` heights and receive as many as exist: element
+/// `i` of the response is height `start + i`, and a `start` past the tip yields an empty range. The
+/// maximum applies to the range as requested. A height missing at or below the tip is left in the
+/// range for the lookup to report.
+///
+/// Each route serving a range picks its own maximum, sized so that the largest response it can
+/// produce stays on the order of a single block. A block hash and a header are several orders of
+/// magnitude smaller than the block they belong to, so applying the `get_blocks` maximum to them
+/// would bound those responses far below what the node already serves in one request.
+///
+/// `item` names what the route serves, so that a caller who exceeds the maximum is told the limit
+/// in the unit it applies to. On the default and `/v1` prefixes this text is the only diagnostic
+/// the caller receives, since `v1_error_middleware` replaces the status code.
+fn check_block_range(
+    block_range: BlockRange,
+    max_block_range: u32,
+    item: &str,
+    latest_height: u32,
+) -> Result<(u32, u32), RestError> {
+    let (start_height, end_height) = (block_range.start, block_range.end);
+
+    // Ensure the end height is greater than the start height.
+    if start_height > end_height {
+        return Err(RestError::bad_request(anyhow!("Invalid block range")));
+    }
+
+    // Ensure the block range is bounded.
+    if end_height - start_height > max_block_range {
+        return Err(RestError::bad_request(anyhow!(
+            "Cannot request more than {max_block_range} {item} per call (requested {})",
+            end_height - start_height
+        )));
+    }
+
+    if !block_range.allow_partial.unwrap_or(false) {
+        return Ok((start_height, end_height));
+    }
+
+    // Clamp the range to the tip.
+    let end_height = end_height.min(latest_height.saturating_add(1));
+    let start_height = start_height.min(end_height);
+
+    Ok((start_height, end_height))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -287,33 +371,21 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             Err(e) => Err(RestError::internal_server_error(anyhow!("tokio error: {e}"))),
         }?;
 
-        rest.block_cache.lock().put(hash, json_block.clone());
-
         Ok(json_block)
     }
 
     /// GET /<network>/blocks?start={start_height}&end={end_height}
+    /// GET /<network>/blocks?start={start_height}&end={end_height}&allow_partial=true
+    ///
+    /// `start` is inclusive and `end` is exclusive. A height the node does not have is a 404. With
+    /// `allow_partial=true`, a range that reaches past the tip is clamped to it instead, so the
+    /// array is shorter than the range, and empty when `start` is past the tip.
     pub(crate) async fn get_blocks(
         State(rest): State<Self>,
         Query(block_range): Query<BlockRange>,
     ) -> Result<ErasedJson, RestError> {
-        let start_height = block_range.start;
-        let end_height = block_range.end;
-
-        const MAX_BLOCK_RANGE: u32 = 50;
-
-        // Ensure the end height is greater than the start height.
-        if start_height > end_height {
-            return Err(RestError::bad_request(anyhow!("Invalid block range")));
-        }
-
-        // Ensure the block range is bounded.
-        if end_height - start_height > MAX_BLOCK_RANGE {
-            return Err(RestError::bad_request(anyhow!(
-                "Cannot request more than {MAX_BLOCK_RANGE} blocks per call (requested {})",
-                end_height - start_height
-            )));
-        }
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_BLOCK_RANGE, "blocks", rest.ledger.latest_height())?;
 
         // Prepare a closure for the blocking work.
         let get_json_blocks = move || -> Result<ErasedJson, RestError> {
@@ -332,6 +404,193 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
                 Err(RestError::internal_server_error(
                     err.context(format!("Failed to get blocks '{start_height}..{end_height}'")),
+                ))
+            }
+        }
+    }
+
+    /// GET /<network>/blocks/hashes?start={start_height}&end={end_height}
+    ///
+    /// `start` is inclusive and `end` is exclusive, as in `get_blocks`, so `start == end` returns
+    /// an empty array rather than the hash at that height.
+    ///
+    /// A height the node does not have is a 404, and the whole request fails rather than returning
+    /// a short array. Note that this is only visible on `/v2`: on the default and `/v1` prefixes
+    /// the v1 error middleware replaces the status with a 500, so a caller that needs to tell a
+    /// not-yet-synced height apart from a fault has to use `/v2`, or pass `allow_partial=true` to
+    /// clamp the range to the tip as in `get_blocks`.
+    pub(crate) async fn get_block_hashes(
+        State(rest): State<Self>,
+        Query(block_range): Query<BlockRange>,
+    ) -> Result<ErasedJson, RestError> {
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_BLOCK_HASH_RANGE, "block hashes", rest.ledger.latest_height())?;
+
+        // Prepare a closure for the blocking work.
+        //
+        // Unlike `get_blocks`, this stays sequential: each height is a single point lookup in the
+        // block ID map, which is cheaper than the work of handing it to another thread, and this
+        // range is large enough that saturating the rayon pool would contend with consensus.
+        let get_json_hashes = move || -> Result<ErasedJson, RestError> {
+            let hashes = (start_height..end_height)
+                .map(|height| rest.ledger.get_hash(height).map_err(map_missing_resource_error))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok(ErasedJson::pretty(hashes))
+        };
+
+        // Fetch the block hashes from the ledger and serialize to json.
+        match tokio::task::spawn_blocking(get_json_hashes).await {
+            Ok(json) => json,
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+
+                Err(RestError::internal_server_error(
+                    err.context(format!("Failed to get block hashes '{start_height}..{end_height}'")),
+                ))
+            }
+        }
+    }
+
+    /// GET /<network>/blocks/headers?start={start_height}&end={end_height}
+    ///
+    /// `start` is inclusive and `end` is exclusive, as in `get_blocks`.
+    ///
+    /// A height the node does not have is a 404, and the whole request fails rather than returning
+    /// a short array. Note that this is only visible on `/v2`: on the default and `/v1` prefixes
+    /// the v1 error middleware replaces the status with a 500, so a caller that needs to tell a
+    /// not-yet-synced height apart from a fault has to use `/v2`, or pass `allow_partial=true` to
+    /// clamp the range to the tip as in `get_blocks`.
+    pub(crate) async fn get_block_headers(
+        State(rest): State<Self>,
+        Query(block_range): Query<BlockRange>,
+    ) -> Result<ErasedJson, RestError> {
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_BLOCK_HEADER_RANGE, "block headers", rest.ledger.latest_height())?;
+
+        // Prepare a closure for the blocking work. Each height is two point lookups: the block ID
+        // map, then the header map. See `get_block_hashes` for why this is sequential.
+        let get_json_headers = move || -> Result<ErasedJson, RestError> {
+            let headers = (start_height..end_height)
+                .map(|height| rest.ledger.get_header(height).map_err(map_missing_resource_error))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok(ErasedJson::pretty(headers))
+        };
+
+        // Fetch the block headers from the ledger and serialize to json.
+        match tokio::task::spawn_blocking(get_json_headers).await {
+            Ok(json) => json,
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+
+                Err(RestError::internal_server_error(
+                    err.context(format!("Failed to get block headers '{start_height}..{end_height}'")),
+                ))
+            }
+        }
+    }
+
+    /// GET /<network>/blocks/transactions?start={start_height}&end={end_height}
+    ///
+    /// `start` is inclusive and `end` is exclusive, as in `get_blocks`. Each element is the
+    /// confirmed transactions of one block, in block order, so a block that confirmed none is an
+    /// empty array rather than an omission.
+    ///
+    /// This is the range form of `/block/{height}/transactions`. It carries the part of a block a
+    /// consumer reconstructing transaction trees needs -- the confirmed transaction ids and their
+    /// contents, including the program a deployment carries -- without `authority`, which is 97% of
+    /// mainnet's block bytes in aggregate and which no transaction tree touches.
+    ///
+    /// A height the node does not have is a 404, and the whole request fails rather than returning
+    /// a short array. Note that this is only visible on `/v2`: on the default and `/v1` prefixes
+    /// the v1 error middleware replaces the status with a 500, so a caller that needs to tell a
+    /// not-yet-synced height apart from a fault has to use `/v2`, or pass `allow_partial=true` to
+    /// clamp the range to the tip as in `get_blocks`.
+    pub(crate) async fn get_block_transactions_range(
+        State(rest): State<Self>,
+        Query(block_range): Query<BlockRange>,
+    ) -> Result<ErasedJson, RestError> {
+        let (start_height, end_height) = check_block_range(
+            block_range,
+            MAX_BLOCK_TRANSACTIONS_RANGE,
+            "blocks' transactions",
+            rest.ledger.latest_height(),
+        )?;
+
+        // Prepare a closure for the blocking work. Each height is two point lookups, the block ID
+        // map then the transactions map, and deserializing the transactions themselves. That last
+        // part is unbounded per block, unlike the other range routes, so this keeps `get_blocks`'
+        // maximum and its rayon fan-out rather than the sequential loop the cheaper routes use.
+        let get_json_transactions = move || -> Result<ErasedJson, RestError> {
+            let transactions = cfg_into_iter!(start_height..end_height)
+                .map(|height| rest.ledger.get_transactions(height).map_err(map_missing_resource_error))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok(ErasedJson::pretty(transactions))
+        };
+
+        // Fetch the transactions from the ledger and serialize to json.
+        match tokio::task::spawn_blocking(get_json_transactions).await {
+            Ok(json) => json,
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+
+                Err(RestError::internal_server_error(
+                    err.context(format!("Failed to get transactions for blocks '{start_height}..{end_height}'")),
+                ))
+            }
+        }
+    }
+
+    /// GET /<network>/blocks/stateRoots?start={start_height}&end={end_height}
+    ///
+    /// `start` is inclusive and `end` is exclusive, as in `get_blocks`.
+    ///
+    /// Each entry is the state root *after* the block at that height, the same root the singular
+    /// `/stateRoot/{height}` route returns. Note that this is not the root a header carries: a
+    /// header holds `previous_state_root`, so the root for height `h` appears in the header of
+    /// height `h + 1`.
+    ///
+    /// A height with no stored root is deliberately a 404 here, whereas the singular route serves
+    /// `null` for it. Returning `null` inside an array would make a gap indistinguishable from a
+    /// root that is genuinely absent, so this matches the other range routes and fails the whole
+    /// request instead. As above, that 404 is only visible on `/v2`; the default and `/v1`
+    /// prefixes replace it with a 500. `allow_partial=true` clamps the range to the tip as in
+    /// `get_blocks`.
+    pub(crate) async fn get_block_state_roots(
+        State(rest): State<Self>,
+        Query(block_range): Query<BlockRange>,
+    ) -> Result<ErasedJson, RestError> {
+        let (start_height, end_height) =
+            check_block_range(block_range, MAX_STATE_ROOT_RANGE, "state roots", rest.ledger.latest_height())?;
+
+        // Prepare a closure for the blocking work. The state root map is keyed by height directly,
+        // so each height is a single point lookup. See `get_block_hashes` for why this is
+        // sequential.
+        let get_json_state_roots = move || -> Result<ErasedJson, RestError> {
+            let state_roots = (start_height..end_height)
+                .map(|height| {
+                    // Unlike the other getters, this one reports a missing height as `None` rather
+                    // than as an error, so translate it to stay consistent with the other routes.
+                    rest.ledger
+                        .get_state_root(height)
+                        .map_err(RestError::from)?
+                        .ok_or_else(|| RestError::not_found(anyhow!("Missing state root for block {height}")))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok(ErasedJson::pretty(state_roots))
+        };
+
+        // Fetch the state roots from the ledger and serialize to json.
+        match tokio::task::spawn_blocking(get_json_state_roots).await {
+            Ok(json) => json,
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+
+                Err(RestError::internal_server_error(
+                    err.context(format!("Failed to get state roots '{start_height}..{end_height}'")),
                 ))
             }
         }
@@ -396,7 +655,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         State(rest): State<Self>,
         Path(hash): Path<N::BlockHash>,
     ) -> Result<ErasedJson, RestError> {
-        Ok(ErasedJson::pretty(rest.ledger.get_height(&hash)?))
+        Ok(ErasedJson::pretty(rest.ledger.get_height(&hash).map_err(map_missing_resource_error)?))
     }
 
     /// GET /<network>/block/{height}/header
@@ -504,17 +763,17 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         // Fall back to the unconfirmed transaction ID.
-        if let Some(unconfirmed) = rest.ledger.try_get_unconfirmed_transaction(tx_id)? {
-            if let Some(reason) = store.get_rejected_reason(&*unconfirmed.id())? {
-                return Ok(Some(reason));
-            }
+        if let Some(unconfirmed) = rest.ledger.try_get_unconfirmed_transaction(tx_id)?
+            && let Some(reason) = store.get_rejected_reason(&*unconfirmed.id())?
+        {
+            return Ok(Some(reason));
         }
 
         // Fall back to the confirmed (fee) transaction ID.
-        if let Some(confirmed) = rest.ledger.try_get_confirmed_transaction(tx_id)? {
-            if let Some(reason) = store.get_rejected_reason(&*confirmed.id())? {
-                return Ok(Some(reason));
-            }
+        if let Some(confirmed) = rest.ledger.try_get_confirmed_transaction(tx_id)?
+            && let Some(reason) = store.get_rejected_reason(&*confirmed.id())?
+        {
+            return Ok(Some(reason));
         }
 
         Ok(None)
@@ -554,7 +813,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         metadata: Query<Metadata>,
     ) -> Result<ErasedJson, RestError> {
         // Get the program from the ledger.
-        let program = rest.ledger.get_program(id).with_context(|| format!("Failed to find program `{id}`"))?;
+        let program = rest
+            .ledger
+            .get_program(id)
+            .with_context(|| format!("Failed to find program `{id}`"))
+            .map_err(map_missing_resource_error)?;
         // Check if metadata is requested and return the program with metadata if so.
         if metadata.metadata.unwrap_or(false) {
             // Get the edition of the program.
@@ -757,27 +1020,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             ))));
         }
 
-        // Deserialize the commitments from the query.
-        let commitments = match tokio::task::spawn_blocking(move || {
-            commitments
+        // Parse the commitments and retrieve their state paths in a blocking task.
+        let get_json_state_paths = move || -> Result<ErasedJson, RestError> {
+            let commitments = commitments
                 .commitments
                 .iter()
                 .map(|s| {
                     s.parse::<Field<N>>()
                         .map_err(|err| RestError::unprocessable_entity(err.context(format!("Invalid commitment: {s}"))))
                 })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .await
-        {
-            Ok(Ok(commitments)) => commitments,
-            Ok(Err(err)) => {
-                return Err(RestError::internal_server_error(anyhow!(err).context("Unable to parse commitments")));
-            }
-            Err(err) => return Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
         };
 
-        Ok(ErasedJson::pretty(rest.ledger.get_state_paths_for_commitments(&commitments)?))
+        match tokio::task::spawn_blocking(get_json_state_paths).await {
+            Ok(json) => json,
+            Err(err) => {
+                let err: anyhow::Error = err.into();
+                Err(RestError::internal_server_error(err.context("Failed to get state paths for commitments")))
+            }
+        }
     }
 
     /// GET /<network>/stateRoot/latest
@@ -995,16 +1258,11 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
         if check_transaction {
-            // Select the semaphore based on the transaction type.
-            let (slot, err_msg) = if tx.is_execute() {
-                (rest.num_verifying_executions.acquire().await, "Too many execution verifications in progress")
+            let _verification_slot = if tx.is_execute() {
+                rest.verification_slots.executions.acquire().await?
             } else {
-                (rest.num_verifying_deploys.acquire().await, "Too many deploy verifications in progress")
+                rest.verification_slots.deploys.acquire().await?
             };
-
-            if slot.is_err() {
-                return Err(RestError::too_many_requests(anyhow!("{err_msg}")));
-            }
 
             // Perform the check.
             let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map_err(|err| {
@@ -1084,11 +1342,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         if check_solution {
-            // Try to acquire a slot.
-            let slot = rest.num_verifying_solutions.acquire().await;
-            if slot.is_err() {
-                return Err(RestError::too_many_requests(anyhow!("Too many solution verifications in progress")));
-            }
+            let _verification_slot = rest.verification_slots.solutions.acquire().await?;
 
             // Compute the current epoch hash.
             let epoch_hash = rest.ledger.latest_epoch_hash()?;
@@ -1465,90 +1719,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             None => Err(RestError::service_unavailable(anyhow!("Route isn't available for this node type"))),
         }
     }
-
-    /// GET /{network}/slipstream/plugins
-    #[cfg(feature = "slipstream-plugins")]
-    pub(crate) async fn slipstream_list_plugins(
-        State(rest): State<Self>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
-
-        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
-        let mgr_guard = mgr_arc.read();
-        let manager = mgr_guard
-            .as_ref()
-            .ok_or_else(|| RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")))?;
-        let plugins = manager
-            .list_plugins()
-            .map_err(|e: SlipstreamPluginManagerError| RestError::internal_server_error(anyhow!(e)))?;
-        Ok((StatusCode::OK, ErasedJson::pretty(plugins)))
-    }
-
-    /// POST /{network}/slipstream/plugins
-    #[cfg(feature = "slipstream-plugins")]
-    pub(crate) async fn slipstream_load_plugin(
-        State(rest): State<Self>,
-        Json(body): Json<serde_json::Value>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
-
-        let config_file = body
-            .get("config_file")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RestError::bad_request(anyhow!("Missing required field: config_file")))?
-            .to_owned();
-        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
-        if mgr_arc.read().is_none() {
-            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
-        }
-        let name = tokio::task::spawn_blocking(move || -> Result<String, SlipstreamPluginManagerError> {
-            // Safety: manager is set exactly once and never cleared; verified Some above.
-            mgr_arc.write().as_mut().expect("plugin manager verified present").load_plugin(&config_file)
-        })
-        .await
-        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
-        .map_err(|e| match e {
-            SlipstreamPluginManagerError::PluginAlreadyLoaded(_) => RestError::unprocessable_entity(anyhow!("{e}")),
-            other => RestError::internal_server_error(anyhow!("{other}")),
-        })?;
-        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "loaded": name }))))
-    }
-
-    /// DELETE /{network}/slipstream/plugins/{name}
-    #[cfg(feature = "slipstream-plugins")]
-    pub(crate) async fn slipstream_unload_plugin(
-        State(rest): State<Self>,
-        Path(name): Path<String>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        use snarkvm::slipstream_plugin_manager::slipstream_manager::SlipstreamPluginManagerError;
-
-        let mgr_arc = rest.ledger.vm().finalize_store().slipstream_plugin_manager();
-        if mgr_arc.read().is_none() {
-            return Err(RestError::service_unavailable(anyhow!("No Slipstream plugin manager is installed")));
-        }
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            // Safety: manager is set exactly once and never cleared; verified Some above.
-            mgr_arc.write().as_mut().expect("plugin manager verified present").unload_plugin(&name).map_err(
-                |e: SlipstreamPluginManagerError| match e {
-                    SlipstreamPluginManagerError::PluginNotLoaded(_) => anyhow!("404: {e}"),
-                    other => anyhow!("{other}"),
-                },
-            )
-        })
-        .await
-        .map_err(|e| RestError::internal_server_error(anyhow!("Task join error: {e}")))?
-        .map_err(|e| {
-            let msg = e.to_string();
-            if let Some(stripped) = msg.strip_prefix("404: ") {
-                RestError::not_found(anyhow!("{stripped}"))
-            } else {
-                RestError::internal_server_error(e)
-            }
-        })?;
-        Ok((StatusCode::OK, ErasedJson::pretty(serde_json::json!({ "unloaded": true }))))
-    }
-
-    // TODO: PUT /{network}/slipstream/plugins/{name} (reload) is not yet implemented.
 }
 
 #[cfg(test)]
@@ -1626,5 +1796,180 @@ mod route_error_tests {
         let err = map_missing_resource_error(anyhow::anyhow!(message));
         assert_eq!(err, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(err.to_string(), message);
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+
+    const MAX: u32 = 50;
+
+    /// A tip above every height the validation tests ask for, so that a clamp would leave them
+    /// alone.
+    const TIP: u32 = 1_000;
+
+    fn range(start: u32, end: u32) -> BlockRange {
+        BlockRange { start, end, allow_partial: None }
+    }
+
+    fn partial_range(start: u32, end: u32) -> BlockRange {
+        BlockRange { start, end, allow_partial: Some(true) }
+    }
+
+    #[test]
+    fn accepts_a_range_within_the_maximum() {
+        assert_eq!(check_block_range(range(10, 20), MAX, "blocks", TIP).unwrap(), (10, 20));
+    }
+
+    #[test]
+    fn accepts_a_range_of_exactly_the_maximum() {
+        assert_eq!(check_block_range(range(10, 10 + MAX), MAX, "blocks", TIP).unwrap(), (10, 10 + MAX));
+    }
+
+    #[test]
+    fn accepts_an_empty_range() {
+        assert_eq!(check_block_range(range(10, 10), MAX, "blocks", TIP).unwrap(), (10, 10));
+    }
+
+    #[test]
+    fn rejects_an_inverted_range() {
+        // This must be rejected before the width check, which would otherwise underflow.
+        let err = check_block_range(range(20, 10), MAX, "blocks", TIP).unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn rejects_a_range_over_the_maximum() {
+        let err = check_block_range(range(10, 11 + MAX), MAX, "blocks", TIP).unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn leaves_a_range_past_the_tip_alone_by_default() {
+        assert_eq!(check_block_range(range(10, 30), MAX, "blocks", 19).unwrap(), (10, 30));
+    }
+
+    #[test]
+    fn clamps_a_partial_range_that_reaches_past_the_tip() {
+        // The tip itself is served, so the exclusive end lands one past it.
+        assert_eq!(check_block_range(partial_range(10, 30), MAX, "blocks", 19).unwrap(), (10, 20));
+        assert_eq!(check_block_range(partial_range(10, 30), MAX, "blocks", 10).unwrap(), (10, 11));
+    }
+
+    #[test]
+    fn clamps_a_partial_range_that_starts_past_the_tip_to_an_empty_range() {
+        let (start, end) = check_block_range(partial_range(10, 30), MAX, "blocks", 9).unwrap();
+        assert_eq!(start, end);
+
+        let (start, end) = check_block_range(partial_range(500, 530), MAX, "blocks", 9).unwrap();
+        assert_eq!(start, end);
+    }
+
+    #[test]
+    fn clamps_at_the_top_of_the_height_space_without_overflowing() {
+        assert_eq!(
+            check_block_range(partial_range(u32::MAX - 5, u32::MAX), MAX, "blocks", u32::MAX).unwrap(),
+            (u32::MAX - 5, u32::MAX)
+        );
+    }
+
+    #[test]
+    fn applies_the_maximum_to_the_requested_range_rather_than_the_clamped_one() {
+        let err = check_block_range(partial_range(0, 1 + MAX), MAX, "blocks", 0).unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn rejects_a_range_spanning_the_whole_height_space() {
+        let err = check_block_range(range(0, u32::MAX), MAX, "blocks", TIP).unwrap_err();
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+
+    /// The json size of one *array element* of each kind, measured on mainnet block 21,815,000 as
+    /// the routes serve it: pretty-printed, so each element carries its own indent, comma and
+    /// newline. These are deliberately not the sizes of the bare values (a block hash is 63 bytes
+    /// as a quoted string but 67 as an element), because it is the response that has to fit.
+    ///
+    /// The header figure is the worst case rather than the measured one: the sampled block had an
+    /// empty `solutions_root` of `"0field"`, and a populated root brings the element from 965 to
+    /// 1,040 bytes.
+    const BLOCK_HASH_BYTES: u32 = 67;
+    const STATE_ROOT_BYTES: u32 = 67;
+    const BLOCK_HEADER_BYTES: u32 = 1_040;
+    const BLOCK_BYTES: u32 = 337_511;
+
+    #[test]
+    fn each_maximum_bounds_its_response_to_at_most_one_block() {
+        // Every route added here serves a projection of a block, so none of them should be able to
+        // produce a response larger than the single block `get_blocks` already serves. If a
+        // maximum is raised past that point, it is no longer free from the node's perspective.
+        let largest_get_blocks_response = MAX_BLOCK_RANGE * BLOCK_BYTES;
+
+        for (name, max, item_bytes) in [
+            ("hashes", MAX_BLOCK_HASH_RANGE, BLOCK_HASH_BYTES),
+            ("headers", MAX_BLOCK_HEADER_RANGE, BLOCK_HEADER_BYTES),
+            ("stateRoots", MAX_STATE_ROOT_RANGE, STATE_ROOT_BYTES),
+        ] {
+            let largest_response = max * item_bytes;
+            assert!(
+                largest_response <= BLOCK_BYTES,
+                "the {name} maximum can serve {largest_response} bytes, more than the {BLOCK_BYTES} bytes of one block"
+            );
+            assert!(largest_response < largest_get_blocks_response);
+
+            // The headroom above is thin by design, so confirm the guard is load-bearing: the
+            // next maximum that would round up to another whole block must fail it.
+            let too_wide = BLOCK_BYTES / item_bytes + 1;
+            assert!(too_wide * item_bytes > BLOCK_BYTES, "the {name} guard would not catch a raised maximum");
+            assert!(max <= BLOCK_BYTES / item_bytes, "the {name} maximum is already over the limit");
+        }
+    }
+
+    /// The heaviest `get_blocks` response `MAX_BLOCK_RANGE` can produce, and the heaviest response
+    /// this route can produce at each maximum that has been measured, in json bytes.
+    ///
+    /// Both are maxima over every contiguous run of heights in the sample, not averages, because a
+    /// caller picks the heights. Sampled from mainnet on 2026-09-20 over 209,683 heights in 670
+    /// runs of 320 contiguous blocks, spanning 7,771 to 22,094,742 and deliberately over-weighting
+    /// the 2024-2025 stretch where transactions are the largest share of a block. The heaviest
+    /// `get_blocks` response in that sample is heights 11,076,870 to 11,076,919; the heaviest
+    /// transactions responses are all around height 3,325,700.
+    const HEAVIEST_GET_BLOCKS_RESPONSE_BYTES: u32 = 28_068_594;
+    const HEAVIEST_TRANSACTIONS_RESPONSE_BYTES: [(u32, u32); 4] =
+        [(50, 10_247_221), (160, 25_736_904), (176, 27_927_850), (320, 47_465_514)];
+
+    #[test]
+    fn the_transactions_maximum_stays_within_a_get_blocks_response() {
+        // `each_maximum_bounds_its_response_to_at_most_one_block` deliberately does not cover this
+        // route: a block's transactions have no fixed size, so no per-item figure bounds it. The
+        // property that holds instead is that the heaviest response this maximum can produce is no
+        // larger than the heaviest `get_blocks` already produces, so the route introduces no
+        // response the node could not already be asked for.
+        let heaviest = HEAVIEST_TRANSACTIONS_RESPONSE_BYTES
+            .iter()
+            .find(|(max, _)| *max == MAX_BLOCK_TRANSACTIONS_RANGE)
+            .map(|(_, bytes)| *bytes)
+            .expect("this maximum has not been measured against mainnet; measure it before using it");
+
+        assert!(
+            heaviest <= HEAVIEST_GET_BLOCKS_RESPONSE_BYTES,
+            "{MAX_BLOCK_TRANSACTIONS_RANGE} blocks' transactions reach {heaviest} bytes, more than \
+             the {HEAVIEST_GET_BLOCKS_RESPONSE_BYTES} bytes of the heaviest {MAX_BLOCK_RANGE} whole blocks"
+        );
+    }
+
+    #[test]
+    fn each_maximum_improves_on_fetching_whole_blocks() {
+        // The point of these routes is that syncing a projection over the whole chain costs far
+        // fewer requests than syncing the blocks that contain it. Guard that they are worth having.
+        for (name, max) in [
+            ("hashes", MAX_BLOCK_HASH_RANGE),
+            ("headers", MAX_BLOCK_HEADER_RANGE),
+            ("stateRoots", MAX_STATE_ROOT_RANGE),
+            ("transactions", MAX_BLOCK_TRANSACTIONS_RANGE),
+        ] {
+            assert!(max > MAX_BLOCK_RANGE, "the {name} maximum is no better than fetching whole blocks");
+        }
     }
 }

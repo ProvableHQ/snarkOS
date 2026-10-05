@@ -130,7 +130,7 @@ workspace = true
 features = [ "sink" ]
 
 [dev-dependencies.peak_alloc]
-version = "0.2"
+version = "0.3"
 
 [dev-dependencies.snarkos-node-bft-ledger-service]
 workspace = true

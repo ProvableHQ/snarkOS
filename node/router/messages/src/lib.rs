@@ -46,7 +46,7 @@ mod peer_response;
 pub use peer_response::PeerResponse;
 
 mod ping;
-pub use ping::{MAX_PING_MESSAGE_SIZE, Ping};
+pub use ping::{MAX_PING_LOCATOR_HEIGHT, MAX_PING_MESSAGE_SIZE, Ping};
 
 mod pong;
 pub use pong::Pong;
@@ -61,7 +61,7 @@ mod unconfirmed_solution;
 pub use unconfirmed_solution::UnconfirmedSolution;
 
 mod unconfirmed_transaction;
-pub use unconfirmed_transaction::{DATA_ENCODING_OVERHEAD, UnconfirmedTransaction};
+pub use unconfirmed_transaction::UnconfirmedTransaction;
 
 pub use snarkos_node_bft_events::DataBlocks;
 
@@ -145,9 +145,16 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V22, 33),
     ];
 
-    /// Returns the latest message version.
+    /// Returns the latest message version whose consensus upgrade has a scheduled block height.
     pub fn latest_message_version() -> u32 {
-        Self::VERSIONS.last().map(|(_, version)| *version).unwrap_or(0)
+        Self::VERSIONS
+            .iter()
+            .rev()
+            .find(|(consensus_version, _)| {
+                N::CONSENSUS_HEIGHT(*consensus_version).is_ok_and(|height| height != u32::MAX)
+            })
+            .map(|(_, version)| *version)
+            .unwrap_or(0)
     }
 
     /// Returns the lowest acceptable message version for the given block height.
@@ -232,10 +239,10 @@ impl<N: Network> Message<N> {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message"));
         }
 
-        if let Some(id) = MessageId::peek(bytes) {
-            if bytes.len() > id.max_size::<N>() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large for its type"));
-            }
+        if let Some(id) = MessageId::peek(bytes)
+            && bytes.len() > id.max_size::<N>()
+        {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "message is too large for its type"));
         }
 
         Ok(())
@@ -331,6 +338,26 @@ mod tests {
             assert_eq!(*message_version, previous_message_version + 1);
             previous_message_version = *message_version;
         }
+    }
+
+    fn latest_message_version_has_scheduled_height<N: Network>() {
+        let latest_message_version = Message::<N>::latest_message_version();
+        let (consensus_version, _) =
+            Message::<N>::VERSIONS.iter().find(|(_, version)| *version == latest_message_version).unwrap();
+        assert_ne!(N::CONSENSUS_HEIGHT(*consensus_version).unwrap(), u32::MAX);
+
+        for (consensus_version, message_version) in Message::<N>::VERSIONS {
+            if message_version > latest_message_version {
+                assert_eq!(N::CONSENSUS_HEIGHT(consensus_version).unwrap(), u32::MAX);
+            }
+        }
+    }
+
+    #[test]
+    fn test_latest_message_version_has_scheduled_height() {
+        latest_message_version_has_scheduled_height::<MainnetV0>();
+        latest_message_version_has_scheduled_height::<TestnetV0>();
+        latest_message_version_has_scheduled_height::<CanaryV0>();
     }
 
     #[test]

@@ -20,7 +20,7 @@ edition = "2024"
 default = [ ]
 locktick = [ "dep:locktick", "snarkvm/locktick" ]
 memory = [ "parking_lot", "tracing" ]
-persistent = [ ]
+persistent = [ "parking_lot", "tracing" ]
 test = [ "memory" ]
 
 [dependencies.aleo-std]
