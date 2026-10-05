@@ -35,10 +35,9 @@ pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
 /// The prefix that marks a stream as speaking the Noise handshake.
 ///
-/// A peer that only knows the legacy handshake reads these bytes as the little-endian `u32` length
-/// prefix of the first frame; the value is `0xFF00_1EAE` (~4.3 GiB), which is far beyond the 1 MiB
-/// frame limit its handshake codec allows, so it rejects the connection immediately rather than
-/// stalling or misparsing it.
+/// A length-delimited handshake reads these bytes as the little-endian `u32` length prefix of the
+/// first frame. The value is `0xFF00_1EAE` (~4.3 GiB), far beyond the 1 MiB frame limit those
+/// codecs allow, so such a peer rejects the connection immediately rather than stalling.
 ///
 /// The prefix travels ahead of the Noise stream and so is not a Noise message, but it is fed to the
 /// pattern as its prologue, which mixes it into the handshake hash on both sides. It is therefore
@@ -55,7 +54,7 @@ pub const MAX_NOISE_MSG_LEN: usize = 65535;
 ///
 /// The specification's own convention is a two-byte big-endian prefix; four little-endian bytes are
 /// used instead so that the marker preceding the stream can be chosen to look like an impossible
-/// frame length to a peer that speaks the legacy handshake. See [`NOISE_MAGIC`].
+/// frame length to a length-delimited handshake. See [`NOISE_MAGIC`].
 const LENGTH_PREFIX_LEN: usize = 4;
 
 /// An upper bound on the number of bytes a Noise message can add on top of its payload: an
@@ -148,7 +147,8 @@ pub fn binding_message(domain: &[u8], role: Role, handshake_hash: &[u8]) -> Vec<
 pub enum HandshakeProtocol {
     /// The Noise-based handshake, identified by the [`NOISE_MAGIC`] prefix.
     Noise,
-    /// The legacy challenge-response handshake.
+    /// The router's challenge-response handshake. It has no marker of its own: anything other than
+    /// [`NOISE_MAGIC`] is this protocol.
     Legacy,
 }
 
@@ -185,9 +185,9 @@ pub async fn detect_handshake_protocol<S: AsyncRead + Unpin>(
 /// Frames the given stream with the given codec, pre-populating the read buffer with bytes that
 /// were consumed from the stream before it was framed.
 ///
-/// This exists only so that the legacy handshake can be handed back the prefix that
-/// [`detect_handshake_protocol`] took from it; the Noise handshake reads its messages exactly and has
-/// no codec to seed. It goes away with the legacy path.
+/// The router's handshake is length-delimited, so the bytes [`detect_handshake_protocol`] took
+/// from it are the start of its first frame and have to be handed back. The Noise handshake reads
+/// its messages exactly and has no codec to seed.
 pub fn prepare_framed<S: AsyncRead + AsyncWrite, C>(stream: S, codec: C, read_buf: &[u8]) -> Framed<S, C> {
     let mut framed = Framed::new(stream, codec);
     framed.read_buffer_mut().extend_from_slice(read_buf);
@@ -667,7 +667,7 @@ mod tests {
     async fn a_legacy_prefix_is_detected_and_returned() {
         let (mut initiator_stream, mut responder_stream) = duplex(1024);
 
-        // The length prefix of a legacy `ChallengeRequest` frame.
+        // The length prefix of a router `ChallengeRequest` frame.
         let legacy_prefix = 87u32.to_le_bytes();
         initiator_stream.write_all(&legacy_prefix).await.unwrap();
 
@@ -678,8 +678,8 @@ mod tests {
 
     #[test]
     fn the_noise_magic_is_an_invalid_legacy_frame_length() {
-        // A legacy peer must reject the magic outright instead of waiting for a frame that will
-        // never arrive; its handshake codecs cap frames at 1 MiB.
+        // A length-delimited handshake must reject the magic outright instead of waiting for a
+        // frame that will never arrive; those codecs cap frames at 1 MiB.
         const MAX_LEGACY_HANDSHAKE_FRAME_LEN: u32 = 1024 * 1024;
         assert!(u32::from_le_bytes(NOISE_MAGIC) > MAX_LEGACY_HANDSHAKE_FRAME_LEN);
     }
