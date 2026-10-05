@@ -29,7 +29,7 @@ The provisioned dashboard is a port of the `SnarkOS / Incident Response` dashboa
 team runs in Grafana Cloud, so a devnet reproduction shows you the same panels you would
 be reading during a real incident. It carries the rows a devnet produces data for
 (`Overview`, `Metrics`, `Block Height`, `Block Data`, `Consensus`, `Transmission Data`,
-`RocksDB`); the cloud-only rows are left out, because their metrics come from Google
+`RocksDB`, `Traffic`); the cloud-only rows are left out, because their metrics come from Google
 Cloud Monitoring, GCP Logging, `node_exporter`, or from snarkVM builds carrying VM
 instrumentation this repo does not depend on.
 
