@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/vicsn/snarkVM.git"
-rev = "cd90421f9b88cee09c6b5b28a8c4c5c5cfe5c672" # feat/runtime-history-json on this staging's snarkVM
+rev = "ae6622709ad9ea5b831894379682a145ede0efe7" # feat/runtime-history-json on this staging's snarkVM
 #version = "=4.10.0"
 default-features = false
 
