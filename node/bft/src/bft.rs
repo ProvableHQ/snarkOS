@@ -38,7 +38,6 @@ use snarkvm::{
 };
 
 use anyhow::Context;
-use colored::Colorize;
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::RwLock;
@@ -261,7 +260,7 @@ impl<N: Network> PrimaryCallback<N> for BFT<N> {
             } else {
                 match is_ready {
                     true => info!("Round {current_round} reached quorum without a leader"),
-                    false => info!("{}", format!("Round {current_round} did not elect a leader (yet)").dimmed()),
+                    false => info!(dim = true, "Round {current_round} did not elect a leader (yet)"),
                 }
             }
         }
@@ -724,7 +723,7 @@ impl<N: Network> BFT<N> {
                         format!(
                             "BFT failed to retrieve transmission '{}.{}' from round {}",
                             fmt_id(transmission_id),
-                            fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed(),
+                            fmt_id(transmission_id.checksum().unwrap_or_default()),
                             certificate.round()
                         )
                     })?;

@@ -70,7 +70,6 @@ use snarkvm::{
 };
 
 use anyhow::Context;
-use colored::Colorize;
 use futures::stream::{FuturesUnordered, StreamExt};
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
@@ -556,7 +555,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     false => return Ok(false),
                 }
             }
-            debug!("Primary is safely skipping {}", format!("(round {round} was already certified)").dimmed());
+            debug!(detail = %format!("(round {round} was already certified)"), "Primary is safely skipping");
             return Ok(false);
         }
 
@@ -583,8 +582,8 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
             // If quorum threshold is not reached, return early.
             if !committee_lookback.is_quorum_threshold_reached(&connected_validators) {
                 debug!(
-                    "Primary is safely skipping a batch proposal for round {round} {}",
-                    "(please connect to more validators)".dimmed()
+                    detail = "(please connect to more validators)",
+                    "Primary is safely skipping a batch proposal for round {round}"
                 );
                 trace!("Primary is connected to {} validators", connected_validators.len() - 1);
                 return Ok(false);
@@ -622,8 +621,8 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         // If the batch is not ready to be proposed, return early.
         if !is_ready {
             debug!(
-                "Primary is safely skipping a batch proposal for round {round} {}",
-                format!("(previous round {previous_round} has not reached quorum)").dimmed()
+                detail = %format!("(previous round {previous_round} has not reached quorum)"),
+                "Primary is safely skipping a batch proposal for round {round}"
             );
             return Ok(false);
         }
@@ -916,8 +915,8 @@ impl<N: Network> Primary<N> {
         // Note this is already checked in `check_batch_header`, however we can return early here without creating a blocking task.
         if self.storage.contains_batch(batch_header.batch_id()) {
             debug!(
-                "Primary is safely skipping a batch proposal from '{peer_ip}' - {}",
-                format!("batch for round {batch_round} already exists in storage").dimmed()
+                detail = %format!("batch for round {batch_round} already exists in storage"),
+                "Primary is safely skipping a batch proposal from '{peer_ip}' -"
             );
             return Ok(());
         }

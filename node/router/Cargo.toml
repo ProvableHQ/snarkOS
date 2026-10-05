@@ -38,9 +38,6 @@ workspace = true
 [dependencies.async-trait]
 workspace = true
 
-[dependencies.colored]
-workspace = true
-
 [dependencies.futures]
 version = "0.3.30"
 features = [ "thread-pool" ]

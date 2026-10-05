@@ -5082,7 +5082,6 @@ dependencies = [
  "axum-extra",
  "bytes",
  "clap",
- "colored 3.1.1",
  "deadline",
  "futures",
  "indexmap 2.14.2",
@@ -5188,7 +5187,6 @@ version = "4.11.0"
 dependencies = [
  "anyhow",
  "bincode",
- "colored 3.1.1",
  "http 1.5.0",
  "locktick",
  "parking_lot",
@@ -5211,7 +5209,6 @@ dependencies = [
  "aleo-std",
  "anyhow",
  "cfg-if",
- "colored 3.1.1",
  "indexmap 2.14.2",
  "itertools 0.14.0",
  "locktick",
@@ -5314,7 +5311,6 @@ version = "4.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "colored 3.1.1",
  "deadline",
  "futures",
  "futures-util",
