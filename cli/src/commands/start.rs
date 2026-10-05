@@ -828,7 +828,7 @@ impl Start {
 
         // Initialize the storage mode.
         let storage_mode = match &self.ledger_storage {
-            Some(path) => StorageMode::Custom(path.clone(), None),
+            Some(path) => StorageMode::from(path.clone()),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),
                 None => StorageMode::Production,

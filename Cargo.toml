@@ -42,7 +42,7 @@ members = [
 ]
 
 [workspace.dependencies.aleo-std]
-version = "1.0.1"
+version = "1.0.4"
 default-features = false
 
 [workspace.dependencies.snarkvm]
@@ -103,7 +103,7 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.5"
+version = "0.6"
 
 [workspace.dependencies.lru]
 version = "0.18.2"

@@ -3,15 +3,6 @@
 version = 4
 
 [[package]]
-name = "addr2line"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
-dependencies = [
- "gimli",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -381,21 +372,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "typed-json",
-]
-
-[[package]]
-name = "backtrace"
-version = "0.3.76"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
-dependencies = [
- "addr2line",
- "cfg-if",
- "libc",
- "miniz_oxide",
- "object",
- "rustc-demangle",
- "windows-link",
 ]
 
 [[package]]
@@ -841,7 +817,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -850,7 +826,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1644,7 +1620,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1974,12 +1950,6 @@ dependencies = [
  "opaque-debug",
  "polyval",
 ]
-
-[[package]]
-name = "gimli"
-version = "0.32.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "git2"
@@ -2393,7 +2363,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -2943,24 +2913,13 @@ dependencies = [
 
 [[package]]
 name = "locktick"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b203d5f7300c3e5775012b0fc5d3177552b0e55bb5ab3b532555eb33e31799b6"
-dependencies = [
- "backtrace",
- "parking_lot",
- "simple_moving_average",
- "tokio",
-]
-
-[[package]]
-name = "locktick"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27bc3999429dc9e39ac740737d3a58e1297836b38882a7b9f8e9d1af9d4bcdf2"
 dependencies = [
  "parking_lot",
  "simple_moving_average",
+ "tokio",
 ]
 
 [[package]]
@@ -3312,15 +3271,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "object"
-version = "0.37.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
@@ -3859,7 +3809,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3898,9 +3848,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4377,12 +4327,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustc-demangle"
-version = "0.1.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
-
-[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4407,7 +4351,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4420,7 +4364,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4479,7 +4423,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4964,7 +4908,7 @@ dependencies = [
  "clap",
  "crypto-bigint",
  "elliptic-curve",
- "locktick 0.5.0",
+ "locktick",
  "rusty-hook",
  "snarkos-account",
  "snarkos-cli",
@@ -5005,7 +4949,7 @@ dependencies = [
  "console-subscriber",
  "crossterm",
  "indexmap 2.14.2",
- "locktick 0.5.0",
+ "locktick",
  "nix 0.30.1",
  "num_cpus",
  "parking_lot",
@@ -5063,7 +5007,7 @@ dependencies = [
  "futures-util",
  "http 1.5.0",
  "indexmap 2.14.2",
- "locktick 0.5.0",
+ "locktick",
  "lru",
  "num_cpus",
  "parking_lot",
@@ -5110,7 +5054,7 @@ dependencies = [
  "futures",
  "indexmap 2.14.2",
  "itertools 0.14.0",
- "locktick 0.5.0",
+ "locktick",
  "lru",
  "mockall",
  "open",
@@ -5178,7 +5122,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "indexmap 2.14.2",
- "locktick 0.5.0",
+ "locktick",
  "parking_lot",
  "rand 0.10.3",
  "rayon",
@@ -5198,7 +5142,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "indexmap 2.14.2",
- "locktick 0.5.0",
+ "locktick",
  "lru",
  "parking_lot",
  "snarkvm",
@@ -5213,7 +5157,7 @@ dependencies = [
  "bincode",
  "colored 3.1.1",
  "http 1.5.0",
- "locktick 0.5.0",
+ "locktick",
  "parking_lot",
  "rayon",
  "reqwest",
@@ -5237,7 +5181,7 @@ dependencies = [
  "colored 3.1.1",
  "indexmap 2.14.2",
  "itertools 0.14.0",
- "locktick 0.5.0",
+ "locktick",
  "lru",
  "once_cell",
  "parking_lot",
@@ -5259,7 +5203,7 @@ name = "snarkos-node-metrics"
 version = "4.11.0"
 dependencies = [
  "built",
- "locktick 0.5.0",
+ "locktick",
  "metrics",
  "metrics-exporter-prometheus",
  "parking_lot",
@@ -5277,7 +5221,7 @@ dependencies = [
  "anyhow",
  "built",
  "bytes",
- "locktick 0.5.0",
+ "locktick",
  "parking_lot",
  "rand 0.10.3",
  "serde",
@@ -5306,7 +5250,7 @@ dependencies = [
  "http 1.5.0",
  "indexmap 2.14.2",
  "jsonwebtoken",
- "locktick 0.5.0",
+ "locktick",
  "lru",
  "once_cell",
  "parking_lot",
@@ -5342,7 +5286,7 @@ dependencies = [
  "futures",
  "futures-util",
  "linked-hash-map",
- "locktick 0.5.0",
+ "locktick",
  "parking_lot",
  "peak_alloc",
  "rand 0.10.3",
@@ -5392,7 +5336,7 @@ dependencies = [
  "futures",
  "indexmap 2.14.2",
  "itertools 0.14.0",
- "locktick 0.5.0",
+ "locktick",
  "parking_lot",
  "rand 0.10.3",
  "serde",
@@ -5437,7 +5381,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-util",
- "locktick 0.5.0",
+ "locktick",
  "once_cell",
  "parking_lot",
  "snarkos-node-metrics",
@@ -5452,7 +5396,7 @@ name = "snarkos-utilities"
 version = "4.11.0"
 dependencies = [
  "anyhow",
- "locktick 0.5.0",
+ "locktick",
  "parking_lot",
  "tokio",
  "tracing",
@@ -5754,7 +5698,7 @@ version = "4.11.0"
 source = "git+https://github.com/ProvableHQ/snarkVM.git?rev=e16c616c43861d417f4ab53b2a7e317cdce18e3c#e16c616c43861d417f4ab53b2a7e317cdce18e3c"
 dependencies = [
  "aleo-std",
- "locktick 0.6.0",
+ "locktick",
  "parking_lot",
  "rayon",
  "serde",
@@ -5948,7 +5892,7 @@ dependencies = [
  "anyhow",
  "cfg-if",
  "indexmap 2.14.2",
- "locktick 0.6.0",
+ "locktick",
  "lru",
  "parking_lot",
  "rand 0.10.3",
@@ -6122,7 +6066,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "indexmap 2.14.2",
- "locktick 0.6.0",
+ "locktick",
  "lru",
  "parking_lot",
  "rand 0.10.3",
@@ -6143,7 +6087,7 @@ dependencies = [
  "anyhow",
  "colored 3.1.1",
  "indexmap 2.14.2",
- "locktick 0.6.0",
+ "locktick",
  "lru",
  "parking_lot",
  "rand 0.10.3",
@@ -6183,7 +6127,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "indexmap 2.14.2",
- "locktick 0.6.0",
+ "locktick",
  "parking_lot",
  "rayon",
  "rocksdb",
@@ -6240,7 +6184,7 @@ dependencies = [
  "colored 3.1.1",
  "hex",
  "lazy_static",
- "locktick 0.6.0",
+ "locktick",
  "parking_lot",
  "paste",
  "rand 0.10.3",
@@ -6261,7 +6205,7 @@ dependencies = [
  "anyhow",
  "indexmap 2.14.2",
  "itertools 0.14.0",
- "locktick 0.6.0",
+ "locktick",
  "lru",
  "parking_lot",
  "rand 0.10.3",
@@ -6309,7 +6253,7 @@ dependencies = [
  "colored 3.1.1",
  "indexmap 2.14.2",
  "itertools 0.14.0",
- "locktick 0.6.0",
+ "locktick",
  "parking_lot",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
@@ -6687,7 +6631,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7803,7 +7747,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
