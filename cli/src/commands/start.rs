@@ -21,6 +21,7 @@ use crate::helpers::{
 use snarkos_account::Account;
 use snarkos_display::Display;
 use snarkos_node::{
+    HistoryOptions,
     Node,
     bft::MEMORY_POOL_PORT,
     network::{NodeType, bootstrap_peers},
@@ -34,6 +35,7 @@ use snarkvm::{
         account::{Address, PrivateKey},
         algorithms::Hash,
         network::{CanaryV0, MainnetV0, Network, TestnetV0},
+        program::ProgramID,
     },
     ledger::{
         block::Block,
@@ -244,6 +246,24 @@ pub struct Start {
     /// tables. Takes an optional base URL of that API; by default, the network's own instance is used.
     #[clap(long, value_name = "URL", num_args = 0..=1, group = "rest_flags")]
     pub history_compat_mode: Option<Option<String>>,
+
+    /// Index historic mapping values and staking rewards, and serve them from the REST server.
+    ///
+    /// Only a client may set this. The history index must already reach the ledger tip. Import
+    /// one with `snarkos clean --history-json <DIR>`. It cannot be combined with
+    /// `--history-compat-mode`.
+    #[clap(long)]
+    pub history: bool,
+
+    /// With `--history`, the programs whose mapping history is recorded, as
+    /// `program_id,start_height` pairs.
+    ///
+    /// A program's mappings are recorded from `start_height`. Staking rewards are always recorded.
+    /// The pairs are stored with the history. A later start with a different pair fails. Run
+    /// `snarkos clean --history` to change them. With no pairs, the history already stored is
+    /// kept. Import `credits.aleo` staking history with `snarkos clean --history-json <DIR>`.
+    #[clap(long, value_name = "PROGRAM_ID,START_HEIGHT", value_delimiter = ',', requires = "history")]
+    pub history_programs: Vec<String>,
 
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
     #[clap(long, group = "jwt_flags")]
@@ -460,6 +480,48 @@ impl Start {
             "The `--history-compat-mode` URL '{url}' must be absolute, e.g. https://mainnet.historical-staking.provable.com"
         );
         Ok(Some(url))
+    }
+
+    /// Parses `--history-programs` values as `program_id,start_height` pairs.
+    ///
+    /// Clap splits each value on commas, so `credits.aleo,0,token.aleo,100` and repeated
+    /// `--history-programs credits.aleo,0` flags both arrive as alternating program ids and heights.
+    fn parse_history_programs<N: Network>(entries: &[String]) -> Result<IndexMap<ProgramID<N>, u32>> {
+        let tokens = entries.iter().map(|entry| entry.trim()).filter(|entry| !entry.is_empty()).collect::<Vec<_>>();
+        ensure!(tokens.len() % 2 == 0, "`--history-programs` takes program_id,start_height pairs");
+        let mut programs = IndexMap::with_capacity(tokens.len() / 2);
+        for pair in tokens.chunks_exact(2) {
+            let (program, height) = (pair[0], pair[1]);
+            let program_id = ProgramID::<N>::from_str(program)
+                .with_context(|| format!("Invalid `--history-programs` program '{program}'"))?;
+            let start_height = height
+                .parse::<u32>()
+                .with_context(|| format!("Invalid `--history-programs` start height '{height}' for '{program}'"))?;
+            ensure!(
+                programs.insert(program_id, start_height).is_none(),
+                "`--history-programs` lists '{program_id}' more than once"
+            );
+        }
+        Ok(programs)
+    }
+
+    /// Returns how the client indexes history, if `--history` is set.
+    fn parse_history_options<N: Network>(&self) -> Result<Option<HistoryOptions<N>>> {
+        if !self.history {
+            return Ok(None);
+        }
+        let programs = Self::parse_history_programs(&self.history_programs)?;
+        Ok(Some(HistoryOptions { programs }))
+    }
+
+    /// Rejects `--history` on any node type other than a client, and together with `--history-compat-mode`.
+    fn ensure_history_allowed(&self, node_type: NodeType) -> Result<()> {
+        if !self.history {
+            return Ok(());
+        }
+        ensure!(node_type == NodeType::Client, "`--history` can only be used on a client node");
+        ensure!(self.history_compat_mode.is_none(), "`--history` and `--history-compat-mode` cannot be used together");
+        Ok(())
     }
 
     /// Returns the CDN to prefetch initial blocks from, or `None` if fetching from the CDN is disabled.
@@ -816,6 +878,7 @@ impl Start {
         let account = self.parse_private_key::<N>()?;
         // Parse the node type.
         let node_type = self.parse_node_type();
+        self.ensure_history_allowed(node_type)?;
 
         // Parse the node IP or use the default IP/port.
         let node_ip = self.node.unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_NODE_PORT)));
@@ -951,6 +1014,26 @@ impl Start {
         let history_api_url = self.parse_history_api_url::<N>()?;
         if let (Some(url), Some(_)) = (&history_api_url, rest_ip) {
             println!("🕰️  History compatibility mode is enabled; historical routes are served from {url}");
+        } else if self.history && rest_ip.is_some() {
+            println!(
+                "🕰️  History indexing is enabled. Historical routes are served from this node."
+            );
+        } else if self.history {
+            println!("🕰️  History indexing is enabled.");
+        }
+        let history = self.parse_history_options::<N>()?;
+        if let Some(history) = &history {
+            let programs = history
+                .programs
+                .iter()
+                .map(|(program, start_height)| format!("({program}, {start_height})"))
+                .collect::<Vec<_>>();
+            match programs.is_empty() {
+                true => println!("🕰️  Indexing staking rewards, and the mapping history stored with this ledger."),
+                false => {
+                    println!("🕰️  Indexing staking rewards, and the mapping history of {}.", programs.join(", "))
+                }
+            }
         }
 
         // TODO(kaimast): start the display earlier and show sync progress.
@@ -971,7 +1054,7 @@ impl Start {
         let node = match node_type {
             NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, dev_hotswap_config, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), history, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
@@ -1565,6 +1648,78 @@ mod tests {
 
         // The flag belongs to the REST server.
         assert!(Start::try_parse_from(["snarkos", "--norest", "--history-compat-mode"].iter()).is_err());
+    }
+
+    #[test]
+    fn history_programs_and_json_flags() {
+        type N = MainnetV0;
+
+        let config = Start::try_parse_from(["snarkos", "--history"].iter()).unwrap();
+        let options = config.parse_history_options::<N>().unwrap().unwrap();
+        assert!(options.programs.is_empty());
+
+        let config = Start::try_parse_from(
+            ["snarkos", "--history", "--history-programs", "credits.aleo,0,token.aleo,1000000"].iter(),
+        )
+        .unwrap();
+        let options = config.parse_history_options::<N>().unwrap().unwrap();
+        let mut expected = IndexMap::new();
+        expected.insert(ProgramID::<N>::from_str("credits.aleo").unwrap(), 0);
+        expected.insert(ProgramID::<N>::from_str("token.aleo").unwrap(), 1_000_000);
+        assert_eq!(options.programs, expected);
+
+        // Repeated flags are the same pairs.
+        let config = Start::try_parse_from(
+            [
+                "snarkos",
+                "--history",
+                "--history-programs",
+                "credits.aleo,0",
+                "--history-programs",
+                "token.aleo,1000000",
+            ]
+            .iter(),
+        )
+        .unwrap();
+        assert_eq!(config.parse_history_options::<N>().unwrap().unwrap().programs, expected);
+
+        for args in [
+            ["snarkos", "--history", "--history-programs", "not a program,0"],
+            ["snarkos", "--history", "--history-programs", "credits.aleo"],
+            ["snarkos", "--history", "--history-programs", "credits.aleo,later"],
+            ["snarkos", "--history", "--history-programs", "credits.aleo,0,credits.aleo,1"],
+        ] {
+            let config = Start::try_parse_from(args.iter()).unwrap();
+            assert!(config.parse_history_options::<N>().is_err(), "{args:?}");
+        }
+
+        let config = Start::try_parse_from(["snarkos"].iter()).unwrap();
+        assert!(config.parse_history_options::<N>().unwrap().is_none());
+
+        // The pairs need `--history`. `--history-reset` and `--history-json` are clean flags.
+        assert!(Start::try_parse_from(["snarkos", "--history-programs", "credits.aleo,0"].iter()).is_err());
+        assert!(Start::try_parse_from(["snarkos", "--history", "--history-reset"].iter()).is_err());
+        assert!(Start::try_parse_from(["snarkos", "--history", "--history-json", "/data"].iter()).is_err());
+    }
+
+    #[test]
+    fn history_flag_is_client_only() {
+        let config = Start::try_parse_from(["snarkos", "--history"].iter()).unwrap();
+        assert!(config.history);
+        assert!(config.ensure_history_allowed(config.parse_node_type()).is_ok());
+
+        let config = Start::try_parse_from(["snarkos", "--client", "--history", "--norest"].iter()).unwrap();
+        assert!(config.ensure_history_allowed(config.parse_node_type()).is_ok());
+
+        for args in [
+            ["snarkos", "--validator", "--history"],
+            ["snarkos", "--prover", "--history"],
+            ["snarkos", "--bootstrap-client", "--history"],
+            ["snarkos", "--history", "--history-compat-mode"],
+        ] {
+            let config = Start::try_parse_from(args.iter()).unwrap();
+            assert!(config.ensure_history_allowed(config.parse_node_type()).is_err(), "{args:?}");
+        }
     }
 
     #[test]
