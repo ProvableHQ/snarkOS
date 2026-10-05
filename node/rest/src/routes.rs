@@ -250,6 +250,29 @@ fn reject_unindexed_height(height: u32, synced: u32) -> Result<(), RestError> {
     }
 }
 
+/// Returns a 404 when `height` is below the block from which `program_id` is indexed.
+fn reject_before_history_start(
+    program_id: impl std::fmt::Display,
+    height: u32,
+    start: Option<u32>,
+) -> Result<(), RestError> {
+    match start {
+        Some(start) if height < start => {
+            Err(RestError::not_found(anyhow!("Mapping history for '{program_id}' is indexed from block {start}")))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Returns a 404 when this node does not index the mapping history of `target`, a program or a
+/// `program/mapping`.
+fn reject_unindexed_history(target: impl std::fmt::Display, indexed: bool) -> Result<(), RestError> {
+    match indexed {
+        true => Ok(()),
+        false => Err(RestError::not_found(anyhow!("Mapping history is not indexed for '{target}' on this node"))),
+    }
+}
+
 /// The query object for `get_history_batch_compat`.
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct HistoricalKeys {
@@ -1635,13 +1658,16 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// GET /{network}/program/{id}/mapping/{name}/{key}/history/{height}
     ///
     /// The mapping value at `height`, as a plaintext string, or `null` when the key is absent.
-    /// A height at or above the history cursor is not indexed yet and is a 404.
+    /// A height at or above the history cursor is not indexed yet and is a 404, as is a mapping
+    /// whose history this node does not index.
     pub(crate) async fn get_history(
         State(rest): State<Self>,
         Path((program_id, mapping_name, mapping_key, height)): Path<HistoricalMappingKey<N>>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         reject_unindexed_height(height, rest.ledger.history_synced_height())?;
         let label = format!("{program_id}/{mapping_name}");
+        reject_unindexed_history(&label, rest.ledger.records_mapping_history_of(&program_id, &mapping_name))?;
+        reject_before_history_start(program_id, height, rest.ledger.history_program_start_height(&program_id))?;
         let value = match tokio::task::spawn_blocking(move || {
             rest.ledger
                 .vm()
@@ -1665,15 +1691,18 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// GET /{network}/program/{id}/mapping/{name}/history/{height}?keys=key1,key2,...
     ///
     /// One `{key, value}` object per requested key, in order. `value` matches the single-key route.
-    /// A height at or above the history cursor is a 404.
+    /// A height at or above the history cursor is a 404, as is a mapping whose history this node
+    /// does not index.
     pub(crate) async fn get_history_batch(
         State(rest): State<Self>,
         Path((program_id, mapping_name, height)): Path<HistoricalMappingRoute<N>>,
         Query(historical_keys): Query<HistoricalKeys>,
     ) -> Result<impl axum::response::IntoResponse, RestError> {
         reject_unindexed_height(height, rest.ledger.history_synced_height())?;
-        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
         let label = format!("{program_id}/{mapping_name}");
+        reject_unindexed_history(&label, rest.ledger.records_mapping_history_of(&program_id, &mapping_name))?;
+        reject_before_history_start(program_id, height, rest.ledger.history_program_start_height(&program_id))?;
+        let mapping_keys = parse_historical_mapping_keys::<N>(&historical_keys.keys)?;
         let requested_keys = historical_keys.keys;
         let values = match tokio::task::spawn_blocking(move || {
             requested_keys
@@ -1706,7 +1735,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
     /// POST /{network}/program/{id}/view/{functionName}/{height}
     ///
     /// Evaluates a view against the history index at `height`. The body matches the latest-height
-    /// route. A height at or above the history cursor is a 404.
+    /// route. A height at or above the history cursor is a 404, as is a program without every
+    /// mapping's history indexed on this node.
     pub(crate) async fn evaluate_view_at_height(
         State(rest): State<Self>,
         Path((program_id, view_name, height)): Path<ViewFunctionRoute<N>>,
@@ -1714,6 +1744,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         json_result: Result<Json<Vec<String>>, JsonRejection>,
     ) -> Result<ErasedJson, RestError> {
         reject_unindexed_height(height, rest.ledger.history_synced_height())?;
+        reject_unindexed_history(program_id, rest.ledger.records_history_of(&program_id))?;
+        reject_before_history_start(program_id, height, rest.ledger.history_program_start_height(&program_id))?;
         let Json(raw_inputs) = match json_result {
             Ok(json) => json,
             Err(err) => return Err(RestError::unprocessable_entity(anyhow!("Invalid request body: {err}"))),

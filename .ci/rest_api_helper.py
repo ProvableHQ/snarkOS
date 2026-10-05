@@ -20,8 +20,8 @@ NUM_WORKERS = 8
 
 # The benchmarks of the history routes. They need a node that serves its history index.
 HISTORY_MODES = ["history-mapping", "history-mapping-latest", "history-mapping-batch", "history-staking-reward"]
-# The `credits.aleo` mappings whose history is keyed by a validator address.
-HISTORY_MAPPINGS = ["account", "bonded", "committee", "delegated"]
+# The `credits.aleo` mappings whose history is keyed by a validator address, as a comma-separated list.
+HISTORY_MAPPINGS = os.environ.get("HISTORY_MAPPINGS", "account,bonded,committee,delegated").split(",")
 # The most keys a history batch request may hold.
 MAX_HISTORY_BATCH_KEYS = 128
 

@@ -139,7 +139,7 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "parameters", "circuit", "package" ]
+features = [ "parameters", "circuit", "package", "rocks" ]
 
 [dependencies.sys-info]
 version = "0.9"

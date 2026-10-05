@@ -1252,6 +1252,7 @@ mod route_tests {
     /// Historical routes backed by this node's history index.
     mod history {
         use super::*;
+        use snarkvm::{console::program::Identifier, ledger::store::HistoryScope};
 
         const STAKER: &str = "aleo1qy4qufq03wcph05fdf5aj09ez67vcmmlrzqf0zza352qwaq43gyqt3wdf6";
 
@@ -1307,6 +1308,47 @@ mod route_tests {
             let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/1").await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
             assert!(body.contains("not in the history index"), "{body}");
+        }
+
+        #[tokio::test]
+        async fn unindexed_program_is_not_served() {
+            let mut rest = sample_rest().await;
+            enable(&mut rest);
+            let store = rest.ledger.vm().finalize_store();
+            store.set_history_synced_height(1).unwrap();
+            let program = |id: &str| <ProgramID<_> as std::str::FromStr>::from_str(id).unwrap();
+            let delegated = <Identifier<CurrentNetwork> as std::str::FromStr>::from_str("delegated").unwrap();
+            store.set_history_scope(Some(HistoryScope {
+                programs: indexmap::IndexMap::from([(program("other.aleo"), 5)]),
+                mappings: indexmap::IndexSet::from([(program("credits.aleo"), delegated)]),
+            }));
+
+            let expected = "Mapping history is not indexed for 'credits.aleo/metadata' on this node";
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/0field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+            let (status, body) = get(&rest, "/program/credits.aleo/mapping/metadata/history/0?keys=0field").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains(expected), "{body}");
+            // A view may read any mapping of its program, so a single indexed mapping is not enough.
+            let (status, body) = request(&rest, Method::POST, "/program/credits.aleo/view/account/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("Mapping history is not indexed for 'credits.aleo' on this node"), "{body}");
+
+            // A single indexed mapping is served.
+            let (status, body) =
+                get(&rest, &format!("/program/credits.aleo/mapping/delegated/{STAKER}/history/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+
+            // `other.aleo` is indexed from block 5, so an earlier height is not served.
+            let (status, body) = get(&rest, "/program/other.aleo/mapping/account/0field/history/0").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert!(body.contains("indexed from block 5"), "{body}");
+
+            // Staking rewards are indexed whatever the program list.
+            let (status, body) = get(&rest, &format!("/staking/rewards/{STAKER}/0")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body.trim(), "null");
         }
     }
 }

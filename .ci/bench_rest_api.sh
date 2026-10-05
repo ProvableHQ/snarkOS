@@ -8,12 +8,17 @@
 #   ./.ci/bench_rest_api.sh --history  Benchmarks the history routes of a node with an indexed history.
 #
 # With `--history`:
-#   - HISTORY_LEDGER: a ledger directory whose history is backfilled. The script starts a client with
+#   - HISTORY_LEDGER: a ledger directory whose history is imported. The script starts a client with
 #     `--history` on it. Unset, the script benchmarks the node already serving REST on port 3030,
 #     which must run with `--history` and a `--rest-rps` high enough not to rate-limit the benchmark.
+#   - HISTORY_PROGRAMS: the `--history-programs` pairs the history was imported with, as
+#     `program_id,start_height` (default: empty, so only staking rewards). The mapping benchmarks
+#     query `credits.aleo` and run only if it is listed.
+#   - HISTORY_JSON: a data-snarkVM JSON directory. With HISTORY_LEDGER, the script runs
+#     `snarkos clean --history-json` before start. It cannot be set together with HISTORY_PROGRAMS.
+#     The mapping benchmarks then query only `credits.aleo/bonded` and `delegated`.
 #   - HISTORY_NETWORK_ID: the network of that ledger (default: 0, mainnet).
 #   - HISTORY_STARTUP_TIMEOUT: seconds to wait for a started client's REST server (default: 3600).
-#     A started client first indexes any blocks the ledger gained since its backfill.
 #   - HISTORY_REQUESTS_PER_WORKER: requests each worker sends per benchmark (default: 1000).
 ###########################################################
 
@@ -49,7 +54,20 @@ function bench_history() {
   history_network_name=$(get_network_name "$history_network_id")
   log "Using network: $history_network_name (ID: $history_network_id)"
 
+  local history_programs=${HISTORY_PROGRAMS:-}
+  if [[ -n "${HISTORY_JSON:-}" && -n "$history_programs" ]]; then
+    log "❌ HISTORY_JSON and HISTORY_PROGRAMS cannot both be set"
+    exit 1
+  fi
   if [[ -n "${HISTORY_LEDGER:-}" ]]; then
+    if [[ -n "${HISTORY_JSON:-}" ]]; then
+      log "Importing JSON history from $HISTORY_JSON into $HISTORY_LEDGER"
+      stdbuf -oL -eL snarkos clean \
+        "--network=$history_network_id" \
+        "--ledger-storage=$HISTORY_LEDGER" \
+        "--history-json=$HISTORY_JSON" \
+        > >(awk -v prefix="[clean] " '{print prefix $0}') 2>&1
+    fi
     log "Starting a history client on the ledger at $HISTORY_LEDGER"
     local history_flags=(
       --nodisplay --nobanner --noupdater # reduce clutter in the output
@@ -61,6 +79,9 @@ function bench_history() {
       "--ledger-storage=$HISTORY_LEDGER"
       --rest-rps=1000000 # ensure benchmarks don't fail due to rate limiting
     )
+    if [[ -n "$history_programs" ]]; then
+      history_flags+=("--history-programs=$history_programs")
+    fi
     # shellcheck disable=SC2086
     run_with_prefix "client-0" $TASKSET1 snarkos start "${history_flags[@]}" --logfile="$log_dir/client-0.log"
     PIDS[0]=$!
@@ -77,9 +98,16 @@ function bench_history() {
 
   local requests_per_worker=${HISTORY_REQUESTS_PER_WORKER:-1000}
   export REST_API_BASE="http://$localhost:3030/v2/$history_network_name"
-  python ./.ci/rest_api_helper.py "history-mapping" "$CORES_PER_NODE" "$requests_per_worker"
-  python ./.ci/rest_api_helper.py "history-mapping-latest" "$CORES_PER_NODE" "$requests_per_worker"
-  python ./.ci/rest_api_helper.py "history-mapping-batch" "$CORES_PER_NODE" "$requests_per_worker"
+  if [[ -n "${HISTORY_JSON:-}" ]]; then
+    export HISTORY_MAPPINGS="bonded,delegated"
+  fi
+  if [[ -n "${HISTORY_JSON:-}" || "$history_programs" == *credits.aleo* ]]; then
+    python ./.ci/rest_api_helper.py "history-mapping" "$CORES_PER_NODE" "$requests_per_worker"
+    python ./.ci/rest_api_helper.py "history-mapping-latest" "$CORES_PER_NODE" "$requests_per_worker"
+    python ./.ci/rest_api_helper.py "history-mapping-batch" "$CORES_PER_NODE" "$requests_per_worker"
+  else
+    log "Skipping the mapping benchmarks: credits.aleo is not in HISTORY_PROGRAMS"
+  fi
   python ./.ci/rest_api_helper.py "history-staking-reward" "$CORES_PER_NODE" "$requests_per_worker"
 
   log "🎉 History REST API benchmark done!"
