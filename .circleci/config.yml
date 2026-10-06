@@ -160,6 +160,33 @@ commands:
       - restore_cache:
           keys:
             - << pipeline.parameters.cache_version >>-rust-{{ checksum "rust-toolchain.toml" }}-<< parameters.cache_key >>
+      - restore_dev_genesis_cache:
+          cache_key: << parameters.cache_key >>
+
+  # Dev genesis blocks are written to ~/.aleo/dev-genesis by load_or_compute_genesis.
+  # The cache key includes Cargo.lock and cli/src/commands/start.rs. CircleCI cache
+  # entries are immutable, so a change to the dev committee that touches neither
+  # file keeps recomputing until cache_version is bumped.
+  restore_dev_genesis_cache:
+    description: "Restore cached dev genesis blocks"
+    parameters:
+      cache_key:
+        type: string
+    steps:
+      - restore_cache:
+          keys:
+            - << pipeline.parameters.cache_version >>-dev-genesis-{{ checksum "Cargo.lock" }}-{{ checksum "cli/src/commands/start.rs" }}-<< parameters.cache_key >>
+
+  save_dev_genesis_cache:
+    description: "Save cached dev genesis blocks"
+    parameters:
+      cache_key:
+        type: string
+    steps:
+      - save_cache:
+          key: << pipeline.parameters.cache_version >>-dev-genesis-{{ checksum "Cargo.lock" }}-{{ checksum "cli/src/commands/start.rs" }}-<< parameters.cache_key >>
+          paths:
+            - ~/.aleo/dev-genesis
 
   clear_environment:
     description: "Clear environment"
@@ -168,6 +195,9 @@ commands:
         description: "Name of the cache; the toolchain checksum is prepended to it"
         type: string
         default: snarkos-stable
+      save_dev_genesis:
+        type: boolean
+        default: false
     steps:
       - run: set +e
       - run:
@@ -182,6 +212,11 @@ commands:
             - ~/.cargo
             # Store the Aleo parameters
             - ~/.aleo/resources
+      - when:
+          condition: << parameters.save_dev_genesis >>
+          steps:
+            - save_dev_genesis_cache:
+                cache_key: << parameters.cache_key >>
 
   run_serial:
     description: "Build and run tests"
@@ -199,6 +234,9 @@ commands:
       no_output_timeout:
         type: string
         default: 30m
+      save_dev_genesis:
+        type: boolean
+        default: false
     steps:
       - checkout
       - setup_environment:
@@ -386,6 +424,7 @@ commands:
           path: target/nextest/ci
       - clear_environment:
           cache_key: << parameters.cache_key >>
+          save_dev_genesis: << parameters.save_dev_genesis >>
 
   run_serial_long:
     description: "Build and run long running tests"
@@ -440,6 +479,7 @@ commands:
             - .ci/target
       - clear_environment:
           cache_key: << parameters.cache_key >>
+          save_dev_genesis: true
 
   install_rust_nightly:
     description: "Install Rust nightly toolchain"
@@ -484,6 +524,7 @@ jobs:
       - run_serial:
           workspace_member: cli
           cache_key: cli
+          save_dev_genesis: true
 
   utilities:
     executor: rust-docker
@@ -632,6 +673,8 @@ jobs:
           timeout: 20m  # Allow 20 minutes total
           command: |
             ./.ci/test_devnet.sh
+     - save_dev_genesis_cache:
+          cache_key: devnet-test 
 
   dev-on-prod-restart-test:
     executor: rust-docker
@@ -671,6 +714,7 @@ jobs:
           ./.ci/test_reset_minority.sh
      - clear_environment:
           cache_key: chaotic-minority-reset-test
+          save_dev_genesis: true
 
   chaotic-majority-reset-test:
     executor: ubuntu-vm
@@ -693,6 +737,7 @@ jobs:
             ./.ci/test_restart_majority.sh
      - clear_environment:
           cache_key: chaotic-majority-restart-test
+          save_dev_genesis: true
 
   upgrade-test:
     executor: rust-docker
