@@ -45,6 +45,7 @@ function exit_handler() {
   # Remove all temporary files and folders
   rm program/program.json program/main.aleo || true
   rm program/txn_data.json program/invalid_txn_data.json || true
+  rm /tmp/transfer_public_tx.txt || true
   rmdir program || true
 }
 trap exit_handler EXIT
@@ -125,6 +126,49 @@ if ! wait_for_stable_consensus_version 0 "$network_name"; then
   echo "❌ Test failed! Consensus version did not stabilize within 5 minutes."
   exit 1
 fi
+
+# Broadcast a transfer_public built from a static query.
+# The state root is the fixed dev genesis root (Field::one()), which a test_network
+# node stores at height 0. The height is the chain height after the consensus
+# version has stabilized, so proving uses that same consensus version.
+# Devnet consensus passes ConsensusVersion::V10 before the version stabilizes.
+# The transaction is generated against the stable consensus version.
+log "● Testing static-query transfer_public against the dev genesis state root..."
+txs_target_state_root="sr1qyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqquwxeur"
+txs_target_consensus_version_height=$(get_block_height 0 "$network_name")
+txs_target_consensus_version=$(get_consensus_version 0 "$network_name")
+query=$(printf '{"state_root": "%s",\n"height": %s}' \
+  "$txs_target_state_root" "$txs_target_consensus_version_height")
+log "Static query at consensus version ${txs_target_consensus_version}, height ${txs_target_consensus_version_height}"
+
+recipient=$(curl -s "http://$localhost:3030/v2/$network_name/committee/latest" | jq -r '.members | keys[1]')
+if [ -z "$recipient" ] || [ "$recipient" = "null" ]; then
+  log "❌ Test failed! Could not retrieve a recipient address from the committee."
+  exit 1
+fi
+
+snarkos developer execute \
+  --dev-key 0 \
+  --query "$query" \
+  credits.aleo transfer_public "$recipient" 100u64 \
+  --network "$network_id" \
+  --store /tmp/transfer_public_tx.txt \
+  --store-format string
+
+broadcast_body=$(mktemp)
+broadcast_status=$(curl -s -w "%{http_code}" -o "$broadcast_body" -X POST \
+  -H "Content-Type: application/json" \
+  --data-binary @/tmp/transfer_public_tx.txt \
+  "http://$localhost:3030/v2/$network_name/transaction/broadcast?check_transaction=true")
+
+if (( broadcast_status != 200 )); then
+  log "❌ Test failed! Static-query transfer_public failed verification (HTTP ${broadcast_status}): $(<"$broadcast_body")"
+  rm -f "$broadcast_body"
+  exit 1
+fi
+
+log "✅ Static-query transfer_public verified: $(<"$broadcast_body")"
+rm -f "$broadcast_body"
 
 # Creates a test program.
 mkdir -p program

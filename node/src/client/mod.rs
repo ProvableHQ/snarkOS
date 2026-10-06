@@ -138,6 +138,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         rest_rps: u32,
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
+        history_json: bool,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
@@ -156,6 +157,11 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
             spawn_blocking!(Ledger::<N, C>::load(genesis, storage_mode))
         }
         .with_context(|| "Failed to initialize the ledger")?;
+
+        // Later blocks finalized by this node are written as JSON beside the ledger.
+        if history_json {
+            ledger.vm().finalize_store().set_record_history_json(true);
+        }
 
         // Initialize the ledger service.
         let ledger_service = Arc::new(CoreLedgerService::<N, C>::new(ledger.clone(), signal_handler.clone()));
