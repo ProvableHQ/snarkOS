@@ -453,8 +453,12 @@ async fn a_legacy_peer_may_send_pings_without_an_upgrade_signal() {
     framed.send(Event::PrimaryPing(ping)).await.unwrap();
     framed.send(Event::ValidatorsRequest(ValidatorsRequest)).await.unwrap();
 
-    // An answer to the request shows that the gateway accepted the ping and kept the connection.
-    let answer = next_event_matching(&mut framed, |event| matches!(event, Event::ValidatorsResponse(_))).await;
-    assert!(answer.is_some(), "the gateway closed the connection instead of answering");
-    assert!(gateways[0].connected_addresses().contains(&accounts[1].address()));
+    // The gateway answers in order, but a rejected ping disconnects from a separate task, which may
+    // land after the answer. So the connection is also checked after a pause.
+    let answer =
+        next_event_matching(&mut framed, |event| matches!(event, Event::ValidatorsResponse(_) | Event::Disconnect(_)))
+            .await;
+    assert!(matches!(answer, Some(Event::ValidatorsResponse(_))), "the gateway rejected the ping: {answer:?}");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(gateways[0].connected_addresses().contains(&accounts[1].address()), "the gateway rejected the ping");
 }

@@ -1383,17 +1383,20 @@ impl<N: Network> Primary<N> {
                     }
                 };
 
-                let upgrade_signal = match local_upgrade_signal::<N>(self_.ledger.latest_block_height()) {
-                    Ok(upgrade_signal) => upgrade_signal,
+                // Construct the primary ping. Without an upgrade signal, it still carries the block locators.
+                let primary_ping = match local_upgrade_signal::<N>(self_.ledger.latest_block_height()) {
+                    Ok(upgrade_signal) => PrimaryPing::from((
+                        <Event<N>>::VERSION,
+                        block_locators,
+                        primary_certificate,
+                        Some(upgrade_signal),
+                    )),
                     Err(e) => {
                         warn!("Failed to determine the upgrade signal - {e}");
-                        continue;
+                        let version = PrimaryPing::<N>::UPGRADE_SIGNAL_VERSION - 1;
+                        PrimaryPing::from((version, block_locators, primary_certificate, None))
                     }
                 };
-
-                // Construct the primary ping.
-                let primary_ping =
-                    PrimaryPing::from((<Event<N>>::VERSION, block_locators, primary_certificate, Some(upgrade_signal)));
                 // Broadcast the event.
                 self_.gateway.broadcast(Event::PrimaryPing(primary_ping));
             }

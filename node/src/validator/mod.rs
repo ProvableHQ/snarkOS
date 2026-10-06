@@ -222,10 +222,11 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         // Start the BFT and consensus handlers now that CDN sync is complete. This ensures that
         // committed subdags are only processed after the initial sync from the CDN has finished.
         node.start_consensus_handlers().await?;
-        // Go dark if the committee schedules a consensus version that this build does not.
-        node.initialize_upgrade_watch();
         // Initialize the routing.
         node.initialize_routing().await;
+        // Go dark if the committee schedules a consensus version that this build does not.
+        // This must follow `initialize_routing`, which would otherwise restart a router that going dark shut down.
+        node.initialize_upgrade_watch();
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
 
