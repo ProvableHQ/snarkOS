@@ -46,8 +46,4 @@ deny = []
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = [
-    "https://github.com/ProvableHQ/snarkVM",
-    # The open snarkVM pull request. Replace this with the ProvableHQ pin when that pull request merges.
-    "https://github.com/vicsn/snarkVM",
-]
+allow-git = ["https://github.com/ProvableHQ/snarkVM"]

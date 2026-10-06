@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-cli"
-version = "4.10.1"
+version = "4.11.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "Command-line interface for snarkOS"
 homepage = "https://aleo.org"
@@ -42,7 +42,8 @@ test_network = [
   "test_targets", 
   "test_consensus_heights",
   "snarkvm/dev-committee",
-  "snarkvm/dev-print"
+  "snarkvm/dev-print",
+  "snarkvm/dev_genesis_state_root",
 ]
 serial = [
   "snarkvm/serial",

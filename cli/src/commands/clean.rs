@@ -72,7 +72,7 @@ impl Clean {
 
         // Remove the specified ledger from storage.
         let storage_mode = match self.ledger_storage {
-            Some(path) => StorageMode::Custom(path),
+            Some(path) => StorageMode::from(path),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),
                 None => StorageMode::Production,
@@ -119,7 +119,7 @@ impl Clean {
     /// Deletes the legacy mapping-history prefixes from an existing ledger.
     fn delete_legacy_mapping_history(&self) -> Result<String> {
         let storage_mode = match &self.ledger_storage {
-            Some(path) => StorageMode::Custom(path.clone()),
+            Some(path) => StorageMode::from(path.clone()),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),
                 None => StorageMode::Production,

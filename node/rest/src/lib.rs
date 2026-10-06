@@ -275,29 +275,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
-        let governor_config = Box::new(
-            GovernorConfigBuilder::default()
-                .per_nanosecond((1_000_000_000 / rest_rps) as u64)
-                .burst_size(rest_rps)
-                .error_handler(|error| {
-                    // Properly return a 429 Too Many Requests error.
-                    // Match on the variant rather than the message, which is upstream's to reword,
-                    // and keep the `retry-after` headers the rate limiter has already computed.
-                    let mut response = Response::new(error.to_string().into());
-                    match error {
-                        GovernorError::TooManyRequests { headers, .. } => {
-                            *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-                            if let Some(headers) = headers {
-                                *response.headers_mut() = headers;
-                            }
-                        }
-                        _ => *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR,
+        let governor_config = GovernorConfigBuilder::default()
+            .per_nanosecond((1_000_000_000 / rest_rps) as u64)
+            .burst_size(rest_rps)
+            .finish()
+            .expect("Couldn't set up rate limiting for the REST server!");
+        let governor_layer = GovernorLayer::new(governor_config).error_handler(|error| {
+            // Properly return a 429 Too Many Requests error.
+            // Match on the variant rather than the message, which is upstream's to reword,
+            // and keep the `retry-after` headers the rate limiter has already computed.
+            let mut response = Response::new(error.to_string().into());
+            match error {
+                GovernorError::TooManyRequests { headers, .. } => {
+                    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                    if let Some(headers) = headers {
+                        *response.headers_mut() = headers;
                     }
-                    response
-                })
-                .finish()
-                .expect("Couldn't set up rate limiting for the REST server!"),
-        );
+                }
+                _ => *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR,
+            }
+            response
+        });
 
         // Build the JWT auth-protected endpoints.
         let auth_routes = axum::Router::new()
@@ -450,9 +448,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // JSON encodings of transactions can exceed the binary size, so this is 2x
             // `LATEST_MAX_TRANSACTION_SIZE`.
             .layer(DefaultBodyLimit::max(2 * N::LATEST_MAX_TRANSACTION_SIZE()))
-            .layer(GovernorLayer {
-                config: governor_config.into(),
-            })
+            .layer(governor_layer)
             // Enable CORS.
             .layer(cors)
             // Enable tower-http tracing.
