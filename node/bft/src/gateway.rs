@@ -32,12 +32,15 @@ use snarkos_node_bft_events::{
     BlockResponse,
     CertificateRequest,
     CertificateResponse,
+    ConsensusSchedule,
     DataBlocks,
     Event,
     HANDSHAKE_DOMAIN,
     HandshakeHint,
+    HandshakeTrailer,
     InitiatorInfo,
     PeerInfo,
+    ResponderInfo,
     ResponderProof,
     TransmissionRequest,
     TransmissionResponse,
@@ -1628,12 +1631,15 @@ impl<N: Network> Handshake for Gateway<N> {
         // Register the peer, or roll it back, if the handshake got far enough to learn its listening
         // address.
         match (&handshake_result, listener_addr) {
-            (Ok(peer_info), Some(addr)) => {
+            (Ok((peer_info, peer_schedule)), Some(addr)) => {
                 let node_type = if bootstrap_peers::<N>(self.is_dev()).contains(&addr) {
                     NodeType::BootstrapClient
                 } else {
                     NodeType::Validator
                 };
+                if node_type == NodeType::Validator {
+                    log_schedule_difference::<N>(addr, peer_schedule.as_ref());
+                }
 
                 let mut peer_pool = self.peer_pool.write();
 
@@ -1692,6 +1698,26 @@ impl<N: Network> Handshake for Gateway<N> {
         handshake_result?;
 
         Ok(connection)
+    }
+}
+
+/// Logs where the consensus schedule of the validator at `addr` differs from this build's.
+fn log_schedule_difference<N: Network>(addr: SocketAddr, peer_schedule: Option<&ConsensusSchedule>) {
+    let Some(peer_schedule) = peer_schedule else {
+        return;
+    };
+    let ours = ConsensusSchedule::of::<N>();
+    let (ours, theirs) = (ours.heights(), peer_schedule.heights());
+    let height_of = |heights: &[u32], index: usize| match heights.get(index) {
+        Some(height) if *height != u32::MAX => height.to_string(),
+        _ => "never".to_string(),
+    };
+    let differences: Vec<_> = (0..ours.len().max(theirs.len()))
+        .filter(|index| ours.get(*index).unwrap_or(&u32::MAX) != theirs.get(*index).unwrap_or(&u32::MAX))
+        .map(|index| format!("V{} at {} (this build: {})", index + 1, height_of(theirs, index), height_of(ours, index)))
+        .collect();
+    if !differences.is_empty() {
+        info!("{CONTEXT} Validator '{addr}' schedules {}", differences.join(", "));
     }
 }
 
@@ -1765,7 +1791,7 @@ impl<N: Network> Gateway<N> {
         peer_addr: SocketAddr,
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
-    ) -> Result<PeerInfo<N>, ConnectError> {
+    ) -> Result<(PeerInfo<N>, Option<ConsensusSchedule>), ConnectError> {
         // Note who answered here last time, before the pool entry becomes a connecting one and stops
         // carrying it.
         let expected_address = match self.peer_pool.read().get(&peer_addr) {
@@ -1791,7 +1817,7 @@ impl<N: Network> Gateway<N> {
 
         /* Message 2: receive the responder's metadata, which deliberately carries no signature. */
 
-        let peer_info: PeerInfo<N> = decode_payload(peer_addr, &noise.recv().await?)?;
+        let ResponderInfo { info: peer_info, trailer: peer_trailer } = decode_payload(peer_addr, &noise.recv().await?)?;
 
         // The handshake hash at this point already commits to both ephemeral keys, the responder's
         // static key and every payload exchanged so far, so a signature over it is only valid for
@@ -1818,7 +1844,11 @@ impl<N: Network> Gateway<N> {
         let Ok(our_signature) = self.account.sign_bytes(&binding, &mut rand::rng()) else {
             return Err(ConnectError::other(anyhow!("Failed to sign the handshake binding")));
         };
-        let our_message = InitiatorInfo { info: our_info, signature: Data::Object(our_signature) };
+        let our_message = InitiatorInfo {
+            info: our_info,
+            signature: Data::Object(our_signature),
+            trailer: HandshakeTrailer::of::<N>(),
+        };
         noise.send(&encode_payload(&our_message)?).await?;
 
         // Capture the binding for the responder's proof before the hash becomes unavailable; it
@@ -1849,7 +1879,7 @@ impl<N: Network> Gateway<N> {
             return Err(reason.into_connect_error(peer_addr));
         }
 
-        Ok(peer_info)
+        Ok((peer_info, peer_trailer.schedule))
     }
 
     /// The connection responder side of the Noise handshake.
@@ -1868,7 +1898,7 @@ impl<N: Network> Gateway<N> {
         peer_ip: &mut Option<SocketAddr>,
         restrictions_id: Field<N>,
         stream: &'a mut TcpStream,
-    ) -> Result<PeerInfo<N>, ConnectError> {
+    ) -> Result<(PeerInfo<N>, Option<ConsensusSchedule>), ConnectError> {
         /* Message 1: the peer's cleartext hint. Everything it claims is re-checked in message 3. */
 
         // The first message is read without deriving any keys, so that everything below costs the
@@ -1903,14 +1933,14 @@ impl<N: Network> Gateway<N> {
 
         let our_info =
             PeerInfo::new(self.local_ip().port(), self.account.address(), restrictions_id, self.snarkos_sha());
-        noise.send(&encode_payload(&our_info)?).await?;
+        noise.send(&encode_payload(&ResponderInfo { info: our_info, trailer: HandshakeTrailer::of::<N>() })?).await?;
 
         // The binding the initiator is expected to have signed.
         let peer_binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);
 
         /* Message 3: the peer's authenticated metadata and its proof of identity. */
 
-        let InitiatorInfo { info: peer_info, signature: peer_signature } =
+        let InitiatorInfo { info: peer_info, signature: peer_signature, trailer: peer_trailer } =
             decode_payload::<InitiatorInfo<N>>(peer_addr, &noise.recv().await?)?;
 
         // Our own binding additionally commits to the peer's static key and to the message it has
@@ -1948,7 +1978,7 @@ impl<N: Network> Gateway<N> {
 
         finish_noise_handshake(noise);
 
-        Ok(peer_info)
+        Ok((peer_info, peer_trailer.schedule))
     }
 
     /// Tells the initiator why it was turned away, and fails the handshake with that reason.
@@ -1957,7 +1987,7 @@ impl<N: Network> Gateway<N> {
         peer_addr: SocketAddr,
         mut noise: NoiseSession<&mut TcpStream>,
         reason: DisconnectReason,
-    ) -> Result<PeerInfo<N>, ConnectError> {
+    ) -> Result<(PeerInfo<N>, Option<ConsensusSchedule>), ConnectError> {
         noise.send(&encode_payload(&ResponderProof::<N>::Rejected { reason })?).await?;
 
         Err(reason.into_connect_error(peer_addr))

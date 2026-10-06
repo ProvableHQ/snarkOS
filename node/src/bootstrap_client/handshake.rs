@@ -228,7 +228,7 @@ impl<N: Network> BootstrapClient<N> {
 
         /* Message 3: the peer's authenticated metadata and its proof of identity. */
 
-        let InitiatorInfo { info: peer_info, signature: peer_signature } =
+        let InitiatorInfo { info: peer_info, signature: peer_signature, .. } =
             decode_payload::<InitiatorInfo<N>>(peer_addr, &noise.recv().await?)?;
 
         let binding = binding_message(HANDSHAKE_DOMAIN, Role::Responder, &noise.handshake_hash()?);

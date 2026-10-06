@@ -26,13 +26,16 @@ use crate::common::{
 use snarkos_account::Account;
 use snarkos_node_bft::{Gateway, helpers::init_primary_channels};
 use snarkos_node_bft_events::{
+    ConsensusSchedule,
     DisconnectReason,
     Event,
     EventCodec,
     HANDSHAKE_DOMAIN,
     HandshakeHint,
+    HandshakeTrailer,
     InitiatorInfo,
     PeerInfo,
+    ResponderInfo,
     ResponderProof,
     ValidatorsRequest,
 };
@@ -212,11 +215,23 @@ async fn a_relayed_noise_handshake_is_rejected() {
 /// stream back so that a test can carry on speaking events over it.
 ///
 /// The signature over the binding is produced by `sign`, so that a test can decide whether to
-/// authenticate honestly or not.
+/// authenticate honestly or not. Like a peer that predates the handshake trailer, it sends none, and
+/// reads the gateway's metadata in the original layout.
 async fn handshake_with_gateway(
     gateway_addr: SocketAddr,
     account: &Account<CurrentNetwork>,
     listener_port: u16,
+    sign: impl Fn(&[u8]) -> Vec<u8>,
+) -> io::Result<(ResponderProof<CurrentNetwork>, TcpStream)> {
+    handshake_with_gateway_sending(gateway_addr, account, listener_port, HandshakeTrailer::default(), sign).await
+}
+
+/// Drives a Noise handshake like [`handshake_with_gateway`], sending `trailer` in the third message.
+async fn handshake_with_gateway_sending(
+    gateway_addr: SocketAddr,
+    account: &Account<CurrentNetwork>,
+    listener_port: u16,
+    trailer: HandshakeTrailer,
     sign: impl Fn(&[u8]) -> Vec<u8>,
 ) -> io::Result<(ResponderProof<CurrentNetwork>, TcpStream)> {
     let mut stream = TcpStream::connect(gateway_addr).await?;
@@ -235,7 +250,7 @@ async fn handshake_with_gateway(
     // Message 3: our metadata, and whatever `sign` decides to offer as proof.
     let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);
     let our_info = PeerInfo::new(listener_port, account.address(), peer_info.restrictions_id, None);
-    let our_message = InitiatorInfo { info: our_info, signature: Data::Buffer(sign(&binding).into()) };
+    let our_message = InitiatorInfo { info: our_info, signature: Data::Buffer(sign(&binding).into()), trailer };
     noise.send(&our_message.to_bytes_le().unwrap()).await?;
 
     // Message 4: the verdict.
@@ -314,7 +329,7 @@ async fn a_contradicted_handshake_hint_is_rejected() {
     let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash().unwrap());
     let signature = peer.sign_bytes(&binding, &mut rand::rng()).unwrap();
     let our_info = PeerInfo::new(4133, peer.address(), peer_info.restrictions_id, None);
-    let our_message = InitiatorInfo { info: our_info, signature: Data::Object(signature) };
+    let our_message = InitiatorInfo { info: our_info, signature: Data::Object(signature), trailer: Default::default() };
     noise.send(&our_message.to_bytes_le().unwrap()).await.unwrap();
 
     let mut noise = noise.into_transport_mode().unwrap();
@@ -346,7 +361,7 @@ async fn an_initiator_cannot_be_checked_as_one_validator_and_admitted_as_another
     let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash().unwrap());
     let signature = actual.sign_bytes(&binding, &mut rand::rng()).unwrap();
     let our_info = PeerInfo::new(4134, actual.address(), peer_info.restrictions_id, None);
-    let our_message = InitiatorInfo { info: our_info, signature: Data::Object(signature) };
+    let our_message = InitiatorInfo { info: our_info, signature: Data::Object(signature), trailer: Default::default() };
     noise.send(&our_message.to_bytes_le().unwrap()).await.unwrap();
 
     // The signature is perfectly valid for `actual`; what must fail is that the gateway ran its
@@ -356,4 +371,41 @@ async fn an_initiator_cannot_be_checked_as_one_validator_and_admitted_as_another
 
     assert_eq!(verdict, ResponderProof::Rejected { reason: DisconnectReason::ProtocolViolation });
     assert!(!gateway.connected_addresses().contains(&actual.address()));
+}
+
+/// The gateway discloses its consensus schedule in the second message.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_responder_discloses_its_consensus_schedule() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let peer = &accounts[1];
+
+    let mut stream = TcpStream::connect(dial_addr(&gateways[0])).await.unwrap();
+    write_noise_magic(&mut stream).await.unwrap();
+    let mut noise = NoiseSession::new(stream, Role::Initiator).unwrap();
+    let version = Event::<CurrentNetwork>::VERSION;
+    let hint = HandshakeHint { version, listener_port: 4141, address: peer.address() };
+    noise.send(&hint.to_bytes_le().unwrap()).await.unwrap();
+
+    let responder_info = ResponderInfo::<CurrentNetwork>::from_bytes_le(&noise.recv().await.unwrap()).unwrap();
+    assert_eq!(responder_info.trailer.schedule, Some(ConsensusSchedule::of::<CurrentNetwork>()));
+}
+
+/// A peer that sends its consensus schedule is accepted, as is one that predates it (see
+/// [`handshake_with_gateway`]).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_initiator_that_discloses_its_consensus_schedule_is_accepted() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let peer = accounts[1].clone();
+
+    let signer = peer.clone();
+    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let trailer = HandshakeTrailer::of::<CurrentNetwork>();
+    let (verdict, _stream) =
+        handshake_with_gateway_sending(dial_addr(&gateways[0]), &peer, 4142, trailer, sign).await.unwrap();
+    assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
+
+    let (gateway, address) = (gateways[0].clone(), peer.address());
+    deadline!(Duration::from_secs(5), move || gateway.connected_addresses().contains(&address));
 }
