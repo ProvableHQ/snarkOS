@@ -275,29 +275,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             .allow_headers([CONTENT_TYPE]);
 
         // Prepare the rate limiting setup.
-        let governor_config = Box::new(
-            GovernorConfigBuilder::default()
-                .per_nanosecond((1_000_000_000 / rest_rps) as u64)
-                .burst_size(rest_rps)
-                .error_handler(|error| {
-                    // Properly return a 429 Too Many Requests error.
-                    // Match on the variant rather than the message, which is upstream's to reword,
-                    // and keep the `retry-after` headers the rate limiter has already computed.
-                    let mut response = Response::new(error.to_string().into());
-                    match error {
-                        GovernorError::TooManyRequests { headers, .. } => {
-                            *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-                            if let Some(headers) = headers {
-                                *response.headers_mut() = headers;
-                            }
-                        }
-                        _ => *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR,
+        let governor_config = GovernorConfigBuilder::default()
+            .per_nanosecond((1_000_000_000 / rest_rps) as u64)
+            .burst_size(rest_rps)
+            .finish()
+            .expect("Couldn't set up rate limiting for the REST server!");
+        let governor_layer = GovernorLayer::new(governor_config).error_handler(|error| {
+            // Properly return a 429 Too Many Requests error.
+            // Match on the variant rather than the message, which is upstream's to reword,
+            // and keep the `retry-after` headers the rate limiter has already computed.
+            let mut response = Response::new(error.to_string().into());
+            match error {
+                GovernorError::TooManyRequests { headers, .. } => {
+                    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                    if let Some(headers) = headers {
+                        *response.headers_mut() = headers;
                     }
-                    response
-                })
-                .finish()
-                .expect("Couldn't set up rate limiting for the REST server!"),
-        );
+                }
+                _ => *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR,
+            }
+            response
+        });
 
         // Build the JWT auth-protected endpoints.
         let auth_routes = axum::Router::new()
@@ -406,6 +404,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Register the view-at-latest-height endpoint (always available, no history required).
         let routes = routes.route("/program/{id}/view/{function}", post(Self::evaluate_view_latest));
 
+        // JSON files written by `snarkos start --history-json`.
+        let routes = routes.route("/block/{height}/history/{mapping}", get(Self::get_block_history));
+
         // In history compatibility mode, serve the routes of the removed `history` feature from the
         // upstream historical API (see `history_compat`).
         let routes = if self.history_compat.is_some() {
@@ -416,15 +417,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 .route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward_compat))
         } else {
             routes
-        };
-
-        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint (unless
-        // compatibility mode already serves it).
-        #[cfg(feature = "history-staking-rewards")]
-        let routes = if self.history_compat.is_some() {
-            routes
-        } else {
-            routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward))
         };
 
         let trace_layer = TraceLayer::new_for_http()
@@ -456,9 +448,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // JSON encodings of transactions can exceed the binary size, so this is 2x
             // `LATEST_MAX_TRANSACTION_SIZE`.
             .layer(DefaultBodyLimit::max(2 * N::LATEST_MAX_TRANSACTION_SIZE()))
-            .layer(GovernorLayer {
-                config: governor_config.into(),
-            })
+            .layer(governor_layer)
             // Enable CORS.
             .layer(cors)
             // Enable tower-http tracing.

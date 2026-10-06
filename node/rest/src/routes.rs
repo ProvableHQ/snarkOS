@@ -17,8 +17,6 @@ use super::*;
 use snarkos_node_network::PeerPoolHandling;
 use snarkos_node_router::messages::UnconfirmedSolution;
 use snarkos_node_sync::BftSyncMode;
-#[cfg(feature = "history-staking-rewards")]
-use snarkvm::ledger::store::helpers::MapRead;
 use snarkvm::{
     ledger::puzzle::Solution,
     prelude::{
@@ -33,7 +31,10 @@ use snarkvm::{
         Value,
         block::Transaction,
     },
-    synthesizer::program::{FinalizeGlobalState, StackTrait},
+    synthesizer::{
+        program::{FinalizeGlobalState, StackTrait},
+        vm::{History, MappingName},
+    },
 };
 
 use axum::{Json, extract::rejection::JsonRejection};
@@ -1131,6 +1132,27 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         Ok(ErasedJson::pretty(rest.ledger.find_block_hash(&tx_id)?))
     }
 
+    /// GET /<network>/block/{height}/history/{mapping}
+    ///
+    /// The JSON file written by `snarkos start --history-json`.
+    pub(crate) async fn get_block_history(
+        State(rest): State<Self>,
+        Path((height, mapping)): Path<(u32, String)>,
+    ) -> Result<Response, RestError> {
+        let mapping = mapping.parse::<MappingName>().map_err(RestError::bad_request)?;
+        let storage_mode = rest.ledger.vm().finalize_store().storage_mode().clone();
+        let json =
+            tokio::task::spawn_blocking(move || History::new(N::ID, &storage_mode).load_mapping(height, mapping))
+                .await
+                .map_err(|err| RestError::internal_server_error(anyhow!("Tokio error: {err}")))?
+                .map_err(|err| RestError::not_found(err.context(format!("No JSON history for block {height}"))))?;
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json))
+            .map_err(|err| RestError::internal_server_error(anyhow!("Failed to build the history response: {err}")))
+    }
+
     /// GET /<network>/find/blockHeight/{stateRoot}
     pub(crate) async fn find_block_height_from_state_root(
         State(rest): State<Self>,
@@ -1657,24 +1679,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             other => return Err(RestError::internal_server_error(anyhow!("Unexpected bonded stake: {other}"))),
         };
         Ok((StatusCode::OK, ErasedJson::pretty((validator, reward, new_stake))))
-    }
-
-    /// GET /{network}/staking/rewards/{address}/{height}
-    #[cfg(feature = "history-staking-rewards")]
-    pub(crate) async fn get_staking_reward(
-        State(rest): State<Self>,
-        Path((address, height)): Path<(Address<N>, u32)>,
-    ) -> Result<impl axum::response::IntoResponse, RestError> {
-        // Retrieve the history for the given block height and variant.
-        let value = rest.ledger.vm().finalize_store().staking_rewards_map().get_confirmed(&(address, height)).map_err(
-            |err| {
-                RestError::not_found(
-                    err.context(format!("Could not load the staking reward for {address} from block '{height}'")),
-                )
-            },
-        )?;
-
-        Ok((StatusCode::OK, ErasedJson::pretty(value)))
     }
 
     /// GET /{network}/validators/participation

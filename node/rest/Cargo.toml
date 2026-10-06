@@ -18,7 +18,10 @@ edition = "2024"
 
 [features]
 default = [ ]
-history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
+# The compile-time history features no longer select snarkVM code.
+# The names stay so existing build commands keep resolving.
+history = []
+history-staking-rewards = []
 metrics = [ "snarkos-node-consensus/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
@@ -117,7 +120,9 @@ workspace = true
 workspace = true
 
 [dependencies.tower_governor]
-version = "0.7"
+version = "0.8"
+default-features = false
+features = [ "axum" ]
 
 [dependencies.tower-http]
 version = "0.7"

@@ -42,7 +42,8 @@ test_network = [
   "test_targets", 
   "test_consensus_heights",
   "snarkvm/dev-committee",
-  "snarkvm/dev-print"
+  "snarkvm/dev-print",
+  "snarkvm/dev_genesis_state_root",
 ]
 serial = [
   "snarkvm/serial",
@@ -139,7 +140,7 @@ workspace = true
 
 [dependencies.snarkvm]
 workspace = true
-features = [ "parameters", "circuit", "package" ]
+features = [ "parameters", "circuit", "package", "rocks" ]
 
 [dependencies.sys-info]
 version = "0.9"
