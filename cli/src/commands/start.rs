@@ -1000,7 +1000,7 @@ impl Start {
         // Exit with an error, so that the node is not mistaken for one that was stopped on purpose.
         if let Some(required) = node.required_consensus_upgrade() {
             bail!(
-                "Validators run ConsensusVersion::V{} at height {}, which this build does not schedule. \
+                "Validators run ConsensusVersion::V{} from height {}, which this build does not schedule at that height. \
                  Upgrade snarkOS before restarting the node.",
                 required.consensus_version,
                 required.height

@@ -279,7 +279,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             if let UpgradeStatus::Required(required) = status {
                 error!(
                     "The network has reached consensus to move to ConsensusVersion::V{} at height {}, but this \
-                     build does not have support for that, and must be upgraded. Shutting down.",
+                     build does not schedule it at that height, and must be upgraded. Shutting down.",
                     required.consensus_version, required.height
                 );
             }
