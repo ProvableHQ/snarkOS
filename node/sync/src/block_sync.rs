@@ -545,7 +545,8 @@ impl<N: Network> BlockSync<N> {
     pub async fn try_issuing_block_requests<C: CommunicationService>(&self, communication: &C) {
         self.handle_block_request_timeouts();
 
-        if self.is_block_synced() {
+        // Clients fetch the tip even while within the validator sync tolerance.
+        if self.connection_mode == ConnectionMode::Gateway && self.is_block_synced() {
             trace!("Node is already synced. Will not issue new block requests");
             return;
         }
