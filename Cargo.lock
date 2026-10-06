@@ -5078,7 +5078,6 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tower-http 0.7.1",
  "tracing",
