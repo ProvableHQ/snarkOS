@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/vicsn/snarkVM.git"
-rev = "7ff81605a1716bcf8efbf45a272cb82527519616" # feat/runtime-history-json on this staging's snarkVM
+rev = "b3be88bc6d77467ae2cf470e53009c1ccadd44d3" # feat/runtime-history-json on this staging's snarkVM
 #version = "=4.10.0"
 default-features = false
 
@@ -282,7 +282,10 @@ path = "snarkos/main.rs"
 
 [features]
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
-history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
+# The compile-time history features no longer select snarkVM code.
+# The names stay so existing build commands keep resolving.
+history = []
+history-staking-rewards = []
 # Deprecated alias for the metrics feature, which now carries the validator telemetry.
 # Retained so that build commands naming this feature keep resolving.
 telemetry = [ "snarkos-node/metrics" ]

@@ -421,15 +421,6 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             routes
         };
 
-        // If the `history-staking-rewards` feature is enabled, enable the additional endpoint (unless
-        // compatibility mode already serves it).
-        #[cfg(feature = "history-staking-rewards")]
-        let routes = if self.history_compat.is_some() {
-            routes
-        } else {
-            routes.route("/staking/rewards/{address}/{height}", get(Self::get_staking_reward))
-        };
-
         let trace_layer = TraceLayer::new_for_http()
             .make_span_with(|request: &Request<_>| {
                 let addr = request
