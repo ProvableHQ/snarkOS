@@ -9,12 +9,12 @@ validator-*
 **node_modules/
 
 # Devnet and CI logs
-/*logs-*/
-/*dev_logs/
+*logs-*/
+*dev_logs/
 
 # Data created when running a node
-/*ledger-*/
-/*node-data-*/
+*ledger-*/
+*node-data-*/
 
 # Legacy files created by a running snarkOS node
 **.current-proposal-cache-*

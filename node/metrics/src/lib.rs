@@ -225,6 +225,39 @@ pub fn gauge_label<V: Into<f64>>(name: &'static str, label_key: &'static str, la
     ::metrics::gauge!(name, label_key => label_value).set(value.into());
 }
 
+pub fn increment_counter_2(
+    name: &'static str,
+    key_a: &'static str,
+    value_a: impl Into<::metrics::SharedString>,
+    key_b: &'static str,
+    value_b: impl Into<::metrics::SharedString>,
+) {
+    ::metrics::counter!(name, key_a => value_a, key_b => value_b).increment(1);
+}
+
+pub fn increment_counter_3(
+    name: &'static str,
+    key_a: &'static str,
+    value_a: impl Into<::metrics::SharedString>,
+    key_b: &'static str,
+    value_b: impl Into<::metrics::SharedString>,
+    key_c: &'static str,
+    value_c: impl Into<::metrics::SharedString>,
+) {
+    ::metrics::counter!(name, key_a => value_a, key_b => value_b, key_c => value_c).increment(1);
+}
+
+pub fn histogram_2<V: Into<f64>>(
+    name: &'static str,
+    key_a: &'static str,
+    value_a: impl Into<::metrics::SharedString>,
+    key_b: &'static str,
+    value_b: impl Into<::metrics::SharedString>,
+    value: V,
+) {
+    ::metrics::histogram!(name, key_a => value_a, key_b => value_b).record(value.into());
+}
+
 // Include the generated build information
 mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));

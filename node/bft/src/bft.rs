@@ -780,7 +780,7 @@ impl<N: Network> BFT<N> {
                     Err(err) => {
                         let err: anyhow::Error = err.into();
                         let err = err.context(format!("BFT failed to receive the callback for round {anchor_round}"));
-                        error!("{}", flatten_error(err));
+                        warn!("{}", flatten_error(err));
                         return Ok(());
                     }
                 }

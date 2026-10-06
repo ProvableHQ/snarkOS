@@ -1802,15 +1802,16 @@ impl<N: Network> Primary<N> {
         // Transition from Certified back to None.
         *self.proposed_batch.write() = ProposedBatchState::None;
 
+        // Broadcast the certified batch to all validators.
+        self.gateway.broadcast(Event::BatchCertified(certificate.clone().into()));
+
         // If a BFT sender was provided, send the certificate to the BFT.
         if let Some(cb) = self.primary_callback.get() {
             // Await the callback to continue.
-            cb.add_new_certificate(certificate.clone()).await.with_context(|| {
+            cb.add_new_certificate(certificate).await.with_context(|| {
                 format!("Failed to insert our newly certified batch for round {round} into the DAG")
             })?;
         }
-        // Broadcast the certified batch to all validators.
-        self.gateway.broadcast(Event::BatchCertified(certificate.into()));
 
         // Log the certified batch.
         info!("Our batch with {num_transmissions} transmissions for round {round} was certified!");

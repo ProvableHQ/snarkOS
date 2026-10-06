@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.10.1"
+version = "4.11.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -18,8 +18,11 @@ edition = "2024"
 
 [features]
 default = [ ]
-history-staking-rewards = [ "snarkvm/history-staking-rewards" ]
-metrics = [ "snarkos-node-consensus/metrics" ]
+# The compile-time history features no longer select snarkVM code.
+# The names stay so existing build commands keep resolving.
+history = []
+history-staking-rewards = []
+metrics = [ "dep:snarkos-node-metrics", "snarkos-node-consensus/metrics" ]
 cuda = [ "snarkvm/cuda", "snarkos-node-consensus/cuda", "snarkos-node-router/cuda" ]
 locktick = [
   "dep:locktick",
@@ -53,7 +56,9 @@ workspace = true
 features = [ "serde", "rayon" ]
 
 [dependencies.jsonwebtoken]
-version = "9.2"
+version = "10.4"
+default-features = false
+features = [ "aws_lc_rs" ]
 
 [dependencies.locktick]
 workspace = true
@@ -79,6 +84,10 @@ features = [ "preserve_order" ]
 
 [dependencies.serde_with]
 version = "3"
+
+[dependencies.snarkos-node-metrics]
+workspace = true
+optional = true
 
 [dependencies.snarkos-node-cdn]
 workspace = true
@@ -115,7 +124,9 @@ workspace = true
 workspace = true
 
 [dependencies.tower_governor]
-version = "0.7"
+version = "0.8"
+default-features = false
+features = [ "axum" ]
 
 [dependencies.tower-http]
 version = "0.7"
