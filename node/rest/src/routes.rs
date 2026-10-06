@@ -1257,27 +1257,36 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         // Determine if we need to check the transaction.
         let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
-        if check_transaction {
+        let tx = if check_transaction {
             let _verification_slot = if tx.is_execute() {
                 rest.verification_slots.executions.acquire().await?
             } else {
                 rest.verification_slots.deploys.acquire().await?
             };
 
-            // Perform the check.
-            let res = rest.ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map_err(|err| {
-                match is_within_sync_leniency {
-                    // The transaction failed to verify.
-                    true => RestError::unprocessable_entity(err.context("Invalid transaction")),
-                    // The node is out of sync and may not be able to properly validate the transaction.
-                    false => {
-                        RestError::service_unavailable(err.context("Unable to validate transaction (node is syncing)"))
-                    }
+            // Perform the check in a blocking task, handing the transaction back on success.
+            let ledger = rest.ledger.clone();
+            match tokio::task::spawn_blocking(move || {
+                ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map(|()| tx)
+            })
+            .await
+            {
+                Ok(Ok(tx)) => tx,
+                Ok(Err(err)) => {
+                    return match is_within_sync_leniency {
+                        // The transaction failed to verify.
+                        true => Err(RestError::unprocessable_entity(err.context("Invalid transaction"))),
+                        // The node is out of sync and may not be able to properly validate the transaction.
+                        false => Err(RestError::service_unavailable(
+                            err.context("Unable to validate transaction (node is syncing)"),
+                        )),
+                    };
                 }
-            });
-            // Propagate error if any.
-            res?;
-        }
+                Err(err) => return Err(RestError::internal_server_error(anyhow!(err).context("Tokio error"))),
+            }
+        } else {
+            tx
+        };
 
         // If the consensus module is enabled, add the unconfirmed transaction to the memory pool.
         if let Some(consensus) = rest.consensus {
