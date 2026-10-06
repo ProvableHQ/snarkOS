@@ -106,8 +106,8 @@ pub trait Heartbeat<N: Network>: Outbound<N> {
                     warn!("No connected peers")
                 }
             }
-            1 => debug!(detail = %connected_peers_fmt, "Connected to 1 peer:"),
-            num_connected => debug!(detail = %connected_peers_fmt, "Connected to {num_connected} peers"),
+            1 => debug!(dim = true, "Connected to 1 peer: {connected_peers_fmt}"),
+            num_connected => debug!(dim = true, "Connected to {num_connected} peers {connected_peers_fmt}"),
         }
     }
 

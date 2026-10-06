@@ -11,11 +11,9 @@ use tracing_subscriber::{
 
 /// Formats the fields of a log event.
 ///
-/// The `message` field is written first. Two field names carry styling:
-/// - `detail`: its value is appended after the message, dimmed on a TTY.
-/// - `dim = true`: the whole line is dimmed on a TTY.
-///
-/// Every other field is appended as ` name=value`.
+/// The `message` field is written first. A `dim = true` field dims the whole
+/// line on a TTY and is not printed itself. Every other field is appended as
+/// ` name=value`.
 ///
 /// Styling codes are written by this formatter only. Field values pass through
 /// [`Escaping`], so ANSI control characters inside a logged value, such as a
@@ -35,18 +33,6 @@ impl<'w> FormatFields<'w> for SnarkosFields {
             out.raw(DIM)?;
         }
         out.write_str(&collector.message)?;
-        if let Some(detail) = &collector.detail {
-            if !collector.message.is_empty() {
-                out.raw(" ")?;
-            }
-            if ansi && !collector.dim {
-                out.raw(DIM)?;
-            }
-            out.write_str(detail)?;
-            if ansi && !collector.dim {
-                out.raw(RESET)?;
-            }
-        }
         for (name, value) in &collector.others {
             out.raw(" ")?;
             out.write_str(name)?;
@@ -67,7 +53,6 @@ const RESET: &str = "\x1b[0m";
 #[derive(Default)]
 struct Collector {
     message: String,
-    detail: Option<String>,
     dim: bool,
     others: Vec<(&'static str, String)>,
 }
@@ -76,7 +61,6 @@ impl Visit for Collector {
     fn record_str(&mut self, field: &Field, value: &str) {
         match field.name() {
             "message" => self.message.push_str(value),
-            "detail" => self.detail = Some(value.to_string()),
             name => self.others.push((name, format!("{value:?}"))),
         }
     }
@@ -94,7 +78,6 @@ impl Visit for Collector {
                 // Writing to a `String` cannot fail.
                 let _ = write!(self.message, "{value:?}");
             }
-            "detail" => self.detail = Some(format!("{value:?}")),
             name => self.others.push((name, format!("{value:?}"))),
         }
     }
@@ -177,45 +160,29 @@ mod tests {
     }
 
     #[test]
-    fn detail_follows_the_message_dimmed() {
-        let out = capture(true, || tracing::info!(detail = "(not ready yet)", "Skipping round {}", 3));
-        assert!(out.ends_with("Skipping round 3 \x1b[2m(not ready yet)\x1b[0m\n"), "{out:?}");
-    }
-
-    #[test]
-    fn detail_accepts_formatted_values() {
-        let out = capture(true, || tracing::info!(detail = %format!("(in {}ms)", 12), "Received block"));
-        assert!(out.ends_with("Received block \x1b[2m(in 12ms)\x1b[0m\n"), "{out:?}");
-    }
-
-    #[test]
     fn dim_covers_the_whole_line() {
         let out = capture(true, || tracing::info!(dim = true, "  Connected to: {}", "1.2.3.4"));
         assert!(out.ends_with("\x1b[2m  Connected to: 1.2.3.4\x1b[0m\n"), "{out:?}");
     }
 
     #[test]
-    fn other_fields_are_appended() {
-        let out = capture(false, || tracing::info!(detail = "(x)", count = 3, "message"));
-        assert!(out.ends_with("message (x) count=3\n"), "{out:?}");
+    fn plain_lines_are_not_styled() {
+        let out = capture(true, || tracing::info!("Skipping round {}", 3));
+        assert!(out.ends_with("\x1b[0m Skipping round 3\n"), "{out:?}");
+        assert!(!out.contains(DIM), "{out:?}");
     }
 
     #[test]
-    fn no_styling_without_ansi() {
-        let out = capture(false, || tracing::info!(dim = true, detail = "(x)", "message"));
-        assert!(out.ends_with("message (x)\n"), "{out:?}");
+    fn other_fields_are_appended() {
+        let out = capture(false, || tracing::info!(dim = true, count = 3, "message"));
+        assert!(out.ends_with("message count=3\n"), "{out:?}");
         assert!(!out.contains('\x1b'));
     }
 
     #[test]
     fn control_characters_in_values_are_escaped() {
-        let out = capture(
-            true,
-            || tracing::info!(detail = %"\x1b[31mred\x1b[0m", peer = %"\x07", "title \x1b]0;owned\x07 set"),
-        );
-        assert!(
-            out.ends_with("title \\x1b]0;owned\\x07 set \x1b[2m\\x1b[31mred\\x1b[0m\x1b[0m peer=\\x07\n"),
-            "{out:?}"
-        );
+        let out =
+            capture(true, || tracing::info!(dim = true, peer = %"\x1b[31mred\x1b[0m", "title \x1b]0;owned\x07 set"));
+        assert!(out.ends_with("\x1b[2mtitle \\x1b]0;owned\\x07 set peer=\\x1b[31mred\\x1b[0m\x1b[0m\n"), "{out:?}");
     }
 }

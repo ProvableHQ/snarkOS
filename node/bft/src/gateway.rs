@@ -1008,7 +1008,7 @@ impl<N: Network> Gateway<N> {
         // Log the connections.
         match connected_validators.len() {
             0 => info!("No connected validators"),
-            num_connected => info!(detail = %total_validators, "Connected to {num_connected} validators"),
+            num_connected => info!("Connected to {num_connected} validators {total_validators}"),
         }
 
         // Collect the connected validator addresses and stake.

@@ -140,7 +140,7 @@ impl<N: Network> ProposalTask<N> {
                     return true;
                 },
                 _ = sleep(CREATE_BATCH_INTERVAL) => {
-                    debug!(detail = "(not ready yet)", "Skipping batch proposal for round {round}");
+                    debug!(dim = true, "Skipping batch proposal for round {round} (not ready yet)");
                 }
             };
         }

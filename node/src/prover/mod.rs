@@ -266,8 +266,8 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         self.increment_puzzle_instances();
 
         debug!(
-            detail = %format!("(Coinbase Target {coinbase_target}, Proof Target {proof_target})"),
-            "Proving 'Puzzle' for Epoch '{}'",
+            dim = true,
+            "Proving 'Puzzle' for Epoch '{}' (Coinbase Target {coinbase_target}, Proof Target {proof_target})",
             fmt_id(epoch_hash)
         );
 
