@@ -211,7 +211,7 @@ pub struct InnerGateway<N: Network> {
     worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
     /// The sync sender.
     sync_sender: OnceCell<SyncSender<N>>,
-    /// Tracks whether the committee has scheduled a consensus version this build lacks.
+    /// Tracks whether validators run a consensus version this build lacks.
     upgrade_monitor: UpgradeMonitor<N>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -296,6 +296,8 @@ impl<N: Network> Gateway<N> {
         #[cfg(feature = "metrics")]
         let (validator_telemetry, telemetry_worker) = Telemetry::new();
 
+        let upgrade_monitor = UpgradeMonitor::new(account.address(), node_data_dir.required_consensus_upgrade_path());
+
         // Return the gateway.
         Ok(Self(Arc::new(InnerGateway {
             account,
@@ -312,7 +314,7 @@ impl<N: Network> Gateway<N> {
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
-            upgrade_monitor: Default::default(),
+            upgrade_monitor,
             handles: Default::default(),
             node_data_dir,
             trusted_peers_only,
@@ -466,10 +468,11 @@ impl<N: Network> Gateway<N> {
                 None
             }
         };
-        if let Some(version) = self.upgrade_monitor.record(address, signal, lookup) {
+        if let Some(required) = self.upgrade_monitor.record(address, signal, lookup) {
             error!(
-                "{CONTEXT} Validators holding at least a third of the stake will run ConsensusVersion::V{version} \
-                 before this build does"
+                "{CONTEXT} Validators holding more than a third of the stake run ConsensusVersion::V{} at height {}, \
+                 which this build does not schedule",
+                required.consensus_version, required.height
             );
         }
     }

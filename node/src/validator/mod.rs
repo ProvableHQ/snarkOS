@@ -20,7 +20,12 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 #[cfg(feature = "test_network")]
 use snarkos_node_bft::ledger_service::{persist_dev_committee_start_round_if_unwritten, prepare_dev_committee_options};
-use snarkos_node_bft::{helpers::UpgradeMonitor, ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_bft::{
+    events::UpgradeSignal,
+    helpers::{UpgradeMonitor, UpgradeStatus},
+    ledger_service::CoreLedgerService,
+    spawn_blocking,
+};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
@@ -38,7 +43,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler};
+use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::prelude::{
     Ledger,
@@ -57,7 +62,7 @@ use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{sync::OnceCell, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 /// A validator is a full node, capable of validating blocks.
 #[derive(Clone)]
@@ -76,17 +81,9 @@ pub struct Validator<N: Network, C: ConsensusStorage<N>> {
     pub(crate) handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Keeps track of sending pings.
     ping: Arc<Ping<N>>,
-    /// Set once consensus and the router have shut down.
-    ///
-    /// `Primary::shut_down` persists the proposal cache from state that it clears, so a second call
-    /// would overwrite the cache and let the node equivocate after a restart.
-    participation_stopped: Arc<OnceCell<()>>,
 }
 
 impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
-    /// How often a node that has gone dark logs that it must be upgraded.
-    const UPGRADE_REQUIRED_LOG_INTERVAL: Duration = Duration::from_secs(10);
-
     /// Initializes a new validator node.
     pub async fn new(
         node_ip: SocketAddr,
@@ -189,8 +186,10 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             sync: sync.clone(),
             ping,
             handles: Default::default(),
-            participation_stopped: Default::default(),
         };
+
+        // Stop the node once validators run a consensus version this build lacks.
+        node.initialize_upgrade_check(signal_handler.clone());
 
         // Perform sync with CDN (if enabled).
         let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler)));
@@ -230,9 +229,6 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         node.start_consensus_handlers().await?;
         // Initialize the routing.
         node.initialize_routing().await;
-        // Go dark if the committee schedules a consensus version that this build does not.
-        // This must follow `initialize_routing`, which would otherwise restart a router that going dark shut down.
-        node.initialize_upgrade_watch();
         // Initialize the notification message loop.
         node.handles.lock().push(crate::start_notification_message_loop());
 
@@ -265,50 +261,31 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         self.consensus.bft().primary().gateway().upgrade_monitor()
     }
 
-    /// Returns the consensus version that the committee will run before this build does, if any.
-    pub fn required_consensus_version(&self) -> Option<u16> {
-        self.upgrade_monitor().required_version()
+    /// Returns the consensus upgrade that validators require of this build, if any.
+    pub fn required_consensus_upgrade(&self) -> Option<UpgradeSignal> {
+        match self.upgrade_monitor().status() {
+            UpgradeStatus::Required(required) => Some(required),
+            UpgradeStatus::Clear | UpgradeStatus::Pending => None,
+        }
     }
 
-    /// Waits for the committee to schedule a consensus version that this build does not, then stops
-    /// all participation in the network and logs periodically until the process is stopped.
-    ///
-    /// The process stays alive so that a supervisor does not restart it with the same build.
-    fn initialize_upgrade_watch(&self) {
+    /// Stops the node through `signal_handler` once validators require a consensus upgrade.
+    fn initialize_upgrade_check(&self, signal_handler: Arc<SignalHandler>) {
         let mut receiver = self.upgrade_monitor().subscribe();
-        let node = self.clone();
         self.spawn(async move {
-            let Some(version) = receiver.wait_for(Option::is_some).await.ok().and_then(|version| *version) else {
-                return;
+            let status = match receiver.wait_for(|status| matches!(status, UpgradeStatus::Required(_))).await {
+                Ok(status) => *status,
+                Err(_) => return,
             };
-
-            // Run the shutdown in its own task, as aborting `handles` must not interrupt it.
-            let stopping = node.clone();
-            let _ = tokio::spawn(async move { stopping.stop_participating().await }).await;
-
-            loop {
+            if let UpgradeStatus::Required(required) = status {
                 error!(
-                    "The network has reached consensus to move to ConsensusVersion::V{version}, but this build \
-                     does not have support for that, and must be upgraded. Going dark and waiting to be shut down \
-                     to upgrade."
+                    "The network has reached consensus to move to ConsensusVersion::V{}, but this build does not \
+                     have support for that, and must be upgraded. Shutting down.",
+                    required.consensus_version
                 );
-                tokio::time::sleep(Self::UPGRADE_REQUIRED_LOG_INTERVAL).await;
             }
+            signal_handler.stop();
         });
-    }
-
-    /// Shuts down the router and consensus, at most once.
-    async fn stop_participating(&self) {
-        self.participation_stopped
-            .get_or_init(|| async {
-                // Shut down the router.
-                self.router.shut_down().await;
-
-                // Shut down consensus.
-                trace!("Shutting down consensus...");
-                self.consensus.shut_down().await;
-            })
-            .await;
     }
 
     // /// Initialize the transaction pool.
@@ -584,8 +561,12 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         trace!("Shutting down the validator...");
         self.handles.lock().iter().for_each(|handle| handle.abort());
 
-        // Shut down the router and consensus, unless the node has already gone dark.
-        self.stop_participating().await;
+        // Shut down the router.
+        self.router.shut_down().await;
+
+        // Shut down consensus.
+        trace!("Shutting down consensus...");
+        self.consensus.shut_down().await;
 
         info!("Node has shut down.");
     }

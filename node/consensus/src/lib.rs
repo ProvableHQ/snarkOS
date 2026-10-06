@@ -588,6 +588,14 @@ impl<N: Network> Consensus<N> {
         transmissions: IndexMap<TransmissionID<N>, Transmission<N>>,
         callback: oneshot::Sender<Result<bool>>,
     ) {
+        // Build no block while validators may run a consensus version this build lacks.
+        // The BFT retries the subdag with its next commit.
+        if let Err(error) = self.bft.primary().gateway().upgrade_monitor().ensure_blocks_may_be_built() {
+            self.reinsert_transmissions(transmissions).await;
+            callback.send(Err(error)).ok();
+            return;
+        }
+
         // Try to advance to the next block.
         let self_ = self.clone();
         let transmissions_ = transmissions.clone();
