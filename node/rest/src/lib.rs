@@ -18,6 +18,9 @@
 #[macro_use]
 extern crate tracing;
 
+#[cfg(feature = "metrics")]
+extern crate snarkos_node_metrics as metrics;
+
 mod helpers;
 // Imports custom `Path` type, to be used instead of `axum`'s.
 pub use helpers::*;
@@ -442,6 +445,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
                 info!("Finished request in {:?}", latency);
             });
 
+        #[cfg(feature = "metrics")]
+        let routes = routes.route_layer(middleware::from_fn(record_rest_request));
+
         routes
             // Pass in `Rest` to make things convenient.
             .with_state(self.clone())
@@ -497,6 +503,43 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         self.handles.lock().push(handle);
         Ok(())
     }
+}
+
+/// Counts a REST request by method, matched route, and status, and records its latency.
+#[cfg(feature = "metrics")]
+async fn record_rest_request(request: Request<Body>, next: middleware::Next) -> Response {
+    let method = match request.method().as_str() {
+        method @ ("GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS" | "TRACE" | "PATCH") => {
+            method.to_owned()
+        }
+        _ => "OTHER".to_owned(),
+    };
+    let endpoint = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|matched| matched.as_str().to_owned())
+        .unwrap_or_else(|| "unmatched".to_owned());
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    let status = response.status().as_u16().to_string();
+    metrics::increment_counter_3(
+        metrics::rest::REQUESTS,
+        "method",
+        method.clone(),
+        "endpoint",
+        endpoint.clone(),
+        "status",
+        status,
+    );
+    metrics::histogram_2(
+        metrics::rest::REQUEST_DURATION,
+        "method",
+        method,
+        "endpoint",
+        endpoint,
+        started.elapsed().as_secs_f64(),
+    );
+    response
 }
 
 /// Converts errors to the old style for the v1 API.
