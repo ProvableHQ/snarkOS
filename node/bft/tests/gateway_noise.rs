@@ -409,3 +409,29 @@ async fn an_initiator_that_discloses_its_consensus_schedule_is_accepted() {
     let (gateway, address) = (gateways[0].clone(), peer.address());
     deadline!(Duration::from_secs(5), move || gateway.connected_addresses().contains(&address));
 }
+
+/// The gateway weighs the schedule a peer disclosed in the handshake: a committee member ahead of
+/// this build holds back the block at the height it is ahead, while too little stake is connected.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gateway_weighs_the_schedule_of_an_initiator() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let (gateway, peer) = (gateways[0].clone(), accounts[1].clone());
+
+    let height = u32::MAX - 1_000;
+    let mut heights = ConsensusSchedule::of::<CurrentNetwork>().heights().to_vec();
+    heights.push(height);
+    let trailer = HandshakeTrailer { schedule: Some(ConsensusSchedule::new(heights).unwrap()) };
+    assert!(gateway.ensure_block_may_be_built(height).is_ok());
+
+    let signer = peer.clone();
+    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let (verdict, _stream) =
+        handshake_with_gateway_sending(dial_addr(&gateway), &peer, 4143, trailer, sign).await.unwrap();
+    assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
+    let (gateway_, address) = (gateway.clone(), peer.address());
+    deadline!(Duration::from_secs(5), move || gateway_.connected_addresses().contains(&address));
+
+    assert!(gateway.ensure_block_may_be_built(height - 1).is_ok());
+    assert!(gateway.ensure_block_may_be_built(height).is_err());
+}

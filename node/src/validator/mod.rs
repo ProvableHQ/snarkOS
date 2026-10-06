@@ -20,7 +20,11 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 #[cfg(feature = "test_network")]
 use snarkos_node_bft::ledger_service::{persist_dev_committee_start_round_if_unwritten, prepare_dev_committee_options};
-use snarkos_node_bft::{ledger_service::CoreLedgerService, spawn_blocking};
+use snarkos_node_bft::{
+    helpers::{RequiredUpgrade, UpgradeMonitor, UpgradeStatus},
+    ledger_service::CoreLedgerService,
+    spawn_blocking,
+};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
@@ -38,7 +42,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler};
+use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler, Stoppable};
 
 use snarkvm::prelude::{
     Ledger,
@@ -183,6 +187,9 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             handles: Default::default(),
         };
 
+        // Stop the node once validators run a consensus version this build lacks.
+        node.initialize_upgrade_check(signal_handler.clone());
+
         // Perform sync with CDN (if enabled).
         let cdn_sync = cdn.map(|base_url| Arc::new(CdnBlockSync::new(base_url, ledger.clone(), signal_handler)));
 
@@ -246,6 +253,38 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     /// Starts the BFT and consensus handlers.
     async fn start_consensus_handlers(&self) -> Result<()> {
         self.consensus.start_consensus_handlers().await
+    }
+
+    /// Returns the upgrade monitor.
+    fn upgrade_monitor(&self) -> &UpgradeMonitor<N> {
+        self.consensus.bft().primary().gateway().upgrade_monitor()
+    }
+
+    /// Returns the consensus upgrade that validators require of this build, if any.
+    pub fn required_consensus_upgrade(&self) -> Option<RequiredUpgrade> {
+        match self.upgrade_monitor().status() {
+            UpgradeStatus::Required(required) => Some(required),
+            UpgradeStatus::Clear | UpgradeStatus::Scheduled(_) => None,
+        }
+    }
+
+    /// Stops the node through `signal_handler` once validators require a consensus upgrade.
+    fn initialize_upgrade_check(&self, signal_handler: Arc<SignalHandler>) {
+        let mut receiver = self.upgrade_monitor().subscribe();
+        self.spawn(async move {
+            let status = match receiver.wait_for(|status| matches!(status, UpgradeStatus::Required(_))).await {
+                Ok(status) => *status,
+                Err(_) => return,
+            };
+            if let UpgradeStatus::Required(required) = status {
+                error!(
+                    "The network has reached consensus to move to ConsensusVersion::V{} at height {}, but this \
+                     build does not have support for that, and must be upgraded. Shutting down.",
+                    required.consensus_version, required.height
+                );
+            }
+            signal_handler.stop();
+        });
     }
 
     // /// Initialize the transaction pool.

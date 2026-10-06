@@ -22,7 +22,16 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
-    helpers::{Cache, PrimarySender, Storage, SyncSender, WorkerSender, assign_to_worker},
+    helpers::{
+        Cache,
+        PrimarySender,
+        Storage,
+        SyncSender,
+        UpgradeMonitor,
+        UpgradeStatus,
+        WorkerSender,
+        assign_to_worker,
+    },
     spawn_blocking,
 };
 use smol_str::SmolStr;
@@ -214,6 +223,8 @@ pub struct InnerGateway<N: Network> {
     worker_senders: OnceCell<IndexMap<u8, WorkerSender<N>>>,
     /// The sync sender.
     sync_sender: OnceCell<SyncSender<N>>,
+    /// Tracks the consensus schedules of validators, and whether this build may build a block.
+    upgrade_monitor: UpgradeMonitor<N>,
     /// The spawned handles.
     handles: Mutex<Vec<JoinHandle<()>>>,
     /// The storage mode.
@@ -297,6 +308,8 @@ impl<N: Network> Gateway<N> {
         #[cfg(feature = "metrics")]
         let (validator_telemetry, telemetry_worker) = Telemetry::new();
 
+        let upgrade_monitor = UpgradeMonitor::new(account.address(), node_data_dir.required_consensus_upgrade_path());
+
         // Return the gateway.
         Ok(Self(Arc::new(InnerGateway {
             account,
@@ -313,6 +326,7 @@ impl<N: Network> Gateway<N> {
             primary_sender: Default::default(),
             worker_senders: Default::default(),
             sync_sender: Default::default(),
+            upgrade_monitor,
             handles: Default::default(),
             node_data_dir,
             trusted_peers_only,
@@ -447,6 +461,49 @@ impl<N: Network> Gateway<N> {
     /// Returns the resolver.
     pub fn resolver(&self) -> &RwLock<Resolver<N>> {
         &self.resolver
+    }
+
+    /// Returns the upgrade monitor.
+    pub fn upgrade_monitor(&self) -> &UpgradeMonitor<N> {
+        &self.upgrade_monitor
+    }
+
+    /// Returns the committee and the addresses of the connected validators, as the upgrade monitor
+    /// weighs them.
+    fn upgrade_evidence(&self) -> Result<(Committee<N>, HashSet<Address<N>>)> {
+        Ok((self.ledger.current_committee()?, self.connected_addresses()))
+    }
+
+    /// Re-evaluates the upgrade status for the next block, and logs a scheduled upgrade.
+    fn update_upgrade_status(&self) {
+        let (committee, connected) = match self.upgrade_evidence() {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                warn!("{CONTEXT} Unable to retrieve the committee to evaluate consensus schedules - {error}");
+                return;
+            }
+        };
+        let next_height = self.ledger.latest_block_height().saturating_add(1);
+        let status = self.upgrade_monitor.update(&committee, &connected, next_height);
+        if let UpgradeStatus::Scheduled(required) = status
+            && self.upgrade_monitor.should_warn()
+        {
+            let this_build = match self.upgrade_monitor.own_height_of(required.consensus_version) {
+                Some(height) => format!("this build schedules it at height {height}"),
+                None => "this build does not schedule it".to_string(),
+            };
+            error!(
+                "{CONTEXT} Validators holding more than a third of the stake run ConsensusVersion::V{} from height {}, \
+                 and {this_build}. This node stops before building block {}; upgrade snarkOS before then.",
+                required.consensus_version, required.height, required.height
+            );
+        }
+    }
+
+    /// Returns an error unless this build may build the block at `height`.
+    pub fn ensure_block_may_be_built(&self, height: u32) -> Result<()> {
+        let (committee, connected) = self.upgrade_evidence()?;
+        self.upgrade_monitor.ensure_block_may_be_built(&committee, &connected, height)
     }
 
     /// Returns the listener IP address from the (ambiguous) peer address.
@@ -983,6 +1040,8 @@ impl<N: Network> Gateway<N> {
     async fn heartbeat(&self) {
         // Log the connected validators.
         self.log_connected_validators();
+        // Re-evaluate whether validators run a consensus version this build lacks.
+        self.update_upgrade_status();
         // Log the validator participation scores.
         #[cfg(feature = "metrics")]
         self.log_participation_scores();
@@ -1639,6 +1698,8 @@ impl<N: Network> Handshake for Gateway<N> {
                 };
                 if node_type == NodeType::Validator {
                     log_schedule_difference::<N>(addr, peer_schedule.as_ref());
+                    self.upgrade_monitor.record_schedule(peer_info.address, peer_schedule.as_ref());
+                    self.update_upgrade_status();
                 }
 
                 let mut peer_pool = self.peer_pool.write();
