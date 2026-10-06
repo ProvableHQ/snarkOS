@@ -45,7 +45,7 @@ use snarkvm::{
     utilities::to_bytes_le,
 };
 
-use aleo_std::{StorageMode, aleo_ledger_dir};
+use aleo_std::{StorageMode, aleo_dir, aleo_ledger_dir};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use clap::{Parser, builder::RangedU64ValueParser};
@@ -242,8 +242,16 @@ pub struct Start {
     /// Serve the routes of the removed `history` feature (`/program/{id}/mapping/{name}/{key}/history/{height}`,
     /// `/staking/rewards/{address}/{height}`, ...) from the Provable historical staking API instead of local
     /// tables. Takes an optional base URL of that API; by default, the network's own instance is used.
-    #[clap(long, value_name = "URL", num_args = 0..=1, group = "rest_flags")]
+    #[clap(long, value_name = "URL", num_args = 0..=1, group = "rest_flags", conflicts_with = "history_json")]
     pub history_compat_mode: Option<Option<String>>,
+
+    /// Write credits.aleo mapping history as JSON while this node finalizes blocks.
+    ///
+    /// Files are `history-{network}/group-{g}/block-{height}/block-{height}-{mapping}.json` beside the
+    /// ledger. A client or a validator can set this flag. `GET /block/{height}/history/{mapping}` reads
+    /// those files.
+    #[clap(long, conflicts_with = "history_compat_mode")]
+    pub history_json: bool,
 
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
     #[clap(long, group = "jwt_flags")]
@@ -947,6 +955,14 @@ impl Start {
             dev_num_validators: self.dev_num_validators,
         });
 
+        // JSON history is written while a client or validator finalizes blocks.
+        if self.history_json && !matches!(node_type, NodeType::Client | NodeType::Validator) {
+            bail!("`--history-json` writes JSON history and is only supported on a client or validator");
+        }
+        if self.history_json {
+            println!("Indexing credits.aleo history as JSON");
+        }
+
         // Determine the historical API to serve the `history` routes from, if in compatibility mode.
         let history_api_url = self.parse_history_api_url::<N>()?;
         if let (Some(url), Some(_)) = (&history_api_url, rest_ip) {
@@ -969,9 +985,9 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, dev_hotswap_config, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), self.history_json, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, dev_hotswap_config, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), self.history_json, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
@@ -1215,23 +1231,29 @@ fn load_or_compute_genesis<N: Network>(
         Block::from_bytes_le(&buffer)
     };
 
-    // Construct the file path.
-    let file_path = std::env::temp_dir().join(hash);
+    // Cached dev genesis blocks live in ~/.aleo/dev-genesis, named by this preimage hash.
+    // CircleCI restores and saves that directory; see restore_dev_genesis_cache in .circleci/config.yml.
+    let cache_dir = aleo_dir().join("dev-genesis");
+    let file_path = cache_dir.join(&hash);
     // Check if the genesis block exists.
     if file_path.exists() {
         // If the block loads successfully, return it.
         if let Ok(block) = load_block(&file_path) {
+            info!("Loaded dev genesis block from {}", file_path.display());
             return Ok(block);
         }
     }
 
     /* Otherwise, compute the genesis block and store it. */
 
+    info!("Computing dev genesis block");
+
     // Initialize a new VM.
     let vm = VM::from(ConsensusStore::<N, ConsensusMemory<N>>::open(StorageMode::new_test(None))?)?;
     // Initialize the genesis block.
     let block = vm.genesis_quorum(&genesis_private_key, committee, public_balances, bonded_balances, rng)?;
     // Write the genesis block to the file.
+    std::fs::create_dir_all(&cache_dir)?;
     std::fs::write(&file_path, block.to_bytes_le()?)?;
     // Return the genesis block.
     Ok(block)
@@ -1565,6 +1587,17 @@ mod tests {
 
         // The flag belongs to the REST server.
         assert!(Start::try_parse_from(["snarkos", "--norest", "--history-compat-mode"].iter()).is_err());
+    }
+
+    #[test]
+    fn history_json_flag_conflicts_with_compat_mode() {
+        let config = Start::try_parse_from(["snarkos", "--client", "--history-json"].iter()).unwrap();
+        assert!(config.history_json);
+        assert!(config.history_compat_mode.is_none());
+
+        assert!(
+            Start::try_parse_from(["snarkos", "--client", "--history-json", "--history-compat-mode"].iter()).is_err()
+        );
     }
 
     #[test]

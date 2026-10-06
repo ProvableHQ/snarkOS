@@ -93,6 +93,7 @@ use std::{
 #[cfg(not(feature = "locktick"))]
 use tokio::sync::RwLock as TRwLock;
 use tokio::{sync::Notify, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 
 /// The state of the primary's batch proposal.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -181,6 +182,10 @@ pub struct Primary<N: Network> {
     /// The recently-signed batch proposals.
     signed_proposals: Arc<RwLock<SignedProposals<N>>>,
 
+    /// Cancels the resends launched by the latest recheck of the pending proposal.
+    /// Replaced (and the old one cancelled) on every recheck, so at most one set of resends is in flight.
+    resend_token: Arc<Mutex<CancellationToken>>,
+
     /// The handles for all background tasks spawned by this primary.
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
 
@@ -240,6 +245,7 @@ impl<N: Network> Primary<N> {
             batch_propose_start: Default::default(),
             latest_proposal_timestamp: Default::default(),
             signed_proposals: Default::default(),
+            resend_token: Default::default(),
             handles: Default::default(),
             proposal_task: Default::default(),
             round_increment_notify: Default::default(),
@@ -503,21 +509,49 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                     );
                     return Ok(false);
                 }
-                // Construct the event.
-                // TODO(ljedrz): the BatchHeader should be serialized only once in advance before being sent to non-signers.
-                let event = Event::BatchPropose(proposal.batch_header().clone().into());
+                // Resends are only useful while the proposal's round is ongoing.
+                // Note: if the round is over, the previous resends are already cancelled, as they are scoped to it.
+                let round_token = self.storage.round_cancellation_token(proposal.round());
+                if round_token.is_cancelled() {
+                    debug!("Not resending batch proposal for round {} (round is over)", proposal.round());
+                    return Ok(false);
+                }
+                // Retrieve the committee lookback for the proposal's round.
+                let committee_lookback = self.ledger.get_committee_lookback_for_round(proposal.round())?;
+                // Construct the event, and serialize the batch header once for all non-signers, rather than
+                // once per peer in `Transport::send`.
+                // Note: this is done inline, as the proposed batch lock is held (so it can't be awaited on),
+                // and serializing a batch header is cheap.
+                let mut event = Event::BatchPropose(proposal.batch_header().clone().into());
+                if let Err(err) = event.serialize_payload() {
+                    error!("Unable to serialize the batch proposal for round {} - {err}", proposal.round());
+                    return Ok(false);
+                }
+                // Supersede the previous recheck's resends, now that their replacements are about to be spawned.
+                // Note: this is done after the fallible steps above, so a failure keeps the previous resends alive.
+                let token = round_token.child_token();
+                std::mem::replace(&mut *self.resend_token.lock(), token.clone()).cancel();
                 // Iterate through the non-signers.
-                for address in proposal.nonsigners(&self.ledger.get_committee_lookback_for_round(proposal.round())?) {
+                for address in proposal.nonsigners(&committee_lookback) {
                     // Resolve the address to the peer IP.
                     match self.gateway.resolver().read().get_peer_ip_for_address(address) {
                         // Resend the batch proposal to the validator for signing.
                         Some(peer_ip) => {
-                            let (gateway, event_, round) = (self.gateway.clone(), event.clone(), proposal.round());
+                            let (gateway, event_, round, token) =
+                                (self.gateway.clone(), event.clone(), proposal.round(), token.clone());
                             self.spawn(async move {
                                 debug!("Resending batch proposal for round {round} to peer '{peer_ip}'");
-                                // Resend the batch proposal to the peer.
-                                if gateway.send(peer_ip, event_).await.is_none() {
-                                    warn!("Failed to resend batch proposal for round {round} to peer '{peer_ip}'");
+                                // Resend the batch proposal to the peer, unless the round ends first.
+                                tokio::select! {
+                                    biased;
+                                    _ = token.cancelled() => {
+                                        debug!("Stopped resending batch proposal for round {round} to peer '{peer_ip}' (superseded or round is over)");
+                                    }
+                                    result = gateway.send(peer_ip, event_) => {
+                                        if result.is_none() {
+                                            warn!("Failed to resend batch proposal for round {round} to peer '{peer_ip}'");
+                                        }
+                                    }
                                 }
                             });
                         }
@@ -801,8 +835,13 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
             }
         })?;
 
-        // Broadcast the batch to all validators for signing.
-        self.gateway.broadcast(Event::BatchPropose(batch_header.into()));
+        // Broadcast the batch to all validators for signing, until the round is over.
+        // Note: `round` may be stale by now, as proposing awaits; peers still sign for the previous round,
+        // so the broadcast is scoped to the current round instead.
+        self.gateway.broadcast_until(
+            Event::BatchPropose(batch_header.into()),
+            self.storage.round_cancellation_token(self.current_round()),
+        );
         // Store the proposal in memory.
         *self.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
         // Record the wall-clock time at which the batch was proposed.
@@ -1763,15 +1802,16 @@ impl<N: Network> Primary<N> {
         // Transition from Certified back to None.
         *self.proposed_batch.write() = ProposedBatchState::None;
 
+        // Broadcast the certified batch to all validators.
+        self.gateway.broadcast(Event::BatchCertified(certificate.clone().into()));
+
         // If a BFT sender was provided, send the certificate to the BFT.
         if let Some(cb) = self.primary_callback.get() {
             // Await the callback to continue.
-            cb.add_new_certificate(certificate.clone()).await.with_context(|| {
+            cb.add_new_certificate(certificate).await.with_context(|| {
                 format!("Failed to insert our newly certified batch for round {round} into the DAG")
             })?;
         }
-        // Broadcast the certified batch to all validators.
-        self.gateway.broadcast(Event::BatchCertified(certificate.into()));
 
         // Log the certified batch.
         info!("Our batch with {num_transmissions} transmissions for round {round} was certified!");
@@ -2832,6 +2872,43 @@ mod tests {
         for transmission_id in transmission_ids {
             assert!(primary.workers()[0].contains_transmission(transmission_id));
         }
+    }
+
+    /// Each recheck of a pending proposal cancels the resends of the previous recheck, and the
+    /// latest resends are cancelled once the round is over.
+    #[test_log::test(tokio::test)]
+    async fn test_resend_supersedes_previous_resends() {
+        let mut rng = TestRng::default();
+        let (primary, accounts) = primary_without_handlers(&mut rng);
+
+        // Store a pending proposal for the current round.
+        let round = 3;
+        let previous_certificates = store_certificate_chain(&primary, &accounts, round, &mut rng);
+        let proposal = create_test_proposal(
+            &accounts[0].1,
+            primary.ledger.current_committee().unwrap(),
+            round,
+            previous_certificates,
+            now(),
+            1,
+            &mut rng,
+        );
+        *primary.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
+
+        // The first recheck resends the proposal.
+        assert!(!primary.propose_batch().await.unwrap());
+        let first = primary.resend_token.lock().clone();
+        assert!(!first.is_cancelled());
+
+        // The second recheck supersedes the first one's resends.
+        assert!(!primary.propose_batch().await.unwrap());
+        let second = primary.resend_token.lock().clone();
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+
+        // Advancing the round cancels the latest resends.
+        primary.storage.increment_to_next_round(round).unwrap();
+        assert!(second.is_cancelled());
     }
 
     /// The signed-proposal cache advances, and only advances: an older round must never overwrite a

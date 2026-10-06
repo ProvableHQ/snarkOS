@@ -87,6 +87,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         rest_rps: u32,
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
+        history_json: bool,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         trusted_validators: &[SocketAddr],
@@ -121,6 +122,11 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
             }
         }
         .with_context(|| "Failed to initialize the ledger")?;
+
+        // Later blocks finalized by this node are written as JSON beside the ledger.
+        if history_json {
+            ledger.vm().finalize_store().set_record_history_json(true);
+        }
 
         // If snarkVM picked the start round itself (no CLI flag and no persisted file),
         // record it now so subsequent restarts are stable.
@@ -573,6 +579,7 @@ mod tests {
             10,
             RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
             None,
+            false,
             account,
             &[],
             &[],

@@ -148,9 +148,6 @@ workspace = true
 workspace = true
 features = [ "macros", "rt-multi-thread", "signal" ]
 
-[dependencies.tokio-stream]
-version = "=0.1"
-
 [dependencies.tokio-util]
 workspace = true
 features = [ "codec" ]
