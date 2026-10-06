@@ -5257,6 +5257,7 @@ dependencies = [
  "snarkos-node-bft-ledger-service",
  "snarkos-node-cdn",
  "snarkos-node-consensus",
+ "snarkos-node-metrics",
  "snarkos-node-network",
  "snarkos-node-router",
  "snarkos-node-sync",

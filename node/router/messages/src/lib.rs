@@ -184,6 +184,26 @@ impl<N: Network> Message<N> {
         })
     }
 
+    /// Returns the message type. Instance fields, such as a block height range, are omitted.
+    #[inline]
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::BlockRequest(..) => "BlockRequest",
+            Self::BlockResponse(..) => "BlockResponse",
+            Self::ChallengeRequest(..) => "ChallengeRequest",
+            Self::ChallengeResponse(..) => "ChallengeResponse",
+            Self::Disconnect(..) => "Disconnect",
+            Self::PeerRequest(..) => "PeerRequest",
+            Self::PeerResponse(..) => "PeerResponse",
+            Self::Ping(..) => "Ping",
+            Self::Pong(..) => "Pong",
+            Self::PuzzleRequest(..) => "PuzzleRequest",
+            Self::PuzzleResponse(..) => "PuzzleResponse",
+            Self::UnconfirmedSolution(..) => "UnconfirmedSolution",
+            Self::UnconfirmedTransaction(..) => "UnconfirmedTransaction",
+        }
+    }
+
     /// Returns the message name.
     #[inline]
     pub fn name(&self) -> Cow<'static, str> {

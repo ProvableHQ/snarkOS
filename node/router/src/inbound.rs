@@ -98,6 +98,9 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
         trace!("Received '{}' from '{peer_ip}'", message.name());
 
+        #[cfg(feature = "metrics")]
+        metrics::increment_counter_2(metrics::router::EVENTS, "direction", "inbound", "type", message.variant_name());
+
         // Update the last seen timestamp of the peer.
         self.router().update_last_seen_for_connected_peer(peer_ip);
 

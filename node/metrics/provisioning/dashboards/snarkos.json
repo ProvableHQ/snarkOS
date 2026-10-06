@@ -9876,7 +9876,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "description": "Estimated number of keys in the database.",
+          "description": "Bytes per second read or written by compaction, and bytes per second written by memtable flushes.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -9926,7 +9926,7 @@
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "Bps"
             }
           },
           "gridPos": {
@@ -9969,15 +9969,41 @@
                 "uid": "prometheus"
               },
               "editorMode": "code",
-              "expr": "snarkvm_rocksdb_estimate_num_keys{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}",
+              "expr": "rate(snarkvm_rocksdb_compact_read_bytes_total{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}[1m])",
               "format": "time_series",
-              "legendFormat": "{{instance_name}}",
+              "legendFormat": "{{instance_name}} compact read",
               "range": true,
-              "refId": "num_keys",
+              "refId": "compact_read",
+              "step": 240
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(snarkvm_rocksdb_compact_write_bytes_total{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}[1m])",
+              "format": "time_series",
+              "legendFormat": "{{instance_name}} compact write",
+              "range": true,
+              "refId": "compact_write",
+              "step": 240
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(snarkvm_rocksdb_flush_write_bytes_total{snarkos_network=\"[[network]]\",snarkos_role=~\"[[role]]\"}[1m])",
+              "format": "time_series",
+              "legendFormat": "{{instance_name}} flush write",
+              "range": true,
+              "refId": "flush_write",
               "step": 240
             }
           ],
-          "title": "RocksDB - Estimated Key Count",
+          "title": "RocksDB - Compaction and Flush Bytes",
           "type": "timeseries"
         },
         {
@@ -10170,6 +10196,396 @@
         }
       ],
       "title": "RocksDB",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "id": 235,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Inbound and outbound router messages per second, by message type.",
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "ops",
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "events/s",
+                "axisPlacement": "auto",
+                "axisSoftMin": 0,
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              }
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "id": 236,
+          "interval": "$rate_interval",
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "sum by (instance_name, direction, type) (\n  rate(snarkos_router_events_total{snarkos_network=~\"$network\",snarkos_role=~\"$role\"}[$__rate_interval])\n)",
+              "legendFormat": "{{instance_name}} {{direction}} {{type}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Router events",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Inbound and outbound gateway events per second, by event type.",
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "ops",
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "events/s",
+                "axisPlacement": "auto",
+                "axisSoftMin": 0,
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              }
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 237,
+          "interval": "$rate_interval",
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "sum by (instance_name, direction, type) (\n  rate(snarkos_gateway_events_total{snarkos_network=~\"$network\",snarkos_role=~\"$role\"}[$__rate_interval])\n)",
+              "legendFormat": "{{instance_name}} {{direction}} {{type}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Gateway events",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "REST requests per second, by method, matched route, and status.",
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "reqps",
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "requests/s",
+                "axisPlacement": "auto",
+                "axisSoftMin": 0,
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              }
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "id": 238,
+          "interval": "$rate_interval",
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "sum by (instance_name, method, endpoint, status) (\n  rate(snarkos_rest_requests_total{snarkos_network=~\"$network\",snarkos_role=~\"$role\"}[$__rate_interval])\n)",
+              "legendFormat": "{{instance_name}} {{method}} {{endpoint}} {{status}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "REST requests",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "95th percentile REST request latency, by method and matched route.",
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "s",
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "seconds",
+                "axisPlacement": "auto",
+                "axisSoftMin": 0,
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              }
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "id": 239,
+          "interval": "$rate_interval",
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.95,\n  sum by (le, instance_name, method, endpoint) (\n    rate(snarkos_rest_request_duration_secs_bucket{snarkos_network=~\"$network\",snarkos_role=~\"$role\"}[$__rate_interval])\n  )\n)",
+              "legendFormat": "{{instance_name}} {{method}} {{endpoint}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "REST request latency",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Traffic",
       "type": "row"
     }
   ],
