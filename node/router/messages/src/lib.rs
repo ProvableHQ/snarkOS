@@ -125,7 +125,7 @@ impl<N: Network> From<DisconnectReason> for Message<N> {
 impl<N: Network> Message<N> {
     /// The version of the network protocol; this is incremented for breaking changes between migration versions.
     // Note. This should be incremented for each new `ConsensusVersion` that is added.
-    pub const VERSIONS: [(ConsensusVersion, u32); 16] = [
+    pub const VERSIONS: [(ConsensusVersion, u32); 17] = [
         (ConsensusVersion::V5, 17),
         (ConsensusVersion::V7, 18),
         (ConsensusVersion::V8, 19),
@@ -142,11 +142,19 @@ impl<N: Network> Message<N> {
         (ConsensusVersion::V19, 30),
         (ConsensusVersion::V20, 31),
         (ConsensusVersion::V21, 32),
+        (ConsensusVersion::V22, 33),
     ];
 
-    /// Returns the latest message version.
+    /// Returns the latest message version whose consensus upgrade has a scheduled block height.
     pub fn latest_message_version() -> u32 {
-        Self::VERSIONS.last().map(|(_, version)| *version).unwrap_or(0)
+        Self::VERSIONS
+            .iter()
+            .rev()
+            .find(|(consensus_version, _)| {
+                N::CONSENSUS_HEIGHT(*consensus_version).is_ok_and(|height| height != u32::MAX)
+            })
+            .map(|(_, version)| *version)
+            .unwrap_or(0)
     }
 
     /// Returns the lowest acceptable message version for the given block height.
@@ -330,6 +338,26 @@ mod tests {
             assert_eq!(*message_version, previous_message_version + 1);
             previous_message_version = *message_version;
         }
+    }
+
+    fn latest_message_version_has_scheduled_height<N: Network>() {
+        let latest_message_version = Message::<N>::latest_message_version();
+        let (consensus_version, _) =
+            Message::<N>::VERSIONS.iter().find(|(_, version)| *version == latest_message_version).unwrap();
+        assert_ne!(N::CONSENSUS_HEIGHT(*consensus_version).unwrap(), u32::MAX);
+
+        for (consensus_version, message_version) in Message::<N>::VERSIONS {
+            if message_version > latest_message_version {
+                assert_eq!(N::CONSENSUS_HEIGHT(consensus_version).unwrap(), u32::MAX);
+            }
+        }
+    }
+
+    #[test]
+    fn test_latest_message_version_has_scheduled_height() {
+        latest_message_version_has_scheduled_height::<MainnetV0>();
+        latest_message_version_has_scheduled_height::<TestnetV0>();
+        latest_message_version_has_scheduled_height::<CanaryV0>();
     }
 
     #[test]

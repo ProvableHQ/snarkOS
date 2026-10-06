@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-router"
-version = "4.10.1"
+version = "4.11.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A node router for a decentralized operating system"
 homepage = "https://aleo.org"
@@ -130,7 +130,7 @@ workspace = true
 features = [ "sink" ]
 
 [dev-dependencies.peak_alloc]
-version = "0.2"
+version = "0.3"
 
 [dev-dependencies.snarkos-node-bft-ledger-service]
 workspace = true

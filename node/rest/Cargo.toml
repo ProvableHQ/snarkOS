@@ -1,6 +1,6 @@
 [package]
 name = "snarkos-node-rest"
-version = "4.10.1"
+version = "4.11.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A REST API server for a decentralized virtual machine"
 homepage = "https://aleo.org"
@@ -117,7 +117,9 @@ workspace = true
 workspace = true
 
 [dependencies.tower_governor]
-version = "0.7"
+version = "0.8"
+default-features = false
+features = [ "axum" ]
 
 [dependencies.tower-http]
 version = "0.7"
