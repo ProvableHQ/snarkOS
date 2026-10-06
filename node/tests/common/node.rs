@@ -30,7 +30,8 @@ pub async fn client() -> Client<CurrentNetwork, ConsensusMemory<CurrentNetwork>>
         None,
         10,
         RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
-        None, // No history compatibility mode.
+        None,  // No history compatibility mode.
+        false, // Do not write JSON history.
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         sample_genesis_block(),
@@ -67,7 +68,8 @@ pub async fn validator() -> Validator<CurrentNetwork, ConsensusMemory<CurrentNet
         None,
         10,
         RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
-        None, // No history compatibility mode.
+        None,  // No history compatibility mode.
+        false, // Do not write JSON history.
         Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap(),
         &[],
         &[],
