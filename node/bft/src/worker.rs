@@ -692,6 +692,7 @@ mod tests {
         #[async_trait]
         impl<N:Network> Transport<N> for Gateway<N> {
             fn broadcast(&self, event: Event<N>);
+            fn broadcast_until(&self, event: Event<N>, token: tokio_util::sync::CancellationToken);
             async fn send(&self, peer_ip: SocketAddr, event: Event<N>) -> Option<oneshot::Receiver<io::Result<()>>>;
         }
     }
