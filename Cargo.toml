@@ -42,14 +42,14 @@ members = [
 ]
 
 [workspace.dependencies.aleo-std]
-version = "1.0.1"
+version = "1.0.4"
 default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-#git = "https://github.com/ProvableHQ/snarkVM.git"
-#rev = "29343ebbb" #main_net_v4110
-version = "=4.11.0"
+git = "https://github.com/ProvableHQ/snarkVM.git"
+rev = "e16c616c43861d417f4ab53b2a7e317cdce18e3c" #staging + mainnet_4_11_0
+#version = "=4.11.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -103,7 +103,7 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.5"
+version = "0.6"
 
 [workspace.dependencies.lru]
 version = "0.18.2"

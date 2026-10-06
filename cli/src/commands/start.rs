@@ -828,7 +828,7 @@ impl Start {
 
         // Initialize the storage mode.
         let storage_mode = match &self.ledger_storage {
-            Some(path) => StorageMode::Custom(path.clone()),
+            Some(path) => StorageMode::from(path.clone()),
             None => match self.dev {
                 Some(id) => StorageMode::Development(id),
                 None => StorageMode::Production,
@@ -838,13 +838,13 @@ impl Start {
         // Users may have unintentionally set a custom path for the ledger, but not for the node data.
         // For validators, we make this an errors, so important files like the proposal cache are stored at the location
         // exepcted by the node operator.
-        if self.node_data_storage.is_some() && !matches!(storage_mode, StorageMode::Custom(_)) {
+        if self.node_data_storage.is_some() && !matches!(storage_mode, StorageMode::Custom(..)) {
             if node_type == NodeType::Validator {
                 bail!("Custom path set for `--node-data-storage`, but not for `--ledger-storage`.")
             } else {
                 warn!("Custom path set for `--node-data-storage`, but not for `--ledger-storage`. The latter will use the default path.");   
             }
-        } else if matches!(storage_mode, StorageMode::Custom(_)) && self.node_data_storage.is_none() {
+        } else if matches!(storage_mode, StorageMode::Custom(..)) && self.node_data_storage.is_none() {
             if node_type == NodeType::Validator {
                 bail!("Custom path set for `--ledger-storage`, but not for `--node-data-storage`.");
             } else {
