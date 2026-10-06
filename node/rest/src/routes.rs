@@ -1258,7 +1258,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let check_transaction = check_transaction.check_transaction.unwrap_or(false);
 
         let tx = if check_transaction {
-            let _verification_slot = if tx.is_execute() {
+            let verification_slot = if tx.is_execute() {
                 rest.verification_slots.executions.acquire().await?
             } else {
                 rest.verification_slots.deploys.acquire().await?
@@ -1267,6 +1267,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // Perform the check in a blocking task, handing the transaction back on success.
             let ledger = rest.ledger.clone();
             match tokio::task::spawn_blocking(move || {
+                // Hold the slot until verification finishes, even if the client disconnects.
+                let _verification_slot = verification_slot;
                 ledger.check_transaction_basic(&tx, None, &mut rand::rng()).map(|()| tx)
             })
             .await
@@ -1351,7 +1353,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         }
 
         if check_solution {
-            let _verification_slot = rest.verification_slots.solutions.acquire().await?;
+            let verification_slot = rest.verification_slots.solutions.acquire().await?;
 
             // Compute the current epoch hash.
             let epoch_hash = rest.ledger.latest_epoch_hash()?;
@@ -1360,28 +1362,31 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
             // Ensure that the solution is valid for the given epoch.
             let puzzle = rest.ledger.puzzle().clone();
             // Verify the solution in a blocking task.
-            let res: Result<(), anyhow::Error> =
-                match tokio::task::spawn_blocking(move || puzzle.check_solution(&solution, epoch_hash, proof_target))
-                    .await
-                {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(err)) => {
-                        return match is_within_sync_leniency {
-                            // The solution failed to verify.
-                            true => Err(RestError::unprocessable_entity(
-                                err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
-                            )),
-                            // The node is out of sync and may not be able to properly validate the solution.
-                            false => Err(RestError::service_unavailable(anyhow!(
-                                "Unable to validate solution '{}' (node is syncing)",
-                                fmt_id(solution.id())
-                            ))),
-                        };
-                    }
-                    Err(err) => {
-                        return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
-                    }
-                };
+            let res: Result<(), anyhow::Error> = match tokio::task::spawn_blocking(move || {
+                // Hold the slot until verification finishes, even if the client disconnects.
+                let _verification_slot = verification_slot;
+                puzzle.check_solution(&solution, epoch_hash, proof_target)
+            })
+            .await
+            {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(err)) => {
+                    return match is_within_sync_leniency {
+                        // The solution failed to verify.
+                        true => Err(RestError::unprocessable_entity(
+                            err.context(format!("Invalid solution '{}'", fmt_id(solution.id()))),
+                        )),
+                        // The node is out of sync and may not be able to properly validate the solution.
+                        false => Err(RestError::service_unavailable(anyhow!(
+                            "Unable to validate solution '{}' (node is syncing)",
+                            fmt_id(solution.id())
+                        ))),
+                    };
+                }
+                Err(err) => {
+                    return Err(RestError::internal_server_error(anyhow!("Tokio error: {err}")));
+                }
+            };
             // Propagate error if any.
             res?;
         }
