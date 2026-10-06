@@ -165,9 +165,10 @@ impl<N: Network, C: ConsensusStorage<N>> Outbound<N> for Validator<N, C> {
         &self.router
     }
 
-    /// Returns `true` if the node is synced up to the latest block (within the given tolerance).
+    /// Returns `true` if the node is synced up to the latest block (within the given tolerance), and
+    /// this build supports the consensus versions the committee has scheduled.
     fn is_block_synced(&self) -> bool {
-        self.sync.is_block_synced()
+        self.sync.is_block_synced() && self.required_consensus_version().is_none()
     }
 
     /// Returns the number of blocks this node is behind the greatest peer height,
