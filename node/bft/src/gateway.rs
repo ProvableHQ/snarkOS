@@ -108,8 +108,7 @@ use tokio::{
     sync::{OnceCell, oneshot},
     task::{self, JoinHandle},
 };
-use tokio_stream::StreamExt;
-use tokio_util::{codec::Framed, sync::CancellationToken};
+use tokio_util::sync::CancellationToken;
 
 /// The maximum interval of events to cache.
 const CACHE_EVENTS_INTERVAL: i64 = (MAX_BATCH_DELAY.as_secs()) as i64; // seconds
