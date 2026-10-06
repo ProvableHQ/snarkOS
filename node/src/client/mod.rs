@@ -138,7 +138,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         rest_rps: u32,
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
-        record_history_json: bool,
+        history_json: bool,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
@@ -159,7 +159,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         .with_context(|| "Failed to initialize the ledger")?;
 
         // Later blocks finalized by this node are written as JSON beside the ledger.
-        if record_history_json {
+        if history_json {
             ledger.vm().finalize_store().set_record_history_json(true);
         }
 

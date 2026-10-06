@@ -1134,7 +1134,7 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
 
     /// GET /<network>/block/{height}/history/{mapping}
     ///
-    /// The JSON file written by `snarkos start --history`.
+    /// The JSON file written by `snarkos start --history-json`.
     pub(crate) async fn get_block_history(
         State(rest): State<Self>,
         Path((height, mapping)): Path<(u32, String)>,
