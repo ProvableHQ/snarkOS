@@ -22,6 +22,12 @@ NODE_VERBOSITY=2
 . ./.ci/utils.sh
 
 network_name=$(get_network_name "$network_id")
+
+# Logs a failure and exits.
+function fail() {
+  log "⛔️ $*"
+  exit 1
+}
 init_log_dir
 
 trap stop_nodes EXIT
@@ -50,17 +56,17 @@ function start_validator() {
   local log_file=$3
   local metrics_flags=()
   if (( index == outdated_validator )); then
-    metrics_flags=(--metrics "--metrics-ip=127.0.0.1:$outdated_metrics_port")
+    metrics_flags=(--metrics "--metrics-ip=$localhost:$outdated_metrics_port")
   fi
   CONSENSUS_VERSION_HEIGHTS=$heights run_with_prefix "validator-$index" snarkos start "${common_flags[@]}" \
-    "--dev=$index" --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+index))" --no-dev-txs \
+    "--dev=$index" --validator "--logfile=$log_file" "--rest=$localhost:$((3030+index))" --no-dev-txs \
     "${metrics_flags[@]}"
   PIDS[index]=$!
 }
 
 # Prints the hash of the block at height $2 on the node with the REST port $1, or nothing.
 function block_hash() {
-  curl -s --max-time 5 "http://127.0.0.1:$1/v2/$network_name/block/$2" | jq -r '.block_hash // empty' 2>/dev/null || true
+  curl -s --max-time 5 "http://$localhost:$1/v2/$network_name/block/$2" | jq -r '.block_hash // empty' 2>/dev/null || true
 }
 
 # Fails unless the upgraded validators hold the block with hash $2 at height $1.
@@ -70,8 +76,7 @@ function check_no_fork() {
   local upgraded_hash
   upgraded_hash=$(block_hash "$upgraded_port" "$height")
   if [[ -z "$outdated_hash" || "$outdated_hash" != "$upgraded_hash" ]]; then
-    log "⛔️ At height $height, the outdated validator holds '$outdated_hash' and the upgraded ones '$upgraded_hash'"
-    exit 1
+    fail "At height $height, the outdated validator holds '$outdated_hash' and the upgraded ones '$upgraded_hash'"
   fi
 }
 
@@ -92,8 +97,7 @@ function expect_outdated_exit() {
 
   while kill -0 "$pid" 2>/dev/null; do
     if (( $(elapsed_since "$start") > 600 )); then
-      log "⛔️ The outdated validator did not exit ($run)"
-      exit 1
+      fail "The outdated validator did not exit ($run)"
     fi
     height=$(get_block_height_by_port "$outdated_port" "$network_name" 5)
     if [[ -n "$height" ]]; then
@@ -107,7 +111,7 @@ function expect_outdated_exit() {
       fi
       if [[ -n "$warned_height" && -z "$reported_upgrade" ]]; then
         # Read the metrics first: with `pipefail`, `grep -q` exiting early would fail `curl`.
-        metrics=$(curl -s --max-time 5 "http://127.0.0.1:$outdated_metrics_port/metrics" || true)
+        metrics=$(curl -s --max-time 5 "http://$localhost:$outdated_metrics_port/metrics" || true)
         if grep -q "^snarkos_consensus_needs_upgrade 1$" <<< "$metrics"; then
           reported_upgrade=1
         fi
@@ -120,32 +124,43 @@ function expect_outdated_exit() {
   wait "$pid" || status=$?
   log "The outdated validator exited with status $status at height '$last_height' ($run)"
   if (( status == 0 )); then
-    log "⛔️ The outdated validator exited without an error ($run)"
-    exit 1
+    fail "The outdated validator exited without an error ($run)"
   fi
   local record
   record=$(od -An -tx1 "$record_file" 2>/dev/null | tr -d ' \n' || true)
   if [[ "$record" != "$expected_record" ]]; then
-    log "⛔️ The outdated validator recorded '$record' instead of '$expected_record' ($run)"
-    exit 1
+    fail "The outdated validator recorded '$record' instead of '$expected_record' ($run)"
   fi
   if ! grep -q "must be upgraded" "$log_file"; then
-    log "⛔️ The outdated validator did not log that it must be upgraded ($run)"
-    exit 1
+    fail "The outdated validator did not log that it must be upgraded ($run)"
   fi
   if [[ -z "$last_height" ]]; then
-    log "⛔️ The outdated validator never reported its height ($run)"
-    exit 1
+    fail "The outdated validator never reported its height ($run)"
   fi
   if (( last_height > activation_height )); then
-    log "⛔️ The outdated validator reached height $last_height ($run)"
-    exit 1
+    fail "The outdated validator reached height $last_height ($run)"
   fi
   if [[ -n "$min_height" ]] && (( last_height < min_height )); then
-    log "⛔️ The outdated validator stopped at height $last_height, before height $min_height ($run)"
-    exit 1
+    fail "The outdated validator stopped at height $last_height, before height $min_height ($run)"
   fi
   check_no_fork "$last_height" "$last_hash"
+}
+
+# Starts the outdated validator with the upgraded schedule, logging to $2, and checks that it catches
+# up without forking and removes the record. $1 names the run.
+function expect_rejoin() {
+  local run=$1
+  local log_file=$2
+  local height
+  start_validator "$outdated_validator" "$upgraded_heights" "$log_file"
+  height=$(( $(get_block_height_by_port "$upgraded_port" "$network_name" 5) + 10 ))
+  if ! wait_for_heights "$outdated_validator" "$total_validators" "$height" "$network_name" 900 5; then
+    fail "The validator did not reach height $height ($run)"
+  fi
+  if [[ -f "$record_file" ]]; then
+    fail "The validator kept the record ($run)"
+  fi
+  check_no_fork "$height" "$(block_hash "$outdated_port" "$height")"
 }
 
 for validator_index in $(seq 0 $((total_validators-1))); do
@@ -164,20 +179,17 @@ wait_for_nodes "$total_validators" 0 "$network_name" 180
 # The outdated validator warns as soon as it connects, and builds blocks until the activation height.
 expect_outdated_exit "first run" "$log_dir/validator-$outdated_validator.log" $((activation_height - 5))
 if [[ -z "$warned_height" ]] || (( warned_height > activation_height - 100 )); then
-  log "⛔️ The outdated validator first warned at height '$warned_height', not well before $activation_height"
-  exit 1
+  fail "The outdated validator first warned at height '$warned_height', not well before $activation_height"
 fi
 log "The outdated validator first warned at height $warned_height"
 if [[ -z "$reported_upgrade" ]]; then
-  log "⛔️ The outdated validator did not report snarkos_consensus_needs_upgrade 1 before it exited"
-  exit 1
+  fail "The outdated validator did not report snarkos_consensus_needs_upgrade 1 before it exited"
 fi
 log "The outdated validator reported snarkos_consensus_needs_upgrade 1"
 
 # The upgraded validators continue without it.
 if ! wait_for_heights 0 "$outdated_validator" "$target_height" "$network_name" 1800 5; then
-  log "⛔️ Upgraded validators did not reach height $target_height"
-  exit 1
+  fail "Upgraded validators did not reach height $target_height"
 fi
 log "Upgraded validators reached height $target_height"
 
@@ -186,8 +198,7 @@ log_file="$log_dir/validator-$outdated_validator-restart.log"
 start_validator "$outdated_validator" "$outdated_heights" "$log_file"
 expect_outdated_exit "restart with the record" "$log_file"
 if ! grep -q "A previous run found" "$log_file"; then
-  log "⛔️ The restarted validator did not read the record"
-  exit 1
+  fail "The restarted validator did not read the record"
 fi
 
 # A start with the same build and no record exits too, as peers keep announcing the version they run.
@@ -197,39 +208,17 @@ start_validator "$outdated_validator" "$outdated_heights" "$log_file"
 expect_outdated_exit "start without the record" "$log_file"
 
 # Once upgraded, the validator removes the record and rejoins.
-log_file="$log_dir/validator-$outdated_validator-upgraded.log"
-start_validator "$outdated_validator" "$upgraded_heights" "$log_file"
-rejoin_height=$(( $(get_block_height_by_port "$upgraded_port" "$network_name" 5) + 10 ))
-if ! wait_for_heights "$outdated_validator" "$total_validators" "$rejoin_height" "$network_name" 900 5; then
-  log "⛔️ The upgraded validator did not reach height $rejoin_height"
-  exit 1
-fi
-if [[ -f "$record_file" ]]; then
-  log "⛔️ The upgraded validator kept the record"
-  exit 1
-fi
-check_no_fork "$rejoin_height" "$(block_hash "$outdated_port" "$rejoin_height")"
+expect_rejoin "upgraded" "$log_dir/validator-$outdated_validator-upgraded.log"
 
 # A record of a version that no build schedules is cleared by a quorum of validators that are not ahead.
 graceful_stop_pid "${PIDS[outdated_validator]}" "validator-$outdated_validator"
 # Height 1000 and ConsensusVersion 65535, in the little-endian encoding of the record.
 printf '\xe8\x03\x00\x00\xff\xff' > "$record_file"
 log_file="$log_dir/validator-$outdated_validator-forged.log"
-start_validator "$outdated_validator" "$upgraded_heights" "$log_file"
-clear_height=$(( $(get_block_height_by_port "$upgraded_port" "$network_name" 5) + 10 ))
-if ! wait_for_heights "$outdated_validator" "$total_validators" "$clear_height" "$network_name" 900 5; then
-  log "⛔️ The validator with a forged record did not reach height $clear_height"
-  exit 1
-fi
+expect_rejoin "forged record" "$log_file"
 if ! grep -q "A previous run found" "$log_file" || ! grep -q "Connected validators holding a quorum" "$log_file"; then
-  log "⛔️ The validator did not read and then clear the forged record"
-  exit 1
+  fail "The validator did not read and then clear the forged record"
 fi
-if [[ -f "$record_file" ]]; then
-  log "⛔️ The validator kept the forged record"
-  exit 1
-fi
-check_no_fork "$clear_height" "$(block_hash "$outdated_port" "$clear_height")"
 if check_node_stopped; then
   exit 1
 fi

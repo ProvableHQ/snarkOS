@@ -125,8 +125,7 @@ async fn a_noise_handshake_leaves_the_connection_usable() {
     let gateway = gateways[0].clone();
     let peer = accounts[1].clone();
 
-    let signer = peer.clone();
-    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let sign = honest_signer(peer.clone());
     let (verdict, mut stream) = handshake_with_gateway(dial_addr(&gateway), &peer, 4140, sign).await.unwrap();
     assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
 
@@ -211,12 +210,17 @@ async fn a_relayed_noise_handshake_is_rejected() {
     relay.abort();
 }
 
+/// Returns a signature producer that proves the ownership of `account` honestly.
+fn honest_signer(account: Account<CurrentNetwork>) -> impl Fn(&[u8]) -> Vec<u8> {
+    move |binding| account.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap()
+}
+
 /// Drives a Noise handshake against a gateway by hand, up to and including the verdict, and hands the
 /// stream back so that a test can carry on speaking events over it.
 ///
 /// The signature over the binding is produced by `sign`, so that a test can decide whether to
-/// authenticate honestly or not. Like a peer that predates the handshake trailer, it sends none, and
-/// reads the gateway's metadata in the original layout.
+/// authenticate honestly or not. It announces the current event version and this build's schedule,
+/// and reads the gateway's metadata in the original layout, skipping its trailer.
 async fn handshake_with_gateway(
     gateway_addr: SocketAddr,
     account: &Account<CurrentNetwork>,
@@ -401,8 +405,7 @@ async fn an_initiator_that_discloses_its_consensus_schedule_is_accepted() {
     let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
     let peer = accounts[1].clone();
 
-    let signer = peer.clone();
-    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let sign = honest_signer(peer.clone());
     let trailer = HandshakeTrailer::of::<CurrentNetwork>();
     let (verdict, _stream) = handshake_with_gateway_sending(
         dial_addr(&gateways[0]),
@@ -434,8 +437,7 @@ async fn the_gateway_weighs_the_schedule_of_an_initiator() {
     let trailer = HandshakeTrailer { schedule: Some(ConsensusSchedule::new(heights).unwrap()) };
     assert!(gateway.ensure_block_may_be_built(height).is_ok());
 
-    let signer = peer.clone();
-    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let sign = honest_signer(peer.clone());
     let (verdict, _stream) = handshake_with_gateway_sending(
         dial_addr(&gateway),
         &peer,
@@ -461,8 +463,7 @@ async fn an_initiator_that_predates_the_consensus_schedule_is_accepted_without_o
     let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
     let peer = accounts[1].clone();
 
-    let signer = peer.clone();
-    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let sign = honest_signer(peer.clone());
     let version = HandshakeTrailer::FIRST_VERSION - 1;
     let (verdict, _stream) = handshake_with_gateway_sending(
         dial_addr(&gateways[0]),
@@ -488,8 +489,7 @@ async fn an_initiator_that_owes_a_consensus_schedule_is_rejected_without_one() {
     let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
     let peer = accounts[1].clone();
 
-    let signer = peer.clone();
-    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let sign = honest_signer(peer.clone());
     let version = HandshakeTrailer::FIRST_VERSION;
     let (verdict, _stream) = handshake_with_gateway_sending(
         dial_addr(&gateways[0]),
