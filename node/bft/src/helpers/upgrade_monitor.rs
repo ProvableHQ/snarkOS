@@ -119,6 +119,18 @@ pub enum UpgradeStatus {
     Required(RequiredUpgrade),
 }
 
+impl UpgradeStatus {
+    /// Returns the values of the `needs_upgrade`, `required_upgrade_height` and
+    /// `required_upgrade_version` metrics. An upgrade counts as soon as it is scheduled, so that
+    /// operators can act before this build stops.
+    pub fn metric_values(&self) -> (u8, u32, u16) {
+        match self {
+            Self::Clear => (0, 0, 0),
+            Self::Scheduled(required) | Self::Required(required) => (1, required.height, required.consensus_version),
+        }
+    }
+}
+
 /// The evidence the monitor keeps.
 struct State<N: Network> {
     /// The steps of the schedule each validator disclosed in its latest handshake.
@@ -262,7 +274,18 @@ impl<N: Network> UpgradeMonitor<N> {
             *current = status;
             modified
         });
+        #[cfg(feature = "metrics")]
+        Self::publish_metrics(status);
         status
+    }
+
+    /// Sets the metrics that let operators alert on an upgrade that validators require of this build.
+    #[cfg(feature = "metrics")]
+    fn publish_metrics(status: UpgradeStatus) {
+        let (needs_upgrade, height, consensus_version) = status.metric_values();
+        metrics::gauge(metrics::consensus::NEEDS_UPGRADE, needs_upgrade);
+        metrics::gauge(metrics::consensus::REQUIRED_UPGRADE_HEIGHT, height);
+        metrics::gauge(metrics::consensus::REQUIRED_UPGRADE_VERSION, consensus_version);
     }
 
     /// Returns an error unless this build may build the block at `height`.
@@ -641,6 +664,22 @@ mod tests {
             assert!(monitor.ensure_block_may_be_built(&committee, &connected, height).is_ok());
         }
         assert_eq!(monitor.status(), UpgradeStatus::Clear);
+    }
+
+    #[test]
+    fn the_metrics_report_an_upgrade_from_when_it_is_scheduled() {
+        let (committee, addresses) = sample_committee();
+        let dir = RecordDir::new();
+        let monitor = monitor(&addresses, &dir);
+        let connected = connected(&addresses);
+        assert_eq!(monitor.update(&committee, &connected, H - 1).metric_values(), (0, 0, 0));
+
+        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
+        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        let expected = (1, H, next_version());
+        assert_eq!(monitor.update(&committee, &connected, H - 1).metric_values(), expected);
+        assert_eq!(monitor.update(&committee, &connected, H).metric_values(), expected);
+        assert!(matches!(monitor.status(), UpgradeStatus::Required(_)));
     }
 
     #[test]
