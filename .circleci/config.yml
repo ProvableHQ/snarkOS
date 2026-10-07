@@ -903,6 +903,7 @@ workflows:
           filters:
             branches:
               only:
+                - test_net_v4120
                 - canary
                 - testnet
                 - mainnet
@@ -913,6 +914,7 @@ workflows:
           filters:
             branches:
               only:
+                - test_net_v4120
                 - canary
                 - testnet
                 - mainnet
@@ -923,6 +925,7 @@ workflows:
           filters:
             branches:
               only:
+                - test_net_v4120
                 - canary
                 - testnet
                 - mainnet
@@ -933,6 +936,7 @@ workflows:
           filters:
             branches:
               only:
+                - test_net_v4120
                 - canary
                 - testnet
                 - mainnet
@@ -952,6 +956,7 @@ workflows:
           filters:
             branches:
               only:
+                - test_net_v4120
                 - canary
                 - testnet
                 - mainnet
