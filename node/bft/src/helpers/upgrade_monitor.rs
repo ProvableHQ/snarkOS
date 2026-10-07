@@ -97,6 +97,11 @@ impl Steps {
         }
     }
 
+    /// Returns the version that activates at exactly `height`, if any.
+    fn activation_at(&self, height: u32) -> Option<u16> {
+        self.0.binary_search_by_key(&height, |(step_height, _)| *step_height).ok().map(|index| self.0[index].1)
+    }
+
     /// Returns the height at which `version`, or a later version, activates, if any.
     fn height_of(&self, version: u16) -> Option<u32> {
         self.0.iter().find(|(_, step_version)| *step_version >= version).map(|(height, _)| *height)
@@ -262,10 +267,16 @@ impl<N: Network> UpgradeMonitor<N> {
 
     /// Returns an error unless this build may build the block at `height`.
     ///
-    /// Beyond a required upgrade, a block is held back at a height where a committee member's
-    /// schedule or a record claims a newer version than this build's, until this validator and the
-    /// connected validators that are not ahead of it at that height hold the quorum threshold of
-    /// stake. Connected validators that disclosed no schedule count as not ahead.
+    /// Beyond a required upgrade, a block is held back until this validator and the connected
+    /// validators that are not ahead of it at that height hold the quorum threshold of stake, if
+    /// either:
+    /// - a committee member's schedule activates a newer version than this build's at exactly that
+    ///   height, or
+    /// - a record claims a newer version at or below that height.
+    ///
+    /// Connected validators that disclosed no schedule count as not ahead. A member's schedule
+    /// counts only at its activation heights; a schedule that activated a version below every
+    /// height would otherwise let one faulty member hold back every block.
     pub fn ensure_block_may_be_built(
         &self,
         committee: &Committee<N>,
@@ -283,10 +294,10 @@ impl<N: Network> UpgradeMonitor<N> {
         let state = self.state.lock();
         let own_version = self.own.version_at(height);
         let is_claimed = state.recorded.is_some_and(|recorded| recorded.height <= height)
-            || state
-                .schedules
-                .iter()
-                .any(|(address, steps)| committee.get_stake(*address) > 0 && steps.version_at(height) > own_version);
+            || state.schedules.iter().any(|(address, steps)| {
+                committee.get_stake(*address) > 0
+                    && steps.activation_at(height).is_some_and(|version| version > own_version)
+            });
         if is_claimed && !self.is_refuted(&state, committee, connected, height) {
             bail!(
                 "Validators may run a newer consensus version than this build at height {height}, and connected \
@@ -602,6 +613,33 @@ mod tests {
 
         assert!(monitor.ensure_block_may_be_built(&committee, &connected, H - 1).is_ok());
         assert!(monitor.ensure_block_may_be_built(&committee, &connected, H).is_err());
+        assert_eq!(monitor.status(), UpgradeStatus::Clear);
+    }
+
+    #[test]
+    fn a_member_ahead_holds_back_only_the_block_at_its_activation() {
+        let (committee, addresses) = sample_committee();
+        let dir = RecordDir::new();
+        let monitor = monitor(&addresses, &dir);
+        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
+        let connected = connected(&addresses[..2]);
+
+        assert!(monitor.ensure_block_may_be_built(&committee, &connected, H).is_err());
+        assert!(monitor.ensure_block_may_be_built(&committee, &connected, H + 1).is_ok());
+    }
+
+    #[test]
+    fn a_member_that_activates_a_version_at_genesis_holds_back_no_block() {
+        // Without enough connected stake to refute it, this would hold back every block.
+        let (committee, addresses) = sample_committee();
+        let dir = RecordDir::new();
+        let monitor = monitor(&addresses, &dir);
+        monitor.record_schedule(addresses[0], Some(&ahead_at(0)));
+        let connected = connected(&addresses[..2]);
+
+        for height in [1, 1_000, H] {
+            assert!(monitor.ensure_block_may_be_built(&committee, &connected, height).is_ok());
+        }
         assert_eq!(monitor.status(), UpgradeStatus::Clear);
     }
 
