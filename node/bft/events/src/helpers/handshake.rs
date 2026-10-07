@@ -242,8 +242,9 @@ impl FromBytes for ConsensusSchedule {
 /// The fields appended to messages 2 and 3 after their original layout.
 ///
 /// It is written as a `u16` length followed by the fields, so that fields added later are skipped by
-/// peers that only know the earlier ones. Its absence reads as a peer that predates it, and a
-/// malformed trailer reads the same way, as the fields are advisory.
+/// peers that only know the earlier ones. A missing or malformed trailer decodes as one without
+/// fields. That is only acceptable from a peer below [`Self::FIRST_VERSION`]; the gateway rejects a
+/// peer at or above it that sends no schedule.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandshakeTrailer {
     /// The consensus schedule of the sender's build.

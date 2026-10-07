@@ -257,14 +257,32 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
     }
 
     /// Stops the node through `signal_handler` once validators require a consensus upgrade.
+    ///
+    /// The required upgrade is stored first, so that the requirement outlives the process. Consensus
+    /// builds no block in the meantime, as the status is already `Required`.
     fn initialize_upgrade_check(&self, signal_handler: Arc<SignalHandler>) {
         let mut receiver = self.upgrade_monitor().subscribe();
+        let record_path = self.upgrade_monitor().record_path().to_path_buf();
         self.spawn(async move {
             let Some(required) =
                 receiver.wait_for(|status| status.required().is_some()).await.ok().and_then(|status| status.required())
             else {
                 return;
             };
+            let stored = tokio::task::spawn_blocking(move || {
+                let stored = required.store(&record_path);
+                (stored, record_path)
+            })
+            .await;
+            match stored {
+                Ok((Ok(()), _)) => (),
+                Ok((Err(error), record_path)) => error!(
+                    "Unable to record the required upgrade at {} - {error}. Until upgraded, this node stops again only \
+                     once its handshakes find the upgrade.",
+                    record_path.display()
+                ),
+                Err(error) => error!("Unable to record the required upgrade - {error}"),
+            }
             let error =
                 format!("{required}, but this build does not schedule it at that height, and must be upgraded.");
             error!("{error} Shutting down.");

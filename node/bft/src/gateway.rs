@@ -461,8 +461,12 @@ impl<N: Network> Gateway<N> {
 
     /// Returns the committee and the addresses of the connected validators, as the upgrade monitor
     /// weighs them.
+    ///
+    /// The committee is the lookback committee for the current round, which certifies the blocks
+    /// this validator builds next.
     fn upgrade_evidence(&self) -> Result<(Committee<N>, HashSet<Address<N>>)> {
-        Ok((self.ledger.current_committee()?, self.connected_addresses()))
+        let committee = self.ledger.get_committee_lookback_for_round(self.storage.current_round())?;
+        Ok((committee, self.connected_addresses()))
     }
 
     /// Re-evaluates the upgrade status for the next block.
@@ -1674,12 +1678,6 @@ impl<N: Network> Handshake for Gateway<N> {
                 } else {
                     NodeType::Validator
                 };
-                if node_type == NodeType::Validator {
-                    log_schedule_difference::<N>(addr, peer_schedule.as_ref());
-                    self.upgrade_monitor.record_schedule(peer_info.address, peer_schedule.as_ref());
-                    self.update_upgrade_status();
-                }
-
                 let mut peer_pool = self.peer_pool.write();
 
                 // Validators may change their listening address, but not the Aleo address; traverse
@@ -1697,17 +1695,30 @@ impl<N: Network> Handshake for Gateway<N> {
                     }
                 });
 
-                if let Some(peer) = peer_pool.get_mut(&addr) {
-                    self.resolver.write().insert_peer(addr, peer_addr, Some(peer_info.address));
-                    peer.upgrade_to_connected(
-                        peer_addr,
-                        peer_info.listener_port,
-                        peer_info.address,
-                        node_type,
-                        peer_info.version,
-                        peer_info.snarkos_sha,
-                        ConnectionMode::Gateway,
-                    );
+                let is_connected = match peer_pool.get_mut(&addr) {
+                    Some(peer) => {
+                        self.resolver.write().insert_peer(addr, peer_addr, Some(peer_info.address));
+                        peer.upgrade_to_connected(
+                            peer_addr,
+                            peer_info.listener_port,
+                            peer_info.address,
+                            node_type,
+                            peer_info.version,
+                            peer_info.snarkos_sha,
+                            ConnectionMode::Gateway,
+                        );
+                        true
+                    }
+                    None => false,
+                };
+                // The upgrade status reads the peer pool, so the lock is released first.
+                drop(peer_pool);
+
+                // The schedule is weighed once the peer counts as connected.
+                if is_connected && node_type == NodeType::Validator {
+                    log_schedule_difference::<N>(addr, peer_schedule.as_ref());
+                    self.upgrade_monitor.record_schedule(peer_info.address, peer_schedule.as_ref());
+                    self.update_upgrade_status();
                 }
                 info!("{CONTEXT} Connected to '{addr}'");
             }

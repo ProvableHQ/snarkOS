@@ -17,7 +17,7 @@ use snarkos_node_bft_events::ConsensusSchedule;
 use snarkvm::{
     console::network::Network,
     ledger::committee::Committee,
-    prelude::{Address, FromBytes, IoResult, Read, Result, ToBytes, Write, bail},
+    prelude::{Address, FromBytes, IoResult, Read, Result, ToBytes, Write},
 };
 
 #[cfg(feature = "locktick")]
@@ -51,6 +51,35 @@ impl ToBytes for RequiredUpgrade {
         self.consensus_version.write_le(&mut writer)
     }
 }
+
+impl RequiredUpgrade {
+    /// Writes the record of this required upgrade to `path`.
+    ///
+    /// The record is written to a temporary file next to `path` and then renamed, so that a crash
+    /// leaves either the previous record or this one, never a truncated record. The rename is
+    /// atomic on the file systems a node runs on.
+    pub fn store(&self, path: &Path) -> Result<()> {
+        let temporary = path.with_extension("tmp");
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(&self.to_bytes_le()?)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        Ok(())
+    }
+}
+
+/// The error for a block that this build may not build, as validators may run a newer consensus
+/// version at its height. The block is retried with the next commit.
+#[derive(Debug)]
+pub struct BlockHeldBack(String);
+
+impl fmt::Display for BlockHeldBack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for BlockHeldBack {}
 
 impl fmt::Display for RequiredUpgrade {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -108,9 +137,11 @@ impl Steps {
         }
     }
 
-    /// Returns the version that activates at exactly `height`, if any.
-    fn activation_at(&self, height: u32) -> Option<u16> {
-        self.0.binary_search_by_key(&height, |(step_height, _)| *step_height).ok().map(|index| self.0[index].1)
+    /// Returns the lowest height at which this schedule runs a newer version than `own`, if any.
+    ///
+    /// The schedule can only overtake `own` where one of its own versions activates.
+    fn first_ahead_of(&self, own: &Steps) -> Option<u32> {
+        self.0.iter().find(|(height, version)| *version > own.version_at(*height)).map(|(height, _)| *height)
     }
 
     /// Returns the height at which `version`, or a later version, activates, if any.
@@ -165,8 +196,8 @@ struct State<N: Network> {
 
 /// Tracks the consensus schedules of validators, and decides whether this build may build a block.
 ///
-/// A required upgrade is written to a file before the status becomes `Required`, so that the
-/// requirement outlives the process.
+/// Once the status is `Required`, the owner of the monitor stores the upgrade at
+/// [`Self::record_path`] before it stops, so that the requirement outlives the process.
 pub struct UpgradeMonitor<N: Network> {
     /// The address of this validator.
     address: Address<N>,
@@ -234,13 +265,23 @@ impl<N: Network> UpgradeMonitor<N> {
     /// validator and the connected validators that are not ahead of it at the recorded height hold
     /// the quorum threshold of stake.
     pub fn update(&self, committee: &Committee<N>, connected: &HashSet<Address<N>>, next_height: u32) -> UpgradeStatus {
-        let mut state = self.state.lock();
+        self.update_locked(&mut self.state.lock(), committee, connected, next_height)
+    }
+
+    /// Re-evaluates the status like [`Self::update`], with the state already locked.
+    fn update_locked(
+        &self,
+        state: &mut State<N>,
+        committee: &Committee<N>,
+        connected: &HashSet<Address<N>>,
+        next_height: u32,
+    ) -> UpgradeStatus {
         if let UpgradeStatus::Required(required) = self.status() {
             return UpgradeStatus::Required(required);
         }
 
         if let Some(recorded) = state.recorded
-            && self.is_refuted(&state, committee, connected, recorded.height)
+            && self.is_refuted(state, committee, connected, recorded.height)
         {
             info!(
                 "Connected validators holding a quorum of stake do not run ConsensusVersion::V{} at height {}",
@@ -250,14 +291,10 @@ impl<N: Network> UpgradeMonitor<N> {
             state.recorded = None;
         }
 
-        let status = match self.required_upgrade(&state, committee) {
-            Some(required) if required.height <= next_height => {
-                // The record is written before the status changes, as the status change stops the process.
-                write_record(&self.record_path, required);
-                UpgradeStatus::Required(required)
-            }
+        let status = match self.required_upgrade(state, committee) {
+            Some(required) if required.height <= next_height => UpgradeStatus::Required(required),
             Some(required) => {
-                self.warn_of(&mut state, required);
+                self.warn_of(state, required);
                 UpgradeStatus::Scheduled(required)
             }
             None => UpgradeStatus::Clear,
@@ -282,35 +319,36 @@ impl<N: Network> UpgradeMonitor<N> {
     /// Beyond a required upgrade, a block is held back until this validator and the connected
     /// validators that are not ahead of it at that height hold the quorum threshold of stake, if
     /// either:
-    /// - a committee member's schedule activates a newer version than this build's at exactly that
-    ///   height, or
+    /// - that height is the first at which a committee member's schedule runs a newer version than
+    ///   this build's, or
     /// - a record claims a newer version at or below that height.
     ///
     /// Connected validators that disclosed no schedule count as not ahead. A member's schedule
-    /// counts only at its activation heights; a schedule that activated a version below every
-    /// height would otherwise let one faulty member hold back every block.
+    /// counts at one height only, so that a faulty member holds back at most one block per
+    /// handshake; any other height would let it list many activations and hold back as many blocks.
+    ///
+    /// The error is a [`BlockHeldBack`].
     pub fn ensure_block_may_be_built(
         &self,
         committee: &Committee<N>,
         connected: &HashSet<Address<N>>,
         height: u32,
     ) -> Result<()> {
-        if let Some(required) = self.update(committee, connected, height).required() {
-            bail!("{required}, which this build lacks");
+        let mut state = self.state.lock();
+        if let Some(required) = self.update_locked(&mut state, committee, connected, height).required() {
+            return Err(BlockHeldBack(format!("{required}, which this build lacks")).into());
         }
 
-        let state = self.state.lock();
-        let own_version = self.own.version_at(height);
         let is_claimed = state.recorded.is_some_and(|recorded| recorded.height <= height)
             || state.schedules.iter().any(|(address, steps)| {
-                committee.get_stake(*address) > 0
-                    && steps.activation_at(height).is_some_and(|version| version > own_version)
+                committee.get_stake(*address) > 0 && steps.first_ahead_of(&self.own) == Some(height)
             });
         if is_claimed && !self.is_refuted(&state, committee, connected, height) {
-            bail!(
+            return Err(BlockHeldBack(format!(
                 "Validators may run a newer consensus version than this build at height {height}, and connected \
                  validators holding a quorum of stake have not refuted it"
-            );
+            ))
+            .into());
         }
         Ok(())
     }
@@ -389,6 +427,11 @@ impl<N: Network> UpgradeMonitor<N> {
         );
     }
 
+    /// Returns the path of the record of a required upgrade.
+    pub fn record_path(&self) -> &Path {
+        &self.record_path
+    }
+
     /// Returns the current status.
     pub fn status(&self) -> UpgradeStatus {
         *self.status.borrow()
@@ -405,13 +448,6 @@ fn read_record(path: &Path) -> Result<Option<RequiredUpgrade>> {
     match fs::read(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         bytes => Ok(Some(RequiredUpgrade::from_bytes_le(&bytes?)?)),
-    }
-}
-
-/// Records a required upgrade.
-fn write_record(path: &Path, required: RequiredUpgrade) {
-    if let Err(error) = required.to_bytes_le().and_then(|bytes| Ok(fs::write(path, bytes)?)) {
-        error!("Unable to record the required upgrade at {} - {error}", path.display());
     }
 }
 
@@ -612,20 +648,33 @@ mod tests {
     }
 
     #[test]
-    fn the_upgrade_is_required_at_its_height_and_recorded() {
-        let Fixture { committee, addresses, dir, monitor } = setup();
+    fn the_upgrade_is_required_at_its_height() {
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         let receiver = monitor.subscribe();
         two_ahead_at(&monitor, &addresses, H);
 
         assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H - 1).is_ok());
-        assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H).is_err());
+        let error = monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H).unwrap_err();
+        // The BFT recognizes a held-back block through the context it adds.
+        assert!(error.context("context").downcast_ref::<BlockHeldBack>().is_some());
         assert_eq!(*receiver.borrow(), UpgradeStatus::Required(required(H)));
-        assert_eq!(dir.read(), Some(required(H)));
 
         // Once required, the upgrade stays required.
         monitor.record_schedule(addresses[0], None);
         monitor.record_schedule(addresses[1], None);
         assert_eq!(monitor.update(&committee, &connected(&addresses), 0), UpgradeStatus::Required(required(H)));
+    }
+
+    #[test]
+    fn a_stored_upgrade_is_read_back_and_leaves_no_temporary_file() {
+        let Fixture { addresses, dir, monitor, .. } = setup();
+        required(H).store(monitor.record_path()).unwrap();
+        assert_eq!(dir.read(), Some(required(H)));
+        assert!(!monitor.record_path().with_extension("tmp").exists());
+
+        // A later run reads the record back, and holds back blocks from its height.
+        let monitor = super::UpgradeMonitor::<CurrentNetwork>::new(*addresses.last().unwrap(), dir.record_path());
+        assert_eq!(monitor.state.lock().recorded, Some(required(H)));
     }
 
     #[test]
@@ -656,6 +705,20 @@ mod tests {
 
         assert!(monitor.ensure_block_may_be_built(&committee, &connected, H).is_err());
         assert!(monitor.ensure_block_may_be_built(&committee, &connected, H + 1).is_ok());
+    }
+
+    #[test]
+    fn a_member_with_many_activations_ahead_holds_back_only_the_first() {
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
+        let mut heights = own_schedule().heights().to_vec();
+        heights.extend((0..150).map(|offset| H + offset));
+        monitor.record_schedule(addresses[0], Some(&ConsensusSchedule::new(heights).unwrap()));
+        let connected = connected(&addresses[..2]);
+
+        assert!(monitor.ensure_block_may_be_built(&committee, &connected, H).is_err());
+        for height in H + 1..H + 150 {
+            assert!(monitor.ensure_block_may_be_built(&committee, &connected, height).is_ok());
+        }
     }
 
     #[test]
