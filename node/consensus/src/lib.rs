@@ -60,7 +60,6 @@ use snarkvm::{
 use aleo_std::StorageMode;
 use anyhow::{Context, Result, bail};
 use cfg_if::cfg_if;
-use colored::Colorize;
 use indexmap::IndexMap;
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -317,7 +316,7 @@ impl<N: Network> Consensus<N> {
             }
             // Check if the solution already exists in the ledger.
             if self.ledger.contains_transmission(&TransmissionID::Solution(solution_id, checksum))? {
-                bail!("Solution '{}' exists in the ledger {}", fmt_id(solution_id), "(skipping)".dimmed());
+                bail!("Solution '{}' exists in the ledger (skipping)", fmt_id(solution_id));
             }
             // Add the solution to the memory pool.
             if self.solutions_queue.lock().put(solution_id, solution).is_some() {
@@ -398,7 +397,7 @@ impl<N: Network> Consensus<N> {
 
             // Check that the transaction is not a fee transaction.
             if transaction.is_fee() {
-                bail!("Transaction '{}' is a fee transaction {}", fmt_id(transaction_id), "(skipping)".dimmed());
+                bail!("Transaction '{}' is a fee transaction (skipping)", fmt_id(transaction_id));
             }
             // Check if the transaction was recently seen.
             if self.seen_transactions.lock().put(transaction_id, ()).is_some() {
@@ -407,7 +406,7 @@ impl<N: Network> Consensus<N> {
             }
             // Check if the transaction already exists in the ledger.
             if self.ledger.contains_transmission(&TransmissionID::Transaction(transaction_id, checksum))? {
-                bail!("Transaction '{}' exists in the ledger {}", fmt_id(transaction_id), "(skipping)".dimmed());
+                bail!("Transaction '{}' exists in the ledger (skipping)", fmt_id(transaction_id));
             }
             // Check that the transaction is not in the mempool.
             if self.contains_transaction(&transaction_id) {
@@ -804,13 +803,13 @@ impl<N: Network> Consensus<N> {
                 Ok(false) => debug!(
                     "Unable to reinsert transmission {}:{} into the memory pool. Already exists.",
                     fmt_id(transmission_id),
-                    fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                    fmt_id(transmission_id.checksum().unwrap_or_default())
                 ),
                 Err(err) => {
                     let err = err.context(format!(
                         "Unable to reinsert transmission {}.{} into the memory pool",
                         fmt_id(transmission_id),
-                        fmt_id(transmission_id.checksum().unwrap_or_default()).dimmed()
+                        fmt_id(transmission_id.checksum().unwrap_or_default())
                     ));
                     warn!("{}", flatten_error(err));
                 }

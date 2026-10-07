@@ -16,7 +16,6 @@
 use crate::{CREATE_BATCH_INTERVAL, MAX_BATCH_DELAY, MIN_BATCH_DELAY};
 
 use anyhow::Result;
-use colored::Colorize;
 use snarkvm::{prelude::Network, utilities::flatten_error};
 use std::{marker::PhantomData, sync::Arc};
 use tokio::{
@@ -141,7 +140,7 @@ impl<N: Network> ProposalTask<N> {
                     return true;
                 },
                 _ = sleep(CREATE_BATCH_INTERVAL) => {
-                    debug!("Skipping batch proposal for round {round} {}", "(not ready yet)".dimmed());
+                    debug!(dim = true, "Skipping batch proposal for round {round} (not ready yet)");
                 }
             };
         }

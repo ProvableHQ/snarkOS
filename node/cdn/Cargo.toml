@@ -37,9 +37,6 @@ workspace = true
 [dependencies.bincode]
 workspace = true
 
-[dependencies.colored]
-workspace = true
-
 [dependencies.locktick]
 workspace = true
 features = [ "parking_lot" ]

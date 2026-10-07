@@ -36,7 +36,6 @@ use snarkvm::{
 };
 
 use anyhow::Context;
-use colored::{ColoredString, Colorize};
 use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "locktick")]
 use locktick::parking_lot::{Mutex, RwLock};
@@ -174,14 +173,13 @@ impl<N: Network> Worker<N> {
 
 impl<N: Network> Worker<N> {
     // Helper to print the transmission ID and checksum (if any).
-    fn format_transmission_id(&self, transmission_id: TransmissionID<N>) -> ColoredString {
+    fn format_transmission_id(&self, transmission_id: TransmissionID<N>) -> String {
         if let Some(checksum) = transmission_id.checksum() {
             // fmt_id will suffix with `..`, so we should not use `.`  as a separator.
             format!("{}:{}", fmt_id(transmission_id), fmt_id(checksum))
         } else {
             fmt_id(transmission_id)
         }
-        .dimmed()
     }
 
     /// Returns `true` if the transmission ID exists in the ready queue, proposed batch, storage, or ledger.
