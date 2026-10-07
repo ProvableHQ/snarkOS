@@ -25,7 +25,6 @@ use crate::{
 };
 
 use snarkos_account::Account;
-use snarkos_node_bft::helpers::RequiredUpgrade;
 use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{
@@ -312,14 +311,6 @@ impl<N: Network> Node<N> {
             Self::Prover(_) => None,
             Self::Client(node) => Some(node.ledger()),
             Self::BootstrapClient(_) => None,
-        }
-    }
-
-    /// Returns the consensus upgrade that validators require of this node, if any.
-    pub fn required_consensus_upgrade(&self) -> Option<RequiredUpgrade> {
-        match self {
-            Self::Validator(node) => node.required_consensus_upgrade(),
-            Self::Prover(_) | Self::Client(_) | Self::BootstrapClient(_) => None,
         }
     }
 

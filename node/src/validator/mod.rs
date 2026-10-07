@@ -20,11 +20,7 @@ use crate::traits::NodeInterface;
 use snarkos_account::Account;
 #[cfg(feature = "test_network")]
 use snarkos_node_bft::ledger_service::{persist_dev_committee_start_round_if_unwritten, prepare_dev_committee_options};
-use snarkos_node_bft::{
-    helpers::{RequiredUpgrade, UpgradeMonitor, UpgradeStatus},
-    ledger_service::CoreLedgerService,
-    spawn_blocking,
-};
+use snarkos_node_bft::{helpers::UpgradeMonitor, ledger_service::CoreLedgerService, spawn_blocking};
 use snarkos_node_cdn::CdnBlockSync;
 use snarkos_node_consensus::Consensus;
 use snarkos_node_network::{ConnectionMode, NodeType, PeerPoolHandling};
@@ -42,7 +38,7 @@ use snarkos_node_tcp::{
     P2P,
     protocols::{Disconnect, Handshake, OnConnect, Reading},
 };
-use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler, Stoppable};
+use snarkos_utilities::{DevHotswapConfig, NodeDataDir, SignalHandler};
 
 use snarkvm::prelude::{
     Ledger,
@@ -260,30 +256,19 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         self.consensus.bft().primary().gateway().upgrade_monitor()
     }
 
-    /// Returns the consensus upgrade that validators require of this build, if any.
-    pub fn required_consensus_upgrade(&self) -> Option<RequiredUpgrade> {
-        match self.upgrade_monitor().status() {
-            UpgradeStatus::Required(required) => Some(required),
-            UpgradeStatus::Clear | UpgradeStatus::Scheduled(_) => None,
-        }
-    }
-
     /// Stops the node through `signal_handler` once validators require a consensus upgrade.
     fn initialize_upgrade_check(&self, signal_handler: Arc<SignalHandler>) {
         let mut receiver = self.upgrade_monitor().subscribe();
         self.spawn(async move {
-            let status = match receiver.wait_for(|status| matches!(status, UpgradeStatus::Required(_))).await {
-                Ok(status) => *status,
-                Err(_) => return,
+            let Some(required) =
+                receiver.wait_for(|status| status.required().is_some()).await.ok().and_then(|status| status.required())
+            else {
+                return;
             };
-            if let UpgradeStatus::Required(required) = status {
-                error!(
-                    "Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}, but \
-                     this build does not schedule it at that height, and must be upgraded. Shutting down.",
-                    required.consensus_version, required.height
-                );
-            }
-            signal_handler.stop();
+            let error =
+                format!("{required}, but this build does not schedule it at that height, and must be upgraded.");
+            error!("{error} Shutting down.");
+            signal_handler.stop_with_error(error);
         });
     }
 

@@ -998,14 +998,8 @@ impl Start {
         node.wait_for_signals(&signal_handler).await;
 
         // Exit with an error, so that the node is not mistaken for one that was stopped on purpose.
-        if let Some(required) = node.required_consensus_upgrade() {
-            bail!(
-                "Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}, which this \
-                 build does not schedule at that height. \
-                 Upgrade snarkOS before restarting the node.",
-                required.consensus_version,
-                required.height
-            );
+        if let Some(error) = signal_handler.error() {
+            bail!(error);
         }
         Ok(())
     }
