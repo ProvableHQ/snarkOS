@@ -209,6 +209,29 @@ impl<N: Network> Event<N> {
         with_data_payload!(self, is_payload_unserialized, false)
     }
 
+    /// Returns the event type. Instance fields, such as a block height range, are omitted.
+    #[inline]
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::BatchPropose(..) => "BatchPropose",
+            Self::BatchSignature(..) => "BatchSignature",
+            Self::BatchCertified(..) => "BatchCertified",
+            Self::BlockRequest(..) => "BlockRequest",
+            Self::BlockResponse(..) => "BlockResponse",
+            Self::CertificateRequest(..) => "CertificateRequest",
+            Self::CertificateResponse(..) => "CertificateResponse",
+            Self::ChallengeRequest(..) => "ChallengeRequest",
+            Self::ChallengeResponse(..) => "ChallengeResponse",
+            Self::Disconnect(..) => "Disconnect",
+            Self::PrimaryPing(..) => "PrimaryPing",
+            Self::TransmissionRequest(..) => "TransmissionRequest",
+            Self::TransmissionResponse(..) => "TransmissionResponse",
+            Self::ValidatorsRequest(..) => "ValidatorsRequest",
+            Self::ValidatorsResponse(..) => "ValidatorsResponse",
+            Self::WorkerPing(..) => "WorkerPing",
+        }
+    }
+
     /// Returns the event name.
     #[inline]
     pub fn name(&self) -> Cow<'static, str> {
