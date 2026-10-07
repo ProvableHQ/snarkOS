@@ -202,17 +202,12 @@ pub struct ConsensusSchedule {
 }
 
 impl ConsensusSchedule {
-    /// The maximum number of consensus versions in a schedule.
-    ///
-    /// The handshake messages are limited to 1024 bytes, so a schedule of more than about 150
-    /// versions would no longer fit, well before this limit.
-    pub const MAX_VERSIONS: usize = u8::MAX as usize;
-
     /// Initializes a schedule from the activation heights of versions 1, 2, and so on.
+    ///
+    /// The number of versions is encoded as a `u8`. In practice, the 1024-byte limit on handshake
+    /// messages caps a schedule at about 150 versions.
     pub fn new(heights: Vec<u32>) -> IoResult<Self> {
-        if heights.len() > Self::MAX_VERSIONS {
-            return Err(io_error(format!("A consensus schedule holds at most {} versions", Self::MAX_VERSIONS)));
-        }
+        u8::try_from(heights.len()).map_err(io_error)?;
         Ok(Self { heights })
     }
 
@@ -576,9 +571,9 @@ pub mod prop_tests {
     }
 
     #[test]
-    fn a_schedule_holds_at_most_the_maximum_number_of_versions() {
-        assert!(ConsensusSchedule::new(vec![0; ConsensusSchedule::MAX_VERSIONS]).is_ok());
-        assert!(ConsensusSchedule::new(vec![0; ConsensusSchedule::MAX_VERSIONS + 1]).is_err());
+    fn a_schedule_holds_at_most_as_many_versions_as_a_u8_counts() {
+        assert!(ConsensusSchedule::new(vec![0; u8::MAX as usize]).is_ok());
+        assert!(ConsensusSchedule::new(vec![0; u8::MAX as usize + 1]).is_err());
     }
 
     #[proptest]
