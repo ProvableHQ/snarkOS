@@ -38,6 +38,7 @@ common_flags=(
 
 upgraded_port=3030
 outdated_port=$((3030+outdated_validator))
+outdated_metrics_port=9000
 record_file=".node-data-$network_id-$outdated_validator/required-consensus-upgrade"
 # The activation height and ConsensusVersion::V22, in the little-endian encoding of the record.
 expected_record="$(printf '%08x' "$activation_height" | sed -E 's/(..)(..)(..)(..)/\4\3\2\1/')1600"
@@ -47,8 +48,13 @@ function start_validator() {
   local index=$1
   local heights=$2
   local log_file=$3
+  local metrics_flags=()
+  if (( index == outdated_validator )); then
+    metrics_flags=(--metrics "--metrics-ip=127.0.0.1:$outdated_metrics_port")
+  fi
   CONSENSUS_VERSION_HEIGHTS=$heights run_with_prefix "validator-$index" snarkos start "${common_flags[@]}" \
-    "--dev=$index" --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+index))" --no-dev-txs
+    "--dev=$index" --validator "--logfile=$log_file" "--rest=127.0.0.1:$((3030+index))" --no-dev-txs \
+    "${metrics_flags[@]}"
   PIDS[index]=$!
 }
 
@@ -72,7 +78,8 @@ function check_no_fork() {
 # Waits for the outdated validator to exit, and checks that it exited with an error, recorded the
 # required upgrade, and holds no block the upgraded validators lack. $1 names the run, $2 is its log
 # file, and $3, if set, is the lowest height it must have reached; it must not exceed the activation
-# height. Sets `warned_height` to its height when it first warned of the upgrade, if it did.
+# height. Sets `warned_height` to its height when it first warned of the upgrade, if it did, and
+# `reported_upgrade` if its metrics reported that it needs an upgrade.
 function expect_outdated_exit() {
   local run=$1
   local log_file=$2
@@ -80,6 +87,7 @@ function expect_outdated_exit() {
   local pid=${PIDS[outdated_validator]}
   local height last_height="" last_hash="" hash start
   warned_height=""
+  reported_upgrade=""
   start=$(now)
 
   while kill -0 "$pid" 2>/dev/null; do
@@ -96,6 +104,13 @@ function expect_outdated_exit() {
       fi
       if [[ -z "$warned_height" ]] && grep -q "This node stops before building block" "$log_file"; then
         warned_height=$height
+      fi
+      if [[ -n "$warned_height" && -z "$reported_upgrade" ]]; then
+        # Read the metrics first: with `pipefail`, `grep -q` exiting early would fail `curl`.
+        metrics=$(curl -s --max-time 5 "http://127.0.0.1:$outdated_metrics_port/metrics" || true)
+        if grep -q "^snarkos_consensus_needs_upgrade 1$" <<< "$metrics"; then
+          reported_upgrade=1
+        fi
       fi
     fi
     sleep 1
@@ -153,6 +168,11 @@ if [[ -z "$warned_height" ]] || (( warned_height > activation_height - 100 )); t
   exit 1
 fi
 log "The outdated validator first warned at height $warned_height"
+if [[ -z "$reported_upgrade" ]]; then
+  log "⛔️ The outdated validator did not report snarkos_consensus_needs_upgrade 1 before it exited"
+  exit 1
+fi
+log "The outdated validator reported snarkos_consensus_needs_upgrade 1"
 
 # The upgraded validators continue without it.
 if ! wait_for_heights 0 "$outdated_validator" "$target_height" "$network_name" 1800 5; then
