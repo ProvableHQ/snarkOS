@@ -17,7 +17,7 @@ use snarkos_node_bft_events::ConsensusSchedule;
 use snarkvm::{
     console::network::Network,
     ledger::committee::Committee,
-    prelude::{Address, Field, FromBytes, IoResult, Read, Result, ToBytes, Write, bail},
+    prelude::{Address, FromBytes, IoResult, Read, Result, ToBytes, Write, bail},
 };
 
 #[cfg(feature = "locktick")]
@@ -26,9 +26,10 @@ use locktick::parking_lot::Mutex;
 use parking_lot::Mutex;
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     fs,
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio::sync::watch;
@@ -48,6 +49,16 @@ impl ToBytes for RequiredUpgrade {
     fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()> {
         self.height.write_le(&mut writer)?;
         self.consensus_version.write_le(&mut writer)
+    }
+}
+
+impl fmt::Display for RequiredUpgrade {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}",
+            self.consensus_version, self.height
+        )
     }
 }
 
@@ -120,6 +131,14 @@ pub enum UpgradeStatus {
 }
 
 impl UpgradeStatus {
+    /// Returns the required upgrade, if the status is `Required`.
+    pub fn required(&self) -> Option<RequiredUpgrade> {
+        match self {
+            Self::Required(required) => Some(*required),
+            Self::Clear | Self::Scheduled(_) => None,
+        }
+    }
+
     /// Returns the values of the `needs_upgrade`, `required_upgrade_height` and
     /// `required_upgrade_version` metrics. An upgrade counts as soon as it is scheduled, so that
     /// operators can act before this build stops.
@@ -140,8 +159,6 @@ struct State<N: Network> {
     schedules: HashMap<Address<N>, Steps>,
     /// The required upgrade that a previous run recorded, until connected validators refute it.
     recorded: Option<RequiredUpgrade>,
-    /// The required upgrade found in `schedules`, with the ID of the committee it was found for.
-    cached: Option<(Field<N>, Option<RequiredUpgrade>)>,
     /// When the monitor last asked for the scheduled upgrade to be logged.
     warned_at: Option<Instant>,
 }
@@ -173,39 +190,31 @@ impl<N: Network> UpgradeMonitor<N> {
         let own = Steps::new(&ConsensusSchedule::of::<N>());
         // A record that cannot be read holds back every block.
         let unreadable = RequiredUpgrade { height: 0, consensus_version: u16::MAX };
-        let recorded = match fs::read(&record_path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        let recorded = match read_record(&record_path) {
+            Ok(None) => None,
+            Ok(Some(recorded)) if own.version_at(recorded.height) >= recorded.consensus_version => {
+                info!(
+                    "This build schedules ConsensusVersion::V{} at height {}, as previously required",
+                    recorded.consensus_version, recorded.height
+                );
+                remove_record(&record_path);
+                None
+            }
+            Ok(Some(recorded)) => {
+                warn!(
+                    "A previous run found that validators run ConsensusVersion::V{} at height {}, which this build \
+                     does not schedule. No block at or above that height is built until connected validators \
+                     confirm or refute it.",
+                    recorded.consensus_version, recorded.height
+                );
+                Some(recorded)
+            }
             Err(error) => {
                 warn!("Unable to read the required upgrade at {} - {error}", record_path.display());
                 Some(unreadable)
             }
-            Ok(bytes) => match RequiredUpgrade::from_bytes_le(&bytes) {
-                Ok(recorded) if own.version_at(recorded.height) >= recorded.consensus_version => {
-                    info!(
-                        "This build schedules ConsensusVersion::V{} at height {}, as previously required",
-                        recorded.consensus_version, recorded.height
-                    );
-                    if let Err(error) = fs::remove_file(&record_path) {
-                        warn!("Unable to remove the required upgrade at {} - {error}", record_path.display());
-                    }
-                    None
-                }
-                Ok(recorded) => {
-                    warn!(
-                        "A previous run found that validators run ConsensusVersion::V{} at height {}, which this build \
-                         does not schedule. No block at or above that height is built until connected validators \
-                         confirm or refute it.",
-                        recorded.consensus_version, recorded.height
-                    );
-                    Some(recorded)
-                }
-                Err(error) => {
-                    warn!("Unable to parse the required upgrade at {} - {error}", record_path.display());
-                    Some(unreadable)
-                }
-            },
         };
-        let state = State { schedules: Default::default(), recorded, cached: None, warned_at: None };
+        let state = State { schedules: Default::default(), recorded, warned_at: None };
         Self { address, own, record_path, state: Mutex::new(state), status: watch::Sender::new(UpgradeStatus::Clear) }
     }
 
@@ -217,7 +226,6 @@ impl<N: Network> UpgradeMonitor<N> {
             Some(schedule) => state.schedules.insert(address, Steps::new(schedule)),
             None => state.schedules.remove(&address),
         };
-        state.cached = None;
     }
 
     /// Re-evaluates the status for the next block to build, at `next_height`.
@@ -238,42 +246,23 @@ impl<N: Network> UpgradeMonitor<N> {
                 "Connected validators holding a quorum of stake do not run ConsensusVersion::V{} at height {}",
                 recorded.consensus_version, recorded.height
             );
-            if let Err(error) = fs::remove_file(&self.record_path) {
-                warn!("Unable to remove the required upgrade at {} - {error}", self.record_path.display());
-            }
+            remove_record(&self.record_path);
             state.recorded = None;
         }
 
-        let required = match state.cached {
-            Some((committee_id, required)) if committee_id == committee.id() => required,
-            _ => {
-                let required = self.required_upgrade(&state, committee);
-                state.cached = Some((committee.id(), required));
-                required
-            }
-        };
-
-        let status = match required {
+        let status = match self.required_upgrade(&state, committee) {
             Some(required) if required.height <= next_height => {
                 // The record is written before the status changes, as the status change stops the process.
-                match required.to_bytes_le() {
-                    Ok(bytes) => {
-                        if let Err(error) = fs::write(&self.record_path, bytes) {
-                            error!("Unable to record the required upgrade at {} - {error}", self.record_path.display());
-                        }
-                    }
-                    Err(error) => error!("Unable to serialize the required upgrade - {error}"),
-                }
+                write_record(&self.record_path, required);
                 UpgradeStatus::Required(required)
             }
-            Some(required) => UpgradeStatus::Scheduled(required),
+            Some(required) => {
+                self.warn_of(&mut state, required);
+                UpgradeStatus::Scheduled(required)
+            }
             None => UpgradeStatus::Clear,
         };
-        self.status.send_if_modified(|current| {
-            let modified = *current != status;
-            *current = status;
-            modified
-        });
+        self.status.send_if_modified(|current| std::mem::replace(current, status) != status);
         #[cfg(feature = "metrics")]
         Self::publish_metrics(status);
         status
@@ -306,13 +295,8 @@ impl<N: Network> UpgradeMonitor<N> {
         connected: &HashSet<Address<N>>,
         height: u32,
     ) -> Result<()> {
-        if let UpgradeStatus::Required(required) = self.update(committee, connected, height) {
-            bail!(
-                "Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}, which \
-                 this build lacks",
-                required.consensus_version,
-                required.height
-            );
+        if let Some(required) = self.update(committee, connected, height).required() {
+            bail!("{required}, which this build lacks");
         }
 
         let state = self.state.lock();
@@ -342,13 +326,13 @@ impl<N: Network> UpgradeMonitor<N> {
         height: u32,
     ) -> bool {
         let own_version = self.own.version_at(height);
-        let current: HashSet<_> = connected
+        let stake = connected
             .iter()
+            .filter(|address| **address != self.address)
             .filter(|address| state.schedules.get(*address).is_none_or(|steps| steps.version_at(height) <= own_version))
-            .copied()
-            .chain([self.address])
-            .collect();
-        committee.is_quorum_threshold_reached(&current)
+            .map(|address| committee.get_stake(*address))
+            .fold(committee.get_stake(self.address), u64::saturating_add);
+        stake >= committee.quorum_threshold()
     }
 
     /// Returns the lowest height at which committee members holding the availability threshold of
@@ -377,10 +361,11 @@ impl<N: Network> UpgradeMonitor<N> {
             ahead.sort_unstable_by_key(|(version, _)| std::cmp::Reverse(*version));
 
             // A validator ahead with a higher version also vouches for every lower one that is ahead.
-            let mut supporters = HashSet::with_capacity(ahead.len());
+            // `schedules` holds one entry per address, so no validator's stake counts twice.
+            let mut stake = 0u64;
             for (version, address) in ahead {
-                supporters.insert(address);
-                if committee.is_availability_threshold_reached(&supporters) {
+                stake = stake.saturating_add(committee.get_stake(address));
+                if stake >= committee.availability_threshold() {
                     return Some(RequiredUpgrade { height, consensus_version: version });
                 }
             }
@@ -388,22 +373,20 @@ impl<N: Network> UpgradeMonitor<N> {
         None
     }
 
-    /// Returns the height at which this build schedules `consensus_version`, if it does.
-    pub fn own_height_of(&self, consensus_version: u16) -> Option<u32> {
-        self.own.height_of(consensus_version)
-    }
-
-    /// Returns `true`, at most once per [`WARNING_INTERVAL`], if a scheduled upgrade should be logged.
-    pub fn should_warn(&self) -> bool {
-        if !matches!(self.status(), UpgradeStatus::Scheduled(_)) {
-            return false;
+    /// Logs a scheduled upgrade, at most once per [`WARNING_INTERVAL`].
+    fn warn_of(&self, state: &mut State<N>, required: RequiredUpgrade) {
+        if state.warned_at.is_some_and(|warned_at| warned_at.elapsed() < WARNING_INTERVAL) {
+            return;
         }
-        let mut state = self.state.lock();
-        let should_warn = state.warned_at.is_none_or(|warned_at| warned_at.elapsed() >= WARNING_INTERVAL);
-        if should_warn {
-            state.warned_at = Some(Instant::now());
-        }
-        should_warn
+        state.warned_at = Some(Instant::now());
+        let this_build = match self.own.height_of(required.consensus_version) {
+            Some(height) => format!("this build schedules it at height {height}"),
+            None => "this build does not schedule it".to_string(),
+        };
+        error!(
+            "{required}, and {this_build}. This node stops before building block {}; upgrade snarkOS before then.",
+            required.height
+        );
     }
 
     /// Returns the current status.
@@ -414,6 +397,28 @@ impl<N: Network> UpgradeMonitor<N> {
     /// Returns a receiver that observes the status.
     pub fn subscribe(&self) -> watch::Receiver<UpgradeStatus> {
         self.status.subscribe()
+    }
+}
+
+/// Reads the record of a required upgrade, or returns `None` if there is none.
+fn read_record(path: &Path) -> Result<Option<RequiredUpgrade>> {
+    match fs::read(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        bytes => Ok(Some(RequiredUpgrade::from_bytes_le(&bytes?)?)),
+    }
+}
+
+/// Records a required upgrade.
+fn write_record(path: &Path, required: RequiredUpgrade) {
+    if let Err(error) = required.to_bytes_le().and_then(|bytes| Ok(fs::write(path, bytes)?)) {
+        error!("Unable to record the required upgrade at {} - {error}", path.display());
+    }
+}
+
+/// Removes the record of a required upgrade.
+fn remove_record(path: &Path) {
+    if let Err(error) = fs::remove_file(path) {
+        warn!("Unable to remove the required upgrade at {} - {error}", path.display());
     }
 }
 
@@ -477,6 +482,29 @@ mod tests {
         UpgradeMonitor::new(*addresses.last().unwrap(), dir.record_path())
     }
 
+    /// A monitor running as the last of the validators of [`sample_committee`].
+    struct Fixture {
+        committee: Committee<CurrentNetwork>,
+        addresses: Vec<Address<CurrentNetwork>>,
+        /// Removes the record when dropped, so it must outlive `monitor`.
+        dir: RecordDir,
+        monitor: UpgradeMonitor<CurrentNetwork>,
+    }
+
+    fn setup() -> Fixture {
+        let (committee, addresses) = sample_committee();
+        let dir = RecordDir::new();
+        let monitor = monitor(&addresses, &dir);
+        Fixture { committee, addresses, dir, monitor }
+    }
+
+    /// Has validators 0 and 1, which reach the availability threshold, disclose a version beyond this
+    /// build's at `height`.
+    fn two_ahead_at(monitor: &UpgradeMonitor<CurrentNetwork>, addresses: &[Address<CurrentNetwork>], height: u32) {
+        monitor.record_schedule(addresses[0], Some(&ahead_at(height)));
+        monitor.record_schedule(addresses[1], Some(&ahead_at(height)));
+    }
+
     fn own_schedule() -> ConsensusSchedule {
         ConsensusSchedule::of::<CurrentNetwork>()
     }
@@ -523,29 +551,22 @@ mod tests {
 
     #[test]
     fn a_faulty_minority_cannot_require_an_upgrade() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&ahead_at(0)));
         assert_eq!(monitor.update(&committee, &connected(&addresses), H), UpgradeStatus::Clear);
     }
 
     #[test]
     fn the_availability_threshold_schedules_an_upgrade() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        let Fixture { committee, addresses, dir, monitor } = setup();
+        two_ahead_at(&monitor, &addresses, H);
         assert_eq!(monitor.update(&committee, &connected(&addresses), H - 1), UpgradeStatus::Scheduled(required(H)));
         assert_eq!(dir.read(), None);
     }
 
     #[test]
     fn faulty_validators_cannot_move_the_upgrade_earlier() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&ahead_at(H - 500)));
         monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
         assert_eq!(monitor.update(&committee, &connected(&addresses), 0), UpgradeStatus::Scheduled(required(H)));
@@ -561,14 +582,12 @@ mod tests {
         heights[index] = own_height - 5;
         let earlier = ConsensusSchedule::new(heights).unwrap();
 
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&earlier));
         monitor.record_schedule(addresses[1], Some(&earlier));
         let expected = RequiredUpgrade { height: own_height - 5, consensus_version: index as u16 + 1 };
         assert_eq!(monitor.update(&committee, &connected(&addresses), 0), UpgradeStatus::Scheduled(expected));
-        assert_eq!(monitor.own_height_of(expected.consensus_version), Some(*own_height));
+        assert_eq!(monitor.own.height_of(expected.consensus_version), Some(*own_height));
     }
 
     #[test]
@@ -586,23 +605,17 @@ mod tests {
 
     #[test]
     fn a_handshake_without_a_schedule_replaces_the_previous_one() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
+        two_ahead_at(&monitor, &addresses, H);
         monitor.record_schedule(addresses[1], None);
         assert_eq!(monitor.update(&committee, &connected(&addresses), H), UpgradeStatus::Clear);
     }
 
     #[test]
     fn the_upgrade_is_required_at_its_height_and_recorded() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir, monitor } = setup();
         let receiver = monitor.subscribe();
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        two_ahead_at(&monitor, &addresses, H);
 
         assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H - 1).is_ok());
         assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H).is_err());
@@ -617,11 +630,8 @@ mod tests {
 
     #[test]
     fn schedules_of_disconnected_validators_still_count() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
+        two_ahead_at(&monitor, &addresses, H);
         assert_eq!(monitor.update(&committee, &HashSet::new(), H), UpgradeStatus::Required(required(H)));
     }
 
@@ -629,9 +639,7 @@ mod tests {
     fn a_block_is_held_back_without_a_quorum_where_a_member_is_ahead() {
         // Validator 0 is ahead and connected, validator 1 discloses no schedule, and validator 2 is
         // ahead but never connected, so too little stake is known to be ahead to require an upgrade.
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
         let connected = connected(&addresses[..2]);
 
@@ -642,9 +650,7 @@ mod tests {
 
     #[test]
     fn a_member_ahead_holds_back_only_the_block_at_its_activation() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
         let connected = connected(&addresses[..2]);
 
@@ -655,9 +661,7 @@ mod tests {
     #[test]
     fn a_member_that_activates_a_version_at_genesis_holds_back_no_block() {
         // Without enough connected stake to refute it, this would hold back every block.
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&ahead_at(0)));
         let connected = connected(&addresses[..2]);
 
@@ -669,14 +673,11 @@ mod tests {
 
     #[test]
     fn the_metrics_report_an_upgrade_from_when_it_is_scheduled() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         let connected = connected(&addresses);
         assert_eq!(monitor.update(&committee, &connected, H - 1).metric_values(), (0, 0, 0));
 
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        two_ahead_at(&monitor, &addresses, H);
         let expected = (1, H, next_version());
         assert_eq!(monitor.update(&committee, &connected, H - 1).metric_values(), expected);
         assert_eq!(monitor.update(&committee, &connected, H).metric_values(), expected);
@@ -685,9 +686,7 @@ mod tests {
 
     #[test]
     fn a_quorum_that_is_not_ahead_lets_a_block_be_built() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
         monitor.record_schedule(addresses[1], Some(&own_schedule()));
         assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H).is_ok());
@@ -696,9 +695,7 @@ mod tests {
     #[test]
     fn a_block_is_built_when_no_validator_is_known_to_be_ahead() {
         // A known limit: a validator that never hears from one that is ahead builds the block.
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses[..1]), H).is_ok());
     }
 
@@ -735,8 +732,7 @@ mod tests {
         let dir = RecordDir::new();
         dir.write(&required(H).to_bytes_le().unwrap());
         let monitor = monitor(&addresses, &dir);
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        two_ahead_at(&monitor, &addresses, H);
         assert_eq!(monitor.update(&committee, &connected(&addresses), H), UpgradeStatus::Required(required(H)));
         assert_eq!(dir.read(), Some(required(H)));
     }
@@ -754,14 +750,15 @@ mod tests {
 
     #[test]
     fn a_scheduled_upgrade_is_logged_at_most_once_per_interval() {
-        let (committee, addresses) = sample_committee();
-        let dir = RecordDir::new();
-        let monitor = monitor(&addresses, &dir);
-        assert!(!monitor.should_warn());
-        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
-        monitor.record_schedule(addresses[1], Some(&ahead_at(H)));
+        let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         monitor.update(&committee, &connected(&addresses), 0);
-        assert!(monitor.should_warn());
-        assert!(!monitor.should_warn());
+        assert!(monitor.state.lock().warned_at.is_none());
+
+        two_ahead_at(&monitor, &addresses, H);
+        monitor.update(&committee, &connected(&addresses), 0);
+        let warned_at = monitor.state.lock().warned_at;
+        assert!(warned_at.is_some());
+        monitor.update(&committee, &connected(&addresses), 1);
+        assert_eq!(monitor.state.lock().warned_at, warned_at);
     }
 }

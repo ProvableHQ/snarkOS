@@ -22,16 +22,7 @@ use crate::{
     MEMORY_POOL_PORT,
     Worker,
     events::{DisconnectReason, EventCodec, PrimaryPing},
-    helpers::{
-        Cache,
-        PrimarySender,
-        Storage,
-        SyncSender,
-        UpgradeMonitor,
-        UpgradeStatus,
-        WorkerSender,
-        assign_to_worker,
-    },
+    helpers::{Cache, PrimarySender, Storage, SyncSender, UpgradeMonitor, WorkerSender, assign_to_worker},
     spawn_blocking,
 };
 use smol_str::SmolStr;
@@ -474,7 +465,7 @@ impl<N: Network> Gateway<N> {
         Ok((self.ledger.current_committee()?, self.connected_addresses()))
     }
 
-    /// Re-evaluates the upgrade status for the next block, and logs a scheduled upgrade.
+    /// Re-evaluates the upgrade status for the next block.
     fn update_upgrade_status(&self) {
         let (committee, connected) = match self.upgrade_evidence() {
             Ok(evidence) => evidence,
@@ -484,20 +475,7 @@ impl<N: Network> Gateway<N> {
             }
         };
         let next_height = self.ledger.latest_block_height().saturating_add(1);
-        let status = self.upgrade_monitor.update(&committee, &connected, next_height);
-        if let UpgradeStatus::Scheduled(required) = status
-            && self.upgrade_monitor.should_warn()
-        {
-            let this_build = match self.upgrade_monitor.own_height_of(required.consensus_version) {
-                Some(height) => format!("this build schedules it at height {height}"),
-                None => "this build does not schedule it".to_string(),
-            };
-            error!(
-                "{CONTEXT} Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}, \
-                 and {this_build}. This node stops before building block {}; upgrade snarkOS before then.",
-                required.consensus_version, required.height, required.height
-            );
-        }
+        self.upgrade_monitor.update(&committee, &connected, next_height);
     }
 
     /// Returns an error unless this build may build the block at `height`.
@@ -1762,23 +1740,6 @@ impl<N: Network> Handshake for Gateway<N> {
     }
 }
 
-/// Returns a reason to reject a peer whose event version requires a trailer with a schedule, if it
-/// sent none or a malformed one.
-fn verify_trailer<N: Network>(
-    peer_addr: SocketAddr,
-    peer_info: &PeerInfo<N>,
-    peer_trailer: &HandshakeTrailer,
-) -> Option<DisconnectReason> {
-    if peer_info.version >= HandshakeTrailer::FIRST_VERSION && peer_trailer.schedule.is_none() {
-        warn!(
-            "{CONTEXT} Handshake with '{peer_addr}' failed (version {} sent no consensus schedule)",
-            peer_info.version
-        );
-        return Some(DisconnectReason::ProtocolViolation);
-    }
-    None
-}
-
 /// Logs where the consensus schedule of the validator at `addr` differs from this build's.
 fn log_schedule_difference<N: Network>(addr: SocketAddr, peer_schedule: Option<&ConsensusSchedule>) {
     let Some(peer_schedule) = peer_schedule else {
@@ -1786,13 +1747,12 @@ fn log_schedule_difference<N: Network>(addr: SocketAddr, peer_schedule: Option<&
     };
     let ours = ConsensusSchedule::of::<N>();
     let (ours, theirs) = (ours.heights(), peer_schedule.heights());
-    let height_of = |heights: &[u32], index: usize| match heights.get(index) {
-        Some(height) if *height != u32::MAX => height.to_string(),
-        _ => "never".to_string(),
-    };
+    // A version missing from a schedule is not scheduled, like one at `u32::MAX`.
+    let at = |heights: &[u32], index: usize| heights.get(index).copied().unwrap_or(u32::MAX);
+    let show = |height: u32| if height == u32::MAX { "never".to_string() } else { height.to_string() };
     let differences: Vec<_> = (0..ours.len().max(theirs.len()))
-        .filter(|index| ours.get(*index).unwrap_or(&u32::MAX) != theirs.get(*index).unwrap_or(&u32::MAX))
-        .map(|index| format!("V{} at {} (this build: {})", index + 1, height_of(theirs, index), height_of(ours, index)))
+        .filter(|index| at(ours, *index) != at(theirs, *index))
+        .map(|index| format!("V{} at {} (this build: {})", index + 1, show(at(theirs, index)), show(at(ours, index))))
         .collect();
     if !differences.is_empty() {
         info!("{CONTEXT} Validator '{addr}' schedules {}", differences.join(", "));
@@ -1903,10 +1863,7 @@ impl<N: Network> Gateway<N> {
         let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);
 
         // Check the peer over before signing anything for it.
-        if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, restrictions_id) {
-            return Err(reason.into_connect_error(peer_addr));
-        }
-        if let Some(reason) = verify_trailer(peer_addr, &peer_info, &peer_trailer) {
+        if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, &peer_trailer, restrictions_id) {
             return Err(reason.into_connect_error(peer_addr));
         }
 
@@ -2040,10 +1997,7 @@ impl<N: Network> Gateway<N> {
 
         // Everything below is a lookup or a comparison; only once all of it passes is the peer
         // worth the cost of a signature verification.
-        if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, restrictions_id) {
-            return self.reject_noise_handshake(peer_addr, noise, reason).await;
-        }
-        if let Some(reason) = verify_trailer(peer_addr, &peer_info, &peer_trailer) {
+        if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, &peer_trailer, restrictions_id) {
             return self.reject_noise_handshake(peer_addr, noise, reason).await;
         }
 
@@ -2087,9 +2041,20 @@ impl<N: Network> Gateway<N> {
         &self,
         peer_addr: SocketAddr,
         info: &PeerInfo<N>,
+        trailer: &HandshakeTrailer,
         expected_restrictions_id: Field<N>,
     ) -> Option<DisconnectReason> {
         log_repo_sha_comparison(peer_addr, &info.snarkos_sha, CONTEXT);
+
+        // A peer at a version that requires a schedule and sent none, or a malformed one, is not read
+        // as a peer that predates it.
+        if info.version >= HandshakeTrailer::FIRST_VERSION && trailer.schedule.is_none() {
+            warn!(
+                "{CONTEXT} Handshake with '{peer_addr}' failed (version {} sent no consensus schedule)",
+                info.version
+            );
+            return Some(DisconnectReason::ProtocolViolation);
+        }
 
         // Verify the restrictions ID. This is the only check here that the cleartext hint cannot
         // carry, as the peer would simply state the expected value; it is left to this point.
