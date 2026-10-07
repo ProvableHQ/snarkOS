@@ -871,7 +871,7 @@ impl<N: Network> Gateway<N> {
                 let PrimaryPing { version, block_locators, primary_certificate } = ping;
 
                 // Ensure the event version is not outdated.
-                if version < Event::<N>::VERSION {
+                if version < Event::<N>::MINIMUM_VERSION {
                     bail!("Dropping '{peer_ip}' on event version {version} (outdated)");
                 }
 
@@ -1762,6 +1762,23 @@ impl<N: Network> Handshake for Gateway<N> {
     }
 }
 
+/// Returns a reason to reject a peer whose event version requires a trailer with a schedule, if it
+/// sent none or a malformed one.
+fn verify_trailer<N: Network>(
+    peer_addr: SocketAddr,
+    peer_info: &PeerInfo<N>,
+    peer_trailer: &HandshakeTrailer,
+) -> Option<DisconnectReason> {
+    if peer_info.version >= HandshakeTrailer::FIRST_VERSION && peer_trailer.schedule.is_none() {
+        warn!(
+            "{CONTEXT} Handshake with '{peer_addr}' failed (version {} sent no consensus schedule)",
+            peer_info.version
+        );
+        return Some(DisconnectReason::ProtocolViolation);
+    }
+    None
+}
+
 /// Logs where the consensus schedule of the validator at `addr` differs from this build's.
 fn log_schedule_difference<N: Network>(addr: SocketAddr, peer_schedule: Option<&ConsensusSchedule>) {
     let Some(peer_schedule) = peer_schedule else {
@@ -1887,6 +1904,9 @@ impl<N: Network> Gateway<N> {
 
         // Check the peer over before signing anything for it.
         if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, restrictions_id) {
+            return Err(reason.into_connect_error(peer_addr));
+        }
+        if let Some(reason) = verify_trailer(peer_addr, &peer_info, &peer_trailer) {
             return Err(reason.into_connect_error(peer_addr));
         }
 
@@ -2023,6 +2043,9 @@ impl<N: Network> Gateway<N> {
         if let Some(reason) = self.verify_peer_info(peer_addr, &peer_info, restrictions_id) {
             return self.reject_noise_handshake(peer_addr, noise, reason).await;
         }
+        if let Some(reason) = verify_trailer(peer_addr, &peer_info, &peer_trailer) {
+            return self.reject_noise_handshake(peer_addr, noise, reason).await;
+        }
 
         /* Message 4: having checked the peer over, verify its proof and produce our own. */
 
@@ -2112,7 +2135,7 @@ impl<N: Network> Gateway<N> {
         let listener_addr = SocketAddr::new(peer_addr.ip(), listener_port);
 
         // Ensure the event protocol version is not outdated.
-        if version < Event::<N>::VERSION {
+        if version < Event::<N>::MINIMUM_VERSION {
             return Some(DisconnectReason::OutdatedClientVersion);
         }
         // If the node is in trusted peers only mode, ensure the peer is trusted.

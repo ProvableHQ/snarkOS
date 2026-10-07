@@ -23,6 +23,7 @@ use snarkos_account::Account;
 use snarkos_node::{
     BootstrapClient,
     bft::events::{
+        ConsensusSchedule,
         DisconnectReason,
         Event,
         HANDSHAKE_DOMAIN,
@@ -30,6 +31,7 @@ use snarkos_node::{
         HandshakeTrailer,
         InitiatorInfo,
         PeerInfo,
+        ResponderInfo,
         ResponderProof,
     },
     network::{
@@ -79,7 +81,10 @@ async fn handshake_with(
     let Ok(peer_info) = noise.recv().await else {
         return Ok(None);
     };
-    let peer_info = PeerInfo::<CurrentNetwork>::from_bytes_le(&peer_info).unwrap();
+    let ResponderInfo { info: peer_info, trailer } =
+        ResponderInfo::<CurrentNetwork>::from_bytes_le(&peer_info).unwrap();
+    // A validator at the current event version rejects a client that does not disclose its schedule.
+    assert_eq!(trailer.schedule, Some(ConsensusSchedule::of::<CurrentNetwork>()));
 
     // Message 3: our metadata and the proof of our identity.
     let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);

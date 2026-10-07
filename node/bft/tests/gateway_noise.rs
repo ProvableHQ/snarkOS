@@ -223,22 +223,24 @@ async fn handshake_with_gateway(
     listener_port: u16,
     sign: impl Fn(&[u8]) -> Vec<u8>,
 ) -> io::Result<(ResponderProof<CurrentNetwork>, TcpStream)> {
-    handshake_with_gateway_sending(gateway_addr, account, listener_port, HandshakeTrailer::default(), sign).await
+    let version = Event::<CurrentNetwork>::VERSION;
+    let trailer = HandshakeTrailer::of::<CurrentNetwork>();
+    handshake_with_gateway_sending(gateway_addr, account, listener_port, version, trailer, sign).await
 }
 
-/// Drives a Noise handshake like [`handshake_with_gateway`], sending `trailer` in the third message.
+/// Drives a Noise handshake like [`handshake_with_gateway`], announcing the event `version` and
+/// sending `trailer` in the third message.
 async fn handshake_with_gateway_sending(
     gateway_addr: SocketAddr,
     account: &Account<CurrentNetwork>,
     listener_port: u16,
+    version: u32,
     trailer: HandshakeTrailer,
     sign: impl Fn(&[u8]) -> Vec<u8>,
 ) -> io::Result<(ResponderProof<CurrentNetwork>, TcpStream)> {
     let mut stream = TcpStream::connect(gateway_addr).await?;
     write_noise_magic(&mut stream).await?;
     let mut noise = NoiseSession::new(stream, Role::Initiator)?;
-
-    let version = snarkos_node_bft_events::Event::<CurrentNetwork>::VERSION;
 
     // Message 1: the cleartext hint.
     let hint = HandshakeHint { version, listener_port, address: account.address() };
@@ -249,7 +251,8 @@ async fn handshake_with_gateway_sending(
 
     // Message 3: our metadata, and whatever `sign` decides to offer as proof.
     let binding = binding_message(HANDSHAKE_DOMAIN, Role::Initiator, &noise.handshake_hash()?);
-    let our_info = PeerInfo::new(listener_port, account.address(), peer_info.restrictions_id, None);
+    let mut our_info = PeerInfo::new(listener_port, account.address(), peer_info.restrictions_id, None);
+    our_info.version = version;
     let our_message = InitiatorInfo { info: our_info, signature: Data::Buffer(sign(&binding).into()), trailer };
     noise.send(&our_message.to_bytes_le().unwrap()).await?;
 
@@ -391,8 +394,7 @@ async fn the_responder_discloses_its_consensus_schedule() {
     assert_eq!(responder_info.trailer.schedule, Some(ConsensusSchedule::of::<CurrentNetwork>()));
 }
 
-/// A peer that sends its consensus schedule is accepted, as is one that predates it (see
-/// [`handshake_with_gateway`]).
+/// A peer at the current event version that sends its consensus schedule is accepted.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_initiator_that_discloses_its_consensus_schedule_is_accepted() {
     let mut rng = TestRng::default();
@@ -402,8 +404,16 @@ async fn an_initiator_that_discloses_its_consensus_schedule_is_accepted() {
     let signer = peer.clone();
     let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
     let trailer = HandshakeTrailer::of::<CurrentNetwork>();
-    let (verdict, _stream) =
-        handshake_with_gateway_sending(dial_addr(&gateways[0]), &peer, 4142, trailer, sign).await.unwrap();
+    let (verdict, _stream) = handshake_with_gateway_sending(
+        dial_addr(&gateways[0]),
+        &peer,
+        4142,
+        Event::<CurrentNetwork>::VERSION,
+        trailer,
+        sign,
+    )
+    .await
+    .unwrap();
     assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
 
     let (gateway, address) = (gateways[0].clone(), peer.address());
@@ -426,12 +436,71 @@ async fn the_gateway_weighs_the_schedule_of_an_initiator() {
 
     let signer = peer.clone();
     let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
-    let (verdict, _stream) =
-        handshake_with_gateway_sending(dial_addr(&gateway), &peer, 4143, trailer, sign).await.unwrap();
+    let (verdict, _stream) = handshake_with_gateway_sending(
+        dial_addr(&gateway),
+        &peer,
+        4143,
+        Event::<CurrentNetwork>::VERSION,
+        trailer,
+        sign,
+    )
+    .await
+    .unwrap();
     assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
     let (gateway_, address) = (gateway.clone(), peer.address());
     deadline!(Duration::from_secs(5), move || gateway_.connected_addresses().contains(&address));
 
     assert!(gateway.ensure_block_may_be_built(height - 1).is_ok());
     assert!(gateway.ensure_block_may_be_built(height).is_err());
+}
+
+/// A peer at an event version that predates the schedule is accepted without one.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_initiator_that_predates_the_consensus_schedule_is_accepted_without_one() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let peer = accounts[1].clone();
+
+    let signer = peer.clone();
+    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let version = HandshakeTrailer::FIRST_VERSION - 1;
+    let (verdict, _stream) = handshake_with_gateway_sending(
+        dial_addr(&gateways[0]),
+        &peer,
+        4144,
+        version,
+        HandshakeTrailer::default(),
+        sign,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(verdict, ResponderProof::Accepted { .. }), "the handshake should have been accepted");
+
+    let (gateway, address) = (gateways[0].clone(), peer.address());
+    deadline!(Duration::from_secs(5), move || gateway.connected_addresses().contains(&address));
+}
+
+/// A peer at an event version that requires the schedule is rejected without one, rather than read
+/// as a peer that predates it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_initiator_that_owes_a_consensus_schedule_is_rejected_without_one() {
+    let mut rng = TestRng::default();
+    let (accounts, gateways) = new_test_gateways(1, &mut rng).await;
+    let peer = accounts[1].clone();
+
+    let signer = peer.clone();
+    let sign = move |binding: &[u8]| signer.sign_bytes(binding, &mut rand::rng()).unwrap().to_bytes_le().unwrap();
+    let version = HandshakeTrailer::FIRST_VERSION;
+    let (verdict, _stream) = handshake_with_gateway_sending(
+        dial_addr(&gateways[0]),
+        &peer,
+        4145,
+        version,
+        HandshakeTrailer::default(),
+        sign,
+    )
+    .await
+    .unwrap();
+    assert_eq!(verdict, ResponderProof::Rejected { reason: DisconnectReason::ProtocolViolation });
+    assert!(!gateways[0].connected_addresses().contains(&peer.address()));
 }

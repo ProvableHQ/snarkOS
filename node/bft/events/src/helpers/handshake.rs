@@ -251,6 +251,9 @@ pub struct HandshakeTrailer {
 }
 
 impl HandshakeTrailer {
+    /// The first event version whose handshake messages 2 and 3 must carry a trailer with a schedule.
+    pub const FIRST_VERSION: u32 = 11;
+
     /// Returns the trailer that this build sends.
     pub fn of<N: Network>() -> Self {
         Self { schedule: Some(ConsensusSchedule::of::<N>()) }
