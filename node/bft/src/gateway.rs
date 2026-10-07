@@ -493,7 +493,7 @@ impl<N: Network> Gateway<N> {
                 None => "this build does not schedule it".to_string(),
             };
             error!(
-                "{CONTEXT} Validators holding more than a third of the stake run ConsensusVersion::V{} from height {}, \
+                "{CONTEXT} Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}, \
                  and {this_build}. This node stops before building block {}; upgrade snarkOS before then.",
                 required.consensus_version, required.height, required.height
             );

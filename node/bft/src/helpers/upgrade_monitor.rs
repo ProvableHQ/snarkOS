@@ -308,7 +308,8 @@ impl<N: Network> UpgradeMonitor<N> {
     ) -> Result<()> {
         if let UpgradeStatus::Required(required) = self.update(committee, connected, height) {
             bail!(
-                "Validators run ConsensusVersion::V{} from height {}, which this build lacks",
+                "Validators holding at least a third of the stake run ConsensusVersion::V{} from height {}, which \
+                 this build lacks",
                 required.consensus_version,
                 required.height
             );
