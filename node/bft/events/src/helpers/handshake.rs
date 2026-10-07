@@ -245,6 +245,10 @@ impl FromBytes for ConsensusSchedule {
 /// peers that only know the earlier ones. A missing or malformed trailer decodes as one without
 /// fields. That is only acceptable from a peer below [`Self::FIRST_VERSION`]; the gateway rejects a
 /// peer at or above it that sends no schedule.
+///
+/// The responder's trailer, in message 2, is covered by the responder's signature. The initiator's
+/// trailer, in message 3, is not covered by the initiator's signature, which is made before that
+/// message; the AEAD of the Noise session binds it, like the rest of message 3.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandshakeTrailer {
     /// The consensus schedule of the sender's build.

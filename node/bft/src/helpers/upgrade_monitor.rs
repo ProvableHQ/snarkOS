@@ -299,9 +299,11 @@ impl<N: Network> UpgradeMonitor<N> {
             }
             None => UpgradeStatus::Clear,
         };
-        self.status.send_if_modified(|current| std::mem::replace(current, status) != status);
-        #[cfg(feature = "metrics")]
-        Self::publish_metrics(status);
+        // The metrics start at the values of `Clear`, so they only change with the status.
+        if self.status.send_if_modified(|current| std::mem::replace(current, status) != status) {
+            #[cfg(feature = "metrics")]
+            Self::publish_metrics(status);
+        }
         status
     }
 
