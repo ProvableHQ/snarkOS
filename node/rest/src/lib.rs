@@ -68,6 +68,7 @@ use tokio::{
 };
 use tower_governor::{GovernorError, GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
+    compression::CompressionLayer,
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
@@ -486,8 +487,8 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let v2_router =
             axum::Router::new().nest(&format!("/{API_VERSION_V2}/{}", N::SHORT_NAME), self.build_routes(rest_rps));
 
-        // Combine all routes.
-        default_router.merge(v1_router).merge(v2_router)
+        // The v1 error middleware reads and converts response bodies before compression.
+        default_router.merge(v1_router).merge(v2_router).layer(CompressionLayer::new())
     }
 
     async fn spawn_server(&mut self, rest_ip: SocketAddr, rest_rps: u32) -> Result<()> {
