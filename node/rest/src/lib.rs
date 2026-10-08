@@ -49,7 +49,7 @@ use axum::{
     http::{Method, Request, StatusCode, header::CONTENT_TYPE},
     middleware,
     response::Response,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use axum_extra::response::ErasedJson;
 #[cfg(feature = "locktick")]
@@ -301,7 +301,9 @@ impl<N: Network, C: ConsensusStorage<N>, R: Routing<N>> Rest<N, C, R> {
         let auth_routes = axum::Router::new()
             .route("/node/address", get(Self::get_node_address))
             .route("/program/{id}/mapping/{name}", get(Self::get_mapping_values))
-            .route("/db_backup", post(Self::db_backup));
+            .route("/db_backup", post(Self::db_backup))
+            .route("/slipstream/plugins", get(Self::slipstream_list_plugins).post(Self::slipstream_load_plugin))
+            .route("/slipstream/plugins/{name}", delete(Self::slipstream_unload_plugin));
 
         let routes = axum::Router::new()
             .merge(auth_routes.route_layer(middleware::from_fn(auth_middleware)))

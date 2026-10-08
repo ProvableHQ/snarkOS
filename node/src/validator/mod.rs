@@ -56,7 +56,7 @@ use core::future::Future;
 use locktick::parking_lot::Mutex;
 #[cfg(not(feature = "locktick"))]
 use parking_lot::Mutex;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
 /// A validator is a full node, capable of validating blocks.
@@ -88,6 +88,7 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
         history_json: bool,
+        slipstream_configs: &[PathBuf],
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         trusted_validators: &[SocketAddr],
@@ -126,6 +127,17 @@ impl<N: Network, C: ConsensusStorage<N>> Validator<N, C> {
         // Later blocks finalized by this node are written as JSON beside the ledger.
         if history_json {
             ledger.vm().finalize_store().set_record_history_json(true);
+        }
+        // Plugin configs enable the stream of mapping updates, staking rewards, and committed blocks.
+        if !slipstream_configs.is_empty() {
+            let manager =
+                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(slipstream_configs)
+                    .context("Failed to initialize the Slipstream plugin manager")?;
+            let finalize_store = ledger.vm().finalize_store();
+            finalize_store.set_slipstream_plugin_manager(manager);
+            finalize_store.set_slipstream(true);
+            let num_plugins = slipstream_configs.len();
+            info!(target: "slipstream", "Slipstream is enabled ({num_plugins} plugin(s))");
         }
 
         // If snarkVM picked the start round itself (no CLI flag and no persisted file),
@@ -511,6 +523,11 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Validator<N, C> {
         // Shut down the node.
         trace!("Shutting down the node...");
 
+        // Flush plugin state before the rest of the node stops.
+        if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
+            manager.unload();
+        }
+
         // Shut down the REST instance.
         if let Some(rest) = &self.rest {
             trace!("Shutting down the REST server...");
@@ -580,6 +597,7 @@ mod tests {
             RestVerificationLimits::max::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>(),
             None,
             false,
+            &[],
             account,
             &[],
             &[],

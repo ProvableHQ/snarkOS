@@ -46,4 +46,8 @@ deny = []
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = ["https://github.com/ProvableHQ/snarkVM"]
+allow-git = [
+  "https://github.com/ProvableHQ/snarkVM",
+  # Drop this entry when ProvableHQ/snarkVM#3508 is merged and the pin returns to that repository.
+  "https://github.com/vicsn/snarkVM",
+]

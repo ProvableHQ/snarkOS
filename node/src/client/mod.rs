@@ -61,6 +61,7 @@ use parking_lot::Mutex;
 use std::{
     net::SocketAddr,
     num::NonZeroUsize,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{
@@ -139,6 +140,7 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         rest_verification_limits: RestVerificationLimits,
         history_api_url: Option<String>,
         history_json: bool,
+        slipstream_configs: &[PathBuf],
         account: Account<N>,
         trusted_peers: &[SocketAddr],
         genesis: Block<N>,
@@ -161,6 +163,17 @@ impl<N: Network, C: ConsensusStorage<N>> Client<N, C> {
         // Later blocks finalized by this node are written as JSON beside the ledger.
         if history_json {
             ledger.vm().finalize_store().set_record_history_json(true);
+        }
+        // Plugin configs enable the stream of mapping updates, staking rewards, and committed blocks.
+        if !slipstream_configs.is_empty() {
+            let manager =
+                snarkvm::slipstream_plugin_manager::SlipstreamPluginManager::from_config_files(slipstream_configs)
+                    .context("Failed to initialize the Slipstream plugin manager")?;
+            let finalize_store = ledger.vm().finalize_store();
+            finalize_store.set_slipstream_plugin_manager(manager);
+            finalize_store.set_slipstream(true);
+            let num_plugins = slipstream_configs.len();
+            info!(target: "slipstream", "Slipstream is enabled ({num_plugins} plugin(s))");
         }
 
         // Initialize the ledger service.
@@ -561,6 +574,11 @@ impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Client<N, C> {
 
         // Shut down the node.
         trace!("Shutting down the node...");
+
+        // Flush plugin state before the rest of the node stops.
+        if let Some(manager) = self.ledger.vm().finalize_store().slipstream_plugin_manager().write().as_mut() {
+            manager.unload();
+        }
 
         // Shut down the REST instance.
         if let Some(rest) = &self.rest {

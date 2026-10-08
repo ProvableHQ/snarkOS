@@ -253,6 +253,13 @@ pub struct Start {
     #[clap(long, conflicts_with = "history_compat_mode")]
     pub history_json: bool,
 
+    /// Paths to Slipstream plugin config files (JSON5). May be repeated.
+    ///
+    /// When at least one path is set, a client or a validator loads those plugins and streams
+    /// mapping updates, staking rewards, and committed blocks.
+    #[clap(long = "slipstream-config", value_name = "PATH")]
+    pub slipstream_configs: Vec<PathBuf>,
+
     /// Specify the JWT secret for the REST server (16B, base64-encoded).
     #[clap(long, group = "jwt_flags")]
     pub jwt_secret: Option<String>,
@@ -962,6 +969,13 @@ impl Start {
         if self.history_json {
             println!("Indexing credits.aleo history as JSON");
         }
+        // Slipstream streams canonical state from a client or validator.
+        if !self.slipstream_configs.is_empty() && !matches!(node_type, NodeType::Client | NodeType::Validator) {
+            bail!("`--slipstream-config` streams canonical state and is only supported on a client or validator");
+        }
+        if !self.slipstream_configs.is_empty() {
+            println!("Streaming mappings, staking rewards, and blocks through Slipstream");
+        }
 
         // Determine the historical API to serve the `history` routes from, if in compatibility mode.
         let history_api_url = self.parse_history_api_url::<N>()?;
@@ -985,9 +999,9 @@ impl Start {
 
         // Initialize the node.
         let node = match node_type {
-            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), self.history_json, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, dev_hotswap_config, signal_handler.clone()).await,
+            NodeType::Validator => Node::new_validator(node_ip, self.bft, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), self.history_json, &self.slipstream_configs, account, &trusted_peers, &trusted_validators, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), dev_txs, self.dev, dev_hotswap_config, signal_handler.clone()).await,
             NodeType::Prover => Node::new_prover(node_ip, account, &trusted_peers, genesis, node_data_dir, self.trusted_peers_only, self.dev, signal_handler.clone()).await,
-            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), self.history_json, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
+            NodeType::Client => Node::new_client(node_ip, rest_ip, self.rest_rps, rest_verification_limits, history_api_url.clone(), self.history_json, &self.slipstream_configs, account, &trusted_peers, genesis, cdn, storage_mode, node_data_dir, self.trusted_peers_only, self.auto_db_checkpoints.clone(), self.dev, signal_handler.clone()).await,
             NodeType::BootstrapClient => Node::new_bootstrap_client(node_ip, account, *genesis.header(), self.dev).await,
         }?;
 
