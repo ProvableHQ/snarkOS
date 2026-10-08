@@ -154,16 +154,17 @@ function expect_outdated_exit() {
 function expect_rejoin() {
   local run=$1
   local log_file=$2
-  local height
+  # Not `height`, which `check_heights` in utils.sh assigns without declaring it local.
+  local rejoin_height
   start_validator "$outdated_validator" "$upgraded_heights" "$log_file"
-  height=$(( $(get_block_height_by_port "$upgraded_port" "$network_name" 5) + 10 ))
-  if ! wait_for_heights "$outdated_validator" "$total_validators" "$height" "$network_name" 900 5; then
-    fail "The validator did not reach height $height ($run)"
+  rejoin_height=$(( $(get_block_height_by_port "$upgraded_port" "$network_name" 5) + 10 ))
+  if ! wait_for_heights "$outdated_validator" "$total_validators" "$rejoin_height" "$network_name" 900 5; then
+    fail "The validator did not reach height $rejoin_height ($run)"
   fi
   if [[ -f "$record_file" ]]; then
     fail "The validator kept the record ($run)"
   fi
-  check_no_fork "$height" "$(block_hash "$outdated_port" "$height")"
+  check_no_fork "$rejoin_height" "$(block_hash "$outdated_port" "$rejoin_height")"
 }
 
 for validator_index in $(seq 0 $((total_validators-1))); do
