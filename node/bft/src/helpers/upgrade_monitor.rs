@@ -37,6 +37,10 @@ use tokio::sync::watch;
 /// How often the monitor asks for a scheduled upgrade to be logged.
 const WARNING_INTERVAL: Duration = Duration::from_secs(600);
 
+/// How many blocks before the activation height of a required upgrade this build stops building
+/// blocks, so that an error of a few blocks in the stop cannot reach the activation height.
+pub const REQUIRED_UPGRADE_SAFETY_MARGIN: u32 = 100;
+
 /// A consensus version that validators holding the availability threshold of stake activate at a
 /// height where this build schedules an older one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +57,12 @@ impl ToBytes for RequiredUpgrade {
 }
 
 impl RequiredUpgrade {
+    /// Returns the height of the first block that this build does not build,
+    /// [`REQUIRED_UPGRADE_SAFETY_MARGIN`] blocks before the activation height.
+    pub fn stop_height(&self) -> u32 {
+        self.height.saturating_sub(REQUIRED_UPGRADE_SAFETY_MARGIN)
+    }
+
     /// Writes the record of this required upgrade to `path`.
     ///
     /// The record is written to a temporary file next to `path` and then renamed, so that a crash
@@ -155,9 +165,10 @@ impl Steps {
 pub enum UpgradeStatus {
     /// No upgrade is required.
     Clear,
-    /// An upgrade is required before the next block to build.
+    /// An upgrade is required, and its stop height is beyond the next block to build.
     Scheduled(RequiredUpgrade),
-    /// An upgrade is required at or before the next block to build. Once set, it never changes.
+    /// An upgrade is required, and the next block to build is at or past its stop height. Once set,
+    /// it never changes.
     Required(RequiredUpgrade),
 }
 
@@ -215,7 +226,7 @@ impl<N: Network> UpgradeMonitor<N> {
     /// Initializes the monitor of the validator at `address` from the record at `record_path`.
     ///
     /// A record of an upgrade that this build schedules is removed. Any other record, including one
-    /// that cannot be read, holds back the blocks at and above its height until connected validators
+    /// that cannot be read, holds back the blocks from its stop height until connected validators
     /// refute it.
     pub fn new(address: Address<N>, record_path: PathBuf) -> Self {
         let own = Steps::new(&ConsensusSchedule::of::<N>());
@@ -292,7 +303,7 @@ impl<N: Network> UpgradeMonitor<N> {
         }
 
         let status = match self.required_upgrade(state, committee) {
-            Some(required) if required.height <= next_height => UpgradeStatus::Required(required),
+            Some(required) if required.stop_height() <= next_height => UpgradeStatus::Required(required),
             Some(required) => {
                 self.warn_of(state, required);
                 UpgradeStatus::Scheduled(required)
@@ -323,7 +334,7 @@ impl<N: Network> UpgradeMonitor<N> {
     /// either:
     /// - that height is the first at which a committee member's schedule runs a newer version than
     ///   this build's, or
-    /// - a record claims a newer version at or below that height.
+    /// - a record's stop height is at or below that height.
     ///
     /// Connected validators that disclosed no schedule count as not ahead. A member's schedule
     /// counts at one height only, so that a faulty member holds back at most one block per
@@ -341,7 +352,7 @@ impl<N: Network> UpgradeMonitor<N> {
             return Err(BlockHeldBack(format!("{required}, which this build lacks")).into());
         }
 
-        let is_claimed = state.recorded.is_some_and(|recorded| recorded.height <= height)
+        let is_claimed = state.recorded.is_some_and(|recorded| recorded.stop_height() <= height)
             || state.schedules.iter().any(|(address, steps)| {
                 committee.get_stake(*address) > 0 && steps.first_ahead_of(&self.own) == Some(height)
             });
@@ -424,8 +435,9 @@ impl<N: Network> UpgradeMonitor<N> {
             None => "this build does not schedule it".to_string(),
         };
         error!(
-            "{required}, and {this_build}. This node stops before building block {}; upgrade snarkOS before then.",
-            required.height
+            "{required}, and {this_build}. This node stops before building block {}, {REQUIRED_UPGRADE_SAFETY_MARGIN} blocks before that \
+             height; upgrade snarkOS before then.",
+            required.stop_height()
         );
     }
 
@@ -598,7 +610,11 @@ mod tests {
     fn the_availability_threshold_schedules_an_upgrade() {
         let Fixture { committee, addresses, dir, monitor } = setup();
         two_ahead_at(&monitor, &addresses, H);
-        assert_eq!(monitor.update(&committee, &connected(&addresses), H - 1), UpgradeStatus::Scheduled(required(H)));
+        let before_stop = required(H).stop_height() - 1;
+        assert_eq!(
+            monitor.update(&committee, &connected(&addresses), before_stop),
+            UpgradeStatus::Scheduled(required(H))
+        );
         assert_eq!(dir.read(), None);
     }
 
@@ -650,13 +666,15 @@ mod tests {
     }
 
     #[test]
-    fn the_upgrade_is_required_at_its_height() {
+    fn the_upgrade_is_required_from_its_stop_height() {
         let Fixture { committee, addresses, dir: _dir, monitor } = setup();
         let receiver = monitor.subscribe();
         two_ahead_at(&monitor, &addresses, H);
+        let stop = required(H).stop_height();
+        assert_eq!(H - stop, REQUIRED_UPGRADE_SAFETY_MARGIN);
 
-        assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H - 1).is_ok());
-        let error = monitor.ensure_block_may_be_built(&committee, &connected(&addresses), H).unwrap_err();
+        assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses), stop - 1).is_ok());
+        let error = monitor.ensure_block_may_be_built(&committee, &connected(&addresses), stop).unwrap_err();
         // The BFT recognizes a held-back block through the context it adds.
         assert!(error.context("context").downcast_ref::<BlockHeldBack>().is_some());
         assert_eq!(*receiver.borrow(), UpgradeStatus::Required(required(H)));
@@ -775,19 +793,20 @@ mod tests {
     }
 
     #[test]
-    fn a_record_holds_back_blocks_from_its_height_until_refuted() {
+    fn a_record_holds_back_blocks_from_its_stop_height_until_refuted() {
         let (committee, addresses) = sample_committee();
         let dir = RecordDir::new();
         dir.write(&required(H).to_bytes_le().unwrap());
         let monitor = monitor(&addresses, &dir);
+        let stop = required(H).stop_height();
 
-        // Below the recorded height, blocks are built.
-        assert!(monitor.ensure_block_may_be_built(&committee, &HashSet::new(), H - 1).is_ok());
-        // At the recorded height, this validator alone holds less than a quorum.
-        assert!(monitor.ensure_block_may_be_built(&committee, &HashSet::new(), H).is_err());
+        // Below the stop height, blocks are built.
+        assert!(monitor.ensure_block_may_be_built(&committee, &HashSet::new(), stop - 1).is_ok());
+        // From the stop height, this validator alone holds less than a quorum.
+        assert!(monitor.ensure_block_may_be_built(&committee, &HashSet::new(), stop).is_err());
         // Two connected validators that are not ahead make a quorum with this one.
         monitor.record_schedule(addresses[0], Some(&own_schedule()));
-        assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses[..2]), H).is_ok());
+        assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses[..2]), stop).is_ok());
         assert_eq!(dir.read(), None);
     }
 

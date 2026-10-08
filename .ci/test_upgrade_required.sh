@@ -13,6 +13,9 @@ set -eo pipefail
 network_id=0
 total_validators=4
 activation_height=150
+# The outdated validator builds no block from REQUIRED_UPGRADE_SAFETY_MARGIN blocks before the activation.
+safety_margin=100
+stop_height=$((activation_height - safety_margin))
 target_height=180
 # The outdated validator is the last one, so that the upgraded ones form a contiguous range.
 outdated_validator=$((total_validators-1))
@@ -137,8 +140,8 @@ function expect_outdated_exit() {
   if [[ -z "$last_height" ]]; then
     fail "The outdated validator never reported its height ($run)"
   fi
-  if (( last_height > activation_height )); then
-    fail "The outdated validator reached height $last_height ($run)"
+  if (( last_height >= stop_height )); then
+    fail "The outdated validator reached height $last_height, at or past the stop height $stop_height ($run)"
   fi
   if [[ -n "$min_height" ]] && (( last_height < min_height )); then
     fail "The outdated validator stopped at height $last_height, before height $min_height ($run)"
@@ -177,9 +180,9 @@ done
 wait_for_nodes "$total_validators" 0 "$network_name" 180
 
 # The outdated validator warns as soon as it connects, and builds blocks until the activation height.
-expect_outdated_exit "first run" "$log_dir/validator-$outdated_validator.log" $((activation_height - 5))
-if [[ -z "$warned_height" ]] || (( warned_height > activation_height - 100 )); then
-  fail "The outdated validator first warned at height '$warned_height', not well before $activation_height"
+expect_outdated_exit "first run" "$log_dir/validator-$outdated_validator.log" $((stop_height - 5))
+if [[ -z "$warned_height" ]] || (( warned_height >= stop_height - 10 )); then
+  fail "The outdated validator first warned at height '$warned_height', not well before $stop_height"
 fi
 log "The outdated validator first warned at height $warned_height"
 if [[ -z "$reported_upgrade" ]]; then
