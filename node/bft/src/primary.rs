@@ -193,6 +193,9 @@ pub struct Primary<N: Network> {
     /// Used to wake up a the dedicated round-increment task, if we may be able to advance to the next round.
     /// This is used, so the timeout for round advancement is reset on every round increment.
     round_increment_notify: Arc<Notify>,
+
+    /// Factor applied to the batch spend limit while this primary builds a proposal.
+    proposal_spent_limit_multiplier: u64,
 }
 
 impl<N: Network> Primary<N> {
@@ -211,6 +214,7 @@ impl<N: Network> Primary<N> {
         trusted_peers_only: bool,
         node_data_dir: NodeDataDir,
         dev: Option<u16>,
+        proposal_spent_limit_multiplier: u64,
     ) -> Result<Self> {
         // Initialize the gateway.
         let gateway = Gateway::new(
@@ -243,6 +247,7 @@ impl<N: Network> Primary<N> {
             handles: Default::default(),
             proposal_task: Default::default(),
             round_increment_notify: Default::default(),
+            proposal_spent_limit_multiplier,
         })
     }
 
@@ -815,9 +820,11 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
 
                             // Check if the next proposal cost exceeds the batch proposal spend limit.
                             let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(block_height);
-                            if next_proposal_cost > batch_spend_limit {
+                            let proposal_spend_limit =
+                                batch_spend_limit.saturating_mul(self.proposal_spent_limit_multiplier);
+                            if next_proposal_cost > proposal_spend_limit {
                                 debug!(
-                                    "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {batch_spend_limit})",
+                                    "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {proposal_spend_limit})",
                                     fmt_id(transaction_id),
                                 );
 
@@ -2260,7 +2267,7 @@ mod tests {
         let account = accounts[account_index].1.clone();
         let block_sync = Arc::new(BlockSync::new(ledger.clone(), ConnectionMode::Gateway));
         let primary =
-            Primary::new(account, storage, ledger, block_sync, None, &[], false, NodeDataDir::new_test(None), None)
+            Primary::new(account, storage, ledger, block_sync, None, &[], false, NodeDataDir::new_test(None), None, 1)
                 .unwrap();
 
         // Construct a worker instance.
