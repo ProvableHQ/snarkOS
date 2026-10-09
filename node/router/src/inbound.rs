@@ -98,6 +98,9 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
 
         trace!("Received '{}' from '{peer_ip}'", message.name());
 
+        #[cfg(feature = "metrics")]
+        metrics::increment_counter_2(metrics::router::EVENTS, "direction", "inbound", "type", message.variant_name());
+
         // Update the last seen timestamp of the peer.
         self.router().update_last_seen_for_connected_peer(peer_ip);
 
@@ -191,13 +194,8 @@ pub trait Inbound<N: Network>: Reading + Outbound<N> {
                     bail!("Dropping '{peer_ip}' on message version {} (outdated)", message.version);
                 }
 
-                // If the peer is a client or validator, ensure there are block locators.
-                let is_client_or_validator = message.node_type.is_client() || message.node_type.is_validator();
-                if is_client_or_validator && message.block_locators.is_none() {
-                    bail!("Peer '{peer_ip}' is a {}, but no block locators were provided", message.node_type);
-                }
                 // If the peer is a prover, ensure there are no block locators.
-                else if message.node_type.is_prover() && message.block_locators.is_some() {
+                if message.node_type.is_prover() && message.block_locators.is_some() {
                     bail!("Peer '{peer_ip}' is a prover, but block locators were provided");
                 }
 

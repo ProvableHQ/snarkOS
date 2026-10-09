@@ -221,8 +221,6 @@ impl<R: Reading> ReadingInternal for R {
                             warn_about_dropped_messages(&conn_span, &mut dropped_count, &mut last_drop_log);
                             debug!(parent: &conn_span, "the inbound queue is no longer saturated");
                         }
-                        #[cfg(feature = "metrics")]
-                        metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
                     }
                     Some(Err(e)) => {
                         error!(parent: &conn_span, "can't read: {e}");
@@ -294,16 +292,19 @@ impl<D: Decoder> Decoder for CountingCodec<D> {
     }
 }
 
-/// Decrements the TCP_TASKS gauge on drop. Paired with each queued message so the gauge stays
-/// balanced whether the message is processed normally or discarded when the inbound channel is
-/// dropped (e.g. on connection abort). The caller must hold this guard until processing is
-/// complete; dropping it earlier will decrement the gauge prematurely.
+/// Maintains the [`metrics::tcp::QUEUED_INBOUND_MESSAGES`] gauge. Paired with each queued message
+/// so the gauge stays balanced whether the message is processed normally or discarded when the
+/// inbound channel is dropped (e.g. on connection abort). The caller must hold this guard until
+/// processing is complete; dropping it earlier will decrement the gauge prematurely.
+///
+/// This is the only thing that may touch the gauge: a second increment anywhere else makes it
+/// drift upward forever, since nothing else decrements it.
 struct QueuedMessageGuard;
 
 impl QueuedMessageGuard {
     fn new() -> Self {
         #[cfg(feature = "metrics")]
-        metrics::increment_gauge(metrics::tcp::TCP_TASKS, 1f64);
+        metrics::increment_gauge(metrics::tcp::QUEUED_INBOUND_MESSAGES, 1f64);
         Self
     }
 }
@@ -311,7 +312,7 @@ impl QueuedMessageGuard {
 impl Drop for QueuedMessageGuard {
     fn drop(&mut self) {
         #[cfg(feature = "metrics")]
-        metrics::decrement_gauge(metrics::tcp::TCP_TASKS, 1f64);
+        metrics::decrement_gauge(metrics::tcp::QUEUED_INBOUND_MESSAGES, 1f64);
     }
 }
 

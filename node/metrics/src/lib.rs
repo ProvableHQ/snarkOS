@@ -56,7 +56,27 @@ pub fn initialize_metrics(ip: Option<SocketAddr>) {
     // Note: this is `PrometheusBuilder::install` spelled out, so that the handle to the exporter
     // task can be retained. `install` spawns the task and immediately drops its handle, which
     // leaves the exporter running after the node has shut down; see `shut_down_metrics`.
-    let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
+    // Seconds-scale latency buckets, shared by all `*_secs` histograms (including `BLOCK_LAG`) plus
+    // `TRANSMISSION_LATENCY`.
+    // Unitless count buckets, for the `snarkos_bft_subdag_*` histograms.
+    //
+    // Note: these are first-pass boundaries, not yet tuned against production data.
+    const SECS_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 5.0, 10.0];
+    const COUNT_BUCKETS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0, 55.0, 89.0];
+
+    let builder = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .set_buckets_for_metric(metrics_exporter_prometheus::Matcher::Suffix("_secs".to_string()), SECS_BUCKETS)
+        .expect("can't set the seconds-scale histogram buckets")
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Full(consensus::TRANSMISSION_LATENCY.to_string()),
+            SECS_BUCKETS,
+        )
+        .expect("can't set the transmission latency histogram buckets")
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Prefix("snarkos_bft_subdag_".to_string()),
+            COUNT_BUCKETS,
+        )
+        .expect("can't set the subdag count histogram buckets");
     let (recorder, exporter) = if let Some(ip) = ip { builder.with_http_listener(ip) } else { builder }
         .build()
         .expect("can't build the prometheus exporter");
@@ -132,6 +152,9 @@ pub fn update_block_metrics<N: Network>(block: &Block<N>) {
     // Update aborted transactions and solutions.
     increment_gauge(blocks::ABORTED_TRANSACTIONS, block.aborted_transaction_ids().len() as f64);
     increment_gauge(blocks::ABORTED_SOLUTIONS, block.aborted_solution_ids().len() as f64);
+
+    // Update the active consensus version.
+    gauge(consensus::VERSION, N::CONSENSUS_VERSION(block.height()).map_or(0.0, |version| version as u16 as f64));
 }
 
 pub fn add_transmission_latency_metric<N: Network>(
@@ -200,6 +223,39 @@ pub fn add_transmission_latency_metric<N: Network>(
 
 pub fn gauge_label<V: Into<f64>>(name: &'static str, label_key: &'static str, label_value: String, value: V) {
     ::metrics::gauge!(name, label_key => label_value).set(value.into());
+}
+
+pub fn increment_counter_2(
+    name: &'static str,
+    key_a: &'static str,
+    value_a: impl Into<::metrics::SharedString>,
+    key_b: &'static str,
+    value_b: impl Into<::metrics::SharedString>,
+) {
+    ::metrics::counter!(name, key_a => value_a, key_b => value_b).increment(1);
+}
+
+pub fn increment_counter_3(
+    name: &'static str,
+    key_a: &'static str,
+    value_a: impl Into<::metrics::SharedString>,
+    key_b: &'static str,
+    value_b: impl Into<::metrics::SharedString>,
+    key_c: &'static str,
+    value_c: impl Into<::metrics::SharedString>,
+) {
+    ::metrics::counter!(name, key_a => value_a, key_b => value_b, key_c => value_c).increment(1);
+}
+
+pub fn histogram_2<V: Into<f64>>(
+    name: &'static str,
+    key_a: &'static str,
+    value_a: impl Into<::metrics::SharedString>,
+    key_b: &'static str,
+    value_b: impl Into<::metrics::SharedString>,
+    value: V,
+) {
+    ::metrics::histogram!(name, key_a => value_a, key_b => value_b).record(value.into());
 }
 
 // Include the generated build information

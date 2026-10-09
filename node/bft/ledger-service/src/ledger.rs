@@ -142,9 +142,16 @@ impl<'a, N: Network, C: ConsensusStorage<N>> LedgerUpdateService<N> for LedgerUp
 impl<N: Network, C: ConsensusStorage<N>> CoreLedgerService<N, C> {
     /// Initializes a new core ledger service.
     pub fn new(ledger: Ledger<N, C>, stoppable: Arc<dyn Stoppable>) -> Self {
-        // Initialize the block height metric.
+        // Initialize the block height and consensus version metrics.
         #[cfg(feature = "metrics")]
-        metrics::gauge(metrics::bft::HEIGHT, ledger.latest_block().height() as f64);
+        {
+            let height = ledger.latest_block().height();
+            metrics::gauge(metrics::bft::HEIGHT, height as f64);
+            metrics::gauge(
+                metrics::consensus::VERSION,
+                N::CONSENSUS_VERSION(height).map_or(0.0, |version| version as u16 as f64),
+            );
+        }
 
         Self { ledger, latest_leader: Default::default(), stoppable, update_lock: Default::default() }
     }
