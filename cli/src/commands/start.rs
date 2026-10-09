@@ -256,7 +256,7 @@ pub struct Start {
     /// Paths to Slipstream plugin config files (JSON5). May be repeated.
     ///
     /// When at least one path is set, a client or a validator loads those plugins and streams
-    /// mapping updates, staking rewards, and committed blocks.
+    /// mapping updates, mapping removals, staking rewards, and committed blocks.
     #[clap(long = "slipstream-config", value_name = "PATH")]
     pub slipstream_configs: Vec<PathBuf>,
 
@@ -974,7 +974,7 @@ impl Start {
             bail!("`--slipstream-config` streams canonical state and is only supported on a client or validator");
         }
         if !self.slipstream_configs.is_empty() {
-            println!("Streaming mappings, staking rewards, and blocks through Slipstream");
+            println!("Streaming mapping updates, mapping removals, staking rewards, and blocks through Slipstream");
         }
 
         // Determine the historical API to serve the `history` routes from, if in compatibility mode.

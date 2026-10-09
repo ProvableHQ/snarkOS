@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/vicsn/snarkVM.git"
-rev = "ca6478a24bac5f54c1f14f5023851fa732ad2f3f" # staging + slipstream runtime flag
+rev = "8e7b28608fbc61cd008d70ee16328e0e76de0a79" # staging + slipstream runtime flag
 #version = "=4.11.0"
 default-features = false
 

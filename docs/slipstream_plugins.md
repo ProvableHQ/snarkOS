@@ -7,6 +7,7 @@ compile-time feature is required.
 Plugins subscribe to:
 
 - **Mapping updates** — each key/value write during canonical finalize.
+- **Mapping removals** — a removed key, a key dropped by a mapping replacement, or a removed mapping. A removed mapping has no key. Removals for a replacement arrive before that replacement's updates.
 - **Staking rewards** — one event per current staker during canonical finalize.
 - **Blocks** — the little-endian encoding of a block, after that block is committed.
 
@@ -59,7 +60,9 @@ snarkos start --validator \
 
 ## Runtime Management via REST
 
-These routes require JWT authentication. Start the node with `--nojwt` to disable it.
+These routes require JWT authentication. `--nojwt` disables that authentication.
+
+Do not combine `--nojwt` with `--slipstream-config` when the REST port is reachable by anyone other than the operator. Without JWT, a caller who can place a config file and a shared library on the node can load that library into the node process.
 
 The routes return **503** when the node was started without `--slipstream-config`.
 
@@ -78,7 +81,7 @@ Content-Type: application/json
 { "config_file": "/path/to/plugin.json5" }
 ```
 
-Returns **422** when a plugin with that name is already loaded.
+Returns **422** when that plugin name or that library is already loaded. Two configs that resolve to the same library file count as the same library.
 
 ### Unload a plugin
 
