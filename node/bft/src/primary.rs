@@ -434,6 +434,77 @@ impl<N: Network> Primary<N> {
     }
 }
 
+/// Result of preparing one ready-queue transmission for a proposal.
+enum ProposalCandidate<N: Network> {
+    /// The transmission is left out of the proposal.
+    Skip,
+    /// The solution can be included.
+    Solution,
+    /// The transaction can be included when `cost` fits in the running proposal spend.
+    Transaction { transaction_id: N::TransactionID, cost: u64, block_height: u32 },
+}
+
+/// Returns whether one ready-queue transmission can be included in a proposal.
+async fn prepare_proposal_candidate<N: Network>(
+    ledger: Arc<dyn LedgerService<N>>,
+    id: TransmissionID<N>,
+    transmission: &Transmission<N>,
+) -> Result<ProposalCandidate<N>> {
+    match (id, transmission) {
+        (TransmissionID::Solution(solution_id, checksum), Transmission::Solution(solution)) => {
+            // Ensure the checksum matches. If not, skip the solution.
+            if !matches!(solution.to_checksum::<N>(), Ok(solution_checksum) if solution_checksum == checksum) {
+                trace!("Proposing - Skipping solution '{}' - Checksum mismatch", fmt_id(solution_id));
+                return Ok(ProposalCandidate::Skip);
+            }
+            // Check if the solution is still valid.
+            if let Err(e) = ledger.check_solution_basic(solution_id, solution.clone()).await {
+                trace!("Proposing - Skipping solution '{}' - {e}", fmt_id(solution_id));
+                return Ok(ProposalCandidate::Skip);
+            }
+            Ok(ProposalCandidate::Solution)
+        }
+        (TransmissionID::Transaction(transaction_id, checksum), Transmission::Transaction(transaction)) => {
+            let transaction_data = transaction.clone();
+            let ledger = Arc::clone(&ledger);
+            spawn_blocking!({
+                // Ensure the checksum matches. If not, skip the transaction.
+                if !matches!(transaction_data.to_checksum::<N>(), Ok(transaction_checksum) if transaction_checksum == checksum)
+                {
+                    trace!("Proposing - Skipping transaction '{}' - Checksum mismatch", fmt_id(transaction_id));
+                    return Ok(ProposalCandidate::Skip);
+                }
+
+                // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
+                // Object transmissions are already deserialized; a buffer is parsed here.
+                let transaction = deserialize_transaction_strict(transaction_data)?;
+
+                // Fetch the current block height and consensus version.
+                let block_height = ledger.latest_block_height();
+                let consensus_version = N::CONSENSUS_VERSION(block_height)?;
+
+                // Compute the transaction spent cost (in microcredits).
+                // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
+                match ledger.transaction_spend_in_microcredits(&transaction, consensus_version) {
+                    Ok(cost) => Ok(ProposalCandidate::Transaction { transaction_id, cost, block_height }),
+                    Err(_) => {
+                        debug!(
+                            "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
+                            fmt_id(transaction_id)
+                        );
+                        Ok(ProposalCandidate::Skip)
+                    }
+                }
+            })
+        }
+        // Note: We explicitly forbid including ratifications,
+        // as the protocol currently does not support ratifications.
+        (TransmissionID::Ratification, Transmission::Ratification) => Ok(ProposalCandidate::Skip),
+        // All other combinations are clearly invalid.
+        _ => Ok(ProposalCandidate::Skip),
+    }
+}
+
 #[async_trait::async_trait]
 impl<N: Network> proposal_task::BatchPropose for Primary<N> {
     fn current_round(&self) -> u64 {
@@ -640,121 +711,136 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         'outer: for worker in self.workers().iter() {
             let mut num_worker_transmissions = 0usize;
 
-            while let Some((id, transmission)) = worker.remove_front() {
+            loop {
                 // Check the selected transmissions are below the batch limit.
-                if transmissions.len() >= BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH {
-                    // Reinsert the transmission into the worker.
-                    worker.insert_front(id, transmission);
+                let batch_room = BatchHeader::<N>::MAX_TRANSMISSIONS_PER_BATCH.saturating_sub(transmissions.len());
+                if batch_room == 0 {
                     break 'outer;
                 }
 
                 // Check the max transmissions per worker is not exceeded.
-                if num_worker_transmissions >= Worker::<N>::MAX_TRANSMISSIONS_PER_WORKER {
-                    // Reinsert the transmission into the worker.
-                    worker.insert_front(id, transmission);
+                let worker_room = Worker::<N>::MAX_TRANSMISSIONS_PER_WORKER.saturating_sub(num_worker_transmissions);
+                if worker_room == 0 {
                     continue 'outer;
                 }
 
-                // Check if the ledger already contains the transmission.
-                if self.ledger.contains_transmission(&id).unwrap_or(true) {
-                    trace!("Proposing - Skipping transmission '{}' - Already in ledger", fmt_id(id));
-                    continue;
-                }
+                // Pull the next window. Ledger and storage rejects are dropped here; everything else is
+                // prepared concurrently, then included in queue order.
+                let window = batch_room.min(worker_room);
+                let mut candidates = Vec::with_capacity(window);
+                while candidates.len() < window {
+                    let Some((id, transmission)) = worker.remove_front() else {
+                        break;
+                    };
 
-                // Check if storage already knows the transmission, either way.
-                //
-                // This is the one place that wants both states: a transmission already in storage is
-                // already in the DAG, and an ID storage knows only as aborted was already decided by
-                // a block, so re-proposing it yields a certificate that storage cannot serve at
-                // commit time - the aborted marker answers the containment check, but
-                // `get_transmission` still has nothing to hand back. Both are skipped
-                // unconditionally - proposing an empty batch is valid, so there is no need to make
-                // an exception for the first transmission.
-                if self.storage.contains_retrievable_transmission(id) || self.storage.contains_aborted_transmission(id)
-                {
-                    trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
-                    continue;
-                }
-
-                // Check the transmission is still valid.
-                match (id, transmission.clone()) {
-                    (TransmissionID::Solution(solution_id, checksum), Transmission::Solution(solution)) => {
-                        // Ensure the checksum matches. If not, skip the solution.
-                        if !matches!(solution.to_checksum::<N>(), Ok(solution_checksum) if solution_checksum == checksum)
-                        {
-                            trace!("Proposing - Skipping solution '{}' - Checksum mismatch", fmt_id(solution_id));
-                            continue;
-                        }
-                        // Check if the solution is still valid.
-                        if let Err(e) = self.ledger.check_solution_basic(solution_id, solution).await {
-                            trace!("Proposing - Skipping solution '{}' - {e}", fmt_id(solution_id));
-                            continue;
-                        }
-                    }
-                    (TransmissionID::Transaction(transaction_id, checksum), Transmission::Transaction(transaction)) => {
-                        // Ensure the checksum matches. If not, skip the transaction.
-                        if !matches!(transaction.to_checksum::<N>(), Ok(transaction_checksum) if transaction_checksum == checksum )
-                        {
-                            trace!("Proposing - Skipping transaction '{}' - Checksum mismatch", fmt_id(transaction_id));
-                            continue;
-                        }
-
-                        // Deserialize the transaction. If the transaction exceeds the maximum size, then return an error.
-                        let transaction = spawn_blocking!(deserialize_transaction_strict(transaction))?;
-
-                        // Fetch the current block height and consensus version.
-                        let current_block_height = self.ledger.latest_block_height();
-                        let consensus_version = N::CONSENSUS_VERSION(current_block_height)?;
-
-                        // Compute the transaction spent cost (in microcredits).
-                        // Note: We purposefully discard this transaction if we are unable to compute the spent cost.
-                        let Ok(cost) = self.ledger.transaction_spend_in_microcredits(&transaction, consensus_version)
-                        else {
-                            debug!(
-                                "Proposing - Skipping and discarding transaction '{}' - Unable to compute transaction spent cost",
-                                fmt_id(transaction_id)
-                            );
-                            continue;
-                        };
-
-                        // Compute the next proposal cost.
-                        // Note: We purposefully discard this transaction if the proposal cost overflows.
-                        let Some(next_proposal_cost) = proposal_cost.checked_add(cost) else {
-                            debug!(
-                                "Proposing - Skipping and discarding transaction '{}' - Proposal cost overflowed",
-                                fmt_id(transaction_id)
-                            );
-                            continue;
-                        };
-
-                        // Check if the next proposal cost exceeds five times the batch proposal spend limit.
-                        let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(current_block_height);
-                        let proposal_spend_limit = batch_spend_limit.saturating_mul(5);
-                        if next_proposal_cost > proposal_spend_limit {
-                            debug!(
-                                "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {proposal_spend_limit})",
-                                fmt_id(transaction_id),
-                            );
-
-                            // Reinsert the transmission into the worker.
-                            worker.insert_front(id, transmission);
-                            break 'outer;
-                        }
-
-                        // Update the proposal cost.
-                        proposal_cost = next_proposal_cost;
+                    // Check if the ledger already contains the transmission.
+                    if self.ledger.contains_transmission(&id).unwrap_or(true) {
+                        trace!("Proposing - Skipping transmission '{}' - Already in ledger", fmt_id(id));
+                        continue;
                     }
 
-                    // Note: We explicitly forbid including ratifications,
-                    // as the protocol currently does not support ratifications.
-                    (TransmissionID::Ratification, Transmission::Ratification) => continue,
-                    // All other combinations are clearly invalid.
-                    _ => continue,
+                    // Check if storage already knows the transmission, either way.
+                    //
+                    // This is the one place that wants both states: a transmission already in storage is
+                    // already in the DAG, and an ID storage knows only as aborted was already decided by
+                    // a block, so re-proposing it yields a certificate that storage cannot serve at
+                    // commit time - the aborted marker answers the containment check, but
+                    // `get_transmission` still has nothing to hand back. Both are skipped
+                    // unconditionally - proposing an empty batch is valid, so there is no need to make
+                    // an exception for the first transmission.
+                    if self.storage.contains_retrievable_transmission(id)
+                        || self.storage.contains_aborted_transmission(id)
+                    {
+                        trace!("Proposing - Skipping transmission '{}' - Already in storage", fmt_id(id));
+                        continue;
+                    }
+
+                    candidates.push((id, transmission));
+                }
+                if candidates.is_empty() {
+                    break;
                 }
 
-                // If the transmission is valid, insert it into the proposal's transmission list.
-                transmissions.insert(id, transmission);
-                num_worker_transmissions = num_worker_transmissions.saturating_add(1);
+                let candidate_count = candidates.len();
+                let mut pending = FuturesUnordered::new();
+                for (index, (id, transmission)) in candidates.into_iter().enumerate() {
+                    let ledger = self.ledger.clone();
+                    pending.push(async move {
+                        let verdict = prepare_proposal_candidate(ledger, id, &transmission).await;
+                        (index, id, transmission, verdict)
+                    });
+                }
+                let mut ordered: Vec<Option<_>> = (0..candidate_count).map(|_| None).collect();
+                while let Some((index, id, transmission, verdict)) = pending.next().await {
+                    ordered[index] = Some((id, transmission, verdict));
+                }
+
+                let mut ordered =
+                    ordered.into_iter().map(|candidate| candidate.expect("every proposal candidate is prepared"));
+                let mut reinsert = Vec::new();
+                let mut reached_spend_limit = false;
+                while let Some((id, transmission, verdict)) = ordered.next() {
+                    if reached_spend_limit {
+                        reinsert.push((id, transmission));
+                        continue;
+                    }
+
+                    let verdict = match verdict {
+                        Ok(verdict) => verdict,
+                        Err(err) => {
+                            reinsert.extend(ordered.map(|(id, transmission, _)| (id, transmission)));
+                            for (id, transmission) in reinsert.into_iter().rev() {
+                                worker.insert_front(id, transmission);
+                            }
+                            return Err(err);
+                        }
+                    };
+
+                    match verdict {
+                        ProposalCandidate::Skip => {}
+                        ProposalCandidate::Solution => {
+                            transmissions.insert(id, transmission);
+                            num_worker_transmissions = num_worker_transmissions.saturating_add(1);
+                        }
+                        ProposalCandidate::Transaction { transaction_id, cost, block_height } => {
+                            // Compute the next proposal cost.
+                            // Note: We purposefully discard this transaction if the proposal cost overflows.
+                            let Some(next_proposal_cost) = proposal_cost.checked_add(cost) else {
+                                debug!(
+                                    "Proposing - Skipping and discarding transaction '{}' - Proposal cost overflowed",
+                                    fmt_id(transaction_id)
+                                );
+                                continue;
+                            };
+
+                            // Check if the next proposal cost exceeds five times the batch proposal spend limit.
+                            let proposal_spend_limit =
+                                BatchHeader::<N>::batch_spend_limit(block_height).saturating_mul(5);
+                            if next_proposal_cost > proposal_spend_limit {
+                                debug!(
+                                    "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {proposal_spend_limit})",
+                                    fmt_id(transaction_id),
+                                );
+
+                                // Reinsert this transmission and every transmission pulled after it.
+                                reinsert.push((id, transmission));
+                                reached_spend_limit = true;
+                                continue;
+                            }
+
+                            // Update the proposal cost.
+                            proposal_cost = next_proposal_cost;
+                            transmissions.insert(id, transmission);
+                            num_worker_transmissions = num_worker_transmissions.saturating_add(1);
+                        }
+                    }
+                }
+                if reached_spend_limit {
+                    for (id, transmission) in reinsert.into_iter().rev() {
+                        worker.insert_front(id, transmission);
+                    }
+                    break 'outer;
+                }
             }
         }
 
@@ -2611,7 +2697,10 @@ mod tests {
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
         primary.workers()[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
 
-        for _i in 0..5 {
+        // Each mock transaction spends one transaction spend limit. At this height the batch spend
+        // limit is 2.5 transaction spend limits, and a proposal accepts five times that, so 12
+        // transactions fit and the 13th stays in the worker.
+        for _i in 0..13 {
             let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
             // Store it on one of the workers.
             primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
@@ -2619,10 +2708,10 @@ mod tests {
 
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
-        // Expect 2/5 transactions to be included in the proposal in addition to the solution.
-        assert_eq!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().len(), 3);
+        // The solution plus 12 transactions.
+        assert_eq!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().len(), 13);
         // Check the transmissions were correctly drained from the workers.
-        assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 3);
+        assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 1);
     }
 
     #[test_log::test(tokio::test)]
