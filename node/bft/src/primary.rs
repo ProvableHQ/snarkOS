@@ -717,12 +717,6 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                             continue;
                         };
 
-                        // Check if the transaction is still valid.
-                        if let Err(e) = self.ledger.check_transaction_basic(transaction_id, transaction).await {
-                            trace!("Proposing - Skipping transaction '{}' - {e}", fmt_id(transaction_id));
-                            continue;
-                        }
-
                         // Compute the next proposal cost.
                         // Note: We purposefully discard this transaction if the proposal cost overflows.
                         let Some(next_proposal_cost) = proposal_cost.checked_add(cost) else {
