@@ -813,12 +813,11 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                                 continue;
                             };
 
-                            // Check if the next proposal cost exceeds five times the batch proposal spend limit.
-                            let proposal_spend_limit =
-                                BatchHeader::<N>::batch_spend_limit(block_height).saturating_mul(5);
-                            if next_proposal_cost > proposal_spend_limit {
+                            // Check if the next proposal cost exceeds the batch proposal spend limit.
+                            let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(block_height);
+                            if next_proposal_cost > batch_spend_limit {
                                 debug!(
-                                    "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {proposal_spend_limit})",
+                                    "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {batch_spend_limit})",
                                     fmt_id(transaction_id),
                                 );
 
@@ -2697,10 +2696,7 @@ mod tests {
         let (solution_id, solution) = sample_unconfirmed_solution(&mut rng);
         primary.workers()[0].process_unconfirmed_solution(solution_id, solution).await.unwrap();
 
-        // Each mock transaction spends one transaction spend limit. At this height the batch spend
-        // limit is 2.5 transaction spend limits, and a proposal accepts five times that, so 12
-        // transactions fit and the 13th stays in the worker.
-        for _i in 0..13 {
+        for _i in 0..5 {
             let (transaction_id, transaction) = sample_unconfirmed_transaction(&mut rng);
             // Store it on one of the workers.
             primary.workers()[0].process_unconfirmed_transaction(transaction_id, transaction).await.unwrap();
@@ -2708,10 +2704,10 @@ mod tests {
 
         // Try to propose a batch again. This time, it should succeed.
         assert!(primary.propose_batch().await.is_ok());
-        // The solution plus 12 transactions.
-        assert_eq!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().len(), 13);
+        // Expect 2/5 transactions to be included in the proposal in addition to the solution.
+        assert_eq!(primary.proposed_batch.read().as_proposal().unwrap().transmissions().len(), 3);
         // Check the transmissions were correctly drained from the workers.
-        assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 1);
+        assert_eq!(primary.workers().iter().map(|worker| worker.transmissions().len()).sum::<usize>(), 3);
     }
 
     #[test_log::test(tokio::test)]
