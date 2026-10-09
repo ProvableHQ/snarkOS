@@ -733,13 +733,13 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
                             continue;
                         };
 
-                        // Check if the next proposal cost exceeds the batch proposal spend limit.
+                        // Check if the next proposal cost exceeds five times the batch proposal spend limit.
                         let batch_spend_limit = BatchHeader::<N>::batch_spend_limit(current_block_height);
-                        if next_proposal_cost > batch_spend_limit {
+                        let proposal_spend_limit = batch_spend_limit.saturating_mul(5);
+                        if next_proposal_cost > proposal_spend_limit {
                             debug!(
-                                "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {})",
+                                "Proposing - Skipping transaction '{}' - Batch spend limit surpassed ({next_proposal_cost} > {proposal_spend_limit})",
                                 fmt_id(transaction_id),
-                                batch_spend_limit
                             );
 
                             // Reinsert the transmission into the worker.
