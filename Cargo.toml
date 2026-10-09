@@ -1,6 +1,6 @@
 [package]
 name = "snarkos"
-version = "4.11.0"
+version = "4.12.0"
 authors = [ "The Aleo Team <hello@aleo.org>" ]
 description = "A decentralized operating system"
 homepage = "https://aleo.org"
@@ -15,7 +15,7 @@ keywords = [
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.88.0" # Attention - Change the MSRV in rust-toolchain and in .circleci/config.yml as well
+rust-version = "1.96.0" # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
 
 [workspace]
 members = [
@@ -42,14 +42,14 @@ members = [
 ]
 
 [workspace.dependencies.aleo-std]
-version = "1.0.1"
+version = "1.0.4"
 default-features = false
 
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
-#git = "https://github.com/ProvableHQ/snarkVM.git"
-#rev = "29343ebbb" #main_net_v4110
-version = "=4.11.0"
+git = "https://github.com/ProvableHQ/snarkVM.git"
+rev = "532d8fdf7" #test_net_v4120
+#version = "=4.12.0"
 default-features = false
 
 [workspace.dependencies.anyhow]
@@ -65,7 +65,7 @@ version = "0.8"
 version = "0.10"
 
 [workspace.dependencies.base64]
-version = "0.22"
+version = "0.23"
 
 [workspace.dependencies.bincode]
 version = "1"
@@ -103,7 +103,7 @@ version = "0.3"
 version = "0.3"
 
 [workspace.dependencies.locktick]
-version = "0.5"
+version = "0.6"
 
 [workspace.dependencies.lru]
 version = "0.18.2"
@@ -137,8 +137,7 @@ version = "1.48"
 version = "0.7"
 
 [workspace.dependencies.http]
-# Pin to 1.3.1 until https://github.com/ProvableHQ/snarkOS/issues/4275 is fixed
-version = "=1.3.1"
+version = "1.5"
 
 [workspace.dependencies.itertools]
 version = "0.14"
@@ -172,7 +171,7 @@ version = "0.6"
 version = "0.13"
 
 [workspace.dependencies.smol_str]
-version = "=0.3.2" # Update after Rust >1.88
+version = "0.3"
 
 [workspace.dependencies.snow]
 version = "0.10"
@@ -197,84 +196,84 @@ version = "0.2"
 
 [workspace.dependencies.snarkos-account]
 path = "account"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-cli]
 path = "cli"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-display]
 path = "display"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node]
 path = "node"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-bft]
 path = "node/bft"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-bft-events]
 path = "node/bft/events"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-bft-storage-service]
 path = "node/bft/storage-service"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-bft-ledger-service]
 path = "node/bft/ledger-service"
-version = "=4.11.0"
+version = "=4.12.0"
 default-features = false
 
 [workspace.dependencies.snarkos-node-consensus]
 path = "node/consensus"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-cdn]
 path = "node/cdn"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-metrics]
 path = "node/metrics"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-network]
 path = "node/network"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-router]
 path = "node/router"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-router-messages]
 path = "node/router/messages"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-rest]
 path = "node/rest"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-sync]
 path = "node/sync"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-sync-communication-service]
 path = "node/sync/communication-service"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-sync-locators]
 path = "node/sync/locators"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-node-tcp]
 path = "node/tcp"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [workspace.dependencies.snarkos-utilities]
 path = "utilities"
-version = "=4.11.0"
+version = "=4.12.0"
 
 [[bin]]
 name = "snarkos"
@@ -282,8 +281,10 @@ path = "snarkos/main.rs"
 
 [features]
 default = [ "snarkos-cli/metrics", "snarkos-node-metrics", "snarkos-node/metrics", "snarkos-node-cdn/metrics" ]
-history-staking-rewards = [ "snarkos-node/history-staking-rewards" ]
-slipstream-plugins = [ "snarkos-node/slipstream-plugins", "snarkos-cli/slipstream-plugins" ]
+# The compile-time history features no longer select snarkVM code.
+# The names stay so existing build commands keep resolving.
+history = []
+history-staking-rewards = []
 # Deprecated alias for the metrics feature, which now carries the validator telemetry.
 # Retained so that build commands naming this feature keep resolving.
 telemetry = [ "snarkos-node/metrics" ]
@@ -372,7 +373,7 @@ workspace = true
 workspace = true
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 [dependencies.tracing]
 workspace = true
@@ -397,15 +398,13 @@ version = "0.11.2"
 workspace = true
 
 [build-dependencies.toml]
-version = "0.9"
+version = "1"
 
 [build-dependencies.walkdir]
 version = "2"
 
 [profile.release]
-opt-level = 3
 lto = "thin"
-incremental = true
 # uncomment the 2 lines below when building with the locktick feature or use the `release-locktick` profile
 # debug = "line-tables-only"
 # strip = "none"
@@ -415,25 +414,11 @@ inherits = "release"
 debug = "line-tables-only"
 strip = "none"
 
-[profile.bench]
-opt-level = 3
-debug = false
-rpath = false
-lto = "thin"
-incremental = true
-debug-assertions = false
-
 [profile.dev]
-opt-level = 2
-lto = "off"
-incremental = true
+debug = "line-tables-only"
 
 [profile.test]
 opt-level = 2
-lto = "off"
-incremental = true
-debug = true
-debug-assertions = true
 
 [package.metadata.cargo-machete]
 ignored = [
