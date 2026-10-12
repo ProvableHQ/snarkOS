@@ -484,14 +484,14 @@ struct NodeState {
 /// Returns the leader of the previous round, if one was present.
 async fn get_leader(State(node): State<NodeState>) -> Result<ErasedJson, RestError> {
     match &node.bft {
-        Some(bft) => Ok(ErasedJson::pretty(bft.leader())),
+        Some(bft) => Ok(ErasedJson::new(bft.leader())),
         None => Err(RestError("BFT is not enabled".into())),
     }
 }
 
 /// Returns the current round.
 async fn get_current_round(State(node): State<NodeState>) -> Result<ErasedJson, RestError> {
-    Ok(ErasedJson::pretty(node.primary.current_round()))
+    Ok(ErasedJson::new(node.primary.current_round()))
 }
 
 /// Returns the certificates for the given round.
@@ -499,7 +499,7 @@ async fn get_certificates_for_round(
     State(node): State<NodeState>,
     Path(round): Path<u64>,
 ) -> Result<ErasedJson, RestError> {
-    Ok(ErasedJson::pretty(node.primary.storage().get_certificates_for_round(round)))
+    Ok(ErasedJson::new(node.primary.storage().get_certificates_for_round(round)))
 }
 
 /// Starts up a local server for monitoring the node.

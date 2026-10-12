@@ -813,6 +813,20 @@ mod route_tests {
     }
 
     #[tokio::test]
+    async fn responses_are_compact_json() {
+        let rest = sample_rest().await;
+
+        // Clients such as `snarkos developer scan` parse this body directly as an integer.
+        let (status, body) = get(&rest, "/block/height/latest").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "0");
+
+        let (status, body) = get(&rest, "/block/latest").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!body.contains('\n'), "the block was served with line breaks: {body}");
+    }
+
+    #[tokio::test]
     async fn block_hashes_returns_the_hashes_in_the_range() {
         let rest = sample_rest().await;
 
