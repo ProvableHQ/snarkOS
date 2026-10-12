@@ -130,7 +130,7 @@ features = [ "axum" ]
 
 [dependencies.tower-http]
 version = "0.7"
-features = [ "cors", "trace" ]
+features = [ "compression-gzip", "cors", "trace" ]
 
 [dependencies.tracing]
 workspace = true
