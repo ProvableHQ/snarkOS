@@ -16,7 +16,7 @@
 use super::*;
 
 use snarkvm::{
-    ledger::narwhal::Data,
+    ledger::narwhal::{DATA_ENCODING_OVERHEAD, Data},
     prelude::{Field, FromBytes, ToBytes},
 };
 
@@ -27,15 +27,6 @@ pub struct UnconfirmedTransaction<N: Network> {
     pub transaction_id: N::TransactionID,
     pub transaction: Data<Transaction<N>>,
 }
-
-/// The bytes `Data`'s own encoding wraps around the object it carries: a version byte and a `u32`
-/// length prefix, both emitted by `Data::write_le` and expected back by `Data::read_le`.
-///
-/// TODO: this belongs in snarkVM, beside the encoding it describes (`ledger/narwhal/data/src`),
-/// so that changing `Data::write_le` forces this to be changed with it. Restating it here is a
-/// stopgap - replace it with the snarkVM constant once one is exported.
-pub const DATA_ENCODING_OVERHEAD: usize = size_of::<u8>() // the version byte
-    + size_of::<u32>(); // the length prefix
 
 impl<N: Network> UnconfirmedTransaction<N> {
     /// The bytes an `UnconfirmedTransaction` frame carries in addition to the transaction itself:

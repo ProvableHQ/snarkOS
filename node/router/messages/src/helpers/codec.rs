@@ -139,7 +139,7 @@ mod tests {
         Transaction,
         UnconfirmedSolution,
         UnconfirmedTransaction,
-        ping::prop_tests::largest_possible_ping,
+        ping::prop_tests::largest_supported_ping,
         puzzle_response::prop_tests::{any_large_puzzle_response, any_puzzle_response},
         unconfirmed_solution::prop_tests::{any_large_unconfirmed_solution, any_unconfirmed_solution},
         unconfirmed_transaction::prop_tests::{
@@ -209,14 +209,14 @@ mod tests {
         assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::UnconfirmedTransaction(_)))));
     }
 
-    /// The largest `Ping` the wire format permits must still be accepted - the failure mode a too
+    /// The largest `Ping` the cap is sized for must still be accepted - the failure mode a too
     /// tight cap causes is disconnecting honest peers, which is worse than the DoS this exists to
     /// prevent.
     #[test]
-    fn largest_possible_ping_is_accepted() {
+    fn largest_supported_ping_is_accepted() {
         let mut bytes = BytesMut::new();
         let mut codec = MessageCodec::<CurrentNetwork>::default();
-        assert!(codec.encode(Message::Ping(largest_possible_ping()), &mut bytes).is_ok());
+        assert!(codec.encode(Message::Ping(largest_supported_ping()), &mut bytes).is_ok());
         assert!(matches!(codec.decode(&mut bytes), Ok(Some(Message::Ping(_)))));
     }
 
@@ -329,13 +329,14 @@ mod tests {
         assert_eq!(codec.codec.max_frame_length(), expected);
     }
 
-    /// Excluding `BlockResponse` shrinks the ceiling to `Ping`'s - the largest of what remains -
-    /// rather than to some hardcoded number, so tightening `Ping`'s own cap in the future
-    /// automatically tightens this ceiling too.
+    /// Excluding `BlockResponse` shrinks the ceiling to `UnconfirmedTransaction`'s - the largest
+    /// of what remains - rather than to some hardcoded number, so tightening any one type's cap in
+    /// the future automatically tightens this ceiling too. A validator must accept those, so this
+    /// is also the floor the router ceiling can reach by capping other message types alone.
     #[test]
     fn excluding_block_response_shrinks_the_ceiling_to_the_next_largest_type() {
         let codec = MessageCodec::<CurrentNetwork>::excluding(&[MessageId::BlockResponse]);
-        assert_eq!(codec.codec.max_frame_length(), MessageId::Ping.max_size::<CurrentNetwork>());
+        assert_eq!(codec.codec.max_frame_length(), MessageId::UnconfirmedTransaction.max_size::<CurrentNetwork>());
     }
 
     /// Excluding a type rejects it outright, even a small, well-formed, correctly-sized instance -
@@ -371,7 +372,7 @@ mod tests {
     /// of a peer-declared, possibly enormous, body has to arrive or be held.
     #[test]
     fn excluding_block_response_rejects_an_oversized_frame_far_below_the_general_ceiling() {
-        let declared_len = MessageId::Ping.max_size::<CurrentNetwork>() + 1;
+        let declared_len = MessageId::UnconfirmedTransaction.max_size::<CurrentNetwork>() + 1;
         let mut bytes = BytesMut::new();
         bytes.extend_from_slice(&(declared_len as u32).to_le_bytes());
         bytes.extend_from_slice(&MessageId::BlockResponse.as_u16().to_le_bytes());

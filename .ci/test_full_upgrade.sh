@@ -18,16 +18,11 @@ set -eo pipefail  # error on any command failure
 total_validators=$1
 total_clients=$2
 network_id=$3
-max_warnings=$4
 
 # Default values if not provided
 : "${total_validators:=4}"
 : "${total_clients:=2}"
 : "${network_id:=0}"
-# Note: a validator logs a "Received signature for an older batch" warning whenever a
-# signature arrives after its batch was already certified, which happens roughly once per
-# round on a small committee. The ceiling therefore has to scale with the length of the run.
-: "${max_warnings:=4000}"
 
 # Node verbosity
 NODE_VERBOSITY=4
@@ -441,7 +436,7 @@ done
 
 log "Upgrade test passed: all nodes upgraded to PR snarkos, the network kept advancing, and every node's consensus version matches the configured schedule."
 
-if check_logs "$log_dir" "$total_validators" "$total_clients" "$max_warnings" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "$MAX_CLIENT_LOG_SIZE_BYTES"; then
+if check_logs "$log_dir" "$total_validators" "$total_clients" "$MAX_VALIDATOR_LOG_SIZE_BYTES" "$MAX_CLIENT_LOG_SIZE_BYTES"; then
   exit 0
 else
   exit 1

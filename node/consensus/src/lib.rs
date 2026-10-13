@@ -319,17 +319,17 @@ impl<N: Network> Consensus<N> {
             if self.ledger.contains_transmission(&TransmissionID::Solution(solution_id, checksum))? {
                 bail!("Solution '{}' exists in the ledger {}", fmt_id(solution_id), "(skipping)".dimmed());
             }
+            // Add the solution to the memory pool.
+            if self.solutions_queue.lock().put(solution_id, solution).is_some() {
+                bail!("Solution '{}' exists in the memory pool", fmt_id(solution_id));
+            }
             #[cfg(feature = "metrics")]
             {
                 metrics::increment_gauge(metrics::consensus::UNCONFIRMED_SOLUTIONS, 1f64);
                 let timestamp = snarkos_node_bft::helpers::now();
-                self.transmissions_tracker.lock().insert(TransmissionID::Solution(solution.id(), checksum), timestamp);
+                self.transmissions_tracker.lock().insert(TransmissionID::Solution(solution_id, checksum), timestamp);
             }
-            // Add the solution to the memory pool.
             trace!("Received unconfirmed solution '{}' in the queue", fmt_id(solution_id));
-            if self.solutions_queue.lock().put(solution_id, solution).is_some() {
-                bail!("Solution '{}' exists in the memory pool", fmt_id(solution_id));
-            }
         }
 
         // Try to process the unconfirmed solutions in the memory pool.
@@ -413,18 +413,18 @@ impl<N: Network> Consensus<N> {
             if self.contains_transaction(&transaction_id) {
                 bail!("Transaction '{}' exists in the memory pool", fmt_id(transaction_id));
             }
+            // Add the transaction to the memory pool.
+            let priority_fee = transaction.priority_fee_amount()?;
+            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
             #[cfg(feature = "metrics")]
             {
                 metrics::increment_gauge(metrics::consensus::UNCONFIRMED_TRANSACTIONS, 1f64);
                 let timestamp = snarkos_node_bft::helpers::now();
                 self.transmissions_tracker
                     .lock()
-                    .insert(TransmissionID::Transaction(transaction.id(), checksum), timestamp);
+                    .insert(TransmissionID::Transaction(transaction_id, checksum), timestamp);
             }
-            // Add the transaction to the memory pool.
             trace!("Received unconfirmed transaction '{}' in the queue", fmt_id(transaction_id));
-            let priority_fee = transaction.priority_fee_amount()?;
-            self.transactions_queue.write().insert(transaction_id, transaction, priority_fee)?;
         }
 
         // Try to process the unconfirmed transactions in the memory pool.
@@ -453,14 +453,34 @@ impl<N: Network> Consensus<N> {
             // Note: interleaving ensures we will never have consecutive invalid deployments blocking the queue.
             let selector_iter = (0..num_deployments).map(|_| true).interleave((0..num_executions).map(|_| false));
             // Drain the transactions from the queue, interleaving deployments and executions.
-            selector_iter
+            let transactions = selector_iter
                 .filter_map(
                     |select_deployment| {
                         if select_deployment { tx_queue.deployments.pop() } else { tx_queue.executions.pop() }
                     },
                 )
                 .map(|(_, tx)| tx)
-                .collect_vec()
+                .collect_vec();
+            #[cfg(feature = "metrics")]
+            {
+                metrics::gauge(
+                    metrics::consensus::DEPLOYMENTS_PRIORITY_QUEUE_SIZE,
+                    tx_queue.deployments.priority_len() as f64,
+                );
+                metrics::gauge(
+                    metrics::consensus::DEPLOYMENTS_ZERO_FEE_QUEUE_SIZE,
+                    tx_queue.deployments.zero_fee_len() as f64,
+                );
+                metrics::gauge(
+                    metrics::consensus::EXECUTIONS_PRIORITY_QUEUE_SIZE,
+                    tx_queue.executions.priority_len() as f64,
+                );
+                metrics::gauge(
+                    metrics::consensus::EXECUTIONS_ZERO_FEE_QUEUE_SIZE,
+                    tx_queue.executions.zero_fee_len() as f64,
+                );
+            }
+            transactions
         };
         // Iterate over the transactions.
         for transaction in transactions.into_iter() {
@@ -609,6 +629,18 @@ impl<N: Network> Consensus<N> {
         let prepare_instant = std::time::Instant::now();
         let block = match ledger_update.prepare_advance_to_next_quorum_block(subdag, transmissions) {
             Ok(block) => block,
+            Err(CheckBlockError::BlockAlreadyExists { .. }) => {
+                debug!("The given block hash already exists in the ledger");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidHeight { .. }) => {
+                debug!("The ledger advanced while we were constructing the next block");
+                return Ok(false);
+            }
+            Err(CheckBlockError::InvalidRound { new, previous }) => {
+                debug!("The subDAG round is too low. Expected >{previous}, got {new}");
+                return Ok(false);
+            }
             Err(err) => return Err(err.into_anyhow()),
         };
         let prepare_elapsed = prepare_instant.elapsed();
@@ -694,11 +726,13 @@ impl<N: Network> Consensus<N> {
         #[cfg(feature = "metrics")]
         {
             let now_utc = snarkos_node_bft::helpers::now_utc();
-            let elapsed = std::time::Duration::from_secs((now_utc.unix_timestamp() - start) as u64);
+            let elapsed_secs = (now_utc.unix_timestamp() - start) as f64;
             let next_block_timestamp = block.header().metadata().timestamp();
             let next_block_utc = snarkos_node_bft::helpers::to_utc_datetime(next_block_timestamp);
+            // Both endpoints are on-chain block timestamps (`i64` seconds by protocol design), so this
+            // value can only ever be a whole number of seconds without a snarkVM protocol change.
             let block_latency = next_block_timestamp - current_block_timestamp;
-            let block_lag = (now_utc - next_block_utc).whole_milliseconds();
+            let block_lag = (now_utc - next_block_utc).whole_seconds() as f64;
 
             let proof_target = block.header().proof_target();
             let coinbase_target = block.header().coinbase_target();
@@ -708,9 +742,9 @@ impl<N: Network> Consensus<N> {
             metrics::add_transmission_latency_metric(&self.transmissions_tracker, &block);
 
             metrics::gauge(metrics::consensus::COMMITTED_CERTIFICATES, num_committed_certificates as f64);
-            metrics::histogram(metrics::consensus::CERTIFICATE_COMMIT_LATENCY, elapsed.as_secs_f64());
+            metrics::histogram(metrics::consensus::CERTIFICATE_COMMIT_LATENCY, elapsed_secs);
             metrics::histogram(metrics::consensus::BLOCK_LATENCY, block_latency as f64);
-            metrics::histogram(metrics::consensus::BLOCK_LAG, block_lag as f64);
+            metrics::histogram(metrics::consensus::BLOCK_LAG, block_lag);
             metrics::gauge(metrics::blocks::PROOF_TARGET, proof_target as f64);
             metrics::gauge(metrics::blocks::COINBASE_TARGET, coinbase_target as f64);
             metrics::gauge(metrics::blocks::CUMULATIVE_PROOF_TARGET, cumulative_proof_target as f64);

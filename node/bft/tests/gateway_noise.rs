@@ -111,28 +111,6 @@ async fn two_gateways_complete_a_noise_handshake() {
     });
 }
 
-/// During the transition, a node that speaks Noise still has to be able to shake hands with one that
-/// only knows the legacy handshake - which is every node until the activation height passes. The
-/// responder goes along with whichever protocol it is offered, and the legacy path now reaches it
-/// through the protocol detection, which consumes the first four bytes of the peer's opening frame
-/// and has to feed them back into the event codec.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_legacy_initiator_is_accepted_by_a_noise_capable_responder() {
-    let mut rng = TestRng::default();
-    let (accounts, gateways) = new_test_gateways(2, &mut rng).await;
-    let (gateway_a, gateway_b) = (gateways[0].clone(), gateways[1].clone());
-
-    // Stand in for an unconverted validator: dial with the legacy handshake.
-    gateway_a.set_initiates_noise_handshake(false);
-    gateway_a.tcp().connect(dial_addr(&gateway_b)).await.unwrap();
-
-    let (a, b) = (gateway_a.clone(), gateway_b.clone());
-    let (addr_a, addr_b) = (accounts[0].address(), accounts[1].address());
-    deadline!(Duration::from_secs(5), move || {
-        a.connected_addresses().contains(&addr_b) && b.connected_addresses().contains(&addr_a)
-    });
-}
-
 /// The handshake hands a bare stream back to the connection, where [`Reading`] builds an event codec
 /// of its own. A `ValidatorsRequest` is always answered, so a response proves the handover left the
 /// stream exactly where that codec expects to start.
@@ -173,14 +151,9 @@ async fn a_noise_handshake_leaves_the_connection_usable() {
 /// Relays a Noise handshake between a victim that dials `listener` and a `target` it believes it is
 /// talking to.
 ///
-/// This is the attack the handshake binding exists to defeat: the attacker terminates a Noise
-/// session on each side and forwards the decrypted payloads verbatim, so that both ends believe
-/// they authenticated each other while it sits in the middle with plaintext access to both.
-///
-/// Against the legacy handshake this works, because the challenge signatures cover only a pair of
-/// nonces and are therefore valid on any connection they are pasted into. Against this one it must
-/// not, because each side signs its own session's handshake hash and the two sessions cannot have
-/// the same one.
+/// The attacker terminates a Noise session on each side and forwards the decrypted payloads
+/// verbatim. Each side signs its own session's handshake hash, and the two sessions cannot have
+/// the same one, so the handshake is rejected.
 async fn relay_noise_handshake(listener: TcpListener, target: SocketAddr) -> io::Result<()> {
     let (mut victim_stream, _) = listener.accept().await?;
 
@@ -348,23 +321,6 @@ async fn a_contradicted_handshake_hint_is_rejected() {
     let verdict = ResponderProof::<CurrentNetwork>::from_bytes_le(&noise.recv().await.unwrap()).unwrap();
 
     assert_eq!(verdict, ResponderProof::Rejected { reason: DisconnectReason::ProtocolViolation });
-}
-
-#[test]
-fn the_noise_marker_is_rejected_by_a_legacy_peer() {
-    use bytes::BytesMut;
-    use snarkos_node_bft_events::EventCodec;
-    use snarkos_node_network::noise::NOISE_MAGIC;
-    use tokio_util::codec::Decoder;
-
-    // A node that only speaks the legacy handshake has to fail fast when it is offered the Noise
-    // one, rather than stalling on a frame that will never arrive. The marker is chosen so that it
-    // decodes as a frame length far beyond what the legacy handshake codec accepts.
-    let mut codec = EventCodec::<CurrentNetwork>::handshake();
-    let mut bytes = BytesMut::from(&NOISE_MAGIC[..]);
-
-    let error = codec.decode(&mut bytes).unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
 
 #[tokio::test(flavor = "multi_thread")]

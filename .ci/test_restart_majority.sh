@@ -19,14 +19,12 @@ total_validators=$1
 network_id=$2
 reset_interval=$3
 num_resets=$4
-max_warnings=$5
 
 # Default values if not provided
 : "${total_validators:=7}"
 : "${network_id:=0}"
 : "${reset_interval:=20}"
 : "${num_resets:=3}"
-: "${max_warnings:=4000}" # Allow lots of warnings as we're doing funky stuff in this test.
 
 # Blocks to advance after all restarts complete.
 final_height_advance=20
@@ -123,7 +121,7 @@ fi
 
 log "SUCCESS! Network took $(elapsed_since "$start") seconds to reach final height of $final_height after $num_resets resets."
 
-if check_logs "$log_dir" "$total_validators" 0 "$max_warnings" "$max_validator_log_size_bytes" "" "$log_check_since"; then
+if check_logs "$log_dir" "$total_validators" 0 "$max_validator_log_size_bytes" "" "$log_check_since"; then
   exit 0
 else
   exit 1

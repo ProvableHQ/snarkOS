@@ -15,9 +15,8 @@
 
 //! The payloads carried by the messages of the gateway's Noise handshake.
 //!
-//! Unlike the legacy [`ChallengeRequest`](crate::ChallengeRequest) and
-//! [`ChallengeResponse`](crate::ChallengeResponse) events, these are not part of the [`Event`]
-//! enum: they are only ever exchanged inside a Noise message, never over an established connection.
+//! These payloads are not part of the [`Event`] enum. They are only ever exchanged inside a Noise
+//! message, never over an established connection.
 //!
 //! The four messages are:
 //!
@@ -92,10 +91,10 @@ const UNKNOWN_COMMIT_HASH: [u8; 40] = [b'?'; 40];
 /// parses the rest; see [`ConnectionMode`]. A hint for a different mode is rejected by name
 /// rather than misread as this one.
 ///
-/// Disclosing the Aleo address here costs little: committee membership is public on-chain, the
-/// responder discloses its own address to an unauthenticated peer in the second message anyway, and
-/// the legacy handshake sends it in the clear. What it buys is the committee check, which is the one
-/// cheap test that a peer cannot satisfy by guessing.
+/// Disclosing the Aleo address here costs little: committee membership is public on-chain, and the
+/// responder discloses its own address to an unauthenticated peer in the second message anyway.
+/// What it buys is the committee check, which is the one cheap test that a peer cannot satisfy by
+/// guessing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HandshakeHint<N: Network> {
     pub version: u32,
@@ -173,8 +172,8 @@ impl<N: Network> FromBytes for PeerInfo<N> {
         let listener_port = u16::read_le(&mut reader)?;
         let address = Address::<N>::read_le(&mut reader)?;
         let restrictions_id = Field::read_le(&mut reader)?;
-        // Unlike the legacy `ChallengeRequest`, a missing SHA is an error rather than a `None`: the
-        // payload is delimited by the Noise message, so a short read is a protocol violation.
+        // A missing SHA is an error rather than a `None`: the payload is delimited by the Noise
+        // message, so a short read is a protocol violation.
         let snarkos_sha = <[u8; 40]>::read_le(&mut reader)?;
         let snarkos_sha = if snarkos_sha == UNKNOWN_COMMIT_HASH { None } else { Some(snarkos_sha) };
 

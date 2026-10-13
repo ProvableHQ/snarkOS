@@ -112,10 +112,10 @@ impl<N: Network, C: ConsensusStorage<N>> Reading for Validator<N, C> {
         // (`ConnectionMode::Gateway`); it never issues a `BlockRequest` over the router, so it
         // never has a legitimate reason to accept a `BlockResponse` there either. Excluding it
         // rejects one outright the moment its ID is visible, and shrinks this connection's frame
-        // ceiling from the general 128 MiB down to `Ping`'s (the largest type still allowed) - so
-        // an untrusted router peer can no longer use a claimed `BlockResponse` to force either a
-        // 128 MiB allocation or a successful decode that `block_response` below only rejects
-        // afterward.
+        // ceiling from the general 128 MiB down to `UnconfirmedTransaction`'s (the largest type
+        // still allowed, and one a validator must accept) - so an untrusted router peer can no
+        // longer use a claimed `BlockResponse` to force either a 128 MiB allocation or a
+        // successful decode that `block_response` below only rejects afterward.
         MessageCodec::excluding(&[MessageId::BlockResponse])
     }
 
