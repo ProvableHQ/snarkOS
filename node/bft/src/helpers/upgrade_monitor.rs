@@ -245,9 +245,11 @@ impl<N: Network> UpgradeMonitor<N> {
             Ok(Some(recorded)) => {
                 warn!(
                     "A previous run found that validators run ConsensusVersion::V{} at height {}, which this build \
-                     does not schedule. No block at or above that height is built until connected validators \
+                     does not schedule. No block at or above height {} is built until connected validators \
                      confirm or refute it.",
-                    recorded.consensus_version, recorded.height
+                    recorded.consensus_version,
+                    recorded.height,
+                    recorded.stop_height()
                 );
                 Some(recorded)
             }
@@ -329,12 +331,12 @@ impl<N: Network> UpgradeMonitor<N> {
 
     /// Returns an error unless this build may build the block at `height`.
     ///
-    /// Beyond a required upgrade, a block is held back until this validator and the connected
-    /// validators that are not ahead of it at that height hold the quorum threshold of stake, if
-    /// either:
-    /// - that height is the first at which a committee member's schedule runs a newer version than
-    ///   this build's, or
-    /// - a record's stop height is at or below that height.
+    /// Beyond a required upgrade, a block is held back:
+    /// - from a record's stop height, until this validator and the connected validators that are
+    ///   not ahead of it at the recorded height hold the quorum threshold of stake, and
+    /// - at the first height at which a committee member's schedule runs a newer version than this
+    ///   build's, until this validator and the connected validators that are not ahead of it at
+    ///   that height hold the quorum threshold of stake.
     ///
     /// Connected validators that disclosed no schedule count as not ahead. A member's schedule
     /// counts at one height only, so that a faulty member holds back at most one block per
@@ -352,10 +354,21 @@ impl<N: Network> UpgradeMonitor<N> {
             return Err(BlockHeldBack(format!("{required}, which this build lacks")).into());
         }
 
-        let is_claimed = state.recorded.is_some_and(|recorded| recorded.stop_height() <= height)
-            || state.schedules.iter().any(|(address, steps)| {
-                committee.get_stake(*address) > 0 && steps.first_ahead_of(&self.own) == Some(height)
-            });
+        // A record that survived the update is not refuted at its activation height.
+        if let Some(recorded) = state.recorded
+            && recorded.stop_height() <= height
+        {
+            return Err(BlockHeldBack(format!(
+                "A previous run found that validators may run ConsensusVersion::V{} from height {}, and connected \
+                 validators holding a quorum of stake have not refuted it",
+                recorded.consensus_version, recorded.height
+            ))
+            .into());
+        }
+
+        let is_claimed = state.schedules.iter().any(|(address, steps)| {
+            committee.get_stake(*address) > 0 && steps.first_ahead_of(&self.own) == Some(height)
+        });
         if is_claimed && !self.is_refuted(&state, committee, connected, height) {
             return Err(BlockHeldBack(format!(
                 "Validators may run a newer consensus version than this build at height {height}, and connected \
@@ -808,6 +821,22 @@ mod tests {
         monitor.record_schedule(addresses[0], Some(&own_schedule()));
         assert!(monitor.ensure_block_may_be_built(&committee, &connected(&addresses[..2]), stop).is_ok());
         assert_eq!(dir.read(), None);
+    }
+
+    #[test]
+    fn a_record_is_refuted_only_at_its_activation_height() {
+        let (committee, addresses) = sample_committee();
+        let dir = RecordDir::new();
+        dir.write(&required(H).to_bytes_le().unwrap());
+        let monitor = monitor(&addresses, &dir);
+        let stop = required(H).stop_height();
+
+        // Validator 0 runs this build's version at the stop height but is ahead at H, so it leaves
+        // the record unrefuted, although it makes a quorum with validator 1 at the stop height.
+        monitor.record_schedule(addresses[0], Some(&ahead_at(H)));
+        let connected = connected(&addresses[..2]);
+        assert!(monitor.ensure_block_may_be_built(&committee, &connected, stop).is_err());
+        assert_eq!(dir.read(), Some(required(H)));
     }
 
     #[test]
