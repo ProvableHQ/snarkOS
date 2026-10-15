@@ -1678,6 +1678,11 @@ impl<N: Network> Handshake for Gateway<N> {
                 } else {
                     NodeType::Validator
                 };
+                // A block check reads the connected validators before their schedules, so the schedule
+                // is recorded before the validator counts as connected.
+                if node_type == NodeType::Validator {
+                    self.upgrade_monitor.record_schedule(peer_info.address, peer_schedule.as_ref());
+                }
                 let mut peer_pool = self.peer_pool.write();
 
                 // Validators may change their listening address, but not the Aleo address; traverse
@@ -1714,10 +1719,8 @@ impl<N: Network> Handshake for Gateway<N> {
                 // The upgrade status reads the peer pool, so the lock is released first.
                 drop(peer_pool);
 
-                // The schedule is weighed once the peer counts as connected.
                 if is_connected && node_type == NodeType::Validator {
                     log_schedule_difference::<N>(addr, peer_schedule.as_ref());
-                    self.upgrade_monitor.record_schedule(peer_info.address, peer_schedule.as_ref());
                     self.update_upgrade_status();
                 }
                 info!("{CONTEXT} Connected to '{addr}'");
