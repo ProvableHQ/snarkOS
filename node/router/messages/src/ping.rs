@@ -137,7 +137,8 @@ pub mod prop_tests {
     ///
     /// Heights of `MAX_CHECKPOINTS * CHECKPOINT_INTERVAL` and above do not round-trip: their
     /// locators carry more than `MAX_CHECKPOINTS` checkpoints, which `BlockLocators::read_le`
-    /// rejects.
+    /// rejects. `BlockLocators::new` already rejects a height of `u32::MAX`, so
+    /// `sample_block_locators` panics there.
     pub fn any_block_locators() -> BoxedStrategy<BlockLocators<CurrentNetwork>> {
         (0u32..1 << 25).prop_map(sample_block_locators).boxed()
     }
