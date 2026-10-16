@@ -15,7 +15,7 @@ keywords = [
 categories = [ "cryptography", "cryptography::cryptocurrencies", "os" ]
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.96.0" # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml, .circleci/config.yml and .github/workflows/benchmarks.yml; change all of them together.
+rust-version = "1.96.0" # Attention - The MSRV is pinned in Cargo.toml, rust-toolchain.toml and .github/workflows/benchmarks.yml; change all of them together.
 
 [workspace]
 members = [
@@ -48,7 +48,7 @@ default-features = false
 [workspace.dependencies.snarkvm]
 #path = "../snarkVM"
 git = "https://github.com/ProvableHQ/snarkVM.git"
-rev = "6d7b76515" #staging
+rev = "9796eb19dee4fd2c671be9b3a1322eda62586991" #staging
 #version = "=4.12.0"
 default-features = false
 
