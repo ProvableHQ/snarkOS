@@ -197,6 +197,9 @@ pub struct Primary<N: Network> {
     /// Used to wake up a the dedicated round-increment task, if we may be able to advance to the next round.
     /// This is used, so the timeout for round advancement is reset on every round increment.
     round_increment_notify: Arc<Notify>,
+
+    /// Wakes the mempool refill task after a new proposal has drained the workers.
+    proposal_notify: Arc<Notify>,
 }
 
 impl<N: Network> Primary<N> {
@@ -248,6 +251,7 @@ impl<N: Network> Primary<N> {
             handles: Default::default(),
             proposal_task: Default::default(),
             round_increment_notify: Default::default(),
+            proposal_notify: Default::default(),
         })
     }
 
@@ -392,6 +396,14 @@ impl<N: Network> Primary<N> {
     /// Returns the number of unconfirmed transmissions.
     pub fn num_unconfirmed_transmissions(&self) -> usize {
         self.workers().iter().map(|worker| worker.num_transmissions()).sum()
+    }
+
+    /// Waits for a new local proposal so the mempool can refill the workers.
+    ///
+    /// This has a single consumer. Proposals made while that consumer is busy are coalesced
+    /// into one pending notification. Rebroadcasts do not notify the consumer.
+    pub async fn wait_for_proposal(&self) {
+        self.proposal_notify.notified().await;
     }
 
     /// Returns the number of unconfirmed ratifications.
@@ -843,6 +855,7 @@ impl<N: Network> proposal_task::BatchPropose for Primary<N> {
         );
         // Store the proposal in memory.
         *self.proposed_batch.write() = ProposedBatchState::Certifying(Box::new(proposal));
+        self.proposal_notify.notify_one();
         // Record the wall-clock time at which the batch was proposed.
         #[cfg(feature = "metrics")]
         {
