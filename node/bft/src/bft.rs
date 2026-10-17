@@ -90,6 +90,7 @@ impl<N: Network> BFT<N> {
         trusted_peers_only: bool,
         node_data_dir: NodeDataDir,
         dev: Option<u16>,
+        proposal_spent_limit_multiplier: u64,
     ) -> Result<Self> {
         Ok(Self {
             primary: Primary::new(
@@ -102,6 +103,7 @@ impl<N: Network> BFT<N> {
                 trusted_peers_only,
                 node_data_dir,
                 dev,
+                proposal_spent_limit_multiplier,
             )?,
             dag: Default::default(),
             leader_certificate: Default::default(),
@@ -1027,6 +1029,7 @@ mod tests {
             false,
             NodeDataDir::new_test(None),
             None,
+            1,
         )
     }
 

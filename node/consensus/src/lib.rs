@@ -142,6 +142,7 @@ impl<N: Network> Consensus<N> {
         node_data_dir: NodeDataDir,
         ping: Arc<Ping<N>>,
         dev: Option<u16>,
+        proposal_spent_limit_multiplier: u64,
     ) -> Result<Self> {
         // Initialize the primary channels.
         let (primary_sender, primary_receiver) = init_primary_channels::<N>();
@@ -161,6 +162,7 @@ impl<N: Network> Consensus<N> {
             trusted_peers_only,
             node_data_dir,
             dev,
+            proposal_spent_limit_multiplier,
         )?;
         // Initialize the consensus channels.
         let (consensus_sender, consensus_receiver) = init_consensus_channels();
@@ -481,8 +483,9 @@ impl<N: Network> Consensus<N> {
             }
             transactions
         };
-        // Iterate over the transactions.
-        for transaction in transactions.into_iter() {
+        // Each transaction is checked on its own task. This function returns after every check has finished.
+        let mut handles = Vec::with_capacity(transactions.len());
+        for transaction in transactions {
             let transaction_id = transaction.id();
             // Determine the type of the transaction. The fee type is technically not possible here.
             let tx_type_str = match transaction {
@@ -491,8 +494,22 @@ impl<N: Network> Consensus<N> {
                 Transaction::Fee(..) => "fee",
             };
             trace!("Adding unconfirmed {tx_type_str} transaction '{}' to the memory pool...", fmt_id(transaction_id));
-            // Send the unconfirmed transaction to the primary.
-            match self.primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await {
+            let primary_sender = self.primary_sender.clone();
+            handles.push(tokio::spawn(async move {
+                let result =
+                    primary_sender.send_unconfirmed_transaction(transaction_id, Data::Object(transaction)).await;
+                (tx_type_str, transaction_id, result)
+            }));
+        }
+        for handle in handles {
+            let (tx_type_str, transaction_id, result) = match handle.await {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    warn!("Unconfirmed transaction task failed: {err}");
+                    continue;
+                }
+            };
+            match result {
                 Ok(true) => {}
                 Ok(false) => debug!(
                     "Unable to add unconfirmed {tx_type_str} transaction '{}' to the memory pool. Already exists.",
